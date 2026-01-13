@@ -16,5 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install NASM
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
       - name: Run test script
         run: ./test.sh
