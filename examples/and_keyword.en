@@ -1,0 +1,62 @@
+print "=============================================="
+print "The 'and' Keyword - All Uses Demonstrated"
+print "=============================================="
+
+To "add numbers" with a number called "x" and a number called "y". 
+  Return a number, the x add the y.
+
+To "multiply three" with a number called "p" and a number called "q" and a number called "r".
+  Return a number, p multiply q multiply r.
+
+print "--- 1. LOGICAL AND (boolean operator) ---"
+a boolean called "sunny" is true.
+a boolean called "warm" is true.
+a boolean called "raining" is false.
+If sunny and warm then,
+    print "Perfect weather for a picnic!".
+If sunny and raining then,
+    print "Sun shower!".
+  Otherwise,
+    print "No sun shower today.".
+
+print "--- 2. FUNCTION PARAMETERS (separator) ---"
+print "add numbers of 3 and 5:"
+print "add numbers" of 3 and 5.
+print "multiply three of 2 and 3 and 4:"
+print "multiply three" of 2 and 3 and 4.
+
+print "--- 3. FUNCTION ARGUMENTS (separator) ---"
+a number called var1 is 10.
+a number called var2 is 20.
+print "Adding first and second:"
+print "add numbers" with var1 and var2.
+
+print "--- 4. SUBJECT LIST TERMINATOR (before 'are') ---"
+a boolean called "engine_on" is false.
+a boolean called "doors_locked" is false.
+a boolean called "seatbelt_on" is false.
+print "Checking if all are false:"
+if engine_on, doors_locked, and seatbelt_on are not true then,
+    print "All systems are OFF - safe to exit vehicle.".
+Set engine_on to true.
+Set doors_locked to true.
+Set seatbelt_on to true.
+print "Now all are true:"
+if engine_on, doors_locked, and seatbelt_on are true then,
+    print "All systems are ON - ready to drive.".
+
+print "--- 5. COMBINING USES ---"
+a number called "num1" is 5.
+a number called "num2" is 10.
+a boolean called "valid" is true.
+a boolean called "ready" is true.
+If valid and ready then,
+    print "Conditions met, calculating...".
+    print "add numbers" of num1 and num2.
+
+print "--- 6. TWO-ITEM LIST WITH 'are' ---"
+a boolean called "left" is true.
+a boolean called "right" is true.
+if left, and right are true then,
+    print "Both left and right are true.".
+print "Done! All 'and' keyword uses demonstrated."

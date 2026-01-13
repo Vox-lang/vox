@@ -1,0 +1,22 @@
+(Test 1: Basic for-each range)
+For each number from 1 to 5, print the number.
+
+(Test 2: Print each loop expansion on range)
+print each number from 10 to 12.
+
+(Test 3: Range with variable bounds)
+Set start to 1.
+Set end to 3.
+For each number from start to end, print the number.
+
+(Test 4: Range with but-if conditional branching)
+print each number from 1 to 6,
+    but if the number modulo 2 is equal to 0 print "even".
+
+(Test 5: Range in function)
+To "sum range" with a number called "n".
+  A number called "total" is 0.
+  For each number from 1 to n, total is total add the number.
+  Return a number, total.
+
+Print "sum range" of 4.

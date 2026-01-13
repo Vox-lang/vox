@@ -1,0 +1,44 @@
+(Timer example - measuring job duration)
+
+Print "Starting job...".
+Create a timer called "job timer".
+Start the "job timer".
+
+(... do work ...)
+Wait 1 second.
+Print "Seconds elapsed so far: ".
+Print the "job timer"'s elapsed seconds.
+
+Wait 500 milliseconds.
+Stop the "job timer".
+
+Print "Finished the job in: ".
+Print the "job timer"'s duration in seconds.
+Print " seconds".
+
+(Access raw timestamps)
+Print "Started at unix time: ".
+Print the "job timer"'s 'start time'.
+Print "Stopped at unix time: ".
+Print the "job timer"'s 'end time'.
+
+(Get current date/time components)
+Print "Current date and time:".
+Get current time into now.
+Print "  Hour: ".
+Print the now's hour.
+Print "  Minute: ".
+Print the now's minute.
+Print "  Second: ".
+Print the now's second.
+Print "  Day: ".
+Print the now's day.
+Print "  Month: ".
+Print the now's month.
+Print "  Year: ".
+Print the now's year.
+
+(Alternative: inline current time)
+Print "It is currently hour ".
+Print current time's hour.
+Print " of the day.".

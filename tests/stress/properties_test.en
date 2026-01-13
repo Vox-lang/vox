@@ -1,0 +1,70 @@
+print "=== PROPERTY ACCESS TEST ===".
+
+print "".
+print "--- Buffer Properties ---".
+a buffer called "buf" is 128 bytes in size.
+print "Buffer capacity:".
+print buf's capacity.
+print "Buffer size (empty):".
+print buf's size.
+
+print "".
+print "--- File Properties ---".
+open a file for writing called out at "./test_props.txt".
+Write "Hello World" to out.
+Close the out.
+
+open a file for reading called src at "./test_props.txt".
+print "File descriptor:".
+print src's descriptor.
+print "File size:".
+print src's size.
+print "File modified time:".
+print src's modified.
+print "File permissions:".
+print src's permissions.
+Close the src.
+
+print "".
+print "--- Number Properties ---".
+a number called "x" is -42.
+print "Number x is:".
+print x.
+print "x's absolute:".
+print x's absolute.
+print "x's sign:".
+print x's sign.
+
+a number called "y" is 10.
+print "Number y is:".
+print y.
+print "y's even (should be 1):".
+print y's even.
+print "y's odd (should be 0):".
+print y's odd.
+
+a number called "z" is 7.
+print "Number z is:".
+print z.
+print "z's even (should be 0):".
+print z's even.
+print "z's odd (should be 1):".
+print z's odd.
+
+print "".
+print "--- Boolean Property Checks ---".
+If x's negative then,
+    print "x is negative - CORRECT".
+
+If y's positive then,
+    print "y is positive - CORRECT".
+
+If y's even then,
+    print "y is even - CORRECT".
+
+If z's odd then,
+    print "z is odd - CORRECT".
+
+print "".
+Delete the file "./test_props.txt".
+print "=== PROPERTY TEST COMPLETE ===".

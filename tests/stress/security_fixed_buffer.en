@@ -1,0 +1,29 @@
+print "=== FIXED BUFFER OVERFLOW TEST ===".
+enable error catching.
+
+print "Test 1: Create a tiny fixed buffer (64 bytes)".
+a buffer called "tiny" is 64 bytes in size.
+
+print "Test 2: Create a file larger than buffer".
+open a file for writing called out at "./overflow_test.txt".
+a number called "i" is 0.
+
+While i is less than 100,
+    Write "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" to out.
+    Write a newline to out.
+    Increment i.
+
+Close the out.
+
+print "Test 3: Attempt to read large file into tiny fixed buffer".
+open a file for reading called src at "./overflow_test.txt".
+Read from src into tiny.
+
+print "Test 4: Check buffer properties".
+
+If tiny's size is equal to tiny's capacity then,
+    print "Buffer is full (size equals capacity)".
+
+Close the src.
+
+print "=== FIXED BUFFER TEST COMPLETE ===".

@@ -1,0 +1,4 @@
+(Test print without newline)
+Print "Hello" without newline.
+Print " " without newline.
+Print "World".

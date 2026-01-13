@@ -1,0 +1,14 @@
+(Test universal loop expansion: each...from works with any action)
+
+To "double" of a number called "x".
+  Return a number, x multiply 2.
+
+a list called "nums" is [1, 2, 3].
+
+print "=== Print each ===".
+print each n from nums.
+
+print "=== Function each ===".
+"double" of each n from nums, print n.
+
+print "=== Done ===".

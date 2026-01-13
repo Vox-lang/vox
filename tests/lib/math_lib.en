@@ -1,0 +1,6 @@
+Library "math" version "1.0".
+
+To "square" with a number called "x". Return a number, x multiply x.
+
+To "cube" with a number called "x". Return a number, x multiply x multiply x.
+

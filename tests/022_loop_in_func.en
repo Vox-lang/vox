@@ -1,0 +1,23 @@
+(Test 1: Sum function with while loop)
+To "sum to" with a number called "n".
+  A number called "total" is 0.
+  A number called "i" is 1.
+  While i is less than or equal to n, total is total add i. i is i add 1.
+  Return a number, total.
+
+Print "sum to" of 5.
+
+(Test 2: Factorial function with while loop)
+To "factorial" with a number called "n".
+  A number called "result" is 1.
+  A number called "i" is 1.
+  While i is less than or equal to n, result is result multiply i. i is i add 1.
+  Return a number, result.
+
+Print "factorial" of 5.
+
+(Test 3: Count down function)
+To "count down from" with a number called "n".
+  While n is greater than 0, print n. n is n subtract 1.
+
+"count down from" of 3.

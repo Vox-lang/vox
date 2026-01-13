@@ -1,0 +1,29 @@
+(Test format string interpolation - comprehensive tests)
+
+(Basic variable interpolation)
+a text called "name" is "Alice".
+a number called "age" is 25.
+Print "Hello, {name}!".
+Print "Age: {age}".
+
+(Number base formatting)
+a number called "val" is 255.
+Print "Decimal: {val}".
+Print "Hex lower: {val:x}".
+Print "Hex upper: {val:X}".
+Print "Binary: {val:b}".
+Print "Octal: {val:o}".
+
+(Float precision)
+a float called "pi" is 3.14159.
+Print "Pi default: {pi}".
+Print "Pi .2: {pi:.2}".
+Print "Pi .0: {pi:.0}".
+
+(Integer padding)
+a number called "small" is 42.
+Print "Padded: [{small:6}]".
+Print "Zero-pad: [{small:06}]".
+
+(Escaped braces with variable)
+Print "Value is {{val}} = {val}".

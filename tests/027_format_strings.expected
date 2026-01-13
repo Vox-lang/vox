@@ -1,0 +1,13 @@
+Hello, Alice!
+Age: 25
+Decimal: 255
+Hex lower: 0xff
+Hex upper: 0xFF
+Binary: 11111111
+Octal: 377
+Pi default: 3.14159
+Pi .2: 3.14
+Pi .0: 3
+Padded: [    42]
+Zero-pad: [000042]
+Value is {val} = 255

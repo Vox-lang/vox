@@ -1,0 +1,8 @@
+(Test hex and binary literals)
+a number called "hex" is 0xFF.
+a number called "bin" is 0b1010.
+a number called "char" is 'A'.
+
+Print hex.
+Print bin.
+Print char.

@@ -1,0 +1,3 @@
+a list called "nums" is [10, 20, 30].
+For each n in nums,
+  print the n.

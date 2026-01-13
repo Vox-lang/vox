@@ -1,0 +1,23 @@
+print "=== Simple File Test ===".
+
+a buffer called "data" is 256 bytes in size.
+
+print "Creating and writing to file...".
+open a file for writing called output at "./test_output.txt".
+Write "Hello from English Compiler!" to output.
+Write a newline to output.
+Write "This is line 2." to output.
+Close the output.
+
+print "Reading from file...".
+open a file for reading called input at "./test_output.txt".
+Read from input into data.
+Close the input.
+
+print "File contents:".
+print data.
+
+print "Cleaning up...".
+Delete the file "./test_output.txt".
+
+print "Done!".

@@ -1,0 +1,39 @@
+Library "cli" version "1.0".
+
+(CLI Helper Library for English)
+(Provides argparse-like functionality for command-line programs)
+
+(Check if a flag is present in arguments)
+To "hasflag" with a text called "flag". Return a number,
+    a number called "i" is 1.
+    a number called "argc" is arguments's count.
+    While i is less than argc,
+        a text called "arg" is argument at i.
+        If arg is equal to flag then, return a number, 1.
+        Increment i.
+    Return a number, 0.
+
+(Check for verbose flag -v or --verbose)
+To "isverbose". Return a number,
+    If "hasflag" of "-v" then, return a number, 1.
+    If "hasflag" of "--verbose" then, return a number, 1.
+    Return a number, 0.
+
+(Check for help flag -h or --help)  
+To "wantshelp". Return a number,
+    If "hasflag" of "-h" then, return a number, 1.
+    If "hasflag" of "--help" then, return a number, 1.
+    Return a number, 0.
+
+(Get value after a flag like --output file.txt)
+To "getoption" with a text called "flag". Return a text,
+    a number called "i" is 1.
+    a number called "argc" is arguments's count.
+    While i is less than argc,
+        a text called "arg" is argument at i.
+        If arg is equal to flag then,
+            a number called "next" is i add 1.
+            If next is less than argc then,
+                return a text, argument at next.
+        Increment i.
+    Return a text, "".

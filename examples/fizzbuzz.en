@@ -1,0 +1,9 @@
+To "check divisibility" with a number called "x" and a number called "y".
+  Return a boolean,
+    x modulo y is 0.
+    
+For each number from 1 to 15,
+  print the number,
+    but if "check divisibility" of the number and 6 is true print "fizzbuzz",
+    but if "check divisibility" of the number and 2 is true print "fizz",
+    but if "check divisibility" of the number and 3 is true print "buzz".

@@ -1,0 +1,89 @@
+Print "=== Integer Arithmetic ===".
+
+Set num1 to 10.
+Set num2 to 3.
+
+Print "num1 = 10, num2 = 3".
+Print "".
+
+Print "Addition: num1 add num2 =".
+Print num1 add num2.
+
+Print "Subtraction: num1 subtract num2 =".
+Print num1 subtract num2.
+
+Print "Multiplication: num1 multiply num2 =".
+Print num1 multiply num2.
+
+Print "Division: num1 divide num2 =".
+Print num1 divide num2.
+
+Print "Modulo: num1 modulo num2 =".
+Print num1 modulo num2.
+
+Print "".
+Print "=== Float Arithmetic ===".
+
+Set val1 to 10.5.
+Set val2 to 3.2.
+
+Print "val1 = 10.5, val2 = 3.2".
+Print "(Note: floats currently display as truncated integers)".
+Print "".
+
+Print "Addition: val1 add val2 =".
+Print val1 add val2.
+
+Print "Subtraction: val1 subtract val2 =".
+Print val1 subtract val2.
+
+Print "Multiplication: val1 multiply val2 =".
+Print val1 multiply val2.
+
+Print "Division: val1 divide val2 =".
+Print val1 divide val2.
+
+Print "".
+Print "=== Mixed Operations ===".
+
+Set result to 5.0.
+Print "Starting with 5.0".
+
+Set result to result add 2.5.
+Print "After adding 2.5:".
+Print result.
+
+Set result to result multiply 2.0.
+Print "After multiplying by 2.0:".
+Print result.
+
+Set result to result subtract 3.0.
+Print "After subtracting 3.0:".
+Print result.
+
+Set result to result divide 2.0.
+Print "After dividing by 2.0:".
+Print result.
+
+Print "".
+Print "=== Comparisons ===".
+
+If 10.5 is greater than 10.0 then, print "10.5 > 10.0: true",
+Otherwise, print "ERROR in comparison".
+
+If 3.0 is less than 3.5 then, print "3.0 < 3.5: true",
+Otherwise, print "ERROR in comparison".
+
+If 5.0 is equal to 5.0 then, print "5.0 == 5.0: true",
+Otherwise, print "ERROR in comparison".
+
+Print "".
+Print "=== Loop with Float Counter ===".
+Print "You should see a sequence of numbers from 0.0 to 4.0".
+Set counter to 0.0.
+While counter is less than 5.0,
+    Print counter.
+    Set counter to counter add 1.0.
+
+Print "".
+Print "Done!".

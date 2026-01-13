@@ -1,0 +1,4 @@
+If 5 is greater than 3 then, print "yes". Otherwise, print "no".
+If 2 is less than 1 then, print "yes". Otherwise, print "no".
+If 5 is equal to 5 then, print "yes". Otherwise, print "no".
+If 5 is not equal to 3 then, print "yes". Otherwise, print "no".

@@ -1,0 +1,54 @@
+(Type Casting Examples - using 'as' keyword)
+(The 'as' keyword converts a value to a different type)
+
+Print "=== Number and Float Conversions ===".
+
+(Float to number - truncates decimal part)
+a float called "pi" is 3.14159.
+a number called "piInt" is the pi as a number.
+Print "3.14159 as number: ".
+Print the piInt.
+
+(Number to float)
+a number called "qty" is 42.
+a float called "qtyF" is the qty as a float.
+Print "42 as float: ".
+Print the qtyF.
+
+(Rounding - explicit cast after adding 0.5)
+a float called "val" is 3.7.
+a number called "rounded" is the val add 0.5 as a number.
+Print "3.7 rounded: ".
+Print the rounded.
+
+Print "".
+Print "=== Number and Text Conversions ===".
+
+(Number to text)
+a number called "age" is 25.
+Print "Age: ".
+Print the age.
+
+Print "".
+Print "=== Boolean and Number Conversions ===".
+
+(Boolean to number)
+a boolean called "bval" is true.
+a number called "bvalN" is the bval as a number.
+Print "true as number: ".
+Print the bvalN.
+
+a boolean called "boff" is false.
+a number called "boffN" is the boff as a number.
+Print "false as number: ".
+Print the boffN.
+
+Print "".
+Print "=== Inline Casting ===".
+
+(Cast within print statement)
+Print "Direct cast 3.99 as number: ".
+Print 3.99 as a number.
+
+Print "".
+Print "=== Done ===".

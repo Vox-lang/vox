@@ -1,0 +1,39 @@
+print "=== BUFFER RESIZE TEST ===".
+
+print "Test 1: Create small buffer".
+a buffer called "buf" is 32 bytes in size.
+print "Initial capacity:".
+print buf's capacity.
+
+print "".
+print "Test 2: Write some data".
+open a file for writing called tmp at "./resize_data.txt".
+Write "Hello World!" to tmp.
+Close the tmp.
+
+open a file for reading called src at "./resize_data.txt".
+Read from src into buf.
+Close the src.
+
+print "After read - size:".
+print buf's size.
+
+print "".
+print "Test 3: Resize buffer to larger".
+resize buf to 256 bytes.
+print "New capacity:".
+print buf's capacity.
+print "Data preserved - size:".
+print buf's size.
+
+print "".
+print "Test 4: Resize buffer to smaller".
+resize buf to 64 bytes.
+print "New capacity:".
+print buf's capacity.
+print "Size after shrink:".
+print buf's size.
+
+Delete the file "./resize_data.txt".
+print "".
+print "=== RESIZE TEST COMPLETE ===".

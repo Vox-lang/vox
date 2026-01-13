@@ -1,0 +1,2 @@
+If 1 is equal to 2 or 3 is equal to 3 then, print "one true".
+If 1 is equal to 2 or 3 is equal to 4 then, print "wrong". Otherwise, print "both false".

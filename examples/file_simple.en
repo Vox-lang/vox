@@ -1,0 +1,5 @@
+print "Writing to file...".
+open a file for writing called out at "./hello.txt".
+Write "Hello World!" to out.
+Close the out.
+print "Done! Check hello.txt".

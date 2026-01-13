@@ -1,0 +1,80 @@
+(Format Strings in English)
+(This example demonstrates all the ways to use formatted output)
+
+Print "=== Basic String Interpolation ===".
+
+(Variables can be embedded in strings using curly braces)
+a text called "name" is "Alice".
+a number called "age" is 25.
+Print "Hello, {name}! You are {age} years old.".
+
+(Multiple variables in one string)
+a text called "city" is "London".
+Print "{name} lives in {city} and is {age}.".
+
+Print "".
+Print "=== Number Formatting ===".
+
+(Floating point precision - specify decimal places)
+a float called "pi" is 3.14159265358979.
+Print "Pi to 2 decimals: {pi:.2}".
+Print "Pi to 4 decimals: {pi:.4}".
+Print "Pi to 0 decimals: {pi:.0}".
+
+(Padding and alignment)
+a number called "small" is 42.
+Print "Padded to 6 chars: [{small:6}]".
+Print "Zero-padded: [{small:06}]".
+Print "Left aligned: [{small:<6}]".
+Print "Right aligned: [{small:>6}]".
+Print "Center aligned: [{small:^6}]".
+
+Print "".
+Print "=== Different Number Bases ===".
+
+a number called "value" is 255.
+Print "Decimal: {value}".
+Print "Hexadecimal: {value:x}".
+Print "Hex uppercase: {value:X}".
+Print "Binary: {value:b}".
+Print "Octal: {value:o}".
+
+(Hex with 0x prefix)
+Print "With prefix: {value:x}"(outputs: 0xff).
+Print "Padded hex: {value:04x}"(outputs: 0x00ff).
+
+Print "".
+Print "=== Escape Sequences ===".
+
+(Literal braces using double braces)
+Print "Use {{braces}} for literal braces.".
+
+(Common escape sequences in strings)
+Print "Tab:\there".
+Print "Newline in string:\nSecond line".
+
+Print "".
+Print "=== Formatting Expressions ===".
+
+(Format inline calculations)
+a number called "x" is 10.
+a number called "y" is 3.
+Print "x + y = {x add y}".
+Print "x * y = {x multiply y}".
+
+(Property access in format strings)
+Print "Argument count: {arguments's count}".
+
+Print "".
+Print "=== Practical Examples ===".
+
+(Currency formatting)
+a float called "price" is 19.99.
+Print "Total: ${price:.2}".
+
+(Percentage)
+a float called "ratio" is 0.756.
+Print "Progress: {ratio multiply 100:.1}%".
+
+Print "".
+Print "=== Done ===".

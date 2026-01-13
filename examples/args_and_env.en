@@ -1,0 +1,102 @@
+(
+    Example: Accessing Command-Line Arguments and Environment Variables
+    
+    This file demonstrates the 's property syntax for accessing:
+    1. Command-line arguments passed to the program
+    2. Environment variables from the shell
+    
+    Usage: ./args_and_env Alice 42
+)
+
+(========================================================================)
+(                    COMMAND-LINE ARGUMENTS                              )
+(========================================================================)
+
+Print "=== Arguments Properties Demo ===".
+
+(Access argument count)
+a number called "argc" is arguments's count.
+Print "Number of arguments: ".
+Print the argc.
+
+(The program name is arguments's name)
+a text called "program" is arguments's name.
+Print "Program name: ".
+Print the program.
+
+(Access first user argument with arguments's first)
+If arguments's count is greater than 1 then,
+    a text called "arg1" is arguments's first.
+    Print "First user argument: ".
+    Print the arg1.
+
+(Check if arguments were provided)
+Print "".
+If arguments's empty then,
+    Print "No user arguments provided.".
+Otherwise,
+    Print "User arguments were provided.".
+
+(Access last argument)
+a text called "lastarg" is arguments's last.
+Print "Last argument: ".
+Print the lastarg.
+
+
+(========================================================================)
+(                    ENVIRONMENT VARIABLES                               )
+(========================================================================)
+
+Print "".
+Print "=== Environment Properties Demo ===".
+
+(Access environment variable by name using 's syntax)
+a text called "home" is environment's "HOME".
+Print "Home directory: ".
+Print the home.
+
+a text called "user" is environment's "USER".
+Print "Current user: ".
+Print the user.
+
+a text called "shell" is environment's "SHELL".
+Print "Shell: ".
+Print the shell.
+
+(Check if variable exists)
+If the environment variable "DEBUG" exists then,
+    Print "Debug mode is enabled via environment.".
+Otherwise,
+    Print "DEBUG environment variable not set.".
+
+(Environment variable count)
+Print "".
+a number called "envcount" is environment's count.
+Print "Total environment variables: ".
+Print the envcount.
+
+(First environment variable)
+a text called "env1" is environment's first.
+Print "First env var: ".
+Print the env1.
+
+
+(========================================================================)
+(                    PRACTICAL EXAMPLE: A GREETER                        )
+(========================================================================)
+
+Print "".
+Print "=== Practical Example ===".
+
+(A program that greets the user, using argument or environment variable)
+a text called "greetname" is "World".
+
+(Priority: 1. Command line argument, 2. Environment variable, 3. Default)
+If arguments's count is greater than 1 then,
+    the greetname is arguments's first.
+But if the environment variable "GREET_NAME" exists then,
+    the greetname is environment's "GREET_NAME".
+
+Print "Hello, ".
+Print the greetname.
+Print "!".

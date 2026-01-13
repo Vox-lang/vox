@@ -1,0 +1,6 @@
+(This is a comment)
+Print "one".
+Print "two". (inline comment)
+(Multi-line
+comment here)
+Print "three".

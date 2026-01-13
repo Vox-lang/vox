@@ -1,0 +1,110 @@
+{
+  "name": "ec-english",
+  "displayName": "English Compiler",
+  "description": "Syntax highlighting for the English programming language (.en files)",
+  "version": "0.1.0",
+  "publisher": "Josjuar Lister",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "english",
+        "aliases": ["English", "english", "en"],
+        "extensions": [".en"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "english",
+        "scopeName": "source.english",
+        "path": "./syntaxes/english.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": "entity.name.tag.each.english",
+            "settings": {
+              "foreground": "#4EC9B0",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "support.type.english",
+            "settings": {
+              "foreground": "#FF79C6",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "entity.name.function.definition.english",
+            "settings": {
+              "foreground": "#DCDCAA",
+              "fontStyle": "bold"
+            }
+          },
+          {
+            "scope": "entity.name.function.call.english",
+            "settings": {
+              "foreground": "#DCDCAA"
+            }
+          },
+          {
+            "scope": "punctuation.definition.english",
+            "settings": {
+              "foreground": "#56abd3"
+            }
+          },
+          {
+            "scope": "storage.type.english",
+            "settings": {
+              "foreground": "#4EC9B0"
+            }
+          },
+          {
+            "scope": "keyword.control.english",
+            "settings": {
+              "foreground": "#C586C0"
+            }
+          },
+          {
+            "scope": "keyword.other.english",
+            "settings": {
+              "foreground": "#C586C0"
+            }
+          },
+          {
+            "scope": "keyword.operator.english",
+            "settings": {
+              "foreground": "#ebe6be"
+            }
+          },
+          {
+            "scope": "constant.language.boolean.english",
+            "settings": {
+              "foreground": "#569CD6"
+            }
+          },
+          {
+            "scope": "support.function.english",
+            "settings": {
+              "foreground": "#b0dcaa"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/ec"
+  },
+  "license": "MIT"
+}

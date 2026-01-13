@@ -1,0 +1,58 @@
+(Calculating Pi using the Nilakantha Series)
+(A beautiful infinite series that converges to π)
+(π = 3 + 4/(2×3×4) - 4/(4×5×6) + 4/(6×7×8) - ...)
+
+Print "The Quest for Pi".
+Print "================".
+Print "".
+Print "Using the Nilakantha series, we shall approximate".
+Print "the most famous constant in mathematics...".
+Print "".
+
+(Our approximation begins with three)
+a float pi is 3.0.
+
+(The denominator starts at two and grows by two each step)
+a float denominator is 2.0.
+
+(We alternate between adding and subtracting)
+a float direction is 1.0.
+
+(Count our iterations)
+a int steps is 0.
+
+(The beautiful dance of convergence)
+While steps is less than 500000,
+    (Calculate the three consecutive numbers for this term)
+    a float called Ist is the denominator,
+    a float called IInd is the denominator add 1.0,
+    a float called IIIrd is the denominator add 2.0,
+
+    (The denominator is their product)
+    a float called product is the Ist multiply the IInd,
+    the product is the product multiply the IIIrd,
+
+    (Calculate this term of the series)
+    a float term is 4.0 divide product,
+    the term is term multiply direction,
+
+    (Add this term to our approximation)
+    the pi is pi add term,
+
+    (Flip the direction for the next term)
+    the direction is 0.0 subtract direction,
+
+    (Move to the next triple of numbers)
+    the denominator is denominator add 2.0,
+    increment the steps.
+
+Print "".
+Print "After 500,000 terms of the series:".
+Print "".
+Print "  Calculated pi:".
+Print pi.
+Print "".
+Print "  Actual pi:".
+Print "  3.14159265358979323846...".
+Print "".
+Print "(64-bit floats give us about 15 digits of precision)".

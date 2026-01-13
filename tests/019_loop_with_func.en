@@ -1,0 +1,8 @@
+To "sum to" with a number called "x".
+  A number called "total" is 0.
+  A number called "i" is 1.
+  While i is less than or equal to x, total is total add i. i is i add 1.
+  Return a number, total.
+
+Print "sum to" of 5.
+Print "sum to" of 10.

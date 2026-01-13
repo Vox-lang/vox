@@ -1,0 +1,22 @@
+print "=== MEGA BUFFER STRESS TEST ===".
+
+print "Creating 10MB file to stress buffer growth...".
+a buffer called "mega".
+
+open a file for writing called out at "./mega_test.txt".
+a number called "i" is 0.
+While i is less than 100000,
+    Write "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" to out.
+    Write a newline to out.
+    Increment i.
+Close the out.
+
+print "File created. Now reading into buffer...".
+open a file for reading called src at "./mega_test.txt".
+Read from src into mega.
+Close the src.
+
+print "SUCCESS: 10MB read without overflow!".
+
+Delete the file "./mega_test.txt".
+print "=== MEGA BUFFER TEST PASSED ===".

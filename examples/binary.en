@@ -1,0 +1,144 @@
+(Binary and Hex Operations in English)
+(This example demonstrates working with binary data, hex values, and buffer manipulation)
+
+Print "=== Hexadecimal Literals ===".
+
+(Numbers can be written in hex using 0x prefix)
+a number called "red" is 0xFF.
+a number called "green" is 0x80.
+a number called "blue" is 0x40.
+Print "Red component: {red} (0x{red:02X})".
+Print "Green component: {green} (0x{green:02X})".
+Print "Blue component: {blue} (0x{blue:02X})".
+
+(Combine into RGB value)
+a number called "rgb" is red multiply 65536 add green multiply 256 add blue.
+Print "Combined RGB: 0x{rgb:06X}".
+
+Print "".
+Print "=== Binary Literals ===".
+
+(Numbers can be written in binary using 0b prefix)
+a number called "flags" is 0b10110100.
+Print "Flags: {flags} (binary: {flags:b})".
+Print "Flags padded: {flags:08b}".
+
+Print "".
+Print "=== Buffer Byte Manipulation ===".
+
+(Create a buffer for binary data)
+Create a buffer called "data" of size 16.
+
+(Set individual bytes by position - 1-indexed like natural English)
+Set byte 1 of data to 0x48.
+Set byte 2 of data to 0x65.
+Set byte 3 of data to 0x6C.
+Set byte 4 of data to 0x6C.
+Set byte 5 of data to 0x6F.
+
+(Read individual bytes)
+a number called "first_byte" is byte 1 of data.
+Print "First byte: 0x{first_byte:02X}".
+
+(Print buffer as string - shows "Hello")
+Print "Buffer contents: ".
+Print data.
+
+Print "".
+Print "=== Modifying Bytes ===".
+
+(Change a specific byte)
+Set byte 5 of data to 0x21.
+Print "After changing byte 5 to '!':".
+Print data.
+
+(Zero out remaining bytes explicitly)
+Set byte 6 of data to 0.
+
+Print "".
+Print "=== Bitwise Operations ===".
+
+a number called "val_a" is 0b11110000.
+a number called "val_b" is 0b10101010.
+
+(Bitwise AND)
+a number called "result" is val_a bit-and val_b.
+Print "{val_a:08b} AND {val_b:08b} = {result:08b}".
+
+(Bitwise OR)
+Set result to val_a bit-or val_b.
+Print "{val_a:08b} OR  {val_b:08b} = {result:08b}".
+
+(Bitwise XOR)
+Set result to val_a bit-xor val_b.
+Print "{val_a:08b} XOR {val_b:08b} = {result:08b}".
+
+(Bitwise NOT - using XOR with all 1s)
+Set result to val_a bit-xor 0xFF.
+Print "NOT {val_a:08b} = {result:08b}".
+
+(Bit shifting)
+Set result to val_a bit-shift-left 2.
+Print "{val_a:08b} << 2 = {result:08b}".
+
+Set result to val_a bit-shift-right 2.
+Print "{val_a:08b} >> 2 = {result:08b}".
+
+Print "".
+Print "=== Practical: Simple Hex Dump ===".
+
+(Write some test data)
+Set byte 1 of data to 0xDE.
+Set byte 2 of data to 0xAD.
+Set byte 3 of data to 0xBE.
+Set byte 4 of data to 0xEF.
+Set byte 5 of data to 0xCA.
+Set byte 6 of data to 0xFE.
+Set byte 7 of data to 0xBA.
+Set byte 8 of data to 0xBE.
+
+Print "Hex dump of first 8 bytes:".
+a number called "i" is 1.
+While i is less than or equal to 8,
+    a number called "byte_val" is byte i of data,
+    Print "{byte_val:02X} " without newline,
+    increment i.
+Print "".
+
+Print "".
+Print "=== Practical: Patching a Binary Value ===".
+
+(Read a 32-bit value from buffer - little endian)
+a number called "b0" is byte 1 of data.
+a number called "b1" is byte 2 of data.
+a number called "b2" is byte 3 of data.
+a number called "b3" is byte 4 of data.
+a number called "value32" is b0 add b1 multiply 256 add b2 multiply 65536 add b3 multiply 16777216.
+Print "32-bit value at offset 0: 0x{value32:08X}".
+
+(Write a new 32-bit value - little endian)
+a number called "newval" is 0x12345678.
+Set byte 1 of data to newval bit-and 0xFF.
+Set byte 2 of data to newval bit-shift-right 8 bit-and 0xFF.
+Set byte 3 of data to newval bit-shift-right 16 bit-and 0xFF.
+Set byte 4 of data to newval bit-shift-right 24 bit-and 0xFF.
+
+Print "After patching with 0x12345678:".
+Set i to 1.
+While i is less than or equal to 4,
+    Set byte_val to byte i of data,
+    Print "{byte_val:02X} " without newline,
+    increment i.
+Print "".
+
+a buffer called "buf" is "data".
+Print "Buffer contents: ".
+Print buf.
+set byte 1 of buf to 'A'. (Add security restraints, CANNOT access out of bounds, should be impossible)
+(If the user tries to access out of bounds, throw an error to be caught by 'on error')
+set byte 2 of "Hello World" to 'B'. (You can set a byte in a string if you want. Throw error if the index is past the end of the string)
+Print "After setting byte 1 to 'A':".
+Print buf. (should be Aata, not 0 indexed)
+
+Print "".
+Print "=== Done ===".

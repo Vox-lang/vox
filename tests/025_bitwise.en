@@ -1,0 +1,23 @@
+(Test bitwise operators)
+a number called "val1" is 0b11110000.
+a number called "val2" is 0b10101010.
+
+(Bitwise AND)
+a number called "and_result" is val1 bit-and val2.
+Print and_result.
+
+(Bitwise OR)
+a number called "or_result" is val1 bit-or val2.
+Print or_result.
+
+(Bitwise XOR)
+a number called "xor_result" is val1 bit-xor val2.
+Print xor_result.
+
+(Shift left)
+a number called "shl" is 1 bit-shift-left 4.
+Print shl.
+
+(Shift right)
+a number called "shr" is 16 bit-shift-right 2.
+Print shr.

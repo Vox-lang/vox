@@ -1,0 +1,36 @@
+Print "=== Lists Demo ===".
+Print "Integer list [10, 20, 30]:".
+a list called "number list" is [10, 20, 30].
+For each n in "number list",
+  print the n.
+print "".
+
+(Access specific elements by index - 1-indexed like natural English)
+Print "Second element of numbers: ".
+Print element 100 of 'number list'.
+
+Print "Boolean list [true, false, true]:".
+a list called "bools" is [true, true, false].
+For each b in bools,
+  print the b.
+print "".
+
+Print "First element: ".
+Print bools's first.
+
+Print "Last element: ".
+Print bools's last.
+
+print bools's size. 
+
+print "You should see an error below"
+a number called "bad" is element 100 of bools.
+On error print "Cannot access element 100 - out of bounds!".
+
+Print "Word list [\"hello\", \"world\"]:".
+a list called words is ["hello", "world"].
+For each w in words,
+  print the w.
+print "".
+
+Print "Done!".

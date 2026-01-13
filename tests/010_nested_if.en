@@ -1,0 +1,4 @@
+Set x to 10.
+If x is greater than 5 then,
+    If x is less than 15 then,
+        Print "between 5 and 15".

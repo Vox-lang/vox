@@ -1,0 +1,19 @@
+(Test 1: Absolute value)
+A number called "x" is -42.
+Print x's absolute.
+
+(Test 2: Sign property)
+Print x's sign.
+
+(Test 3: Even/odd checks)
+A number called "y" is 10.
+Print y's even.
+Print y's odd.
+
+A number called "z" is 7.
+Print z's even.
+Print z's odd.
+
+(Test 4: Positive/negative as boolean)
+If x's negative then, print 1. Otherwise, print 0.
+If y's positive then, print 1. Otherwise, print 0.

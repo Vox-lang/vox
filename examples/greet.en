@@ -1,0 +1,57 @@
+(A simple greeter that demonstrates command-line arguments and environment variables)
+(Uses the 's property syntax for accessing argument and environment properties)
+
+Print "=== Argument Properties Demo ===".
+
+a number called "argc" is arguments's count.
+Print "Argument count: ".
+Print the argc.
+
+a text called "program" is arguments's name.
+Print "Program name: ".
+Print the program.
+
+(Greet using argument or default)
+a text called "name" is "World".
+
+If arguments's count is greater than 1 then,
+    the name is arguments's first.
+
+Print "Hello, ".
+Print the name.
+Print "!".
+
+(Check if arguments were provided)
+If arguments's empty then,
+    Print "(No user arguments provided)".
+
+Print "".
+Print "=== Environment Properties Demo ===".
+
+a number called "env count" is environment's count.
+Print "Environment variable count: ".
+Print the env count.
+
+(Access environment variable by name using 's syntax)
+a text called "user" is environment's "USER".
+Print "Current user: ".
+Print the user.
+
+a text called "home" is environment's "HOME".
+Print "Home directory: ".
+Print the home.
+
+(Show first environment variable)
+a text called "env1" is environment's first.
+Print "First env var: ".
+Print the env1.
+
+open a file for writing called output at "/dev/stdout".
+open a file for reading called stdinput at "/dev/stdin".
+a buffer called "userbuf".
+print "What's your name? ".
+read from stdinput into userbuf.
+print "".
+write "Hi, " to output.
+write userbuf to output.
+write "!" to output.

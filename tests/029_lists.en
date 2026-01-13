@@ -1,0 +1,29 @@
+(Test list creation and iteration)
+a list called nums is [10, 20, 30].
+For each n in nums,
+  print the n.
+
+(Test element access - 1-indexed)
+Print element 1 of nums.
+Print element 2 of nums.
+Print element 3 of nums.
+
+(Test first and last properties)
+Print nums's first.
+Print nums's last.
+
+(Test boolean list)
+a list called flags is [true, false, true].
+Print flags's first.
+Print element 2 of flags.
+Print flags's last.
+
+(Test bounds checking - should return 0 and set error)
+a number called bad is element 100 of nums.
+Print the bad.
+On error print 999.
+
+(Test negative index - should return 0 and set error)
+a number called neg is element 0 of nums.
+Print the neg.
+On error print 888.
