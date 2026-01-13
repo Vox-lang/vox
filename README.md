@@ -30,60 +30,24 @@ sudo apt install nasm
 cargo build --release
 ```
 
+## Installing
+
+```bash
+# Install
+sudo make install
+
+# Uninstall
+sudo make uninstall
+```
+
 ## Usage
 
 ```bash
-# Compile an English program
-./target/release/ec program.en
-
 # Compile and run
-./target/release/ec program.en --run
+ec example.en --run
 
-# Output assembly only
-./target/release/ec program.en --emit-asm
-```
-
-## Language Syntax
-
-### Printing
-```
-Print "Hello, World!".
-Print 42.
-Print myVariable.
-```
-
-### Variables
-```
-Set x to 10.
-Create counter as 0.
-```
-
-### Conditionals
-```
-If x is greater than 10, print "big".
-If the number is even print "even" but if it is odd print "odd".
-```
-
-### Loops
-```
-For each number from 1 to 100, print the number.
-While x is less than 10, increment x.
-Repeat 5 times, print "hello".
-```
-
-### Properties
-```
-If x is even...
-If x is odd...
-If x is positive...
-If x is negative...
-If x is zero...
-```
-
-### Memory (Heap)
-```
-Allocate 1024 for buffer.
-Free buffer.
+# Compile
+ec example.en
 ```
 
 ## Examples
