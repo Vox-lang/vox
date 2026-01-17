@@ -5,6 +5,9 @@ BINDIR := $(PREFIX)/bin
 DATADIR := $(PREFIX)/share/ec
 COREDIR := $(DATADIR)/coreasm
 
+# Default target architecture (host architecture)
+TARGET_ARCH := $(shell uname -m)
+
 BIN := ec
 RELEASE_PATH := target/release
 RELEASE_BIN := $(RELEASE_PATH)/$(BIN)
@@ -15,8 +18,8 @@ all: build
 
 build: $(RELEASE_BIN)
 
-$(RELEASE_BIN): src Cargo.toml
-	cargo build --release
+$(RELEASE_BIN): $(shell find src -name '*.rs' 2>/dev/null) Cargo.toml
+	TARGET_ARCH=$(TARGET_ARCH) cargo build --release
 
 install:
 	install -d "$(BINDIR)"

@@ -202,6 +202,7 @@ fn main() {
         eprintln!("  --shared         Build a shared library (.so) instead of executable");
         eprintln!("  --link <libs>    Link against shared libraries (comma-separated)");
         eprintln!("  --lib-path <paths>  Additional library search paths (comma-separated)");
+        eprintln!("  --target <arch>   Target architecture (default: x86_64)");
         eprintln!("  -o <file>        Output file name");
         eprintln!("  -v | --verbose   Verbose output");
         std::process::exit(1);
@@ -215,6 +216,7 @@ fn main() {
     let mut verbose = false;
     let mut link_libs: Vec<String> = Vec::new();
     let mut lib_paths: Vec<String> = Vec::new();
+    let mut target_arch = option_env!("TARGET_ARCH").unwrap_or("x86_64").to_string();
     
     let mut i = 2;
     while i < args.len() {
@@ -239,6 +241,12 @@ fn main() {
                 i += 1;
                 if i < args.len() {
                     lib_paths.extend(args[i].split(',').map(|s| s.trim().to_string()));
+                }
+            }
+            "--target" => {
+                i += 1;
+                if i < args.len() {
+                    target_arch = args[i].clone();
                 }
             }
             _ => {}
@@ -288,6 +296,7 @@ fn main() {
     
     let mut codegen = CodeGenerator::new();
     codegen.set_shared_lib_mode(build_shared);
+    codegen.set_target_arch(&target_arch);
     let assembly = codegen.generate(&program);
     
     let base_name = Path::new(source_path)
