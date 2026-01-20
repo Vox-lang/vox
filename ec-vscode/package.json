@@ -15,7 +15,7 @@
       {
         "id": "english",
         "aliases": ["English", "english", "en"],
-        "extensions": [".en"],
+        "extensions": [".en", ".eng"],
         "configuration": "./language-configuration.json"
       }
     ],
