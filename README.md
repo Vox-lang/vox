@@ -1,6 +1,6 @@
 # EC
 
-A compiler that translates English to x86_64 Assembly. By Josjuar Lister 2026
+A compiler that translates English to x86_64 Assembly. By Josjuar Lister 2026 
 
 ## Overview
 
