@@ -55,7 +55,7 @@ This property makes EC particularly well-suited for static utilities, constraine
 * No libc or runtime; uses direct system calls
 * Deterministic sentence-based syntax
 * Compile-time memory and resource tracking
-* Modular standard library with dependency inclusion
+* Modular library of core macros with dependency inclusion
 * Extremely small statically linked executables
 
 ---
