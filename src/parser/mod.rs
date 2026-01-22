@@ -2488,49 +2488,40 @@ impl Parser {
                     current_literal.clear();
                 }
                 
-                // Parse content and optional format
-                let mut var_content = String::new();
+                // Parse content until closing brace
+                let mut placeholder_content = String::new();
                 while let Some(&c) = chars.peek() {
                     if c == '}' {
                         chars.next();
                         break;
                     }
-                    var_content.push(c);
+                    placeholder_content.push(c);
                     chars.next();
                 }
                 
-                // Split on : for format spec
-                if let Some(colon_pos) = var_content.find(':') {
-                    let content = var_content[..colon_pos].trim().to_string();
-                    let format = var_content[colon_pos + 1..].trim().to_string();
-                    
-                    // Try to parse as expression first
-                    if let Some(expr) = self.try_parse_expression(&content) {
-                        parts.push(FormatPart::Expression { 
-                            expr: Box::new(expr), 
-                            format: Some(format) 
-                        });
-                    } else {
-                        parts.push(FormatPart::Variable { 
-                            name: content, 
-                            format: Some(format) 
-                        });
-                    }
+                // Split on first : to separate variable/expression from format spec
+                // The format spec is preserved exactly as written, with no interpretation
+                let (content, format) = if let Some(colon_pos) = placeholder_content.find(':') {
+                    let content = placeholder_content[..colon_pos].trim().to_string();
+                    // Preserve format spec verbatim - no trimming, no interpretation
+                    let format = placeholder_content[colon_pos + 1..].to_string();
+                    (content, Some(format))
                 } else {
-                    let content = var_content.trim().to_string();
-                    
-                    // Try to parse as expression first
-                    if let Some(expr) = self.try_parse_expression(&content) {
-                        parts.push(FormatPart::Expression { 
-                            expr: Box::new(expr), 
-                            format: None 
-                        });
-                    } else {
-                        parts.push(FormatPart::Variable { 
-                            name: content, 
-                            format: None 
-                        });
-                    }
+                    (placeholder_content.trim().to_string(), None)
+                };
+                
+                // Determine if content is an expression or a simple variable name
+                // The format spec (if any) is attached verbatim without any parsing
+                if let Some(expr) = self.try_parse_expression(&content) {
+                    parts.push(FormatPart::Expression { 
+                        expr: Box::new(expr), 
+                        format 
+                    });
+                } else {
+                    parts.push(FormatPart::Variable { 
+                        name: content, 
+                        format 
+                    });
                 }
             } else if ch == '}' {
                 // Check for escaped brace }}

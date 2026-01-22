@@ -1,0 +1,8 @@
+(Test format string combined width+base specs)
+
+a number called "small" is 42.
+a number called "big" is 255.
+Print "Padded hex: [{small:04x}]".
+Print "Padded binary: [{small:08b}]".
+Print "Padded octal: [{small:04o}]".
+Print "Padded hex upper: [{big:04X}]".

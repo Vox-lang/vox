@@ -36,6 +36,23 @@ enum VarType {
     Unknown,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum IntegerBase {
+    Decimal,
+    HexLower,
+    HexUpper,
+    Binary,
+    Octal,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FormatSpec {
+    width: Option<i32>,
+    zero_pad: bool,
+    base: IntegerBase,
+    precision: Option<i32>,
+}
+
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -1147,6 +1164,198 @@ impl CodeGenerator {
         }
     }
     
+    fn parse_format_spec(&self, fmt: Option<&str>) -> FormatSpec {
+        match fmt {
+            None => FormatSpec {
+                width: None,
+                zero_pad: false,
+                base: IntegerBase::Decimal,
+                precision: None,
+            },
+            Some(fmt_str) => {
+                let mut spec = FormatSpec {
+                    width: None,
+                    zero_pad: false,
+                    base: IntegerBase::Decimal,
+                    precision: None,
+                };
+                
+                // Check for precision format first (starts with '.')
+                if fmt_str.starts_with('.') {
+                    // Float precision format like .2, .4, etc.
+                    if let Ok(precision) = fmt_str[1..].parse::<i32>() {
+                        spec.precision = Some(precision);
+                    }
+                    return spec;
+                }
+                
+                // Parse width and zero padding
+                let mut remaining = fmt_str;
+                let mut has_width = false;
+                
+                // Check if it starts with digit or '0' for width/padding
+                if remaining.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) {
+                    let zero_pad = remaining.starts_with('0');
+                    let width_str = if zero_pad {
+                        remaining.trim_start_matches('0')
+                    } else {
+                        remaining
+                    };
+                    
+                    // Extract digits for width
+                    let width_end = width_str.chars().take_while(|c| c.is_ascii_digit()).count();
+                    if width_end > 0 {
+                        let width_digits = &width_str[..width_end];
+                        if let Ok(width) = width_digits.parse::<i32>() {
+                            spec.width = Some(width);
+                            spec.zero_pad = zero_pad;
+                            has_width = true;
+                            remaining = &fmt_str[if zero_pad { 1 + width_end } else { width_end }..];
+                        }
+                    }
+                }
+                
+                // Parse base specifier from remaining characters
+                if !remaining.is_empty() {
+                    match remaining {
+                        "x" => spec.base = IntegerBase::HexLower,
+                        "X" => spec.base = IntegerBase::HexUpper,
+                        "b" => spec.base = IntegerBase::Binary,
+                        "o" => spec.base = IntegerBase::Octal,
+                        _ => {
+                            // If we parsed a width but no base, treat as decimal
+                            if has_width {
+                                spec.base = IntegerBase::Decimal;
+                            }
+                        }
+                    }
+                }
+                
+                spec
+            }
+        }
+    }
+    
+    fn emit_formatted_value(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
+        // Handle precision format for floats
+        if let Some(precision) = fmt.precision {
+            self.emit_indent("movq xmm0, rdi");
+            self.emit_indent(&format!("mov rdi, {}", precision));
+            self.emit_indent("call _print_float_precision");
+            self.uses_floats = true;
+            self.uses_format = true;
+            return;
+        }
+        
+        // If no specific format (default case), handle by type
+        if fmt.width.is_none() && matches!(fmt.base, IntegerBase::Decimal) {
+            match value_type {
+                Some(VarType::Float) => {
+                    self.emit_indent("movq xmm0, rdi");
+                    self.emit_indent("PRINT_FLOAT");
+                    self.uses_floats = true;
+                }
+                Some(VarType::String) | Some(VarType::Buffer) => {
+                    self.emit_indent("PRINT_CSTR rdi");
+                }
+                _ => {
+                    self.emit_indent("PRINT_INT rdi");
+                }
+            }
+            return;
+        }
+        
+        // Handle integer formatting with width and base
+        match fmt.base {
+            IntegerBase::Decimal => {
+                match (fmt.width, fmt.zero_pad) {
+                    (Some(width), true) => {
+                        self.emit_indent(&format!("PRINT_INT_ZEROPAD rdi, {}", width));
+                    }
+                    (Some(width), false) => {
+                        self.emit_indent(&format!("PRINT_INT_PADDED rdi, {}", width));
+                    }
+                    _ => {
+                        self.emit_indent("PRINT_INT rdi");
+                    }
+                }
+                self.uses_format = true;
+            }
+            IntegerBase::HexLower => {
+                if fmt.width.is_some() {
+                    match (fmt.width, fmt.zero_pad) {
+                        (Some(width), true) => {
+                            self.emit_indent(&format!("PRINT_HEX_LOWER_ZEROPAD rdi, {}", width));
+                        }
+                        (Some(width), false) => {
+                            self.emit_indent(&format!("PRINT_HEX_LOWER_PADDED rdi, {}", width));
+                        }
+                        _ => {
+                            self.emit_indent("PRINT_HEX_LOWER rdi");
+                        }
+                    }
+                } else {
+                    self.emit_indent("PRINT_HEX_LOWER rdi");
+                }
+                self.uses_format = true;
+            }
+            IntegerBase::HexUpper => {
+                if fmt.width.is_some() {
+                    match (fmt.width, fmt.zero_pad) {
+                        (Some(width), true) => {
+                            self.emit_indent(&format!("PRINT_HEX_UPPER_ZEROPAD rdi, {}", width));
+                        }
+                        (Some(width), false) => {
+                            self.emit_indent(&format!("PRINT_HEX_UPPER_PADDED rdi, {}", width));
+                        }
+                        _ => {
+                            self.emit_indent("PRINT_HEX_UPPER rdi");
+                        }
+                    }
+                } else {
+                    self.emit_indent("PRINT_HEX_UPPER rdi");
+                }
+                self.uses_format = true;
+            }
+            IntegerBase::Binary => {
+                if fmt.width.is_some() {
+                    match (fmt.width, fmt.zero_pad) {
+                        (Some(width), true) => {
+                            self.emit_indent(&format!("PRINT_BINARY_ZEROPAD rdi, {}", width));
+                        }
+                        (Some(width), false) => {
+                            self.emit_indent(&format!("PRINT_BINARY_PADDED rdi, {}", width));
+                        }
+                        _ => {
+                            self.emit_indent("PRINT_BINARY rdi");
+                        }
+                    }
+                } else {
+                    self.emit_indent("PRINT_BINARY rdi");
+                }
+                self.uses_format = true;
+            }
+            IntegerBase::Octal => {
+                if fmt.width.is_some() {
+                    match (fmt.width, fmt.zero_pad) {
+                        (Some(width), true) => {
+                            self.emit_indent(&format!("PRINT_OCTAL_ZEROPAD rdi, {}", width));
+                        }
+                        (Some(width), false) => {
+                            self.emit_indent(&format!("PRINT_OCTAL_PADDED rdi, {}", width));
+                        }
+                        _ => {
+                            self.emit_indent("PRINT_OCTAL rdi");
+                        }
+                    }
+                } else {
+                    self.emit_indent("PRINT_OCTAL rdi");
+                }
+                self.uses_format = true;
+            }
+        }
+    }
+    
     fn generate_print(&mut self, value: &Expr, without_newline: bool) {
         self.uses_io = true;
         match value {
@@ -1209,68 +1418,10 @@ impl CodeGenerator {
                             }
                             
                             let var_type = var_type;
-                                
-                                // Handle format specifier
-                                match format.as_deref() {
-                                    Some(fmt) if fmt.ends_with('x') || fmt.ends_with('X') => {
-                                        // Hex format
-                                        let uppercase = fmt.ends_with('X');
-                                        if uppercase {
-                                            self.emit_indent("PRINT_HEX_UPPER rdi");
-                                        } else {
-                                            self.emit_indent("PRINT_HEX_LOWER rdi");
-                                        }
-                                        self.uses_format = true;
-                                    }
-                                    Some(fmt) if fmt.ends_with('b') => {
-                                        // Binary format
-                                        self.emit_indent("PRINT_BINARY rdi");
-                                        self.uses_format = true;
-                                    }
-                                    Some(fmt) if fmt.ends_with('o') => {
-                                        // Octal format
-                                        self.emit_indent("PRINT_OCTAL rdi");
-                                        self.uses_format = true;
-                                    }
-                                    Some(fmt) if fmt.starts_with('.') => {
-                                        // Precision format for floats: .2, .4, etc.
-                                        let precision: i32 = fmt[1..].parse().unwrap_or(2);
-                                        self.emit_indent("movq xmm0, rdi");
-                                        self.emit_indent(&format!("mov rdi, {}", precision));
-                                        self.emit_indent("call _print_float_precision");
-                                        self.uses_floats = true;
-                                        self.uses_format = true;
-                                    }
-                                    Some(fmt) if fmt.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) => {
-                                        // Padding format: 6, 06, etc.
-                                        let zero_pad = fmt.starts_with('0');
-                                        let width: i32 = fmt.trim_start_matches('0').parse().unwrap_or(0);
-                                        if zero_pad && width > 0 {
-                                            self.emit_indent(&format!("PRINT_INT_ZEROPAD rdi, {}", width));
-                                        } else if width > 0 {
-                                            self.emit_indent(&format!("PRINT_INT_PADDED rdi, {}", width));
-                                        } else {
-                                            self.emit_indent("PRINT_INT rdi");
-                                        }
-                                        self.uses_format = true;
-                                    }
-                                    _ => {
-                                        // Default: print as appropriate type
-                                        match var_type {
-                                            Some(VarType::Float) => {
-                                                self.emit_indent("movq xmm0, rdi");
-                                                self.emit_indent("PRINT_FLOAT");
-                                                self.uses_floats = true;
-                                            }
-                                            Some(VarType::String) | Some(VarType::Buffer) => {
-                                                self.emit_indent("PRINT_CSTR rdi");
-                                            }
-                                            _ => {
-                                                self.emit_indent("PRINT_INT rdi");
-                                            }
-                                        }
-                                    }
-                                }
+                            
+                            // Parse format spec and emit formatted value
+                            let fmt_spec = self.parse_format_spec(format.as_deref());
+                            self.emit_formatted_value(var_type, fmt_spec);
                         }
                         FormatPart::Expression { expr, format } => {
                             // Generate code for the expression, result will be in rax
@@ -1280,67 +1431,9 @@ impl CodeGenerator {
                             // Determine the type of the expression for formatting
                             let expr_type = self.infer_expr_type(expr);
                             
-                            // Handle format specifier
-                            match format.as_deref() {
-                                Some(fmt) if fmt.ends_with('x') || fmt.ends_with('X') => {
-                                    // Hex format
-                                    let uppercase = fmt.ends_with('X');
-                                    if uppercase {
-                                        self.emit_indent("PRINT_HEX_UPPER rdi");
-                                    } else {
-                                        self.emit_indent("PRINT_HEX_LOWER rdi");
-                                    }
-                                    self.uses_format = true;
-                                }
-                                Some(fmt) if fmt.ends_with('b') => {
-                                    // Binary format
-                                    self.emit_indent("PRINT_BINARY rdi");
-                                    self.uses_format = true;
-                                }
-                                Some(fmt) if fmt.ends_with('o') => {
-                                    // Octal format
-                                    self.emit_indent("PRINT_OCTAL rdi");
-                                    self.uses_format = true;
-                                }
-                                Some(fmt) if fmt.starts_with('.') => {
-                                    // Precision format for floats: .2, .4, etc.
-                                    let precision: i32 = fmt[1..].parse().unwrap_or(2);
-                                    self.emit_indent("movq xmm0, rdi");
-                                    self.emit_indent(&format!("mov rdi, {}", precision));
-                                    self.emit_indent("call _print_float_precision");
-                                    self.uses_floats = true;
-                                    self.uses_format = true;
-                                }
-                                Some(fmt) if fmt.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) => {
-                                    // Padding format: 6, 06, etc.
-                                    let zero_pad = fmt.starts_with('0');
-                                    let width: i32 = fmt.trim_start_matches('0').parse().unwrap_or(0);
-                                    if zero_pad && width > 0 {
-                                        self.emit_indent(&format!("PRINT_INT_ZEROPAD rdi, {}", width));
-                                    } else if width > 0 {
-                                        self.emit_indent(&format!("PRINT_INT_PADDED rdi, {}", width));
-                                    } else {
-                                        self.emit_indent("PRINT_INT rdi");
-                                    }
-                                    self.uses_format = true;
-                                }
-                                _ => {
-                                    // Default: print as appropriate type
-                                    match expr_type {
-                                        Some(VarType::Float) => {
-                                            self.emit_indent("movq xmm0, rdi");
-                                            self.emit_indent("PRINT_FLOAT");
-                                            self.uses_floats = true;
-                                        }
-                                        Some(VarType::String) | Some(VarType::Buffer) => {
-                                            self.emit_indent("PRINT_CSTR rdi");
-                                        }
-                                        _ => {
-                                            self.emit_indent("PRINT_INT rdi");
-                                        }
-                                    }
-                                }
-                            }
+                            // Parse format spec and emit formatted value
+                            let fmt_spec = self.parse_format_spec(format.as_deref());
+                            self.emit_formatted_value(expr_type, fmt_spec);
                         }
                     }
                 }

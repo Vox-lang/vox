@@ -321,6 +321,445 @@ _print_octal_impl:
     pop rax
 %endmacro
 
+; Print hex (lowercase) with zero-padding
+; Args: value, min_width
+%macro PRINT_HEX_LOWER_ZEROPAD 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    xor rdx, rdx                ; lowercase flag = 0
+    call _print_hex_zeropad_impl
+    
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print hex (uppercase) with zero-padding
+; Args: value, min_width
+%macro PRINT_HEX_UPPER_ZEROPAD 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    mov rdx, 1                  ; uppercase flag = 1
+    call _print_hex_zeropad_impl
+    
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print binary with zero-padding
+; Args: value, min_width
+%macro PRINT_BINARY_ZEROPAD 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    call _print_binary_zeropad_impl
+    
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print octal with zero-padding
+; Args: value, min_width
+%macro PRINT_OCTAL_ZEROPAD 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    call _print_octal_zeropad_impl
+    
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Helper: convert hex to buffer, return ptr in rax, len in rcx
+; Args: rdi = value, rsi = uppercase flag
+; Returns: rax = ptr to digits, rcx = digit count
+_hex_to_buffer:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+    
+    mov r12, rdi                ; value
+    mov r13, rsi                ; uppercase flag
+    
+    ; Build hex string backwards
+    lea rdi, [_format_buffer + 20]
+    mov byte [rdi], 0           ; null terminator
+    xor rcx, rcx                ; digit count
+    
+    mov rax, r12
+    test rax, rax
+    jnz .convert_loop
+    
+    ; Handle zero
+    dec rdi
+    mov byte [rdi], '0'
+    mov rcx, 1
+    jmp .done
+    
+.convert_loop:
+    test rax, rax
+    jz .done
+    
+    push rcx
+    mov rcx, rax
+    and rcx, 0xF                ; get low nibble
+    
+    ; Select correct hex char table
+    test r13, r13
+    jz .use_lower
+    lea rbx, [_hex_chars_upper]
+    jmp .get_char
+.use_lower:
+    lea rbx, [_hex_chars_lower]
+.get_char:
+    mov cl, [rbx + rcx]
+    dec rdi
+    mov [rdi], cl
+    pop rcx
+    inc rcx
+    
+    shr rax, 4                  ; next nibble
+    jmp .convert_loop
+    
+.done:
+    mov rax, rdi                ; return ptr
+    ; rcx already has length
+    
+    pop r13
+    pop r12
+    leave
+    ret
+
+; Helper: convert binary to buffer, return ptr in rax, len in rcx
+; Args: rdi = value
+; Returns: rax = ptr to digits, rcx = digit count
+_binary_to_buffer:
+    push rbp
+    mov rbp, rsp
+    push r12
+    
+    mov r12, rdi                ; value
+    
+    ; Build binary string backwards
+    lea rdi, [_format_buffer + 65]
+    mov byte [rdi], 0           ; null terminator
+    xor rcx, rcx                ; digit count
+    
+    mov rax, r12
+    test rax, rax
+    jnz .convert_loop
+    
+    ; Handle zero
+    dec rdi
+    mov byte [rdi], '0'
+    mov rcx, 1
+    jmp .done
+    
+.convert_loop:
+    test rax, rax
+    jz .done
+    
+    push rcx
+    mov cl, al
+    and cl, 1
+    add cl, '0'
+    dec rdi
+    mov [rdi], cl
+    pop rcx
+    inc rcx
+    
+    shr rax, 1
+    jmp .convert_loop
+    
+.done:
+    mov rax, rdi                ; return ptr
+    ; rcx already has length
+    
+    pop r12
+    leave
+    ret
+
+; Helper: convert octal to buffer, return ptr in rax, len in rcx
+; Args: rdi = value
+; Returns: rax = ptr to digits, rcx = digit count
+_octal_to_buffer:
+    push rbp
+    mov rbp, rsp
+    push r12
+    
+    mov r12, rdi                ; value
+    
+    ; Build octal string backwards
+    lea rdi, [_format_buffer + 32]
+    mov byte [rdi], 0           ; null terminator
+    xor rcx, rcx                ; digit count
+    
+    mov rax, r12
+    test rax, rax
+    jnz .convert_loop
+    
+    ; Handle zero
+    dec rdi
+    mov byte [rdi], '0'
+    mov rcx, 1
+    jmp .done
+    
+.convert_loop:
+    test rax, rax
+    jz .done
+    
+    push rcx
+    mov rcx, rax
+    and cl, 7                   ; get low 3 bits
+    add cl, '0'
+    dec rdi
+    mov [rdi], cl
+    pop rcx
+    inc rcx
+    
+    shr rax, 3                  ; next octal digit
+    jmp .convert_loop
+    
+.done:
+    mov rax, rdi                ; return ptr
+    ; rcx already has length
+    
+    pop r12
+    leave
+    ret
+
+; Print hex with zero-padding
+; Args: rdi = value, rsi = min width, rdx = uppercase flag
+_print_hex_zeropad_impl:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+    push r14
+    push r15
+    
+    mov r12, rsi                ; min width
+    mov r13, rdx                ; uppercase flag
+    
+    ; Convert to buffer
+    mov rsi, r13
+    call _hex_to_buffer
+    mov r14, rax                ; digit ptr
+    mov r15, rcx                ; digit len
+    
+    ; Print "0x" prefix
+    mov byte [_format_buffer + 40], '0'
+    mov byte [_format_buffer + 41], 'x'
+    push r14
+    push r15
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 40]
+    mov rdx, 2
+    syscall
+    pop r15
+    pop r14
+    
+    ; Print leading zeros if needed
+    mov rax, r12
+    sub rax, r15                ; padding needed
+    jle .print_digits
+    
+.zero_loop:
+    test rax, rax
+    jz .print_digits
+    push rax
+    push r14
+    push r15
+    mov byte [_format_buffer + 40], '0'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 40]
+    mov rdx, 1
+    syscall
+    pop r15
+    pop r14
+    pop rax
+    dec rax
+    jmp .zero_loop
+    
+.print_digits:
+    ; Print the actual digits
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, r14
+    mov rdx, r15
+    syscall
+    
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    leave
+    ret
+
+; Print binary with zero-padding
+; Args: rdi = value, rsi = min width
+_print_binary_zeropad_impl:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+    push r14
+    
+    mov r12, rsi                ; min width
+    
+    ; Convert to buffer
+    call _binary_to_buffer
+    mov r13, rax                ; digit ptr
+    mov r14, rcx                ; digit len
+    
+    ; Print leading zeros if needed
+    mov rax, r12
+    sub rax, r14                ; padding needed
+    jle .print_digits
+    
+.zero_loop:
+    test rax, rax
+    jz .print_digits
+    push rax
+    push r13
+    push r14
+    mov byte [_format_buffer + 40], '0'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 40]
+    mov rdx, 1
+    syscall
+    pop r14
+    pop r13
+    pop rax
+    dec rax
+    jmp .zero_loop
+    
+.print_digits:
+    ; Print the actual digits
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, r13
+    mov rdx, r14
+    syscall
+    
+    pop r14
+    pop r13
+    pop r12
+    leave
+    ret
+
+; Print octal with zero-padding
+; Args: rdi = value, rsi = min width
+_print_octal_zeropad_impl:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+    push r14
+    
+    mov r12, rsi                ; min width
+    
+    ; Convert to buffer
+    call _octal_to_buffer
+    mov r13, rax                ; digit ptr
+    mov r14, rcx                ; digit len
+    
+    ; Print "0o" prefix
+    mov byte [_format_buffer + 40], '0'
+    mov byte [_format_buffer + 41], 'o'
+    push r13
+    push r14
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 40]
+    mov rdx, 2
+    syscall
+    pop r14
+    pop r13
+    
+    ; Print leading zeros if needed
+    mov rax, r12
+    sub rax, r14                ; padding needed
+    jle .print_digits
+    
+.zero_loop:
+    test rax, rax
+    jz .print_digits
+    push rax
+    push r13
+    push r14
+    mov byte [_format_buffer + 40], '0'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 40]
+    mov rdx, 1
+    syscall
+    pop r14
+    pop r13
+    pop rax
+    dec rax
+    jmp .zero_loop
+    
+.print_digits:
+    ; Print the actual digits
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, r13
+    mov rdx, r14
+    syscall
+    
+    pop r14
+    pop r13
+    pop r12
+    leave
+    ret
+
+
 _print_int_padded_impl:
     push rbp
     mov rbp, rsp
