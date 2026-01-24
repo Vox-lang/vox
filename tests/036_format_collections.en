@@ -14,6 +14,7 @@ a list called "word_list" is ["apple", "banana", "cherry"].
 (List operations in format strings)
 Print "List size: {num_list's size}".
 Print "List empty: {num_list's empty}".
+Print "List full: {num_list's full}".
 Print "First element: {num_list's first}".
 Print "Last element: {num_list's last}".
 Print "Word count: {word_list's length}".

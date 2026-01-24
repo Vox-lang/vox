@@ -11,6 +11,7 @@ pub struct CodeGenerator {
     float_counter: usize,
     variables: HashMap<String, i64>,
     variable_types: HashMap<String, VarType>,
+    list_element_types: HashMap<String, VarType>,
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
@@ -32,6 +33,7 @@ enum VarType {
     Float,       // 64-bit IEEE 754 double
     String,      // Raw string pointer (from lists, etc.)
     Buffer,      // Dynamic buffer struct (has header)
+    List,        // List struct [length, elem0, elem1, ...]
     Boolean,
     Unknown,
 }
@@ -65,6 +67,7 @@ impl CodeGenerator {
             float_counter: 0,
             variables: HashMap::new(),
             variable_types: HashMap::new(),
+            list_element_types: HashMap::new(),
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
@@ -326,8 +329,10 @@ impl CodeGenerator {
                 }
                 
                 if let Some(val) = value {
-                    // Track element type for lists
+                    // Track list type and element type for lists
                     if let Expr::ListLit { elements } = val {
+                        self.variable_types.insert(name.clone(), VarType::List);
+                        // Track element type separately
                         if let Some(first) = elements.first() {
                             let elem_type = match first {
                                 Expr::StringLit(_) => VarType::String,
@@ -336,7 +341,7 @@ impl CodeGenerator {
                                 Expr::BoolLit(_) => VarType::Boolean,
                                 _ => VarType::Unknown,
                             };
-                            self.variable_types.insert(name.clone(), elem_type);
+                            self.list_element_types.insert(name.clone(), elem_type);
                         }
                     }
                     // Float literals set float type
@@ -364,13 +369,16 @@ impl CodeGenerator {
                             self.emit_indent(&format!("mov rdi, {}  ; buffer capacity", capacity));
                             self.emit_indent("call _alloc_buffer");
                             self.emit_indent(&format!("mov [rbp-{}], rax  ; store buffer pointer", offset));
-                            // Copy string data into buffer using memcpy-style approach
-                            self.emit_indent("mov rdi, rax  ; dest buffer");
+                            // Copy string data into buffer data area (offset 24 = BUF_DATA)
+                            self.emit_indent("lea rdi, [rax + 24]  ; dest = buffer data area");
                             self.emit_indent(&format!("lea rsi, [rel {}]  ; source string", str_label));
                             self.emit_indent(&format!("mov rcx, {}  ; string length", str_len));
                             self.emit_indent("rep movsb  ; copy bytes");
                             // Null-terminate the buffer
                             self.emit_indent("mov byte [rdi], 0");
+                            // Update buffer length field (offset 8 = BUF_LENGTH)
+                            self.emit_indent(&format!("mov rax, [rbp-{}]  ; reload buffer pointer", offset));
+                            self.emit_indent(&format!("mov qword [rax + 8], {}  ; set buffer length", str_len));
                             self.uses_buffers = true;
                         } else {
                             // Non-string initializer for buffer - evaluate and store
@@ -1932,11 +1940,13 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(object).cloned().unwrap_or(VarType::Unknown);
                     
                     match property {
-                        // Buffer properties
+                        // Buffer/List properties
                         ObjectProperty::Size => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             if var_type == VarType::Buffer {
                                 self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
+                            } else if var_type == VarType::List {
+                                self.emit_indent("mov rax, [rax]  ; list length at offset 0");
                             } else {
                                 // For files, call _file_size
                                 self.emit_indent("mov rdi, rax");
@@ -1949,18 +1959,28 @@ impl CodeGenerator {
                         }
                         ObjectProperty::Empty => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
-                            self.emit_indent("mov rax, [rax + 8]  ; get size");
+                            if var_type == VarType::List {
+                                self.emit_indent("mov rax, [rax]  ; get list length");
+                            } else {
+                                self.emit_indent("mov rax, [rax + 8]  ; get buffer size");
+                            }
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setz al");
                             self.emit_indent("movzx rax, al  ; 1 if empty, 0 otherwise");
                         }
                         ObjectProperty::Full => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
-                            self.emit_indent("mov rbx, [rax]      ; capacity");
-                            self.emit_indent("mov rax, [rax + 8]  ; size");
-                            self.emit_indent("cmp rax, rbx");
-                            self.emit_indent("sete al");
-                            self.emit_indent("movzx rax, al  ; 1 if full, 0 otherwise");
+                            if var_type == VarType::List {
+                                // Lists can grow dynamically, so never full
+                                self.emit_indent("xor rax, rax  ; lists are never full");
+                            } else {
+                                // Buffer: compare size to capacity
+                                self.emit_indent("mov rbx, [rax]      ; capacity");
+                                self.emit_indent("mov rax, [rax + 8]  ; size");
+                                self.emit_indent("cmp rax, rbx");
+                                self.emit_indent("sete al");
+                                self.emit_indent("movzx rax, al  ; 1 if full, 0 otherwise");
+                            }
                         }
                         
                         // File properties
@@ -2514,6 +2534,28 @@ impl CodeGenerator {
             Expr::StringLit(_) => Some(VarType::String),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
+            Expr::PropertyAccess { object, property } => {
+                // For First/Last on lists, return the list's element type
+                match property {
+                    ObjectProperty::First | ObjectProperty::Last => {
+                        if self.variable_types.get(object) == Some(&VarType::List) {
+                            self.list_element_types.get(object).cloned()
+                        } else {
+                            Some(VarType::Integer)
+                        }
+                    }
+                    ObjectProperty::Size | ObjectProperty::Capacity => Some(VarType::Integer),
+                    _ => Some(VarType::Integer),
+                }
+            }
+            Expr::ElementAccess { list, .. } => {
+                // For element access, return the list's element type
+                if let Expr::Identifier(name) = list.as_ref() {
+                    self.list_element_types.get(name).cloned().or(Some(VarType::Integer))
+                } else {
+                    Some(VarType::Integer)
+                }
+            }
             Expr::BinaryOp { left, op, right } => {
                 // For binary operations, infer based on operator and operand types
                 match op {

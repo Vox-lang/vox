@@ -9,10 +9,10 @@ First element: 1
 Last element: 5
 Word count: 3
 First word: apple
-First byte: 65
-Second byte: 98
-Third byte: 99
-Byte sum: 166
+First byte: 72
+Second byte: 101
+Third byte: 108
+Byte sum: 173
 Size plus 10: 15
 Size times 2: 10
-Byte operations: 6565
+Byte operations: 7272
