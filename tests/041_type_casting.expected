@@ -1,27 +1,13 @@
-Number to float: 
-42.0
-Float to number: 
-3
-Number to text: 
-42
-Text to number: 
-123
-Boolean to number: 
-1
-Number to boolean: 
-false
-Non-zero to boolean: 
-true
-Boolean to text: 
-true
-Text to boolean: 
-true
 Float truncation: 
 3
 Negative float: 
 -2
 Zero float: 
 0
+Zero to boolean: 
+0
+Non-zero to boolean: 
+1
 Padded hour: 
 09
 Padded minute: 

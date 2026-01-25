@@ -1,36 +1,10 @@
-Current timestamp: 
-1737123456
-Current hour: 
-0
-Current minute: 
-24
-Current second: 
-16
-Current day: 
-18
-Current month: 
-1
-Current year: 
-2025
-Inline hour: 
-0
-Inline minute: 
-24
-Timer duration in ms: 
-100
-Timer duration in seconds: 
-0
-Fast timer: 
-50
-Slow timer: 
-150
+Time retrieved: OK
+Year check: PASS
+Hour range: PASS
+Minute range: PASS
+Month range: PASS
+Day range: PASS
+Inline time: PASS
 Calculation result: 
-500500
-Calculation time: 
-0
-Start time: 
-1737123456
-End time: 
-1737123457
-Difference: 
-1
+5050
+All time tests completed

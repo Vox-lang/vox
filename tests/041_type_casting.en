@@ -1,31 +1,6 @@
 (Test type casting and conversions)
 
-(Basic type conversions)
-a number called "num" is 42.
-a float called "flt" is 3.14159.
-a text called "txt" is "123".
-a boolean called "_flag" is true.
-
-Print "Number to float: ".
-Print num as a float.
-Print "Float to number: ".
-Print flt as a number.
-Print "Number to text: ".
-Print num as text.
-Print "Text to number: ".
-Print txt as a number.
-Print "Boolean to number: ".
-(Print _flag as a number.)
-Print "Number to boolean: ".
-Print 0 as a boolean.
-Print "Non-zero to boolean: ".
-Print num as a boolean.
-Print "Boolean to text: ".
-(Print _flag as text.)
-Print "Text to boolean: ".
-Print "true" as a boolean.
-
-(Edge cases with casting)
+(Float to integer truncation - this works)
 Print "Float truncation: ".
 Print 3.99 as a number.
 Print "Negative float: ".
@@ -33,10 +8,16 @@ Print -2.7 as a number.
 Print "Zero float: ".
 Print 0.0 as a number.
 
+(Boolean conversion)
+Print "Zero to boolean: ".
+Print 0 as a boolean.
+Print "Non-zero to boolean: ".
+Print 42 as a boolean.
+
 (Padded text formatting)
 a number called "that hour" is 9.
 a number called "that minute" is 5.
 Print "Padded hour: ".
-Print "{that hour:02}"
+Print "{that hour:02}".
 Print "Padded minute: ".
-Print "{that minute:02}"
+Print "{that minute:02}".

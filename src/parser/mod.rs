@@ -941,49 +941,101 @@ impl Parser {
             let start = self.parse_primary()?;
             self.skip_noise();
             
-            self.expect(&Token::To);
-            self.expect(&Token::And);
-            self.skip_noise();
-            
-            let end = self.parse_primary()?;
-            self.skip_noise();
-            self.expect(&Token::Comma);
-            self.skip_noise();
-            
-            // Parse body - terminated by period (single sentence loop body)
-            let mut body = Vec::new();
-            loop {
-                if matches!(self.current(), Token::EOF) {
-                    break;
-                }
-                
-                let stmt = self.parse_statement()?;
-                body.push(stmt);
+            // Check if this is a range (has "to") or a collection iteration
+            if *self.current() == Token::To || matches!(self.current(), Token::Identifier(s) if s == "to") {
+                // Range: from X to Y
+                self.advance(); // consume "to"
                 self.skip_noise();
                 
-                if *self.current() == Token::Comma {
-                    // Comma continues to next action in same for loop
-                    self.advance();
+                let end = self.parse_primary()?;
+                self.skip_noise();
+                self.expect(&Token::Comma);
+                self.skip_noise();
+                
+                // Parse body - terminated by period (single sentence loop body)
+                let mut body = Vec::new();
+                loop {
+                    if matches!(self.current(), Token::EOF) {
+                        break;
+                    }
+                    
+                    let stmt = self.parse_statement()?;
+                    body.push(stmt);
                     self.skip_noise();
-                } else if *self.current() == Token::Period {
-                    // Period ends this for loop's body
-                    self.advance();
-                    self.skip_noise();
-                    break;
-                } else {
-                    break;
+                    
+                    if *self.current() == Token::Comma {
+                        // Comma continues to next action in same for loop
+                        self.advance();
+                        self.skip_noise();
+                    } else if *self.current() == Token::Period {
+                        // Period ends this for loop's body
+                        self.advance();
+                        self.skip_noise();
+                        break;
+                    } else {
+                        break;
+                    }
                 }
+                
+                Ok(Statement::ForRange {
+                    variable,
+                    range: Expr::Range {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        inclusive,
+                    },
+                    body,
+                })
+            } else {
+                // Collection iteration: from <collection>
+                // start is actually the collection
+                let collection = match start {
+                    Expr::StringLit(s) => Expr::Identifier(s),
+                    other => other,
+                };
+                
+                // Check for optional "treating X as Y" clause before the comma
+                let treating = self.try_parse_treating()?;
+                
+                self.expect(&Token::Comma);
+                self.skip_noise();
+                
+                // Parse body - terminated by period
+                let mut body = Vec::new();
+                loop {
+                    if matches!(self.current(), Token::EOF) {
+                        break;
+                    }
+                    
+                    let stmt = self.parse_statement()?;
+                    body.push(stmt);
+                    self.skip_noise();
+                    
+                    if *self.current() == Token::Comma {
+                        self.advance();
+                        self.skip_noise();
+                    } else if *self.current() == Token::Period {
+                        self.advance();
+                        self.skip_noise();
+                        break;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // If treating clause present, wrap variable references in body
+                let body = if let Some((match_val, replacement)) = treating {
+                    self.apply_treating_to_body(body, &variable, match_val, replacement)
+                } else {
+                    body
+                };
+                
+                Ok(Statement::ForEach {
+                    variable,
+                    collection,
+                    body,
+                })
             }
-            
-            Ok(Statement::ForRange {
-                variable,
-                range: Expr::Range {
-                    start: Box::new(start),
-                    end: Box::new(end),
-                    inclusive,
-                },
-                body,
-            })
         } else if *self.current() == Token::In {
             self.advance();
             self.skip_noise();
@@ -1323,6 +1375,162 @@ impl Parser {
         }
     }
     
+    /// Try to parse optional "treating X as Y" clause.
+    /// Returns Some((match_value, replacement)) if found, None otherwise.
+    fn try_parse_treating(&mut self) -> Result<Option<(Expr, Expr)>, CompileError> {
+        if *self.current() != Token::Treating {
+            return Ok(None);
+        }
+        self.advance();
+        self.skip_noise();
+        
+        // Parse match value (simple: string or identifier only)
+        let match_value = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err(
+                "Missing match value after 'treating'\n  \
+                 Syntax: treating <match> as <replacement>\n  \
+                 Example: treating \"-\" as \"/dev/stdin\""
+            )),
+        };
+        self.skip_noise();
+        
+        // Expect "as"
+        let has_as = if *self.current() == Token::As {
+            self.advance();
+            self.skip_noise();
+            true
+        } else if let Token::Identifier(s) = self.current() {
+            if s.to_lowercase() == "as" {
+                self.advance();
+                self.skip_noise();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        
+        if !has_as {
+            return Err(self.err(&format!(
+                "Missing 'as' after 'treating {:?}'\n  \
+                 Syntax: treating <match> as <replacement>\n  \
+                 Example: treating \"-\" as \"/dev/stdin\"",
+                match_value
+            )));
+        }
+        
+        // Parse replacement (simple: string or identifier only)
+        let replacement = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err(
+                "Missing replacement value after 'as'\n  \
+                 Syntax: treating <match> as <replacement>\n  \
+                 Example: treating \"-\" as \"/dev/stdin\""
+            )),
+        };
+        self.skip_noise();
+        
+        Ok(Some((match_value, replacement)))
+    }
+    
+    /// Apply treating substitution to all references of a variable in a statement body.
+    /// Wraps Identifier references to the variable with TreatingAs expressions.
+    fn apply_treating_to_body(&self, body: Vec<Statement>, variable: &str, match_val: Expr, replacement: Expr) -> Vec<Statement> {
+        body.into_iter().map(|stmt| {
+            self.apply_treating_to_statement(stmt, variable, &match_val, &replacement)
+        }).collect()
+    }
+    
+    fn apply_treating_to_statement(&self, stmt: Statement, variable: &str, match_val: &Expr, replacement: &Expr) -> Statement {
+        match stmt {
+            Statement::Print { value, without_newline } => {
+                Statement::Print {
+                    value: self.apply_treating_to_expr(value, variable, match_val, replacement),
+                    without_newline,
+                }
+            }
+            Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                Statement::If {
+                    condition: self.apply_treating_to_expr(condition, variable, match_val, replacement),
+                    then_block: self.apply_treating_to_body(then_block, variable, match_val.clone(), replacement.clone()),
+                    else_if_blocks: else_if_blocks.into_iter().map(|(cond, block)| {
+                        (self.apply_treating_to_expr(cond, variable, match_val, replacement),
+                         self.apply_treating_to_body(block, variable, match_val.clone(), replacement.clone()))
+                    }).collect(),
+                    else_block: else_block.map(|b| self.apply_treating_to_body(b, variable, match_val.clone(), replacement.clone())),
+                }
+            }
+            Statement::Assignment { name, value } => {
+                Statement::Assignment {
+                    name,
+                    value: self.apply_treating_to_expr(value, variable, match_val, replacement),
+                }
+            }
+            Statement::FunctionCall { name, args } => {
+                Statement::FunctionCall {
+                    name,
+                    args: args.into_iter().map(|a| self.apply_treating_to_expr(a, variable, match_val, replacement)).collect(),
+                }
+            }
+            Statement::FileWrite { file, value } => {
+                Statement::FileWrite {
+                    file,
+                    value: self.apply_treating_to_expr(value, variable, match_val, replacement),
+                }
+            }
+            other => other,
+        }
+    }
+    
+    fn apply_treating_to_expr(&self, expr: Expr, variable: &str, match_val: &Expr, replacement: &Expr) -> Expr {
+        match expr {
+            Expr::Identifier(ref name) if name == variable => {
+                Expr::TreatingAs {
+                    value: Box::new(expr),
+                    match_value: Box::new(match_val.clone()),
+                    replacement: Box::new(replacement.clone()),
+                }
+            }
+            Expr::FormatString { parts } => {
+                Expr::FormatString {
+                    parts: parts.into_iter().map(|part| {
+                        match part {
+                            FormatPart::Expression { expr, format } => {
+                                FormatPart::Expression {
+                                    expr: Box::new(self.apply_treating_to_expr(*expr, variable, match_val, replacement)),
+                                    format,
+                                }
+                            }
+                            FormatPart::Variable { name, format } if name == variable => {
+                                FormatPart::Expression {
+                                    expr: Box::new(Expr::TreatingAs {
+                                        value: Box::new(Expr::Identifier(name)),
+                                        match_value: Box::new(match_val.clone()),
+                                        replacement: Box::new(replacement.clone()),
+                                    }),
+                                    format,
+                                }
+                            }
+                            other => other,
+                        }
+                    }).collect()
+                }
+            }
+            Expr::BinaryOp { left, op, right } => {
+                Expr::BinaryOp {
+                    left: Box::new(self.apply_treating_to_expr(*left, variable, match_val, replacement)),
+                    op,
+                    right: Box::new(self.apply_treating_to_expr(*right, variable, match_val, replacement)),
+                }
+            }
+            other => other,
+        }
+    }
+    
     /// Try to parse "each <variable> from <collection> [treating X as Y]" pattern.
     /// Returns Some((variable, collection, optional_treating)) if found.
     /// This is the universal loop expansion syntax that works with any action.
@@ -1383,64 +1591,7 @@ impl Parser {
         self.skip_noise();
         
         // Check for optional "treating X as Y" clause
-        let treating = if *self.current() == Token::Treating {
-            self.advance();
-            self.skip_noise();
-            
-            // Parse match value (simple: string or identifier only)
-            let match_value = match self.current().clone() {
-                Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
-                Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
-                _ => return Err(self.err(
-                    "Missing match value after 'treating'\n  \
-                     Syntax: treating <match> as <replacement>\n  \
-                     Example: treating \"-\" as \"/dev/stdin\""
-                )),
-            };
-            self.skip_noise();
-            
-            // Expect "as"
-            let has_as = if *self.current() == Token::As {
-                self.advance();
-                self.skip_noise();
-                true
-            } else if let Token::Identifier(s) = self.current() {
-                if s.to_lowercase() == "as" {
-                    self.advance();
-                    self.skip_noise();
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            
-            if !has_as {
-                return Err(self.err(&format!(
-                    "Missing 'as' after 'treating {:?}'\n  \
-                     Syntax: treating <match> as <replacement>\n  \
-                     Example: treating \"-\" as \"/dev/stdin\"",
-                    match_value
-                )));
-            }
-            
-            // Parse replacement (simple: string or identifier only)
-            let replacement = match self.current().clone() {
-                Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
-                Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
-                _ => return Err(self.err(
-                    "Missing replacement value after 'as'\n  \
-                     Syntax: treating <match> as <replacement>\n  \
-                     Example: treating \"-\" as \"/dev/stdin\""
-                )),
-            };
-            self.skip_noise();
-            
-            Some((match_value, replacement))
-        } else {
-            None
-        };
+        let treating = self.try_parse_treating()?;
         
         Ok(Some((variable, collection, treating)))
     }
@@ -2642,11 +2793,12 @@ impl Parser {
             return None;
         }
         
-        // Try to parse as an English expression
+        // Try to parse as an English expression (including comparisons)
         let mut lexer = Lexer::new(content);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);
-        match parser.parse_expression() {
+        // Use parse_and_expr to handle comparisons like "0 is equal to 0"
+        match parser.parse_and_expr() {
             Ok(expr) => {
                 // Check if we consumed all tokens (successful parse)
                 if *parser.current() == Token::EOF {

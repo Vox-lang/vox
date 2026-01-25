@@ -12,6 +12,7 @@ pub struct CodeGenerator {
     variables: HashMap<String, i64>,
     variable_types: HashMap<String, VarType>,
     list_element_types: HashMap<String, VarType>,
+    file_writable: HashMap<String, bool>,
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
@@ -68,6 +69,7 @@ impl CodeGenerator {
             variables: HashMap::new(),
             variable_types: HashMap::new(),
             list_element_types: HashMap::new(),
+            file_writable: HashMap::new(),
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
@@ -141,6 +143,10 @@ impl CodeGenerator {
             Expr::FloatLit(_) => true,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
+            }
+            Expr::Cast { target_type, .. } => {
+                // Cast to float produces a float
+                matches!(target_type, Type::Float)
             }
             Expr::BinaryOp { left, op, right } => {
                 // Comparison and boolean operators return integers, not floats
@@ -638,8 +644,19 @@ impl CodeGenerator {
                 // ------------------------------------------------------------
 
                 // Allocate param stack slots FIRST so offsets are stable.
-                for (param_name, _) in params.iter() {
+                // Also register param types so they're known in function body.
+                for (param_name, param_type) in params.iter() {
                     self.alloc_var(param_name);
+                    let var_type = match param_type {
+                        Type::Integer => VarType::Integer,
+                        Type::Float => VarType::Float,
+                        Type::String => VarType::String,
+                        Type::Boolean => VarType::Boolean,
+                        Type::List(_) => VarType::List,
+                        Type::Buffer => VarType::Buffer,
+                        _ => VarType::Unknown,
+                    };
+                    self.variable_types.insert(param_name.clone(), var_type);
                 }
 
                 // Generate body into a temp buffer (this will call alloc_var for locals too)
@@ -755,9 +772,10 @@ impl CodeGenerator {
                     return;
                 }
                 
-                // Determine element type from list literal
+                // Determine element type from list
                 let elem_type = if let Expr::Identifier(list_name) = collection {
-                    self.variable_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
+                    // Get element type from list_element_types, not variable_types
+                    self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
                 } else if let Expr::ListLit { elements } = collection {
                     if let Some(first) = elements.first() {
                         match first {
@@ -901,6 +919,10 @@ impl CodeGenerator {
                         true
                     }
                 };
+                
+                // Track if file is writable based on mode
+                let is_writable = matches!(mode, FileMode::Writing | FileMode::Appending);
+                self.file_writable.insert(name.clone(), is_writable);
                 
                 // Open file with appropriate mode (path is in rdi)
                 match mode {
@@ -2007,11 +2029,13 @@ impl CodeGenerator {
                             self.emit_indent("movzx rax, al  ; 1 if readable, 0 otherwise");
                         }
                         ObjectProperty::Writable => {
-                            // Check if fd >= 0 (valid for writing)
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setns al");
-                            self.emit_indent("movzx rax, al  ; 1 if writable, 0 otherwise");
+                            // Check if file was opened for writing/appending
+                            let is_writable = self.file_writable.get(object).copied().unwrap_or(false);
+                            if is_writable {
+                                self.emit_indent("mov rax, 1  ; file opened for writing");
+                            } else {
+                                self.emit_indent("xor rax, rax  ; file opened for reading only");
+                            }
                         }
                         
                         // List properties
@@ -2322,11 +2346,19 @@ impl CodeGenerator {
                         if !self.is_float_expr(value) {
                             self.emit_indent("; Cast integer to float");
                             self.emit_indent("cvtsi2sd xmm0, rax");
+                            self.uses_floats = true;
                         }
                     }
+                    Type::Boolean => {
+                        // Convert to boolean (0 = false, non-zero = true)
+                        self.emit_indent("; Cast to boolean");
+                        self.emit_indent("test rax, rax");
+                        self.emit_indent("setne al");
+                        self.emit_indent("movzx rax, al");
+                    }
                     _ => {
-                        // Other casts - TODO: implement text conversions
-                        self.emit_indent("; Cast (no-op for now)");
+                        // Other casts - no-op
+                        self.emit_indent("; Cast (no-op)");
                     }
                 }
             }
@@ -2358,6 +2390,8 @@ impl CodeGenerator {
                 self.generate_expr(index);
                 self.emit_indent("mov rcx, rax");  // index in rcx
                 self.emit_indent("pop rbx");       // buffer ptr in rbx
+                // Get data pointer (skip buffer header - BUF_DATA = 24)
+                self.emit_indent("add rbx, 24  ; skip to buffer data area");
                 // Convert 1-indexed to 0-indexed and read byte
                 self.emit_indent("dec rcx");
                 self.emit_indent("xor rax, rax");
@@ -2573,6 +2607,7 @@ impl CodeGenerator {
                 }
             }
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
+            Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
             _ => Some(VarType::Integer), // Default to integer for complex expressions
         }
     }

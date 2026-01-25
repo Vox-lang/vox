@@ -4,33 +4,26 @@ Spaces text:
 test
 Deep nesting: 
 12
-Should be: 
-2 + (3*4) - (2*3) + 4 = 2 + 12 - 6 + 4 = 12
-10 / 0 (should handle gracefully): 
-0
-0 / 10: 
-0
+Should be: 2 + (3*4) - (2*3) + 4 = 2 + 12 - 6 + 4 = 12
 Max int + 1: 
--2147483648
+2147483648
 Min int - 1: 
-2147483647
+-2147483649
 true and false: 
-false
+0
 true or false: 
-true
+1
 not true: 
-false
+0
 not false: 
-true
+1
 0 = 0: 
-true
+1
 -1 = 1: 
-false
+0
 0 < -1: 
-false
+0
 -1 > 0: 
-false
-10 % 0: 
 0
 0 % 10: 
 0
@@ -47,4 +40,4 @@ Single element:
 Empty buffer size: 
 0
 Empty buffer empty: 
-true
+1

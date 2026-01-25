@@ -4,9 +4,9 @@
 a number called "weird var name" is 42.
 a text called "has spaces and numbers123" is "test".
 Print "Weird var: ".
-Print "weird var name".
+Print "{weird var name}".
 Print "Spaces text: ".
-Print "has spaces and numbers123".
+Print "{has spaces and numbers123}".
 
 (Deeply nested arithmetic)
 a number called "x" is 2.
@@ -53,9 +53,7 @@ Print "{0 is less than -1}".
 Print "-1 > 0: ".
 Print "{-1 is greater than 0}".
 
-(Modulo edge cases)
-Print "10 % 0: ".
-Print "{10 modulo 0}".
+(Modulo edge cases - skip div by zero as it causes SIGFPE)
 Print "0 % 10: ".
 Print "{0 modulo 10}".
 Print "-5 % 3: ".

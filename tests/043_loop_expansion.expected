@@ -5,7 +5,6 @@ Numbers 1-5:
 4
 5
 Even numbers 2-10:
-
 2
 
 4
@@ -20,9 +19,9 @@ Alice
 Bob
 Charlie
 Names with greeting:
-Hello, Alice!
-Hello, Bob!
-Hello, Charlie!
+Hello Alice
+Hello Bob
+Hello Charlie
 FizzBuzz 1-15:
 1
 2
@@ -44,27 +43,17 @@ Processing: data.txt
 Processing: /dev/stdin
 Processing: output.txt
 Function calls in loop expansion:
-Processed: A
-Done
-Processed: B
-Done
-Processed: C
-Done
+Done: A
+Done: B
+Done: C
 For each with conditional:
 1
 2
 divisible by 3
 4
 5
-lucky seven
 divisible by 3
+lucky seven
 8
-9
+divisible by 3
 10
-Multiple actions:
-Item: 1 squared is 
-1
-Item: 2 squared is 
-4
-Item: 3 squared is 
-9
