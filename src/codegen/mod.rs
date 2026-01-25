@@ -25,6 +25,7 @@ pub struct CodeGenerator {
     uses_format: bool,
     uses_time: bool,
     uses_funcs: bool,
+    uses_lists: bool,
     target_arch: String,
 }
 
@@ -81,6 +82,7 @@ impl CodeGenerator {
             uses_format: false,
             uses_time: false,
             uses_funcs: false,
+            uses_lists: false,
             target_arch: "x86_64".to_string(),
         }
     }
@@ -239,6 +241,9 @@ impl CodeGenerator {
             }
             if self.uses_funcs {
                 result.push_str(&format!("%include \"coreasm/{}/funcs.asm\"\n", self.target_arch));
+            }
+            if self.uses_lists {
+                result.push_str(&format!("%include \"coreasm/{}/list.asm\"\n", self.target_arch));
             }
         }
         result.push('\n');
@@ -792,12 +797,13 @@ impl CodeGenerator {
                 };
                 
                 // Get list pointer
+                // List structure: [capacity:8][length:8][elem_size:8][data...]
                 self.generate_expr(collection);
                 let list_ptr = self.alloc_var(&format!("{}_list", variable));
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; list pointer", list_ptr));
                 
-                // Get list length
-                self.emit_indent("mov rax, [rax]  ; get length");
+                // Get list length (at offset 8)
+                self.emit_indent("mov rax, [rax + 8]  ; get length (offset 8)");
                 let list_len = self.alloc_var(&format!("{}_len", variable));
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; list length", list_len));
                 
@@ -817,10 +823,10 @@ impl CodeGenerator {
                 self.emit_indent(&format!("cmp rax, [rbp-{}]  ; compare with length", list_len));
                 self.emit_indent(&format!("jge {}", end_label));
                 
-                // Get current element: list[index+1] (skip length field)
+                // Get current element: data starts at offset 24
                 self.emit_indent(&format!("mov rbx, [rbp-{}]  ; list pointer", list_ptr));
-                self.emit_indent("inc rax  ; skip length field");
-                self.emit_indent("shl rax, 3  ; multiply by 8");
+                self.emit_indent("shl rax, 3  ; index * 8");
+                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
                 self.emit_indent("add rbx, rax");
                 self.emit_indent("mov rax, [rbx]  ; get element");
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
@@ -902,6 +908,45 @@ impl CodeGenerator {
                 self.generate_expr(value);
                 // Write element
                 self.emit_indent("mov [rbx + rcx], rax  ; write element");
+            }
+            
+            Statement::ListAppend { list, value } => {
+                self.uses_lists = true;
+                self.emit_indent("; Append value to list");
+                
+                // Track element type from appended value if not already set
+                if !self.list_element_types.contains_key(list) {
+                    let elem_type = match value {
+                        Expr::StringLit(_) => VarType::String,
+                        Expr::IntegerLit(_) => VarType::Integer,
+                        Expr::FloatLit(_) => VarType::Float,
+                        Expr::BoolLit(_) => VarType::Boolean,
+                        Expr::Identifier(name) => {
+                            self.variable_types.get(name).cloned().unwrap_or(VarType::Unknown)
+                        }
+                        _ => VarType::Unknown,
+                    };
+                    if elem_type != VarType::Unknown {
+                        self.list_element_types.insert(list.clone(), elem_type);
+                    }
+                }
+                
+                // Get list pointer
+                if let Some(offset) = self.get_var(list) {
+                    // Evaluate value first and save it
+                    self.generate_expr(value);
+                    self.emit_indent("push rax  ; save value to append");
+                    
+                    // Get list pointer
+                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; list ptr", offset));
+                    
+                    // Call list_append helper (rdi = list ptr, rsi = value)
+                    self.emit_indent("pop rsi  ; value to append");
+                    self.emit_indent("call _list_append");
+                    
+                    // Store potentially new list pointer back
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
+                }
             }
             
             Statement::FileOpen { name, path, mode } => {
@@ -1548,6 +1593,32 @@ impl CodeGenerator {
                 }
             }
             
+            Expr::ElementAccess { list, .. } => {
+                // Get the list's element type for proper printing
+                let elem_type = if let Expr::Identifier(name) = list.as_ref() {
+                    self.list_element_types.get(name).cloned()
+                } else {
+                    None
+                };
+                
+                self.generate_expr(value);
+                self.emit_indent("mov rdi, rax");
+                
+                match elem_type {
+                    Some(VarType::String) => {
+                        self.emit_indent("PRINT_CSTR rdi");
+                    }
+                    Some(VarType::Float) => {
+                        self.emit_indent("movq xmm0, rdi");
+                        self.emit_indent("PRINT_FLOAT");
+                        self.uses_floats = true;
+                    }
+                    _ => {
+                        self.emit_indent("PRINT_INT rdi");
+                    }
+                }
+            }
+            
             _ => {
                 let is_float = self.is_float_expr(value);
                 self.generate_expr(value);
@@ -1890,26 +1961,41 @@ impl CodeGenerator {
             }
 
             Expr::ListLit { elements } => {
-                // Allocate memory for list: [length, elem0, elem1, ...]
-                // Each element is 8 bytes
-                let size = (elements.len() + 1) * 8;
+                // List structure: [capacity:8][length:8][elem_size:8][data...]
+                // Each element is 8 bytes, header is 24 bytes
+                let capacity = std::cmp::max(elements.len(), 8); // minimum capacity 8
+                let header_size = 24;
+                let data_size = capacity * 8;
+                let total_size = header_size + data_size;
                 
-                // Allocate on stack for simplicity (could use heap later)
-                self.emit_indent(&format!("; List literal with {} elements", elements.len()));
-                self.emit_indent(&format!("sub rsp, {}", size));
-                self.emit_indent("mov rax, rsp");
+                self.uses_lists = true;
+                self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
+                
+                // Allocate memory using mmap (heap allocation)
+                self.emit_indent(&format!("mov rdi, 0  ; addr = NULL"));
+                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("mov r9, 0  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
                 self.emit_indent("push rax  ; save list pointer");
                 
+                // Store capacity
+                self.emit_indent(&format!("mov qword [rax], {}  ; capacity", capacity));
                 // Store length
-                self.emit_indent(&format!("mov qword [rax], {}", elements.len()));
+                self.emit_indent(&format!("mov qword [rax + 8], {}  ; length", elements.len()));
+                // Store element size
+                self.emit_indent("mov qword [rax + 16], 8  ; element size");
                 
-                // Store elements
+                // Store elements (data starts at offset 24)
                 for (i, elem) in elements.iter().enumerate() {
                     self.emit_indent("pop rbx  ; get list pointer");
                     self.emit_indent("push rbx ; save it back");
                     self.generate_expr(elem);
                     self.emit_indent("pop rbx  ; get list pointer");
-                    self.emit_indent(&format!("mov [rbx+{}], rax", (i + 1) * 8));
+                    self.emit_indent(&format!("mov [rbx+{}], rax", header_size + i * 8));
                     self.emit_indent("push rbx ; save list pointer");
                 }
                 
@@ -1918,6 +2004,7 @@ impl CodeGenerator {
             
             // ListAccess: 0-indexed access (internal use)
             // MEMORY SAFETY: Always bounds-check before access
+            // List structure: [capacity:8][length:8][elem_size:8][data...]
             Expr::ListAccess { list, index } => {
                 let ok_label = self.new_label("list_ok");
                 let error_label = self.new_label("list_err");
@@ -1936,7 +2023,7 @@ impl CodeGenerator {
                 // Bounds check: index must be >= 0 and < length
                 self.emit_indent("cmp rcx, 0");
                 self.emit_indent(&format!("jl {}  ; index < 0 is error", error_label));
-                self.emit_indent("mov rdx, [rbx]  ; get length");
+                self.emit_indent("mov rdx, [rbx + 8]  ; get length (offset 8)");
                 self.emit_indent("cmp rcx, rdx");
                 self.emit_indent(&format!("jl {}  ; index < length is OK", ok_label));
                 
@@ -1947,10 +2034,12 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jmp {}", done_label));
                 
                 // Success path: safe access
+                // List structure: [capacity:8][length:8][elem_size:8][data...]
+                // Data starts at offset 24
                 self.emit(&format!("{}:", ok_label));
                 self.emit_indent("mov rax, rcx");
-                self.emit_indent("inc rax   ; skip length field");
-                self.emit_indent("shl rax, 3  ; multiply by 8");
+                self.emit_indent("shl rax, 3  ; multiply by 8 (element size)");
+                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 
@@ -1968,7 +2057,7 @@ impl CodeGenerator {
                             if var_type == VarType::Buffer {
                                 self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
                             } else if var_type == VarType::List {
-                                self.emit_indent("mov rax, [rax]  ; list length at offset 0");
+                                self.emit_indent("mov rax, [rax + 8]  ; list length at offset 8");
                             } else {
                                 // For files, call _file_size
                                 self.emit_indent("mov rdi, rax");
@@ -1982,7 +2071,7 @@ impl CodeGenerator {
                         ObjectProperty::Empty => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             if var_type == VarType::List {
-                                self.emit_indent("mov rax, [rax]  ; get list length");
+                                self.emit_indent("mov rax, [rax + 8]  ; get list length (offset 8)");
                             } else {
                                 self.emit_indent("mov rax, [rax + 8]  ; get buffer size");
                             }
@@ -2039,14 +2128,17 @@ impl CodeGenerator {
                         }
                         
                         // List properties
+                        // List structure: [capacity:8][length:8][elem_size:8][data...]
                         ObjectProperty::First => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
-                            self.emit_indent("mov rax, [rax + 8]  ; first element");
+                            self.emit_indent("mov rax, [rax + 24]  ; first element (data at offset 24)");
                         }
                         ObjectProperty::Last => {
                             self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
-                            self.emit_indent("mov rbx, [rax]      ; length");
+                            self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
+                            self.emit_indent("dec rbx             ; 0-indexed");
                             self.emit_indent("shl rbx, 3          ; * 8");
+                            self.emit_indent("add rbx, 24         ; + header offset");
                             self.emit_indent("add rax, rbx        ; offset to last");
                             self.emit_indent("mov rax, [rax]      ; last element");
                         }
@@ -2405,7 +2497,7 @@ impl CodeGenerator {
             }
             
             // Element access: element N of list (1-indexed)
-            // List structure: [length, elem0, elem1, ...] - all 8-byte values
+            // List structure: [capacity:8][length:8][elem_size:8][data...] 
             // MEMORY SAFETY: Always bounds-check before access
             Expr::ElementAccess { list, index } => {
                 let ok_label = self.new_label("elem_ok");
@@ -2424,7 +2516,7 @@ impl CodeGenerator {
                 // Bounds check: index must be >= 1 and <= length
                 self.emit_indent("cmp rcx, 1");
                 self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
-                self.emit_indent("mov rdx, [rbx]  ; get length");
+                self.emit_indent("mov rdx, [rbx + 8]  ; get length (offset 8)");
                 self.emit_indent("cmp rcx, rdx");
                 self.emit_indent(&format!("jle {}  ; index <= length is OK", ok_label));
                 
@@ -2435,9 +2527,12 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jmp {}", done_label));
                 
                 // Success path: safe access
+                // Data starts at offset 24, 1-indexed so element 1 is at offset 24
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; index * 8");
+                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 

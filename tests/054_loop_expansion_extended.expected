@@ -1,0 +1,22 @@
+Before empty loop
+After empty loop
+After append from empty:
+1
+100
+Range loop:
+1
+2
+3
+Before loop x:
+999
+1
+2
+3
+After loop x:
+3
+Range append result:
+4
+1
+2
+3
+4

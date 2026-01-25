@@ -234,6 +234,11 @@ impl Analyzer {
                 self.analyze_expr(value);
             }
             
+            Statement::ListAppend { list, value } => {
+                self.track_identifier(list);
+                self.analyze_expr(value);
+            }
+            
             Statement::FileOpen { name, path, .. } => {
                 self.variables.insert(name.clone());
                 self.analyze_expr(path);

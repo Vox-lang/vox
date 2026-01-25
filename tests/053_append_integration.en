@@ -1,0 +1,36 @@
+(Test append integration scenarios)
+
+(Test 1: Append in loop)
+a list called "loop_result" is [].
+a number called "counter" is 1.
+While counter is less than or equal to 4,
+  append counter to loop_result,
+  increment counter.
+print "Loop built list:".
+For each n in loop_result,
+  print the n.
+
+(Test 2: Append in conditional)
+a list called "conditional" is [].
+a number called "val" is 7.
+If val is greater than 5 then,
+  append 1 to conditional.
+Otherwise,
+  append 0 to conditional.
+print "Conditional append:".
+print element 1 of conditional.
+
+(Test 3: Multiple list appends)
+a list called "list1" is [].
+a list called "list2" is [].
+append 1 to list1.
+append 2 to list2.
+append 3 to list1.
+append 4 to list2.
+print "List 1:".
+For each n in list1,
+  print the n.
+print "List 2:".
+For each n in list2,
+  print the n.
+

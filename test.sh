@@ -75,6 +75,14 @@ if [[ ! -f "$EC_BIN" ]]; then
     echo ""
 fi
 
+cargo_test() {
+    echo -e "${YELLOW}Running cargo tests...${NC}"
+    cargo test
+    err=$?
+    echo ""
+    return $err
+}
+
 # Function to run a single test
 run_test() {
     local test_file="$1"
@@ -141,6 +149,12 @@ fi
 # Run tests
 echo -e "${BOLD}Running tests...${NC}"
 echo ""
+
+# Run cargo unit tests
+if ! cargo_test
+then
+    exit 1
+fi
 
 for test_file in "${TEST_FILES[@]}"; do
     run_test "$test_file"

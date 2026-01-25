@@ -211,6 +211,7 @@ impl Parser {
             Token::Enable => self.parse_enable(),
             Token::Disable => self.parse_disable(),
             Token::Resize => self.parse_resize(),
+            Token::Append => self.parse_append(),
             Token::Library => self.parse_library_decl(),
             Token::See => self.parse_see(),
             // Time and Timer statements
@@ -243,6 +244,44 @@ impl Parser {
             };
             let print_stmt = Statement::Print { value: var_expr, without_newline: false };
             return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+        }
+        
+        // Check for function call with loop expansion: "print "func" of each X from Y"
+        if let Token::StringLiteral(func_name) = self.current().clone() {
+            let saved_pos = self.pos;
+            self.advance();
+            self.skip_noise();
+            
+            if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
+                self.advance();
+                self.skip_noise();
+                
+                // Check if next is "each" for loop expansion
+                if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+                    // Create function call with loop variable as argument
+                    let arg_expr = if let Some((match_val, replacement)) = treating {
+                        Expr::TreatingAs {
+                            value: Box::new(Expr::Identifier(variable.clone())),
+                            match_value: Box::new(match_val),
+                            replacement: Box::new(replacement),
+                        }
+                    } else {
+                        Expr::Identifier(variable.clone())
+                    };
+                    let func_call = Expr::FunctionCall { 
+                        name: func_name, 
+                        args: vec![arg_expr] 
+                    };
+                    let print_stmt = Statement::Print { value: func_call, without_newline: false };
+                    return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+                } else {
+                    // Not a loop expansion, restore position and parse normally
+                    self.pos = saved_pos;
+                }
+            } else {
+                // Not a function call pattern, restore position
+                self.pos = saved_pos;
+            }
         }
         
         let value = self.parse_expression()?;
@@ -1573,7 +1612,9 @@ impl Parser {
         self.skip_noise();
         
         // Check if this is a range: <start> to <end>
-        let collection = if *self.current() == Token::To {
+        // But only if first is a simple value (number/identifier), not a list or other collection
+        let is_list_or_collection = matches!(first, Expr::ListLit { .. } | Expr::PropertyAccess { .. });
+        let collection = if *self.current() == Token::To && !is_list_or_collection {
             self.advance();
             self.skip_noise();
             let end = self.parse_primary()?;
@@ -1940,6 +1981,119 @@ impl Parser {
         }
         
         Ok(Statement::BufferResize { name, new_size })
+    }
+    
+    fn parse_append(&mut self) -> Result<Statement, CompileError> {
+        // "append <expr> to <list>" or "append each <var> from <collection> to <list>"
+        self.advance(); // consume 'append'
+        self.skip_noise();
+        
+        // Check for loop expansion: "append each X from Y to Z"
+        if let Some((variable, collection, _treating)) = self.try_parse_each_from()? {
+            // Get target list name after "to"
+            self.skip_noise();
+            if *self.current() != Token::To {
+                return Err(self.err("Expected 'to' after collection in append"));
+            }
+            self.advance();
+            self.skip_noise();
+            
+            let list_name = match self.current().clone() {
+                Token::Identifier(n) => { self.advance(); n }
+                Token::The => {
+                    self.advance();
+                    self.skip_noise();
+                    match self.current().clone() {
+                        Token::Identifier(n) => { self.advance(); n }
+                        _ => return Err(self.err("Expected list name after 'the'")),
+                    }
+                }
+                _ => return Err(self.err("Expected list name after 'to'")),
+            };
+            
+            // Create the append statement for loop body
+            let append_stmt = Statement::ListAppend {
+                list: list_name,
+                value: Expr::Identifier(variable.clone()),
+            };
+            
+            return self.wrap_in_loop_expansion(variable, collection, append_stmt);
+        }
+        
+        // Parse just the value (literal, identifier, or simple expression)
+        // We need to be careful not to consume 'to' which is the separator
+        let value = match self.current().clone() {
+            Token::IntegerLiteral(n) => {
+                self.advance();
+                Expr::IntegerLit(n)
+            }
+            Token::FloatLiteral(n) => {
+                self.advance();
+                Expr::FloatLit(n)
+            }
+            Token::StringLiteral(s) => {
+                self.advance();
+                // Check for format string
+                if s.contains('{') && !s.starts_with("{{") {
+                    let parts = self.parse_format_string(&s);
+                    if !parts.is_empty() && parts.iter().any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. })) {
+                        Expr::FormatString { parts }
+                    } else {
+                        Expr::StringLit(s)
+                    }
+                } else {
+                    Expr::StringLit(s)
+                }
+            }
+            Token::True => {
+                self.advance();
+                Expr::BoolLit(true)
+            }
+            Token::False => {
+                self.advance();
+                Expr::BoolLit(false)
+            }
+            Token::Identifier(name) => {
+                self.advance();
+                Expr::Identifier(name)
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                if let Token::Identifier(name) = self.current().clone() {
+                    self.advance();
+                    Expr::Identifier(name)
+                } else {
+                    return Err(self.err("Expected identifier after 'the' in append"));
+                }
+            }
+            _ => return Err(self.err("Expected value to append")),
+        };
+        
+        self.skip_noise();
+        
+        // Expect "to"
+        if *self.current() != Token::To {
+            return Err(self.err("Expected 'to' after value in append statement"));
+        }
+        self.advance();
+        self.skip_noise();
+        
+        // Get list name
+        let list = match self.current().clone() {
+            Token::Identifier(n) => { self.advance(); n }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                match self.current().clone() {
+                    Token::Identifier(n) => { self.advance(); n }
+                    _ => return Err(self.err("Expected list name after 'the'")),
+                }
+            }
+            _ => return Err(self.err("Expected list name after 'to'")),
+        };
+        
+        Ok(Statement::ListAppend { list, value })
     }
     
     fn parse_library_decl(&mut self) -> Result<Statement, CompileError> {

@@ -1,0 +1,67 @@
+(Comprehensive loop expansion tests from LOOP_EXPANSION_OPTIONS.md)
+
+(Define helper functions)
+To "double" of a number called "x".
+  Return a number, x multiply 2.
+
+To "square" of a number called "x".
+  Return a number, x multiply x.
+
+(Test 1: Basic function call with loop expansion - Case 1 from docs)
+print "=== Test 1: Function call with loop expansion ===".
+print "double" of each number from [1, 2, 3].
+
+(Test 2: Print each from list)
+print "=== Test 2: Print each from list ===".
+print each n from [10, 20, 30].
+
+(Test 3: Append with loop expansion - Case 3 from docs)
+print "=== Test 3: Append with loop expansion ===".
+a list called "squares" is [].
+append each x from [1, 2, 3] to squares.
+For each n in squares,
+  print the n.
+
+(Test 4: Empty collection - Case 11 from docs)
+print "=== Test 4: Empty collection ===".
+print "Before empty".
+print each number from [].
+print "After empty".
+
+(Test 5: Variable shadowing - Case 14 from docs)
+print "=== Test 5: Variable shadowing ===".
+a number called "x" is 100.
+print "x before loop:".
+print the x.
+For each x in [1, 2, 3],
+  print the x.
+print "x after loop:".
+print the x.
+
+(Test 6: Loop expansion with range)
+print "=== Test 6: Range loop expansion ===".
+print each n from 1 to 5.
+
+(Test 7: Function call with range loop expansion)
+print "=== Test 7: Function with range loop ===".
+print "double" of each n from 1 to 3.
+
+(Test 8: Append each from range)
+print "=== Test 8: Append from range ===".
+a list called "range_result" is [].
+append each n from 1 to 4 to range_result.
+print range_result's length.
+For each n in range_result,
+  print the n.
+
+(Test 9: Multiple loop expansions in sequence)
+print "=== Test 9: Sequential loops ===".
+print "First loop:".
+print each n from [1, 2].
+print "Second loop:".
+print each n from [3, 4].
+
+(Test 10: Loop expansion with function that returns computed value)
+print "=== Test 10: Square function with loop ===".
+print "square" of each n from [2, 3, 4].
+

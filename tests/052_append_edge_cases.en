@@ -1,0 +1,37 @@
+(Test append edge cases)
+
+(Test 1: Append to list with single element)
+a list called "single" is [99].
+append 100 to single.
+print "After append to single:".
+print single's length.
+print element 1 of single.
+print element 2 of single.
+
+(Test 2: Append to list with a few elements)
+a list called "few" is [1, 2, 3].
+append 4 to few.
+print "After append to few:".
+print few's length.
+print few's last.
+
+(Test 3: Append variable value)
+a list called "vars" is [].
+a number called "val" is 42.
+append val to vars.
+print "After append variable:".
+print vars's length.
+print element 1 of vars.
+
+(Test 4: Append multiple values in sequence)
+a list called "seq" is [].
+append 1 to seq.
+append 2 to seq.
+append 3 to seq.
+append 4 to seq.
+append 5 to seq.
+print "After append sequence:".
+print seq's length.
+print seq's first.
+print seq's last.
+

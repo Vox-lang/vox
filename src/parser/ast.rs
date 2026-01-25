@@ -335,6 +335,12 @@ pub enum Statement {
         value: Expr,
     },
     
+    // Append value to list
+    ListAppend {
+        list: String,
+        value: Expr,
+    },
+    
     FileOpen {
         name: String,
         path: Expr,

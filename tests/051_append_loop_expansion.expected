@@ -1,0 +1,15 @@
+After append each directly:
+3
+10
+20
+30
+After append from range:
+5
+1
+2
+3
+4
+5
+After append from empty:
+1
+100

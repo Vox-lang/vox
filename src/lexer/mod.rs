@@ -5,7 +5,7 @@ use std::str::Chars;
 pub enum Token {
     // Actions
     Print, Set, Create, Add, Subtract, Multiply, Divide, Increment, Decrement,
-    Call, Allocate, Free,
+    Call, Allocate, Free, Append,
     
     // File I/O Actions
     Open, Read, Write, Close, Delete, Exists, Resize,
@@ -244,6 +244,7 @@ impl Token {
             Token::Call => Some("call"),
             Token::Allocate => Some("allocate"),
             Token::Free => Some("free"),
+            Token::Append => Some("append"),
             // File I/O Actions
             Token::Open => Some("open"),
             Token::Read => Some("read"),
@@ -720,6 +721,7 @@ impl<'a> Lexer<'a> {
             "call" | "invoke" | "run" => Token::Call,
             "allocate" => Token::Allocate,
             "free" | "release" | "deallocate" => Token::Free,
+            "append" | "push" => Token::Append,
             "if" => Token::If,
             "when" => Token::When,
             "then" => Token::Then,

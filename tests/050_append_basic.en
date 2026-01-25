@@ -1,0 +1,40 @@
+(Test basic append operations)
+
+(Test 1: Append single number to empty list)
+a list called "nums" is [].
+append 42 to nums.
+print "After append 42:".
+print nums's length.
+print element 1 of nums.
+
+(Test 2: Append single text to empty list)
+a list called "words" is [].
+append "hello" to words.
+print "After append hello:".
+print words's length.
+print element 1 of words.
+
+(Test 3: Append single boolean to empty list)
+a list called "flags" is [].
+append true to flags.
+print "After append true:".
+print flags's length.
+print element 1 of flags.
+
+(Test 4: Append to non-empty list)
+a list called "items" is [1, 2, 3].
+append 4 to items.
+print "After append 4 to [1,2,3]:".
+print items's length.
+print items's last.
+
+(Test 5: Append multiple times in sequence)
+a list called "seq" is [].
+append 10 to seq.
+append 20 to seq.
+append 30 to seq.
+print "After three appends:".
+print seq's length.
+For each n in seq,
+  print the n.
+

@@ -1,6 +1,6 @@
 # EC Language Specification
 
-**Version 0.1.2**
+**Version 0.2.0**
 
 This document defines the syntax and semantics of EC (sentence based code).
 
@@ -14,12 +14,13 @@ This document defines the syntax and semantics of EC (sentence based code).
 4. [Functions](#functions)
 5. [Expressions](#expressions)
 6. [Control Flow](#control-flow)
-7. [Input/Output](#inputoutput)
-8. [Operators](#operators)
-9. [Keywords](#keywords)
-10. [Libraries and Imports](#libraries-and-imports)
-11. [Compiler Usage](#compiler-usage)
-12. [Grammar Summary](#grammar-summary)
+7. [Lists and Collections](#lists-and-collections)
+8. [Input/Output](#inputoutput)
+9. [Operators](#operators)
+10. [Keywords](#keywords)
+11. [Libraries and Imports](#libraries-and-imports)
+12. [Compiler Usage](#compiler-usage)
+13. [Grammar Summary](#grammar-summary)
 
 ---
 
@@ -607,6 +608,241 @@ If arguments's empty then,
 Increment the counter.
 Decrement the value.
 ```
+
+---
+
+## Lists and Collections
+
+### List Literals
+
+Create lists with square brackets containing comma-separated values:
+
+```
+a list called "numbers" is [1, 2, 3].
+a list called "names" is ["Alice", "Bob", "Charlie"].
+a list called "mixed" is [1, "two", 3].
+a list called "empty" is [].
+```
+
+**Key points:**
+- Lists are **1-indexed** (like natural language: "the first element", "the second element")
+- Lists can contain mixed types
+- Empty lists `[]` are allowed
+- Lists are allocated on the heap with automatic memory management
+
+### List Properties
+
+Access list properties using the `'s` syntax:
+
+```
+a list called "items" is [10, 20, 30].
+
+print items's length.      (prints 3)
+print items's size.        (same as length)
+print items's first.       (prints 10)
+print items's last.        (prints 30)
+print items's empty.       (prints false)
+```
+
+| Property | Description | Type |
+|----------|-------------|------|
+| `length` | Number of items in the list | Number |
+| `size` | Same as length | Number |
+| `empty` | Whether the list has no items | Boolean |
+| `first` | The first item in the list | Item |
+| `last` | The last item in the list | Item |
+
+### List Element Access
+
+Access elements by index (1-indexed):
+
+```
+a list called "numbers" is [10, 20, 30].
+
+Print element 1 of numbers.   (prints 10)
+Print element 2 of numbers.   (prints 20)
+Print numbers's first.        (prints 10)
+Print numbers's last.         (prints 30)
+
+(Using variable index)
+a number called "i" is 2.
+Print element i of numbers.   (prints 20)
+```
+
+**Bounds checking:**
+- Out-of-bounds access sets an error flag and returns 0
+- Errors can be caught with `On error`
+
+```
+a list called "items" is [1, 2, 3].
+a number called "bad" is element 100 of items.
+On error print "Cannot access element 100 - out of bounds!".
+```
+
+### Appending to Lists
+
+Add elements to the end of a list using the `append` keyword:
+
+```
+a list called "numbers" is [1, 2, 3].
+append 4 to numbers.
+append 5 to numbers.
+print numbers's length.       (prints 5)
+```
+
+**Key features:**
+- **Dynamic growth**: Lists automatically allocate more memory as needed
+- **Type tracking**: The first append determines the list's element type for printing
+- **Works with any value**: integers, strings, booleans, variables, expressions
+
+**Examples:**
+
+```
+(Append integers)
+a list called "nums" is [].
+append 10 to nums.
+append 20 to nums.
+
+(Append strings)
+a list called "words" is [].
+append "hello" to words.
+append "world" to words.
+
+(Append from variables)
+a number called "x" is 42.
+append x to nums.
+
+(Append in loops)
+a list called "squares" is [].
+a number called "i" is 1.
+While i is less than or equal to 5,
+  append i multiply i to squares,
+  increment i.
+```
+
+### Loop Expansion with Collections
+
+The `each...from` syntax works with lists and ranges to execute an action for each item:
+
+```
+(Print each item from a list)
+print each number from [1, 2, 3].
+
+(Print each item from a range)
+print each number from 1 to 10.
+
+(Call a function for each item)
+"double" of each n from [1, 2, 3].
+
+(Append each item from a collection)
+a list called "source" is [1, 2, 3].
+a list called "dest" is [].
+append each x from source to dest.
+```
+
+**Syntax:** `<action> each <variable> from <collection>`
+
+**Supported collections:**
+- **Lists**: `[1, 2, 3]`, any list variable
+- **Ranges**: `1 to 10`, `start to end` (inclusive)
+- **Arguments**: `arguments's all`
+
+**Works with any action:**
+- `print each X from Y` - print each item
+- `"function" of each X from Y` - call function for each item
+- `append each X from Y to Z` - append each item to a list
+- `open ... at each X from Y` - open file for each path
+
+**Examples:**
+
+```
+(Print each from list)
+print each n from [10, 20, 30].
+
+(Print each from range)
+print each n from 1 to 5.
+
+(Function call with loop expansion)
+To "double" of a number called "x".
+  Return a number, x multiply 2.
+
+print "double" of each n from [1, 2, 3].
+
+(Append from range)
+a list called "range_list" is [].
+append each n from 1 to 5 to range_list.
+
+(Append from list)
+a list called "source" is [10, 20, 30].
+a list called "dest" is [].
+append each x from source to dest.
+
+(Empty collection - does nothing)
+print each n from [].
+```
+
+**Variable shadowing:**
+
+Loop variables shadow outer variables with the same name. After the loop, the variable retains the value from the last iteration:
+
+```
+a number called "x" is 100.
+print the x.                  (prints 100)
+
+print each x from [1, 2, 3].  (prints 1, 2, 3)
+
+print the x.                  (prints 3 - last iteration value)
+```
+
+### Conditional Output with `but if`
+
+Use `but if` to conditionally override output within loops:
+
+```
+(Print numbers, but override with words for certain values)
+print each number from 1 to 15,
+    but if the number modulo 6 is equal to 0 print "fizzbuzz",
+    but if the number modulo 2 is equal to 0 print "fizz",
+    but if the number modulo 3 is equal to 0 print "buzz".
+
+(Simple even/odd labeling)
+print each number from 1 to 10,
+    but if the number modulo 2 is equal to 0 print "even".
+```
+
+**How it works:**
+1. The default action is to print the loop variable
+2. Each `but if` clause is checked in order
+3. If a condition is true, that value is printed instead
+4. If no conditions match, the default value is printed
+
+**Key points:**
+- Conditions are checked in order - first match wins
+- Multiple `but if` clauses can be chained
+- Works with both ranges and collections
+- The loop variable is available in conditions
+
+### Inline Value Substitution with `treating`
+
+The `treating X as Y` clause performs inline value substitution:
+
+```
+(Replace "-" with "/dev/stdin" for each filename)
+open a file for reading called source at each filename from arguments's all treating "-" as "/dev/stdin",
+  read from source into content,
+  write content to output,
+  close source.
+
+(Print with default value)
+print each name from names treating "" as "Anonymous".
+
+(Call function with substitution)
+"process" of each file from files treating "-" as "/dev/stdin".
+```
+
+**Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
+
+If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration.
 
 ---
 
@@ -1488,6 +1724,7 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Break` | Exit loop |
 | `Continue` | Skip to next iteration |
 | `Exit` | Terminate program with exit code |
+| `Append` | Add element to list |
 
 ### Connectors
 
@@ -1657,11 +1894,15 @@ ec main.en --link libmath --lib-path ./libs
 program     ::= statement*
 statement   ::= print_stmt | var_decl | assignment | if_stmt | while_stmt 
               | for_stmt | func_def | increment | decrement | break | continue
+              | append_stmt
 
 var_decl    ::= ("a" | "an") type "called" name "is" expr "."
               | ("Set" | "Create") "the"? type? "called"? name "to" expr "."
 
 assignment  ::= "the" name "is" expr "."
+
+append_stmt ::= "append" expr "to" name "."
+              | "append" "each" name "from" expr "to" name ("treating" expr "as" expr)? "."
 
 func_def    ::= "To" string "with" params "." "Return" "a" type "," expr "."
 params      ::= param ("and" param)*
@@ -1676,9 +1917,16 @@ if_stmt     ::= ("If" | "When") condition "then" "," block
 
 while_stmt  ::= "While" condition "," block "."
 
-for_stmt    ::= "For each number from" expr "to" expr "," block "."
+for_stmt    ::= "For each" name "from" expr "to" expr "," block "."
+              | "For each" name "in" expr "," block "."
 
 print_stmt  ::= "Print" expr ("," "but if" condition "print" expr)* "."
+              | "Print" "each" name "from" expr ("treating" expr "as" expr)? 
+                ("," "but if" condition "print" expr)* "."
+              | "Print" string "of" "each" name "from" expr ("treating" expr "as" expr)?
+                ("," "but if" condition "print" expr)* "."
+
+loop_expansion ::= "each" name "from" expr ("treating" expr "as" expr)?
 
 expr        ::= or_expr
 or_expr     ::= and_expr ("or" and_expr)*

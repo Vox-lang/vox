@@ -1,0 +1,37 @@
+(Test loop expansion extended examples from docs)
+
+(Test 1: Empty collection - should do nothing)
+print "Before empty loop".
+For each x in [],
+  print the x.
+print "After empty loop".
+
+(Test 2: Append each from empty list - should do nothing)
+a list called "result" is [100].
+append each x from [] to result.
+print "After append from empty:".
+print result's length.
+print element 1 of result.
+
+(Test 3: Loop expansion with range)
+print "Range loop:".
+For each n from 1 to 3,
+  print the n.
+
+(Test 4: Variable shadowing - loop variable shadows outer)
+a number called "x" is 999.
+print "Before loop x:".
+print the x.
+For each x in [1, 2, 3],
+  print the x.
+print "After loop x:".
+print the x.
+
+(Test 5: Append each from range)
+a list called "range_nums" is [].
+append each n from 1 to 4 to range_nums.
+print "Range append result:".
+print range_nums's length.
+For each n in range_nums,
+  print the n.
+

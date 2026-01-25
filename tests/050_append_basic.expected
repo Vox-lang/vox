@@ -1,0 +1,17 @@
+After append 42:
+1
+42
+After append hello:
+1
+hello
+After append true:
+1
+1
+After append 4 to [1,2,3]:
+4
+4
+After three appends:
+3
+10
+20
+30

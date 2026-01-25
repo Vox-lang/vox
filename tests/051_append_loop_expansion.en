@@ -1,0 +1,25 @@
+(Test append with loop expansion)
+
+(Test 1: Append each element directly from list)
+a list called "copied" is [].
+append each x from [10, 20, 30] to copied.
+print "After append each directly:".
+print copied's length.
+For each n in copied,
+  print the n.
+
+(Test 2: Append from range)
+a list called "range_list" is [].
+append each n from 1 to 5 to range_list.
+print "After append from range:".
+print range_list's length.
+For each n in range_list,
+  print the n.
+
+(Test 3: Empty collection append - should do nothing)
+a list called "empty_test" is [100].
+append each x from [] to empty_test.
+print "After append from empty:".
+print empty_test's length.
+print element 1 of empty_test.
+

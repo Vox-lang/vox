@@ -1,0 +1,50 @@
+=== Test 1: Function call with loop expansion ===
+2
+4
+6
+=== Test 2: Print each from list ===
+10
+20
+30
+=== Test 3: Append with loop expansion ===
+1
+2
+3
+=== Test 4: Empty collection ===
+Before empty
+After empty
+=== Test 5: Variable shadowing ===
+x before loop:
+100
+1
+2
+3
+x after loop:
+3
+=== Test 6: Range loop expansion ===
+1
+2
+3
+4
+5
+=== Test 7: Function with range loop ===
+2
+4
+6
+=== Test 8: Append from range ===
+4
+1
+2
+3
+4
+=== Test 9: Sequential loops ===
+First loop:
+1
+2
+Second loop:
+3
+4
+=== Test 10: Square function with loop ===
+4
+9
+16
