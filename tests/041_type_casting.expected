@@ -8,6 +8,8 @@ Zero to boolean:
 0
 Non-zero to boolean: 
 1
+42 as float: 
+42.0
 Padded hour: 
 09
 Padded minute: 

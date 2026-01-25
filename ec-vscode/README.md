@@ -1,15 +1,28 @@
 # EC - VSCode Extension
 
-Syntax highlighting for EC (sentence based code) (`.en` files).
+> **Syntax highlighting for EC (sentence based code)**
+
+EC is a systems-level programming language with natural language syntax. This extension provides rich syntax highlighting for `.en` and `.eng` files.
+
+## Quick Setup
+
+```bash
+# Run the auto-setup script (Linux/macOS)
+./setup.sh
+```
+
+Or see [Manual Installation](#installation-before-marketplace-release) below.
 
 ## Features
 
-- **Syntax highlighting** for EC language constructs
-- **Comment support** - parenthetical comments `(like this)`
+- **Full syntax highlighting** for all EC language constructs
+- **Comment support** — parenthetical comments `(like this)` with nesting
 - **Auto-closing pairs** for brackets, parentheses, and quotes
 - **Code folding** for function definitions
-- **Creative highlighting** for unique EC constructs like `each` (loop expansion) and `but` (conditional branching)
-- **Format string interpolation highlighting** - the content inside `{...}` is highlighted distinctly
+- **Format string interpolation** — `{variable}` inside strings gets distinct highlighting
+- **Special highlighting** for unique EC constructs:
+  - `each` (loop expansion) — teal + bold
+  - `but` (conditional branching) — pink + bold
 
 ## Highlighted Elements
 
@@ -17,16 +30,17 @@ Syntax highlighting for EC (sentence based code) (`.en` files).
 |---------|---------|-------|
 | `each` keyword | `print each number from 1 to 10` | **Teal + Bold** |
 | `but` keyword | `but if x is true` | **Pink + Bold** |
+| Format interpolation | `"Hello {name}!"` → `name` | **Yellow + Bold** |
 | Control keywords | `If`, `While`, `For`, `Return` | Purple |
-| Action keywords | `Print`, `Set`, `Create` | Purple |
-| Types | `number`, `text`, `boolean`, `buffer` | Teal |
+| Action keywords | `Print`, `Set`, `Create`, `treating`, `as` | Purple |
+| Types | `number`, `text`, `boolean`, `buffer`, `float`, `list` | Teal |
 | Strings | `"Hello, World!"` | Green |
-| Numbers | `42`, `3.14` | Orange |
+| Numbers | `42`, `3.14`, `-5` | Orange |
 | Booleans | `true`, `false` | Blue |
 | Comments | `(this is a comment)` | Gray/Italic |
 | Function definitions | `To "function name"` | Yellow + Bold |
 | Function calls | `"function" of x` | Yellow |
-| I/O keywords | `Open`, `Read`, `Write`, `Close` | Yellow |
+| I/O keywords | `Open`, `Read`, `Write`, `Close` | Light Green |
 | Properties | `x's absolute`, `buf's size` | Light Blue |
 | Articles | `a`, `an`, `the`, `called` | Gray (dimmed) |
 
@@ -118,6 +132,7 @@ windsurf --install-extension ec-0.1.0.vsix
 
 ```
 ec-vscode/
+├── setup.sh                     # Auto-setup script for new developers
 ├── package.json                 # Extension manifest + color customizations
 ├── language-configuration.json  # Brackets, comments, folding
 ├── syntaxes/
@@ -129,7 +144,14 @@ ec-vscode/
 
 ## Usage
 
-Once installed, simply open any `.en` file and syntax highlighting will be applied automatically.
+Once installed, simply open any `.en` or `.eng` file and syntax highlighting will be applied automatically.
+
+The language will appear as **"EC"** (or "English") in the language picker.
+
+## Contributing
+
+The grammar is defined in `syntaxes/english.tmLanguage.json` using TextMate patterns.
+Color customizations are in `package.json` under `configurationDefaults.editor.tokenColorCustomizations`.
 
 ## License
 

@@ -2337,6 +2337,9 @@ impl CodeGenerator {
                         // Float to integer - truncate using cvttsd2si
                         if self.is_float_expr(value) {
                             self.emit_indent("; Cast float to integer");
+                            // Float expressions are represented as 64-bit float bits in RAX.
+                            // Ensure XMM0 has the correct value before converting.
+                            self.emit_indent("RAX_TO_XMM0");
                             self.emit_indent("cvttsd2si rax, xmm0");
                         }
                         // Other types stay as-is (already integer)
@@ -2346,6 +2349,9 @@ impl CodeGenerator {
                         if !self.is_float_expr(value) {
                             self.emit_indent("; Cast integer to float");
                             self.emit_indent("cvtsi2sd xmm0, rax");
+                            // Keep the invariant that expressions leave their value in RAX.
+                            // For floats, RAX holds the IEEE-754 bits.
+                            self.emit_indent("XMM0_TO_RAX");
                             self.uses_floats = true;
                         }
                     }

@@ -14,6 +14,12 @@ Print 0 as a boolean.
 Print "Non-zero to boolean: ".
 Print 42 as a boolean.
 
+(Number to float conversion - this is broken)
+a number called "qty" is 42.
+a float called "qtyF" is the qty as a float.
+Print "42 as float: ".
+Print the qtyF.
+
 (Padded text formatting)
 a number called "that hour" is 9.
 a number called "that minute" is 5.
