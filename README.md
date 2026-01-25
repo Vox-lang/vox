@@ -3,6 +3,7 @@
 ![Open issues](https://img.shields.io/github/issues/eng-c/ec?style=flat-square)
 ![Repo size](https://img.shields.io/github/repo-size/eng-c/ec?style=flat-square)
 ![Last commit](https://img.shields.io/github/last-commit/eng-c/ec?style=flat-square)
+![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)
 
 **EC** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly — without a **resident runtime system**, virtual machine, or standard library.
 
