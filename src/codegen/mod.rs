@@ -917,12 +917,24 @@ impl CodeGenerator {
                 // Track element type from appended value if not already set
                 if !self.list_element_types.contains_key(list) {
                     let elem_type = match value {
-                        Expr::StringLit(_) => VarType::String,
+                        Expr::StringLit(s) => {
+                            // If this string literal is a buffer variable, the list gets strings
+                            if self.variable_types.get(s) == Some(&VarType::Buffer) {
+                                VarType::String
+                            } else {
+                                VarType::String
+                            }
+                        }
                         Expr::IntegerLit(_) => VarType::Integer,
                         Expr::FloatLit(_) => VarType::Float,
                         Expr::BoolLit(_) => VarType::Boolean,
                         Expr::Identifier(name) => {
-                            self.variable_types.get(name).cloned().unwrap_or(VarType::Unknown)
+                            // Buffer variables produce string elements when appended
+                            match self.variable_types.get(name) {
+                                Some(VarType::Buffer) => VarType::String,
+                                Some(t) => t.clone(),
+                                None => VarType::Unknown,
+                            }
                         }
                         _ => VarType::Unknown,
                     };
@@ -933,8 +945,25 @@ impl CodeGenerator {
                 
                 // Get list pointer
                 if let Some(offset) = self.get_var(list) {
+                    // Check if the value is a buffer variable
+                    let is_buffer_value = match value {
+                        Expr::StringLit(s) | Expr::Identifier(s) => {
+                            self.variable_types.get(s) == Some(&VarType::Buffer)
+                        }
+                        _ => false,
+                    };
+                    
                     // Evaluate value first and save it
                     self.generate_expr(value);
+                    
+                    if is_buffer_value {
+                        // For buffer values, extract string data and duplicate it
+                        self.emit_indent("mov rdi, rax  ; buffer struct pointer");
+                        self.emit_indent("call _buffer_data  ; get data pointer");
+                        self.emit_indent("mov rdi, rax  ; source string");
+                        self.emit_indent("call _strdup  ; duplicate string");
+                    }
+                    
                     self.emit_indent("push rax  ; save value to append");
                     
                     // Get list pointer
@@ -1025,6 +1054,8 @@ impl CodeGenerator {
                     self.emit_indent("test rdi, rdi");
                     self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
                     self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+                    // Reset buffer length before reading (read replaces, not appends)
+                    self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_into_buffer  ; auto-grows if needed");
                     // Update buffer pointer (may have changed if grown)
                     self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
@@ -1547,8 +1578,32 @@ impl CodeGenerator {
             }
             
             Expr::StringLit(s) => {
-                let label = self.add_string(s);
-                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                // Check if this string literal is actually a variable reference
+                if let Some(offset) = self.get_var(s) {
+                    self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                    let var_type = self.variable_types.get(s).cloned();
+                    match var_type {
+                        Some(VarType::Buffer) => {
+                            self.emit_indent("call _buffer_data");
+                            self.emit_indent("mov rdi, rax");
+                            self.emit_indent("PRINT_CSTR rdi");
+                        }
+                        Some(VarType::String) => {
+                            self.emit_indent("PRINT_CSTR rdi");
+                        }
+                        Some(VarType::Float) => {
+                            self.emit_indent("movq xmm0, rdi");
+                            self.emit_indent("PRINT_FLOAT");
+                            self.uses_floats = true;
+                        }
+                        _ => {
+                            self.emit_indent("PRINT_INT rdi");
+                        }
+                    }
+                } else {
+                    let label = self.add_string(s);
+                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                }
             }
             
             Expr::IntegerLit(n) => {
@@ -1657,8 +1712,13 @@ impl CodeGenerator {
             }
             
             Expr::StringLit(s) => {
-                let label = self.add_string(s);
-                self.emit_indent(&format!("lea rax, [{}]", label));
+                // Check if this string literal is actually a variable reference
+                if let Some(offset) = self.get_var(s) {
+                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                } else {
+                    let label = self.add_string(s);
+                    self.emit_indent(&format!("lea rax, [{}]", label));
+                }
             }
             
             Expr::Identifier(name) => {
@@ -1901,6 +1961,16 @@ impl CodeGenerator {
                         self.emit_indent("movzx rax, al");
                     }
                     Property::Empty => {
+                        // For buffer/list variables, check the size field at offset 8
+                        let is_buffer_or_list = match value.as_ref() {
+                            Expr::StringLit(s) | Expr::Identifier(s) => {
+                                matches!(self.variable_types.get(s), Some(VarType::Buffer) | Some(VarType::List))
+                            }
+                            _ => false,
+                        };
+                        if is_buffer_or_list {
+                            self.emit_indent("mov rax, [rax + 8]  ; get size/length");
+                        }
                         self.emit_indent("test rax, rax");
                         self.emit_indent("setz al");
                         self.emit_indent("movzx rax, al");
@@ -2574,6 +2644,16 @@ impl CodeGenerator {
                         self.emit_indent(&format!("jge {}", false_label));
                     }
                     Property::Empty => {
+                        // For buffer/list variables, check the size field at offset 8
+                        let is_buffer_or_list = match value.as_ref() {
+                            Expr::StringLit(s) | Expr::Identifier(s) => {
+                                matches!(self.variable_types.get(s), Some(VarType::Buffer) | Some(VarType::List))
+                            }
+                            _ => false,
+                        };
+                        if is_buffer_or_list {
+                            self.emit_indent("mov rax, [rax + 8]  ; get size/length");
+                        }
                         self.emit_indent("test rax, rax");
                         self.emit_indent(&format!("jnz {}", false_label));
                     }
