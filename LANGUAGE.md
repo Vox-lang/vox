@@ -516,6 +516,15 @@ If <condition> then, <statement>. Otherwise, <statement>.
 If <condition> then, <statement>. But if <condition> then, <statement>. Otherwise, <statement>.
 ```
 
+**Sentence consumption rule (important):**
+- Each `then,` / `but if ... then,` / `otherwise,` branch consumes actions until the sentence ends.
+- Separate multiple actions in a branch with commas.
+- Use a period to end the full `if` sentence.
+
+```
+If ready then, print "a", print "b", print "c".
+```
+
 **Alternative keywords:**
 - `When` can replace `If`
 - `Else` can replace `Otherwise`

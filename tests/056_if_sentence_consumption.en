@@ -1,0 +1,13 @@
+(Ensure if branches consume entire sentences with comma-separated actions)
+
+If true then,
+    Print "A",
+    Print "B",
+    Print "C".
+
+If false then,
+    Print "X",
+    Print "Y",
+    Print "Z".
+
+Print "DONE".

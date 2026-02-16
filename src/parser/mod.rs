@@ -304,6 +304,9 @@ impl Parser {
         };
         
         // Check for conditional print patterns: "print X, but if Y" or "print X but if Y"
+        // IMPORTANT: do not consume a plain trailing comma here, because it may belong
+        // to an enclosing sentence-consuming construct (if/while/for/on error).
+        let conditional_start_pos = self.pos;
         if matches!(self.current(), Token::But | Token::Comma) {
             self.advance();
             self.skip_noise();
@@ -317,6 +320,10 @@ impl Parser {
             if *self.current() == Token::If {
                 return self.parse_conditional_print(value);
             }
+
+            // Not a conditional-print continuation; restore parser position so
+            // outer constructs can consume the separator normally.
+            self.pos = conditional_start_pos;
         }
         
         Ok(Statement::Print { value, without_newline })
@@ -3233,6 +3240,18 @@ impl Parser {
             Token::Arguments | Token::Argument => {
                 self.advance();
                 self.skip_noise();
+
+                // arguments has <value>
+                if let Token::Identifier(ref id) = self.current() {
+                    if id.to_lowercase() == "has" {
+                        self.advance();
+                        self.skip_noise();
+                        let value = self.parse_expression()?;
+                        return Ok(Expr::ArgumentHas {
+                            value: Box::new(value),
+                        });
+                    }
+                }
                 
                 if *self.current() == Token::Apostrophe {
                     self.advance();

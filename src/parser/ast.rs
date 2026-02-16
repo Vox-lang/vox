@@ -87,6 +87,9 @@ pub enum Expr {
     ArgumentLast,       // last user argument (or program name if no args)
     ArgumentEmpty,      // true if argc <= 1 (no user args)
     ArgumentAll,        // all user arguments as a list (argv[1..])
+    ArgumentHas {
+        value: Box<Expr>,
+    },
     
     // Inline substitution: expr treating "X" as "Y"
     TreatingAs {

@@ -2395,6 +2395,46 @@ impl CodeGenerator {
                 // If used elsewhere, we can't return a list directly
                 self.emit_indent("; ArgumentAll - handled by ForEach");
             }
+
+            Expr::ArgumentHas { value } => {
+                let loop_label = self.new_label("arg_has_loop");
+                let found_label = self.new_label("arg_has_found");
+                let done_label = self.new_label("arg_has_done");
+
+                // Evaluate target value to match and keep it in rbx
+                self.generate_expr(value);
+                self.emit_indent("mov rbx, rax  ; target argument value");
+
+                // argc in rcx, start index in r8 (skip argv[0])
+                self.emit_indent("call _get_argc");
+                self.emit_indent("mov rcx, rax  ; argc");
+                self.emit_indent("mov r8, 1  ; start at argv[1]");
+                self.emit_indent("xor rax, rax  ; default result: false");
+
+                self.emit(&format!("{}:", loop_label));
+                self.emit_indent("cmp r8, rcx");
+                self.emit_indent(&format!("jge {}", done_label));
+
+                // current arg = _get_arg(index)
+                self.emit_indent("mov rdi, r8");
+                self.emit_indent("call _get_arg");
+
+                // compare current arg with target
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("mov rsi, rbx");
+                self.emit_indent("call _str_eq");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jnz {}", found_label));
+
+                self.emit_indent("inc r8");
+                self.emit_indent(&format!("jmp {}", loop_label));
+
+                self.emit(&format!("{}:", found_label));
+                self.emit_indent("mov rax, 1");
+                self.emit_indent(&format!("jmp {}", done_label));
+
+                self.emit(&format!("{}:", done_label));
+            }
             
             Expr::TreatingAs { value, match_value, replacement } => {
                 // Inline substitution: if value == match_value, use replacement

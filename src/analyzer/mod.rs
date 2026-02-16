@@ -420,6 +420,12 @@ impl Analyzer {
             Expr::ArgumentAll => {
                 self.deps.uses_args = true;
             }
+
+            Expr::ArgumentHas { value } => {
+                self.deps.uses_args = true;
+                self.deps.uses_strings = true;
+                self.analyze_expr(value);
+            }
             
             Expr::TreatingAs { value, match_value, replacement } => {
                 self.analyze_expr(value);

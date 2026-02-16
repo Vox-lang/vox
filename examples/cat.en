@@ -2,17 +2,28 @@
 (Uses loop expansion: "open ... at each X from Y" iterates over all arguments)
 
 Open a file for writing called "output" at "/dev/stdout".
-Create a buffer called "content".
+Create a buffer called "content" with size 4096.
+
+If arguments has "--help" then,
+    Print "Usage: cat [OPTION]... [FILE]...",
+    Print "Concatenate FILE(s) to standard output.",
+    Print "With no FILE, or when FILE is -, read standard input.",
+    Exit 0.
+
+If arguments has "--version" then,
+    Print "cat (ec) 0.1.2",
+    Exit 0.
 
 If arguments's empty then,
     open a file for reading called "source" at "/dev/stdin",
     read from source into content,
-    write content to output,
-    close source,
-    exit 0.
+    while content is not empty,
+        write content to output,
+        read from source into content.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
   read from source into content,
-  write content to output,
-  close source.
+  while content is not empty,
+    write content to output,
+    read from source into content.
