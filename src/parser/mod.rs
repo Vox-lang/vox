@@ -137,6 +137,47 @@ mod file_line_read_and_seek_tests {
             other => panic!("Expected While, got {:?}", other),
         }
     }
+
+    #[test]
+    fn test_parse_zero_param_function_def_with_comma_signature() {
+        let input = r#"
+            To "show version",
+                Exit 0.
+        "#;
+
+        let result = parse_input(input).expect("zero-parameter function definition should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { name, params, body, .. } => {
+                assert_eq!(name, "show version");
+                assert!(params.is_empty(), "expected no parameters");
+                assert_eq!(body.len(), 1, "expected single statement function body");
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_zero_param_function_call_statement() {
+        let input = r#"
+            To "show version",
+                Exit 0.
+
+            "show version".
+        "#;
+
+        let result = parse_input(input).expect("zero-parameter function definition and call should parse");
+        assert_eq!(result.statements.len(), 2);
+
+        match &result.statements[1] {
+            Statement::FunctionCall { name, args } => {
+                assert_eq!(name, "show version");
+                assert!(args.is_empty(), "expected no call arguments");
+            }
+            other => panic!("Expected FunctionCall, got {:?}", other),
+        }
+    }
 }
 
 impl Parser {
@@ -2610,8 +2651,8 @@ impl Parser {
         }
         
         self.skip_noise();
-        // Period after function signature is optional
-        if *self.current() == Token::Period {
+        // Period or comma after function signature are optional.
+        if matches!(self.current(), Token::Period | Token::Comma) {
             self.advance();
             self.skip_noise();
         }
@@ -2651,6 +2692,11 @@ impl Parser {
         // Continue parsing body until paragraph break
         while !matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
             self.skip_noise();
+            if matches!(self.current(), Token::Comma) {
+                self.advance();
+                self.skip_noise();
+                continue;
+            }
             if matches!(self.current(), Token::Period) {
                 self.advance();
                 self.skip_noise();
@@ -2660,6 +2706,12 @@ impl Parser {
             }
             let stmt = self.parse_statement()?;
             body.push(stmt);
+
+            self.skip_noise();
+            if *self.current() == Token::Comma {
+                self.advance();
+                self.skip_noise();
+            }
         }
         
         // Consume paragraph break

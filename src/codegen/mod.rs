@@ -11,6 +11,7 @@ pub struct CodeGenerator {
     float_counter: usize,
     variables: HashMap<String, i64>,
     variable_types: HashMap<String, VarType>,
+    global_constants: HashMap<String, Expr>,
     list_element_types: HashMap<String, VarType>,
     file_writable: HashMap<String, bool>,
     stack_offset: i64,
@@ -70,6 +71,7 @@ impl CodeGenerator {
             float_counter: 0,
             variables: HashMap::new(),
             variable_types: HashMap::new(),
+            global_constants: HashMap::new(),
             list_element_types: HashMap::new(),
             file_writable: HashMap::new(),
             stack_offset: 0,
@@ -141,6 +143,44 @@ impl CodeGenerator {
     fn get_var(&self, name: &str) -> Option<i64> {
         self.variables.get(name).copied()
     }
+
+    fn collect_global_constants(&mut self, program: &Program) {
+        self.global_constants.clear();
+        for stmt in &program.statements {
+            if let Statement::VarDecl { name, value: Some(expr), .. } = stmt {
+                if matches!(expr, Expr::StringLit(_) | Expr::IntegerLit(_) | Expr::BoolLit(_)) {
+                    self.global_constants.insert(name.clone(), expr.clone());
+                }
+            }
+        }
+    }
+
+    fn emit_global_constant_format_fallback(&mut self, name: &str, format: Option<&String>) -> bool {
+        let Some(expr) = self.global_constants.get(name).cloned() else {
+            return false;
+        };
+
+        match expr {
+            Expr::StringLit(s) => {
+                let label = self.add_string(&s);
+                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                true
+            }
+            Expr::IntegerLit(n) => {
+                self.emit_indent(&format!("mov rdi, {}", n));
+                let fmt_spec = self.parse_format_spec(format.map(|s| s.as_str()));
+                self.emit_formatted_value(Some(VarType::Integer), fmt_spec);
+                true
+            }
+            Expr::BoolLit(b) => {
+                self.emit_indent(&format!("mov rdi, {}", if b { 1 } else { 0 }));
+                let fmt_spec = self.parse_format_spec(format.map(|s| s.as_str()));
+                self.emit_formatted_value(Some(VarType::Integer), fmt_spec);
+                true
+            }
+            _ => false,
+        }
+    }
     
     fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
@@ -195,6 +235,8 @@ impl CodeGenerator {
     }
     
     pub fn generate(&mut self, program: &Program) -> String {
+        self.collect_global_constants(program);
+
         for stmt in &program.statements {
             self.generate_statement(stmt);
         }
@@ -1634,6 +1676,8 @@ impl CodeGenerator {
                                 // Regular variable lookup
                                 self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                                 var_type = self.variable_types.get(name).cloned();
+                            } else if self.emit_global_constant_format_fallback(name, format.as_ref()) {
+                                continue;
                             } else {
                                 // Unknown - print placeholder
                                 let placeholder = format!("{{{}}}", name);
@@ -1692,8 +1736,10 @@ impl CodeGenerator {
                         }
                     }
                 } else {
-                    let label = self.add_string(s);
-                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                    if !self.emit_global_constant_format_fallback(s, None) {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                    }
                 }
             }
             

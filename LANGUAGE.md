@@ -1,6 +1,6 @@
 # EC Language Specification
 
-**Version 0.1.3**
+**Version 0.1.4**
 
 This document defines the syntax and semantics of EC (sentence based code).
 
@@ -296,6 +296,16 @@ the counter is the counter add 1.
 To "<function name>" with a <type> called "<param1>" and a <type> called "<param2>". Return a <type>, <expression>.
 ```
 
+No-parameter functions are also valid:
+
+```
+To "show version".
+  Print "1.0.0".
+
+To ping.
+  Print "pong".
+```
+
 **Examples:**
 ```
 To "add numbers" with a number called "x" and a number called "y". Return a number, the x add y.
@@ -305,10 +315,16 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 
 **Rules:**
 - Function name can be quoted (`"add numbers"`) or unquoted single word (`add`)
-- Parameters introduced with `with` or `of` (both work identically)
+- Parameters are optional. If present, introduce them with `with` or `of` (both work identically)
 - Parameters use `a <type> called "<name>"` syntax (name can be unquoted if single word)
 - Multiple parameters joined with `and`
 - Return type follows `Return a <type>,`
+
+### Function Scope
+
+- Variables declared at top level are global and can be used inside functions.
+- Variables declared inside a function are local to that function and are not available at top level.
+- Referencing an unknown variable inside a function is a compile-time error.
 
 ### Function Calls
 
@@ -322,8 +338,15 @@ calculate with x and y
 
 **Rules:**
 - Function name can be quoted (`"add numbers"`) or unquoted single word (`calculate`)
-- Arguments follow `of`, `to`, `with`, or `on`
+- For calls with arguments, use `of`, `to`, `with`, or `on`
 - Multiple arguments separated by `and`
+
+Calls with no arguments can be written directly:
+
+```
+"show version".
+ping.
+```
 
 ### Calling as Statement
 

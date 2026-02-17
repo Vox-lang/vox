@@ -16,7 +16,6 @@ use parser::Parser;
 use parser::ast::Statement;
 use analyzer::Analyzer;
 use codegen::CodeGenerator;
-use errors::CompileError;
 
 /// Find the coreasm library directory using industry-standard resolution order:
 /// 1. EC_CORE_PATH environment variable (user override)
@@ -189,28 +188,55 @@ fn process_includes(
     program.statements = new_statements;
 }
 
+fn show_version() {
+    eprintln!("ec v{} By Josjuar Lister 2026", env!("CARGO_PKG_VERSION"));
+}
+
+fn show_help() {
+    eprintln!("Usage: ec <source.en> [options]");
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  --emit-asm       Output assembly only (don't assemble/link)");
+    eprintln!("  --keep-asm       Keep assembly file after linking");
+    eprintln!("  --run            Compile and run the program");
+    eprintln!("  --shared         Build a shared library (.so) instead of executable");
+    eprintln!("  --link <libs>    Link against shared libraries (comma-separated)");
+    eprintln!("  --lib-path <paths>  Additional library search paths (comma-separated)");
+    eprintln!("  --target <arch>   Target architecture (default: x86_64)");
+    eprintln!("  -o <file>        Output file name");
+    eprintln!("  -v | --verbose   Verbose output");
+    eprintln!("  -h | --help           Show help");
+    eprintln!("  -V | --version        Show version");
+    eprintln!();
+    show_version();
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     
     if args.len() < 2 {
-        eprintln!("ec v0.1.0");
-        eprintln!("Usage: ec <source.en> [options]");
-        eprintln!("By Josjuar Lister 2026");
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  --emit-asm       Output assembly only (don't assemble/link)");
-        eprintln!("  --run            Compile and run the program");
-        eprintln!("  --shared         Build a shared library (.so) instead of executable");
-        eprintln!("  --link <libs>    Link against shared libraries (comma-separated)");
-        eprintln!("  --lib-path <paths>  Additional library search paths (comma-separated)");
-        eprintln!("  --target <arch>   Target architecture (default: x86_64)");
-        eprintln!("  -o <file>        Output file name");
-        eprintln!("  -v | --verbose   Verbose output");
+        show_help();
         std::process::exit(1);
+    }
+    
+    // Check for help/version flags before treating first arg as source file
+    if args.len() == 2 {
+        match args[1].as_str() {
+            "--help" | "-h" => {
+                show_help();
+                std::process::exit(0);
+            }
+            "--version" | "-V" => {
+                show_version();
+                std::process::exit(0);
+            }
+            _ => {}
+        }
     }
     
     let source_path = &args[1];
     let mut emit_asm_only = false;
+    let mut keep_asm = false;
     let mut run_after = false;
     let mut build_shared = false;
     let mut output_name = None;
@@ -222,7 +248,16 @@ fn main() {
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
+            "--help" | "-h" => {
+                show_help();
+                std::process::exit(0);
+            }
+            "--version" | "-V" => {
+                show_version();
+                std::process::exit(0);
+            }
             "--emit-asm" => emit_asm_only = true,
+            "--keep-asm" => keep_asm = true,
             "--run" => run_after = true,
             "--shared" => build_shared = true,
             "--verbose" | "-v" => verbose = true,
@@ -285,12 +320,12 @@ fn main() {
     included_files.insert(source_path_buf.canonicalize().unwrap_or(source_path_buf.clone()));
     process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
     
-    let mut analyzer = Analyzer::new();
+    let mut analyzer = Analyzer::new().with_source(source_path, &source);
     analyzer.analyze(&mut program);
     
     if !analyzer.errors.is_empty() {
         for err in &analyzer.errors {
-            eprintln!("{}", CompileError::new(err));
+            eprintln!("{}", err);
         }
         std::process::exit(1);
     }
@@ -439,15 +474,26 @@ fn main() {
             std::process::exit(1);
         }
     }
-    
+
     let _ = fs::remove_file(&obj_path);
-    
+
     if verbose {
         if build_shared {
             println!("Created shared library: {}", output_path);
         } else {
             println!("Created executable: {}", output_path);
         }
+    }
+
+    if keep_asm {
+        if verbose {
+            println!("Kept assembly file: {}", asm_path);
+        }
+    } else {
+        if verbose {
+            println!("Removed assembly file: {}", asm_path);
+        }
+        let _ = fs::remove_file(&asm_path);
     }
     
     if run_after {

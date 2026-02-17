@@ -1,50 +1,52 @@
-(reimplementation of core utils CAT command in english)
-(Uses loop expansion: "open ... at each X from Y" iterates over all arguments)
+(reimplementation of core utils CAT command in ec)
 
-a text called "program version" is "0.1.2".
+A text called "Program Version" is "0.1.4".
+
+To "show version".
+  A text called "Program" is arguments's name.
+  Print "{Program} (ec) {Program Version} by Josjuar Lister".
+  Exit 0.
 
 Open a file for writing called "output" at "/dev/stdout".
-Create a buffer called "content" with size 4096.
+Create a buffer called "content" of size 1024.
 
 If arguments has "--help" or arguments has "-h" then,
-    a text called "program" is arguments's name,
-    Print "Usage: {program} [OPTION]... [FILE]...",
-    Print "Concatenate FILE(s) to standard output.",
-    Print "With no FILE, or when FILE is -, read standard input.",
-    Print "",
-    Print "Options:",
-    Print "  -h, --help     display this help and exit",
-    Print "  -n, --number   number all output lines",
-    Print "  -v, --version  output version information and exit",
-    Exit 0.
+  A text called "Program" is arguments's name,
+  Print "Usage: {Program} [OPTION]... [FILE]...",
+  Print "Concatenate FILE(s) to standard output.",
+  Print "With no FILE, or when FILE is -, read standard input.",
+  Print "",
+  Print "Options:",
+  Print "  -h, --help     display this help and exit",
+  Print "  -n, --number   number all output lines",
+  Print "  -v, --version  output version information and exit",
+  Exit 0.
 
 If arguments has "--version" or arguments has "-v" then,
-    a text called "program" is arguments's name,
-    Print "{program} (ec) {program version} by Josjuar Lister",
-    Exit 0.
+  "show version".
 
 If arguments has "--number" or arguments has "-n" then,
-    a boolean called "number lines" is true.
-    a number called "line number" is 1.
+  A boolean called "we are numbering lines" is true,
+  A number called "Line Number" is 1.
 
-If arguments's empty then,
-    open a file for reading called "source" at "/dev/stdin",
-    read line from source into content,
-    while content is not empty,
-        if "number lines" then,
-            Print "{line number:6}\t" without newline,
-            the "line number" is "line number" add 1.
-        write content to output,
-        read line from the source into content.
+If arguments's empty or arguments has "-n"(Special case) then,
+  Open a file for reading called "source" at "/dev/stdin",
+  read line from source into content,
+  while content is not empty,
+    if "we are numbering lines" then,
+      Print "{Line Number:6}\t" without newline,
+      increment the "Line Number".
+    Write content to output,
+    read line from the source into content.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
-  if "number lines" then,
-    the "line number" is 1.
+  if "we are numbering lines" then,
+    the "Line Number" is 1 (We reset the line number before processing each file).
   read line from the source into content,
   while the content is not empty,
-    if "number lines" then,
-      Print "{line number:6}\t" without newline,
-      the "line number" is the "line number" add 1.
-    write the content to output,
+    if "we are numbering lines" then,
+      Print "{Line Number:6}\t" without newline,
+      increment the "Line Number".
+    Write the content to output,
     read line from the source into content.
