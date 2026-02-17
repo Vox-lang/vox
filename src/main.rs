@@ -16,6 +16,7 @@ use parser::Parser;
 use parser::ast::Statement;
 use analyzer::Analyzer;
 use codegen::CodeGenerator;
+use errors::CompileError;
 
 /// Find the coreasm library directory using industry-standard resolution order:
 /// 1. EC_CORE_PATH environment variable (user override)
@@ -289,7 +290,7 @@ fn main() {
     
     if !analyzer.errors.is_empty() {
         for err in &analyzer.errors {
-            eprintln!("Error: {}", err);
+            eprintln!("{}", CompileError::new(err));
         }
         std::process::exit(1);
     }

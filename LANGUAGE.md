@@ -1,6 +1,6 @@
 # EC Language Specification
 
-**Version 0.1.2**
+**Version 0.1.3**
 
 This document defines the syntax and semantics of EC (sentence based code).
 
@@ -102,6 +102,21 @@ If x is greater than 10 then, print "big", set y to 1. Otherwise, print "small",
 - **Period** (`.`) ends the entire construct, including all its actions
 - **Comma** (`,`) separates multiple actions within the same construct
 - Only **function definitions** can span multiple sentences (using paragraph breaks)
+
+**Sentence ownership (nested constructs):**
+- A nested construct (especially `if ... then`) owns its **own trailing period**.
+- Outer constructs (`while`, `for each`, `repeat`) do **not** steal that inner period.
+- After an inner `if` ends, the outer sentence may continue with more actions.
+
+```
+While content is not empty,
+    if number_lines then,
+        print "{line}: " without newline.
+    write content to output,
+    read line from source into content.
+```
+
+In the example above, the period after the inner `if` closes only that `if`. The `while` body continues with `write` and `read`.
 
 ### Ranges
 
@@ -520,6 +535,7 @@ If <condition> then, <statement>. But if <condition> then, <statement>. Otherwis
 - Each `then,` / `but if ... then,` / `otherwise,` branch consumes actions until the sentence ends.
 - Separate multiple actions in a branch with commas.
 - Use a period to end the full `if` sentence.
+- A period before `but if`/`otherwise` is treated as part of the same if-chain when the chain continues.
 
 ```
 If ready then, print "a", print "b", print "c".
@@ -1212,6 +1228,35 @@ Read from files or standard input into a buffer:
 Read from standard input into buffer.
 Read from source into contents.
 ```
+
+Read one logical line (up to `\n` or EOF) into a buffer:
+
+```
+Read line from source into linebuf.
+Read line from standard input into linebuf.
+```
+
+**`Read line` behavior:**
+- Consumes the trailing newline but does **not** include it in the buffer
+- Returns an empty buffer at EOF
+- Resets buffer contents before each read (replace, not append)
+- For fixed-size buffers, overlong lines are truncated and set the error flag
+
+### Seeking
+
+Move a file descriptor position before reading:
+
+```
+Seek source to line 1.
+Seek source to byte 1.
+Seek source to bytes 128.
+```
+
+**Seeking rules:**
+- Positions are **1-indexed** (`line 1` = start of file, `byte 1` = file offset 0)
+- `Seek ... to line N` moves to the first byte of line `N`
+- `Seek ... to byte N`/`bytes N` moves to byte position `N`
+- Invalid targets (e.g. line past EOF, position < 1, invalid fd) set the error flag
 
 ### Writing
 

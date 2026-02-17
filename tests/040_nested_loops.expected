@@ -12,6 +12,8 @@ Outer loop: counter=2
   Inner: k=1
   Inner: k=2
   Inner: k=3
+Odd number: 1
+Odd number: 3
 Grade: B
 95: A
 75: C

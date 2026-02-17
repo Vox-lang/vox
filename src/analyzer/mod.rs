@@ -84,6 +84,53 @@ impl Analyzer {
     fn track_identifier(&mut self, name: &str) {
         self.used_identifiers.insert(name.to_string());
     }
+
+    fn analyze_block_in_scope(&mut self, block: &[Statement], scope: &HashSet<String>) -> (HashSet<String>, bool) {
+        let saved_scope = self.variables.clone();
+        self.variables = scope.clone();
+        let mut terminates = false;
+        for stmt in block {
+            self.analyze_statement(stmt);
+            if self.statement_always_terminates(stmt) {
+                terminates = true;
+                break;
+            }
+        }
+        let resulting_scope = self.variables.clone();
+        self.variables = saved_scope;
+        (resulting_scope, terminates)
+    }
+
+    fn block_always_terminates(&self, block: &[Statement]) -> bool {
+        for stmt in block {
+            if self.statement_always_terminates(stmt) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn statement_always_terminates(&self, stmt: &Statement) -> bool {
+        match stmt {
+            Statement::Return { .. } | Statement::Exit { .. } => true,
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                if !self.block_always_terminates(then_block) {
+                    return false;
+                }
+                for (_, block) in else_if_blocks {
+                    if !self.block_always_terminates(block) {
+                        return false;
+                    }
+                }
+                if let Some(block) = else_block {
+                    self.block_always_terminates(block)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
     
     fn analyze_statement(&mut self, stmt: &Statement) {
         match stmt {
@@ -112,19 +159,49 @@ impl Analyzer {
             
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
                 self.analyze_expr(condition);
-                for s in then_block {
-                    self.analyze_statement(s);
+
+                // Branches are analyzed with the same incoming scope.
+                // Declarations inside one branch do not become visible in sibling
+                // branches. After the if-statement, only variables that are
+                // definitely available on all continuing paths remain visible.
+                let branch_scope = self.variables.clone();
+                let mut continuing_scopes: Vec<HashSet<String>> = Vec::new();
+
+                let (then_scope, then_terminates) = self.analyze_block_in_scope(then_block, &branch_scope);
+                if !then_terminates {
+                    continuing_scopes.push(then_scope);
                 }
+
                 for (cond, block) in else_if_blocks {
+                    let saved_scope = self.variables.clone();
+                    self.variables = branch_scope.clone();
                     self.analyze_expr(cond);
-                    for s in block {
-                        self.analyze_statement(s);
+                    self.variables = saved_scope;
+                    let (elif_scope, elif_terminates) = self.analyze_block_in_scope(block, &branch_scope);
+                    if !elif_terminates {
+                        continuing_scopes.push(elif_scope);
                     }
                 }
+
                 if let Some(block) = else_block {
-                    for s in block {
-                        self.analyze_statement(s);
+                    let (else_scope, else_terminates) = self.analyze_block_in_scope(block, &branch_scope);
+                    if !else_terminates {
+                        continuing_scopes.push(else_scope);
                     }
+                } else {
+                    // No else means the original incoming scope can continue unchanged.
+                    continuing_scopes.push(branch_scope.clone());
+                }
+
+                if continuing_scopes.is_empty() {
+                    // All paths terminate (e.g., return/exit). Keep incoming scope.
+                    self.variables = branch_scope;
+                } else {
+                    let mut intersection = continuing_scopes[0].clone();
+                    for scope in continuing_scopes.iter().skip(1) {
+                        intersection.retain(|name| scope.contains(name));
+                    }
+                    self.variables = intersection;
                 }
             }
             
@@ -249,6 +326,29 @@ impl Analyzer {
                 if !self.variables.contains(buffer) {
                     self.errors.push(format!("Unknown buffer: {}", buffer));
                 }
+                self.deps.uses_io = true;
+            }
+
+            Statement::FileReadLine { buffer, .. } => {
+                if !self.variables.contains(buffer) {
+                    self.errors.push(format!("Unknown buffer: {}", buffer));
+                }
+                self.deps.uses_io = true;
+            }
+
+            Statement::FileSeekLine { file, line } => {
+                if !self.variables.contains(file) {
+                    self.errors.push(format!("Unknown file: {}", file));
+                }
+                self.analyze_expr(line);
+                self.deps.uses_io = true;
+            }
+
+            Statement::FileSeekByte { file, byte } => {
+                if !self.variables.contains(file) {
+                    self.errors.push(format!("Unknown file: {}", file));
+                }
+                self.analyze_expr(byte);
                 self.deps.uses_io = true;
             }
             

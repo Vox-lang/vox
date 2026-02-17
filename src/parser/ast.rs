@@ -354,6 +354,21 @@ pub enum Statement {
         source: String,      // file name or "stdin"
         buffer: String,
     },
+
+    FileReadLine {
+        source: String,      // file name or "stdin"
+        buffer: String,
+    },
+
+    FileSeekLine {
+        file: String,
+        line: Expr,          // 1-indexed line number
+    },
+
+    FileSeekByte {
+        file: String,
+        byte: Expr,          // 1-indexed byte position
+    },
     
     FileWrite {
         file: String,

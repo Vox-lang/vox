@@ -29,6 +29,7 @@ section .bss
     buf_count: resq 1
     
     ; Note: _last_error is defined in core.asm (always available)
+    line_read_tmp: resb 1
 
 section .text
 
@@ -58,6 +59,235 @@ _register_fd:
     inc qword [fd_count]
     
 .table_full:
+    pop rcx
+    pop rbx
+    ret
+
+; Read a single line from fd into buffer (stops at '\n' or EOF)
+; Args: fd in rdi, buffer pointer in rsi
+; Returns: bytes read in rax (including newline when present), updated buffer pointer in rsi
+; Behavior:
+;   - Newline is preserved in the destination buffer
+;   - Buffer is always null-terminated
+;   - Fixed buffer overflow truncates line, sets error, and drains remainder of the line
+global _read_line_into_buffer
+_read_line_into_buffer:
+    push rbx
+    push rcx
+    push rdx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                 ; fd
+    mov r13, rsi                 ; buffer
+    xor r14, r14                 ; bytes read this call
+    mov r15, [rsi + BUF_FLAGS]   ; buffer flags
+
+.line_loop:
+    ; Ensure at least 1 byte of data capacity remains
+    mov rax, [r13 + BUF_CAPACITY]
+    sub rax, [r13 + BUF_LENGTH]
+    cmp rax, 1
+    jge .do_read_byte
+
+    ; Need more space - grow if dynamic, otherwise truncate safely
+    test r15, BUF_FLAG_FIXED
+    jnz .fixed_overflow
+
+    mov rdi, r13
+    mov rsi, [r13 + BUF_CAPACITY]
+    shl rsi, 1
+    cmp rsi, 1
+    jge .grow_ok
+    mov rsi, 1
+.grow_ok:
+    call _grow_buffer
+    mov r13, rax
+    jmp .line_loop
+
+.do_read_byte:
+    mov rax, 0                   ; SYS_READ
+    mov rdi, r12
+    lea rsi, [rel line_read_tmp]
+    mov rdx, 1
+    syscall
+
+    ; rax == 0 => EOF, rax < 0 => read error
+    cmp rax, 0
+    je .line_done
+    js .line_read_error
+
+    movzx ebx, byte [rel line_read_tmp]
+    cmp bl, 10                   ; '\n'
+    jne .store_byte
+
+    ; Preserve newline in output so line-based read/write can round-trip file content.
+    ; Ensure one byte can be stored.
+    mov rax, [r13 + BUF_CAPACITY]
+    sub rax, [r13 + BUF_LENGTH]
+    cmp rax, 1
+    jl .fixed_overflow
+
+    lea rcx, [r13 + BUF_DATA]
+    add rcx, [r13 + BUF_LENGTH]
+    mov byte [rcx], 10
+    inc qword [r13 + BUF_LENGTH]
+    inc r14
+    jmp .line_done
+
+.store_byte:
+    ; Store non-newline byte
+    lea rcx, [r13 + BUF_DATA]
+    add rcx, [r13 + BUF_LENGTH]
+    mov [rcx], bl
+    inc qword [r13 + BUF_LENGTH]
+    inc r14
+    jmp .line_loop
+
+.fixed_overflow:
+    ; Truncated line in fixed-size buffer: set overflow error and drain until newline/EOF
+    mov qword [rel _last_error], 1
+
+.drain_line:
+    mov rax, 0                   ; SYS_READ
+    mov rdi, r12
+    lea rsi, [rel line_read_tmp]
+    mov rdx, 1
+    syscall
+
+    cmp rax, 0
+    je .line_done
+    js .line_read_error
+
+    movzx ebx, byte [rel line_read_tmp]
+    cmp bl, 10
+    jne .drain_line
+    jmp .line_done
+
+.line_read_error:
+    mov qword [rel _last_error], 2
+
+.line_done:
+    ; Always null-terminate
+    lea rax, [r13 + BUF_DATA]
+    add rax, [r13 + BUF_LENGTH]
+    mov byte [rax], 0
+
+    mov rax, r14
+    mov rsi, r13
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Seek fd to a 1-indexed byte position (byte 1 = file offset 0)
+; Args: fd in rdi, byte position in rsi
+; Returns: resulting offset in rax, or -1 on error
+global _seek_fd_byte
+_seek_fd_byte:
+    push rbx
+
+    cmp rsi, 1
+    jl .seek_byte_error
+
+    dec rsi                      ; convert 1-indexed -> 0-indexed offset
+    mov rax, 8                   ; SYS_LSEEK
+    mov rdx, 0                   ; SEEK_SET
+    syscall
+
+    test rax, rax
+    js .seek_byte_error
+
+    pop rbx
+    ret
+
+.seek_byte_error:
+    mov qword [rel _last_error], 2
+    mov rax, -1
+    pop rbx
+    ret
+
+; Seek fd to a 1-indexed line position (line 1 = start of file)
+; Args: fd in rdi, line number in rsi
+; Returns: resulting offset in rax, or -1 on error
+global _seek_fd_line
+_seek_fd_line:
+    push rbx
+    push rcx
+    push rdx
+    push r12
+    push r13
+
+    mov r12, rdi                 ; fd
+    mov r13, rsi                 ; target line
+
+    cmp r13, 1
+    jl .seek_line_error
+
+    ; Rewind to start first
+    mov rax, 8                   ; SYS_LSEEK
+    mov rdi, r12
+    xor rsi, rsi                 ; offset 0
+    mov rdx, 0                   ; SEEK_SET
+    syscall
+    test rax, rax
+    js .seek_line_error
+
+    cmp r13, 1
+    je .seek_line_done_offset    ; already at line 1
+
+    ; Need to cross (target_line - 1) newlines
+    mov rcx, 1                   ; current line index
+
+.seek_line_scan:
+    mov rax, 0                   ; SYS_READ
+    mov rdi, r12
+    lea rsi, [rel line_read_tmp]
+    mov rdx, 1
+    syscall
+
+    cmp rax, 0
+    je .seek_line_error          ; hit EOF before requested line
+    js .seek_line_error
+
+    movzx ebx, byte [rel line_read_tmp]
+    cmp bl, 10                   ; newline?
+    jne .seek_line_scan
+
+    inc rcx
+    cmp rcx, r13
+    jl .seek_line_scan
+
+.seek_line_done_offset:
+    ; Query resulting file offset with lseek(fd, 0, SEEK_CUR)
+    mov rax, 8                   ; SYS_LSEEK
+    mov rdi, r12
+    xor rsi, rsi
+    mov rdx, 1                   ; SEEK_CUR
+    syscall
+    test rax, rax
+    js .seek_line_error
+
+    pop r13
+    pop r12
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+.seek_line_error:
+    mov qword [rel _last_error], 2
+    mov rax, -1
+    pop r13
+    pop r12
+    pop rdx
     pop rcx
     pop rbx
     ret

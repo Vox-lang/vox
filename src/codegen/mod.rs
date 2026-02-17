@@ -26,6 +26,7 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     target_arch: String,
 }
 
@@ -83,6 +84,7 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            loop_stack: Vec::new(),
             target_arch: "x86_64".to_string(),
         }
     }
@@ -479,10 +481,13 @@ impl CodeGenerator {
                 
                 self.emit(&format!("{}:", start_label));
                 self.generate_condition(condition, &end_label);
+
+                self.loop_stack.push((start_label.clone(), end_label.clone()));
                 
                 for s in body {
                     self.generate_statement(s);
                 }
+                self.loop_stack.pop();
                 
                 self.emit_indent(&format!("jmp {}", start_label));
                 self.emit(&format!("{}:", end_label));
@@ -490,6 +495,7 @@ impl CodeGenerator {
             
             Statement::ForRange { variable, range, body } => {
                 let start_label = self.new_label("for_start");
+                let continue_label = self.new_label("for_continue");
                 let end_label = self.new_label("for_end");
                 
                 if let Expr::Range { start, end, inclusive } = range {
@@ -510,10 +516,15 @@ impl CodeGenerator {
                     self.emit_indent(&format!("mov rax, [rbp-{}]", var_offset));
                     self.emit_indent(&format!("cmp rax, [rbp-{}]", end_offset));
                     self.emit_indent(&format!("jge {}", end_label));
+
+                    self.loop_stack.push((continue_label.clone(), end_label.clone()));
                     
                     for s in body {
                         self.generate_statement(s);
                     }
+                    self.loop_stack.pop();
+
+                    self.emit(&format!("{}:", continue_label));
                     
                     self.emit_indent(&format!("inc qword [rbp-{}]", var_offset));
                     self.emit_indent(&format!("jmp {}", start_label));
@@ -524,6 +535,7 @@ impl CodeGenerator {
             
             Statement::Repeat { count, body } => {
                 let start_label = self.new_label("repeat_start");
+                let continue_label = self.new_label("repeat_continue");
                 let end_label = self.new_label("repeat_end");
                 
                 self.generate_expr(count);
@@ -534,10 +546,15 @@ impl CodeGenerator {
                 
                 self.emit_indent(&format!("cmp qword [rbp-{}], 0", counter_offset));
                 self.emit_indent(&format!("jle {}", end_label));
+
+                self.loop_stack.push((continue_label.clone(), end_label.clone()));
                 
                 for s in body {
                     self.generate_statement(s);
                 }
+                self.loop_stack.pop();
+
+                self.emit(&format!("{}:", continue_label));
                 
                 self.emit_indent(&format!("dec qword [rbp-{}]", counter_offset));
                 self.emit_indent(&format!("jmp {}", start_label));
@@ -573,6 +590,9 @@ impl CodeGenerator {
             
             Statement::Break => {
                 self.emit_indent("; break");
+                if let Some((_, break_label)) = self.loop_stack.last() {
+                    self.emit_indent(&format!("jmp {}", break_label));
+                }
             }
             
             Statement::Exit { code } => {
@@ -589,6 +609,9 @@ impl CodeGenerator {
             
             Statement::Continue => {
                 self.emit_indent("; continue");
+                if let Some((continue_label, _)) = self.loop_stack.last() {
+                    self.emit_indent(&format!("jmp {}", continue_label));
+                }
             }
             
             Statement::Return { value } => {
@@ -637,11 +660,13 @@ impl CodeGenerator {
                 let saved_output = std::mem::take(&mut self.output);
                 let saved_vars = std::mem::take(&mut self.variables);
                 let saved_stack = self.stack_offset;
+                let saved_loop_stack = std::mem::take(&mut self.loop_stack);
 
                 // Fresh function-local state
                 self.output = String::new();
                 self.variables = std::collections::HashMap::new(); // or whatever your type is
                 self.stack_offset = 0;
+                self.loop_stack = Vec::new();
 
                 // ------------------------------------------------------------
                 // PASS 1: Allocate stack slots for params, then generate body
@@ -725,6 +750,7 @@ impl CodeGenerator {
                 self.output = saved_output;
                 self.variables = saved_vars;
                 self.stack_offset = saved_stack;
+                self.loop_stack = saved_loop_stack;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -734,6 +760,7 @@ impl CodeGenerator {
             
             Statement::ForEach { variable, collection, body } => {
                 let start_label = self.new_label("foreach_start");
+                let continue_label = self.new_label("foreach_continue");
                 let end_label = self.new_label("foreach_end");
                 
                 // Special handling for ArgumentAll - iterate over argv[1..argc]
@@ -765,9 +792,13 @@ impl CodeGenerator {
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
                     
                     // Generate body
+                    self.loop_stack.push((continue_label.clone(), end_label.clone()));
                     for s in body {
                         self.generate_statement(s);
                     }
+                    self.loop_stack.pop();
+
+                    self.emit(&format!("{}:", continue_label));
                     
                     // Increment index
                     self.emit_indent(&format!("inc qword [rbp-{}]", index_var));
@@ -832,9 +863,13 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
                 
                 // Generate body
+                self.loop_stack.push((continue_label.clone(), end_label.clone()));
                 for s in body {
                     self.generate_statement(s);
                 }
+                self.loop_stack.pop();
+
+                self.emit(&format!("{}:", continue_label));
                 
                 // Increment index
                 self.emit_indent(&format!("inc qword [rbp-{}]", index_var));
@@ -1061,6 +1096,62 @@ impl CodeGenerator {
                     self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
                     self.emit(&format!("{}:", skip_label));
                 }
+            }
+
+            Statement::FileReadLine { source, buffer } => {
+                // Get source fd
+                let source_fd = if source == "stdin" {
+                    "0".to_string()  // STDIN
+                } else if let Some(offset) = self.get_var(source) {
+                    format!("[rbp-{}]", offset)
+                } else {
+                    "0".to_string()
+                };
+
+                if let Some(buf_offset) = self.get_var(buffer) {
+                    let skip_label = self.new_label("skip_fd");
+                    self.emit_indent(&format!("mov rdi, {}", source_fd));
+                    // Skip read if fd is invalid (negative)
+                    self.emit_indent("test rdi, rdi");
+                    self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
+                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+                    // Reset buffer length before reading (read replaces, not appends)
+                    self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
+                    self.emit_indent("call _read_line_into_buffer");
+                    // Update buffer pointer (may have changed if grown)
+                    self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
+                    self.emit(&format!("{}:", skip_label));
+                }
+            }
+
+            Statement::FileSeekLine { file, line } => {
+                self.uses_files = true;
+
+                let file_fd = if let Some(offset) = self.get_var(file) {
+                    format!("[rbp-{}]", offset)
+                } else {
+                    "0".to_string()
+                };
+
+                self.generate_expr(line);
+                self.emit_indent("mov rsi, rax  ; target line (1-indexed)");
+                self.emit_indent(&format!("mov rdi, {}", file_fd));
+                self.emit_indent("call _seek_fd_line");
+            }
+
+            Statement::FileSeekByte { file, byte } => {
+                self.uses_files = true;
+
+                let file_fd = if let Some(offset) = self.get_var(file) {
+                    format!("[rbp-{}]", offset)
+                } else {
+                    "0".to_string()
+                };
+
+                self.generate_expr(byte);
+                self.emit_indent("mov rsi, rax  ; target byte (1-indexed)");
+                self.emit_indent(&format!("mov rdi, {}", file_fd));
+                self.emit_indent("call _seek_fd_byte");
             }
             
             Statement::FileWrite { file, value } => {

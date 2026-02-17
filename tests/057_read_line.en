@@ -1,0 +1,29 @@
+(Proposed syntax test for line-based file reads)
+
+open a file for writing called sample at "./test_read_line.txt".
+Write "alpha\nbeta" to sample.
+Close sample.
+
+open a file for reading called source at "./test_read_line.txt".
+a buffer called "linebuf" is 256 bytes in size.
+
+Read line from source into linebuf.
+Print linebuf.
+
+Read line from source into linebuf.
+Print linebuf.
+
+Read line from source into linebuf.
+If linebuf's empty then,
+    Print "<EOF>".
+
+(Reset file pointer and read in a loop)
+Seek source to line 1 (Also allow seeking to bytes in the asm modules).
+
+Read line from source into linebuf.
+While linebuf is not empty,
+    Print linebuf,
+    Read line from source into linebuf.
+
+Close source.
+Delete the file "./test_read_line.txt".

@@ -1,29 +1,48 @@
 (reimplementation of core utils CAT command in english)
 (Uses loop expansion: "open ... at each X from Y" iterates over all arguments)
 
+a text called "program version" is "0.1.1".
+
 Open a file for writing called "output" at "/dev/stdout".
 Create a buffer called "content" with size 4096.
 
-If arguments has "--help" then,
-    Print "Usage: cat [OPTION]... [FILE]...",
+If arguments has "--help" or arguments has "-h" then,
+    a text called "program" is arguments's name,
+    Print "Usage: {program} [OPTION]... [FILE]...",
     Print "Concatenate FILE(s) to standard output.",
     Print "With no FILE, or when FILE is -, read standard input.",
+    Print "",
+    Print "Options:",
+    Print "  -h, --help     display this help and exit",
+    Print "  -n, --number   number all output lines",
+    Print "  -v, --version  output version information and exit",
     Exit 0.
 
-If arguments has "--version" then,
-    Print "cat (ec) 0.1.2",
+If arguments has "--version" or arguments has "-v" then,
+    a text called "program" is arguments's name,
+    Print "{program} (ec) {program version} by Josjuar Lister",
     Exit 0.
+
+If arguments has "--number" or arguments has "-n" then,
+    a boolean called "number lines" is true.
+    a number called "line number" is 1.
 
 If arguments's empty then,
     open a file for reading called "source" at "/dev/stdin",
-    read from source into content,
+    read line from source into content,
     while content is not empty,
+        if "number lines" then,
+            Print "{line number:6}\t" without newline,
+            the "line number" is the "line number" add 1.
         write content to output,
-        read from source into content.
+        read line from source into content.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
-  read from source into content,
+  read line from source into content,
   while content is not empty,
+    if "number lines" then,
+        Print "{line number:6}\t" without newline,
+        the "line number" is the "line number" add 1.
     write content to output,
-    read from source into content.
+    read line from source into content.

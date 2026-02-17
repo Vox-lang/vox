@@ -10,6 +10,105 @@ pub struct Parser {
     source_file: Option<SourceFile>,
 }
 
+#[cfg(test)]
+mod file_line_read_and_seek_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse_input(input: &str) -> Result<Program, CompileError> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
+    }
+
+    #[test]
+    fn test_parse_read_line_statement() {
+        let input = r#"Read line from source into linebuf."#;
+        let result = parse_input(input).expect("read line should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FileReadLine { source, buffer } => {
+                assert_eq!(source, "source");
+                assert_eq!(buffer, "linebuf");
+            }
+            other => panic!("Expected FileReadLine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_seek_line_statement() {
+        let input = r#"Seek source to line 1."#;
+        let result = parse_input(input).expect("seek line should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FileSeekLine { file, line } => {
+                assert_eq!(file, "source");
+                assert!(matches!(line, Expr::IntegerLit(1)));
+            }
+            other => panic!("Expected FileSeekLine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_seek_byte_statement() {
+        let input = r#"Seek source to byte 1."#;
+        let result = parse_input(input).expect("seek byte should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FileSeekByte { file, byte } => {
+                assert_eq!(file, "source");
+                assert!(matches!(byte, Expr::IntegerLit(1)));
+            }
+            other => panic!("Expected FileSeekByte, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_read_line_requires_from_keyword() {
+        let input = r#"Read line source into linebuf."#;
+        let err = parse_input(input).expect_err("missing 'from' should fail");
+        assert!(err.to_string().contains("'from' after 'read line'"));
+    }
+
+    #[test]
+    fn test_parse_seek_requires_mode() {
+        let input = r#"Seek source to 1."#;
+        let err = parse_input(input).expect_err("seek mode should be required");
+        assert!(err.to_string().contains("Expected 'line' or 'byte'"));
+    }
+
+    #[test]
+    fn test_nested_if_period_does_not_end_while_body() {
+        let input = r#"
+            While true,
+                if false then,
+                    Print "X".
+                Print "Y",
+                Print "Z".
+        "#;
+
+        let result = parse_input(input).expect("nested if in while should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::While { body, .. } => {
+                assert_eq!(body.len(), 3, "while body should include statements after inner if");
+                match &body[0] {
+                    Statement::If { then_block, .. } => {
+                        assert_eq!(then_block.len(), 1, "inner if should only own its print statement");
+                    }
+                    other => panic!("Expected first while body statement to be If, got {:?}", other),
+                }
+            }
+            other => panic!("Expected While, got {:?}", other),
+        }
+    }
+}
+
 impl Parser {
     pub fn new(tokens: Vec<TokenInfo>) -> Self {
         Parser { tokens, pos: 0, source_file: None }
@@ -133,6 +232,22 @@ impl Parser {
             self.advance();
         }
     }
+
+    /// Consume a period only when it is the separator before an if-chain continuation
+    /// (`but`, `else`, `otherwise`).
+    fn consume_period_before_else_chain(&mut self) {
+        if *self.current() != Token::Period {
+            return;
+        }
+
+        let saved = self.pos;
+        self.advance();
+        self.skip_all_whitespace();
+
+        if !matches!(self.current(), Token::But | Token::Else | Token::Otherwise) {
+            self.pos = saved;
+        }
+    }
     
     #[allow(dead_code)]
     fn skip_newlines(&mut self) {
@@ -206,6 +321,7 @@ impl Parser {
             Token::Write => self.parse_file_write(),
             Token::Close => self.parse_file_close(),
             Token::Delete => self.parse_file_delete(),
+            Token::Seek => self.parse_file_seek(),
             Token::On => self.parse_on_error(),
             Token::Auto => self.parse_auto_error(),
             Token::Enable => self.parse_enable(),
@@ -857,22 +973,16 @@ impl Parser {
         let mut else_if_blocks = Vec::new();
         let mut else_block = None;
         
-        self.skip_noise();
-        // Consume period after then block if followed by else/otherwise
-        if *self.current() == Token::Period {
-            if matches!(self.peek(1), Token::But | Token::Else | Token::Otherwise) {
-                self.advance(); // consume period
-                self.skip_noise();
-            }
-        }
+        self.skip_all_whitespace();
+        self.consume_period_before_else_chain();
         
         while matches!(self.current(), Token::But | Token::Else | Token::Otherwise) {
             self.advance();
-            self.skip_noise();
+            self.skip_all_whitespace();
             
             if *self.current() == Token::If || *self.current() == Token::When {
                 self.advance();
-                self.skip_noise();
+                self.skip_all_whitespace();
                 let cond = self.parse_condition()?;
                 self.skip_noise();
                 self.expect(&Token::Then);
@@ -880,6 +990,8 @@ impl Parser {
                 self.skip_noise();
                 let block = self.parse_block()?;
                 else_if_blocks.push((cond, block));
+                self.skip_all_whitespace();
+                self.consume_period_before_else_chain();
             } else {
                 self.expect(&Token::Comma);
                 self.skip_noise();
@@ -888,6 +1000,14 @@ impl Parser {
                 else_block = Some(block);
                 break;
             }
+        }
+
+        // Standalone if-sentences own their trailing period.
+        // This prevents outer sentence-consuming constructs (e.g., while/for)
+        // from treating the inner if's period as their own terminator.
+        if *self.current() == Token::Period {
+            self.advance();
+            self.skip_noise();
         }
         
         Ok(Statement::If {
@@ -1004,6 +1124,9 @@ impl Parser {
                     if matches!(self.current(), Token::EOF) {
                         break;
                     }
+                    if !body.is_empty() && matches!(self.current(), Token::ParagraphBreak) {
+                        break;
+                    }
                     
                     let stmt = self.parse_statement()?;
                     body.push(stmt);
@@ -1018,7 +1141,7 @@ impl Parser {
                         self.advance();
                         self.skip_noise();
                         break;
-                    } else {
+                    } else if *self.current() == Token::ParagraphBreak {
                         break;
                     }
                 }
@@ -1052,6 +1175,9 @@ impl Parser {
                     if matches!(self.current(), Token::EOF) {
                         break;
                     }
+                    if !body.is_empty() && matches!(self.current(), Token::ParagraphBreak) {
+                        break;
+                    }
                     
                     let stmt = self.parse_statement()?;
                     body.push(stmt);
@@ -1064,7 +1190,7 @@ impl Parser {
                         self.advance();
                         self.skip_noise();
                         break;
-                    } else {
+                    } else if *self.current() == Token::ParagraphBreak {
                         break;
                     }
                 }
@@ -1101,6 +1227,9 @@ impl Parser {
                 if matches!(self.current(), Token::EOF) {
                     break;
                 }
+                if !body.is_empty() && matches!(self.current(), Token::ParagraphBreak) {
+                    break;
+                }
                 
                 let stmt = self.parse_statement()?;
                 body.push(stmt);
@@ -1115,7 +1244,7 @@ impl Parser {
                     self.advance();
                     self.skip_noise();
                     break;
-                } else {
+                } else if *self.current() == Token::ParagraphBreak {
                     break;
                 }
             }
@@ -1715,11 +1844,29 @@ impl Parser {
     
     fn parse_file_read(&mut self) -> Result<Statement, CompileError> {
         // "Read from <source> into <buffer>"
+        // "Read line from <source> into <buffer>"
         self.advance(); // consume 'read'
         self.skip_noise();
+
+        // Optional line mode: "read line from ..."
+        let mut line_mode = false;
+        if let Token::Identifier(s) = self.current().clone() {
+            if s.eq_ignore_ascii_case("line") {
+                line_mode = true;
+                self.advance();
+                self.skip_noise();
+            }
+        }
         
         // Expect "from"
-        self.expect(&Token::From);
+        if !self.expect(&Token::From) {
+            let expected = if line_mode {
+                "'from' after 'read line'"
+            } else {
+                "'from' after 'read'"
+            };
+            return Err(self.err_expected(expected, self.current()));
+        }
         self.skip_noise();
         
         // Parse source: "standard input" or file name
@@ -1740,7 +1887,9 @@ impl Parser {
         self.skip_noise();
         
         // Expect "into"
-        self.expect(&Token::Into);
+        if !self.expect(&Token::Into) {
+            return Err(self.err_expected("'into' after read source", self.current()));
+        }
         self.skip_noise();
         
         // Get buffer name
@@ -1750,7 +1899,80 @@ impl Parser {
             _ => return Err(self.err("Expected buffer name after 'into'")),
         };
         
-        Ok(Statement::FileRead { source, buffer })
+        if line_mode {
+            Ok(Statement::FileReadLine { source, buffer })
+        } else {
+            Ok(Statement::FileRead { source, buffer })
+        }
+    }
+
+    fn parse_file_seek(&mut self) -> Result<Statement, CompileError> {
+        // "Seek <file> to line <expr>"
+        // "Seek <file> to byte <expr>"
+        self.advance(); // consume 'seek'
+        self.skip_noise();
+
+        let file = match self.current().clone() {
+            Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            Token::StringLiteral(n) => {
+                self.advance();
+                n
+            }
+            _ => return Err(self.err_expected("file name after 'seek'", self.current())),
+        };
+
+        self.skip_noise();
+        if !self.expect(&Token::To) {
+            return Err(self.err_expected("'to' after file name in seek", self.current()));
+        }
+        self.skip_noise();
+
+        let mode = match self.current().clone() {
+            Token::Identifier(s) => {
+                let lower = s.to_lowercase();
+                if lower == "line" || lower == "lines" {
+                    self.advance();
+                    "line"
+                } else if lower == "byte" || lower == "bytes" {
+                    self.advance();
+                    "byte"
+                } else {
+                    return Err(self.err(
+                        "Expected 'line' or 'byte' after 'seek <file> to'\n  \
+                         Syntax: Seek source to line 1.\n  \
+                         Also valid: Seek source to byte 1."
+                    ));
+                }
+            }
+            Token::Byte | Token::Bytes => {
+                self.advance();
+                "byte"
+            }
+            _ => {
+                return Err(self.err(
+                    "Expected 'line' or 'byte' after 'seek <file> to'\n  \
+                     Syntax: Seek source to line 1."
+                ))
+            }
+        };
+
+        self.skip_noise();
+        let position = self.parse_expression()?;
+
+        if mode == "line" {
+            Ok(Statement::FileSeekLine {
+                file,
+                line: position,
+            })
+        } else {
+            Ok(Statement::FileSeekByte {
+                file,
+                byte: position,
+            })
+        }
     }
     
     fn parse_file_write(&mut self) -> Result<Statement, CompileError> {
@@ -2454,7 +2676,7 @@ impl Parser {
         let stmt = self.parse_statement()?;
         statements.push(stmt);
         
-        while matches!(self.current(), Token::Period | Token::Comma) && 
+        while matches!(self.current(), Token::Comma) && 
               !matches!(self.peek(1), Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak) {
             self.advance();
             self.skip_noise();

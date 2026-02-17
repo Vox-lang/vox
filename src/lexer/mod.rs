@@ -8,7 +8,7 @@ pub enum Token {
     Call, Allocate, Free, Append,
     
     // File I/O Actions
-    Open, Read, Write, Close, Delete, Exists, Resize,
+    Open, Read, Write, Close, Delete, Exists, Resize, Seek,
     
     // Control Flow
     If, When, Then, Else, But, Otherwise, While, Until, For, Each, Every,
@@ -164,6 +164,7 @@ impl Token {
             "delete" | "remove" => Some("delete"),
             "exists" | "exist" => Some("exists"),
             "resize" | "reallocate" | "grow" | "shrink" => Some("resize"),
+            "seek" => Some("seek"),
             // Properties
             "even" => Some("even"),
             "odd" => Some("odd"),
@@ -253,6 +254,7 @@ impl Token {
             Token::Delete => Some("delete"),
             Token::Exists => Some("exists"),
             Token::Resize => Some("resize"),
+            Token::Seek => Some("seek"),
             // Control Flow
             Token::If => Some("if"),
             Token::When => Some("when"),
@@ -789,6 +791,7 @@ impl<'a> Lexer<'a> {
             "delete" | "remove" => Token::Delete,
             "exists" | "exist" => Token::Exists,
             "resize" | "reallocate" | "grow" | "shrink" => Token::Resize,
+            "seek" => Token::Seek,
             "buffer" => Token::Buffer,
             "file" => Token::File,
             "bytes" => Token::Bytes,
