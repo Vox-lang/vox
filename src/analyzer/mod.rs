@@ -196,6 +196,97 @@ mod guard_env_tests {
             analyzer.errors
         );
     }
+
+    #[test]
+    fn branch_local_identifier_named_like_keyword_is_not_false_positive() {
+        let input = r#"
+            If arguments's count is greater than 1 then,
+                a text called "arg1" is arguments's first,
+                Print the arg1.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Unknown identifier 'arg1'") && !e.message.contains("Unknown variable: arg1")),
+            "unexpected arg1 errors: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn flag_schema_after_non_schema_code_is_allowed() {
+        let input = r#"
+            Print "hello".
+            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer.errors.is_empty(),
+            "expected no errors for schema after non-schema code, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn flag_schema_after_explicit_parse_is_rejected() {
+        let input = r#"
+            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            parse flags.
+            a flag called "debug" is "-d" or "--debug", it is a boolean.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Cannot declare new flags after 'parse flags.'")),
+            "expected post-parse schema error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn duplicate_parse_flags_statement_is_rejected() {
+        let input = r#"
+            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            parse flags.
+            parse flags.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Duplicate 'parse flags.' statement")),
+            "expected duplicate-parse error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn flag_usage_before_explicit_parse_is_rejected() {
+        let input = r#"
+            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            Print "{verbose}".
+            parse flags.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Flag variable 'verbose' is used before flags are parsed")),
+            "expected pre-parse usage error, got: {:?}",
+            analyzer.errors
+        );
+    }
 }
 
 pub struct Analyzer {
@@ -203,6 +294,7 @@ pub struct Analyzer {
     pub variables: HashSet<String>,
     pub functions: HashSet<String>,
     pub used_identifiers: HashSet<String>,  // Track all identifiers seen
+    typo_candidates: HashSet<String>,
     pub errors: Vec<CompileError>,
     source_file: Option<SourceFile>,
     guarded_scopes: HashMap<String, HashSet<String>>,
@@ -210,6 +302,7 @@ pub struct Analyzer {
     active_guards: Vec<String>,
     block_depth: usize,
     global_variables: HashSet<String>,
+    flag_variables: HashSet<String>,
 }
 
 #[derive(Clone, Default)]
@@ -225,6 +318,7 @@ impl Analyzer {
             variables: HashSet::new(),
             functions: HashSet::new(),
             used_identifiers: HashSet::new(),
+            typo_candidates: HashSet::new(),
             errors: Vec::new(),
             source_file: None,
             guarded_scopes: HashMap::new(),
@@ -232,6 +326,7 @@ impl Analyzer {
             active_guards: Vec::new(),
             block_depth: 0,
             global_variables: HashSet::new(),
+            flag_variables: HashSet::new(),
         }
     }
 
@@ -241,7 +336,9 @@ impl Analyzer {
     }
     
     pub fn analyze(&mut self, program: &mut Program) {
-        // First pass: collect function definitions and top-level global declarations.
+        // First pass: collect function definitions, global declarations, and flag schemas.
+        let mut explicit_parse_seen = false;
+
         for stmt in &program.statements {
             match stmt {
                 Statement::FunctionDef { name, .. } => {
@@ -257,7 +354,51 @@ impl Analyzer {
                 Statement::GetTime { into } => {
                     self.global_variables.insert(into.clone());
                 }
+                Statement::FlagSchemaDecl { name, .. } => {
+                    self.flag_variables.insert(name.clone());
+                    self.global_variables.insert(name.clone());
+                    if explicit_parse_seen {
+                        self.push_error(
+                            "Cannot declare new flags after 'parse flags.'".to_string(),
+                            Some(name),
+                        );
+                    }
+                }
+                Statement::ParseFlags => {
+                    if explicit_parse_seen {
+                        self.push_error("Duplicate 'parse flags.' statement".to_string(), None);
+                    }
+                    explicit_parse_seen = true;
+                }
                 _ => {}
+            }
+        }
+
+        let parse_point = if explicit_parse_seen {
+            program
+                .statements
+                .iter()
+                .position(|s| matches!(s, Statement::ParseFlags))
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        } else {
+            program
+                .statements
+                .iter()
+                .rposition(|s| matches!(s, Statement::FlagSchemaDecl { .. }))
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        };
+
+        for stmt in program.statements.iter().take(parse_point) {
+            if matches!(stmt, Statement::FlagSchemaDecl { .. } | Statement::ParseFlags) {
+                continue;
+            }
+            if let Some(flag_name) = self.statement_uses_flag(stmt) {
+                self.push_error(
+                    format!("Flag variable '{}' is used before flags are parsed", flag_name),
+                    Some(&flag_name),
+                );
             }
         }
 
@@ -278,16 +419,15 @@ impl Analyzer {
     }
     
     fn check_for_typos(&mut self) {
-        // Find identifiers that aren't declared variables or functions
-        let unknown: Vec<String> = self.used_identifiers
-            .iter()
-            .filter(|id| !self.is_declared_anywhere(id) && !self.functions.contains(*id))
-            .cloned()
-            .collect();
-        
-        // Check if any look like keyword typos
-        let mut typo_errors: Vec<CompileError> = Vec::new();
+        let unknown: Vec<String> = self.typo_candidates.iter().cloned().collect();
+        let mut typo_errors = Vec::new();
+
         for id in unknown {
+            // Skip if this identifier already has an error
+            if self.errors.iter().any(|e| e.message.contains(&id)) {
+                continue;
+            }
+
             // Skip common internal identifiers
             if id.starts_with('_') || id == "stdin" || id == "stdout" || id == "stderr" {
                 continue;
@@ -310,6 +450,99 @@ impl Analyzer {
     
     fn track_identifier(&mut self, name: &str) {
         self.used_identifiers.insert(name.to_string());
+    }
+
+    fn track_typo_candidate(&mut self, name: &str) {
+        self.typo_candidates.insert(name.to_string());
+    }
+
+    fn expr_uses_flag(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(name) => {
+                if self.flag_variables.contains(name) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }
+            Expr::FormatString { parts } => {
+                for part in parts {
+                    match part {
+                        FormatPart::Variable { name, .. } => {
+                            if self.flag_variables.contains(name) {
+                                return Some(name.clone());
+                            }
+                        }
+                        FormatPart::Expression { expr, .. } => {
+                            if let Some(name) = self.expr_uses_flag(expr) {
+                                return Some(name);
+                            }
+                        }
+                        FormatPart::Literal(_) => {}
+                    }
+                }
+                None
+            }
+            Expr::BinaryOp { left, right, .. } => self.expr_uses_flag(left).or_else(|| self.expr_uses_flag(right)),
+            Expr::UnaryOp { operand, .. } => self.expr_uses_flag(operand),
+            Expr::Range { start, end, .. } => self.expr_uses_flag(start).or_else(|| self.expr_uses_flag(end)),
+            Expr::PropertyCheck { value, .. } => self.expr_uses_flag(value),
+            Expr::FunctionCall { args, .. } => args.iter().find_map(|a| self.expr_uses_flag(a)),
+            Expr::ListLit { elements } => elements.iter().find_map(|e| self.expr_uses_flag(e)),
+            Expr::ListAccess { list, index } => self.expr_uses_flag(list).or_else(|| self.expr_uses_flag(index)),
+            Expr::ByteAccess { buffer, index } => self.expr_uses_flag(buffer).or_else(|| self.expr_uses_flag(index)),
+            Expr::ElementAccess { list, index } => self.expr_uses_flag(list).or_else(|| self.expr_uses_flag(index)),
+            Expr::Cast { value, .. } => self.expr_uses_flag(value),
+            Expr::DurationCast { value, .. } => self.expr_uses_flag(value),
+            Expr::TreatingAs { value, match_value, replacement } => self
+                .expr_uses_flag(value)
+                .or_else(|| self.expr_uses_flag(match_value))
+                .or_else(|| self.expr_uses_flag(replacement)),
+            Expr::ArgumentAt { index } => self.expr_uses_flag(index),
+            Expr::EnvironmentVariable { name } => self.expr_uses_flag(name),
+            Expr::EnvironmentVariableAt { index } => self.expr_uses_flag(index),
+            Expr::EnvironmentVariableExists { name } => self.expr_uses_flag(name),
+            _ => None,
+        }
+    }
+
+    fn statement_uses_flag(&self, stmt: &Statement) -> Option<String> {
+        match stmt {
+            Statement::Print { value, .. } => self.expr_uses_flag(value),
+            Statement::VarDecl { value, .. } => value.as_ref().and_then(|v| self.expr_uses_flag(v)),
+            Statement::Assignment { value, .. } => self.expr_uses_flag(value),
+            Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                self.expr_uses_flag(condition)
+                    .or_else(|| then_block.iter().find_map(|s| self.statement_uses_flag(s)))
+                    .or_else(|| else_if_blocks.iter().find_map(|(c, b)| self.expr_uses_flag(c).or_else(|| b.iter().find_map(|s| self.statement_uses_flag(s)))))
+                    .or_else(|| else_block.as_ref().and_then(|b| b.iter().find_map(|s| self.statement_uses_flag(s))))
+            }
+            Statement::While { condition, body } => self
+                .expr_uses_flag(condition)
+                .or_else(|| body.iter().find_map(|s| self.statement_uses_flag(s))),
+            Statement::ForRange { range, body, .. } => self
+                .expr_uses_flag(range)
+                .or_else(|| body.iter().find_map(|s| self.statement_uses_flag(s))),
+            Statement::ForEach { collection, body, .. } => self
+                .expr_uses_flag(collection)
+                .or_else(|| body.iter().find_map(|s| self.statement_uses_flag(s))),
+            Statement::Repeat { count, body } => self
+                .expr_uses_flag(count)
+                .or_else(|| body.iter().find_map(|s| self.statement_uses_flag(s))),
+            Statement::Return { value } => value.as_ref().and_then(|v| self.expr_uses_flag(v)),
+            Statement::Exit { code } => self.expr_uses_flag(code),
+            Statement::Allocate { size, .. } => self.expr_uses_flag(size),
+            Statement::ByteSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
+            Statement::ElementSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
+            Statement::ListAppend { value, .. } => self.expr_uses_flag(value),
+            Statement::FileOpen { path, .. } => self.expr_uses_flag(path),
+            Statement::FileWrite { value, .. } => self.expr_uses_flag(value),
+            Statement::OnError { actions } => actions.iter().find_map(|a| self.statement_uses_flag(a)),
+            Statement::BufferResize { new_size, .. } => self.expr_uses_flag(new_size),
+            Statement::FunctionCall { args, .. } => args.iter().find_map(|a| self.expr_uses_flag(a)),
+            Statement::Wait { duration, .. } => self.expr_uses_flag(duration),
+            _ => None,
+        }
     }
 
     fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
@@ -366,14 +599,6 @@ impl Analyzer {
     fn apply_env(&mut self, env: &AnalysisEnv) {
         self.variables = env.always.clone();
         self.guarded_scopes = env.guarded.clone();
-    }
-
-    fn is_declared_anywhere(&self, name: &str) -> bool {
-        self.variables.contains(name)
-            || self
-                .guarded_scopes
-                .values()
-                .any(|vars| vars.contains(name))
     }
 
     fn is_variable_available(&self, name: &str) -> bool {
@@ -544,6 +769,18 @@ impl Analyzer {
                 if let Some(v) = value {
                     self.analyze_expr(v);
                 }
+            }
+
+            Statement::FlagSchemaDecl { name, default, .. } => {
+                self.deps.uses_args = true;
+                self.declare_variable_in_current_scope(name);
+                if let Some(v) = default {
+                    self.analyze_expr(v);
+                }
+            }
+
+            Statement::ParseFlags => {
+                self.deps.uses_args = true;
             }
             
             Statement::Assignment { name, value } => {
@@ -899,6 +1136,8 @@ impl Analyzer {
                             if !self.is_variable_available(name) && name != "_iter" {
                                 if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
                                     self.push_unknown_variable(name);
+                                } else {
+                                    self.track_typo_candidate(name);
                                 }
                             }
                         }
@@ -914,6 +1153,8 @@ impl Analyzer {
                     // (that will be caught by check_for_typos)
                     if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
                         self.push_unknown_variable(name);
+                    } else {
+                        self.track_typo_candidate(name);
                     }
                 }
             }
@@ -921,7 +1162,7 @@ impl Analyzer {
             // Argument and environment variable expressions
             Expr::ArgumentCount | Expr::ArgumentName | Expr::ArgumentFirst | 
             Expr::ArgumentSecond | Expr::ArgumentLast | Expr::ArgumentEmpty |
-            Expr::ArgumentAll => {
+            Expr::ArgumentAll | Expr::ArgumentRaw => {
                 self.deps.uses_args = true;
             }
 

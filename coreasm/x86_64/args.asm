@@ -17,6 +17,8 @@ section .bss
     _argc: resq 1           ; argument count
     _argv: resq 1           ; pointer to argv array
     _envp: resq 1           ; pointer to envp array
+    _parsed_argc: resq 1    ; filtered positional arg count (user args only)
+    _parsed_args: resq 4096 ; filtered positional pointers
 
 section .text
 
@@ -66,6 +68,121 @@ global _get_program_name
 _get_program_name:
     mov rax, [rel _argv]
     mov rax, [rax]          ; argv[0]
+    ret
+
+; Get raw user argument count (argv[1..])
+; Returns: count in rax
+global _get_raw_argc
+_get_raw_argc:
+    mov rax, [rel _argc]
+    cmp rax, 1
+    jle .no_user_args
+    dec rax
+    ret
+.no_user_args:
+    xor rax, rax
+    ret
+
+; Get raw user argument by 0-based index
+; Args: index in rdi (0 = argv[1])
+; Returns: pointer to null-terminated string in rax, or 0 if out of bounds
+global _get_raw_arg
+_get_raw_arg:
+    call _get_raw_argc
+    cmp rdi, rax
+    jge .raw_oob
+    mov rax, [rel _argv]
+    lea rdx, [rdi + 1]
+    mov rax, [rax + rdx*8]
+    ret
+.raw_oob:
+    xor rax, rax
+    ret
+
+; Reset parsed positional args storage
+global _reset_parsed_args
+_reset_parsed_args:
+    mov qword [rel _parsed_argc], 0
+    ret
+
+; Append positional argument pointer to parsed list
+; Args: arg pointer in rdi
+global _append_parsed_arg
+_append_parsed_arg:
+    mov rax, [rel _parsed_argc]
+    cmp rax, 4096
+    jge .append_done
+    lea rdx, [rel _parsed_args]
+    mov [rdx + rax*8], rdi
+    inc rax
+    mov [rel _parsed_argc], rax
+.append_done:
+    ret
+
+; Get parsed positional args count
+; Returns: count in rax
+global _get_parsed_argc
+_get_parsed_argc:
+    mov rax, [rel _parsed_argc]
+    ret
+
+; Get parsed positional arg by 0-based index
+; Args: index in rdi
+; Returns: pointer in rax or 0 if out of bounds
+global _get_parsed_arg
+_get_parsed_arg:
+    cmp rdi, [rel _parsed_argc]
+    jge .parsed_oob
+    lea rdx, [rel _parsed_args]
+    mov rax, [rdx + rdi*8]
+    ret
+.parsed_oob:
+    xor rax, rax
+    ret
+
+; Parse signed integer from string
+; Args: rdi = string pointer
+; Returns: rax = parsed integer (0 on empty/invalid prefix)
+global _parse_i64
+_parse_i64:
+    push rbx
+    push rcx
+    push rdx
+
+    xor rax, rax            ; accumulator
+    xor rcx, rcx            ; sign flag (0=+,1=-)
+    mov rbx, rdi
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .parse_loop
+    mov rcx, 1
+    inc rbx
+
+.parse_loop:
+    mov dl, [rbx]
+    test dl, dl
+    jz .parse_done
+    cmp dl, '0'
+    jl .parse_done
+    cmp dl, '9'
+    jg .parse_done
+    imul rax, rax, 10
+    sub dl, '0'
+    movzx rdx, dl
+    add rax, rdx
+    inc rbx
+    jmp .parse_loop
+
+.parse_done:
+    test rcx, rcx
+    jz .parse_ret
+    neg rax
+
+.parse_ret:
+    pop rdx
+    pop rcx
+    pop rbx
     ret
 
 ; ============================================================================

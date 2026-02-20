@@ -1,0 +1,9 @@
+verbose:1
+ALL
+-v
+file.txt
+RAW
+--verbose
+--
+-v
+file.txt

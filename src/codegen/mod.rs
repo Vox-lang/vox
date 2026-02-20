@@ -28,7 +28,17 @@ pub struct CodeGenerator {
     uses_funcs: bool,
     uses_lists: bool,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
+    flag_schemas: Vec<FlagSchemaRuntime>,
     target_arch: String,
+}
+
+#[derive(Clone)]
+struct FlagSchemaRuntime {
+    name: String,
+    short: String,
+    long: String,
+    value_type: FlagValueType,
+    required: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -87,6 +97,7 @@ impl CodeGenerator {
             uses_funcs: false,
             uses_lists: false,
             loop_stack: Vec::new(),
+            flag_schemas: Vec::new(),
             target_arch: "x86_64".to_string(),
         }
     }
@@ -153,6 +164,163 @@ impl CodeGenerator {
                 }
             }
         }
+    }
+
+    fn collect_flag_schemas(&mut self, program: &Program) {
+        self.flag_schemas.clear();
+        for stmt in &program.statements {
+            if let Statement::FlagSchemaDecl {
+                name,
+                short,
+                long,
+                value_type,
+                required,
+                ..
+            } = stmt
+            {
+                self.flag_schemas.push(FlagSchemaRuntime {
+                    name: name.clone(),
+                    short: short.clone(),
+                    long: long.clone(),
+                    value_type: value_type.clone(),
+                    required: *required,
+                });
+            }
+        }
+    }
+
+    fn emit_flag_parse_routine(&mut self) {
+        if self.flag_schemas.is_empty() {
+            return;
+        }
+
+        self.emit_indent("; Runtime flag schema parsing");
+        self.emit_indent("call _reset_parsed_args");
+
+        let schemas = self.flag_schemas.clone();
+        let mut seen_entries: Vec<(FlagSchemaRuntime, i64, i64)> = Vec::new();
+        for schema in &schemas {
+            let flag_offset = if let Some(off) = self.get_var(&schema.name) {
+                off
+            } else {
+                self.alloc_var(&schema.name)
+            };
+            let seen_offset = self.alloc_var(&format!("__flag_seen_{}", schema.name.replace(' ', "_")));
+            self.emit_indent(&format!("mov qword [rbp-{}], 0", seen_offset));
+            seen_entries.push((schema.clone(), seen_offset, flag_offset));
+        }
+
+        let argc_off = self.alloc_var("__flag_parse_argc");
+        let idx_off = self.alloc_var("__flag_parse_idx");
+        let cur_off = self.alloc_var("__flag_parse_cur");
+        let stop_off = self.alloc_var("__flag_parse_stop");
+
+        self.emit_indent("call _get_raw_argc");
+        self.emit_indent(&format!("mov [rbp-{}], rax", argc_off));
+        self.emit_indent(&format!("mov qword [rbp-{}], 0", idx_off));
+        self.emit_indent(&format!("mov qword [rbp-{}], 0", stop_off));
+
+        let loop_label = self.new_label("flag_parse_loop");
+        let done_label = self.new_label("flag_parse_done");
+        let append_pos_label = self.new_label("flag_parse_append_positional");
+        let continue_label = self.new_label("flag_parse_continue");
+
+        let stop_token = self.add_string("--");
+        self.emit(&format!("{}:", loop_label));
+        self.emit_indent(&format!("mov rax, [rbp-{}]", idx_off));
+        self.emit_indent(&format!("cmp rax, [rbp-{}]", argc_off));
+        self.emit_indent(&format!("jge {}", done_label));
+
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("call _get_raw_arg");
+        self.emit_indent(&format!("mov [rbp-{}], rax", cur_off));
+
+        self.emit_indent(&format!("cmp qword [rbp-{}], 0", stop_off));
+        self.emit_indent(&format!("jne {}", append_pos_label));
+
+        let not_stop_label = self.new_label("flag_parse_not_stop");
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", cur_off));
+        self.emit_indent(&format!("lea rsi, [rel {}]", stop_token));
+        self.emit_indent("call _str_eq");
+        self.emit_indent("test rax, rax");
+        self.emit_indent(&format!("jz {}", not_stop_label));
+        self.emit_indent(&format!("mov qword [rbp-{}], 1", stop_off));
+        self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
+        self.emit_indent(&format!("jmp {}", continue_label));
+        self.emit(&format!("{}:", not_stop_label));
+
+        let mut next_check_label = append_pos_label.clone();
+        for (schema, seen_off, flag_off) in &seen_entries {
+            let no_match_label = self.new_label("flag_no_match");
+            let matched_label = self.new_label("flag_matched");
+
+            let short_label = self.add_string(&schema.short);
+            self.emit_indent(&format!("mov rdi, [rbp-{}]", cur_off));
+            self.emit_indent(&format!("lea rsi, [rel {}]", short_label));
+            self.emit_indent("call _str_eq");
+            self.emit_indent("test rax, rax");
+            self.emit_indent(&format!("jnz {}", matched_label));
+
+            let long_label = self.add_string(&schema.long);
+            self.emit_indent(&format!("mov rdi, [rbp-{}]", cur_off));
+            self.emit_indent(&format!("lea rsi, [rel {}]", long_label));
+            self.emit_indent("call _str_eq");
+            self.emit_indent("test rax, rax");
+            self.emit_indent(&format!("jz {}", no_match_label));
+
+            self.emit(&format!("{}:", matched_label));
+            match schema.value_type {
+                FlagValueType::Boolean => {
+                    self.emit_indent(&format!("mov qword [rbp-{}], 1", flag_off));
+                    self.emit_indent(&format!("mov qword [rbp-{}], 1", seen_off));
+                    self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
+                    self.emit_indent(&format!("jmp {}", continue_label));
+                }
+                FlagValueType::Text | FlagValueType::Number => {
+                    self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
+                    self.emit_indent(&format!("mov rax, [rbp-{}]", idx_off));
+                    self.emit_indent(&format!("cmp rax, [rbp-{}]", argc_off));
+                    self.emit_indent(&format!("jge {}", done_label));
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("call _get_raw_arg");
+                    if matches!(schema.value_type, FlagValueType::Number) {
+                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent("call _parse_i64");
+                    }
+                    self.emit_indent(&format!("mov [rbp-{}], rax", flag_off));
+                    self.emit_indent(&format!("mov qword [rbp-{}], 1", seen_off));
+                    self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
+                    self.emit_indent(&format!("jmp {}", continue_label));
+                }
+            }
+
+            self.emit(&format!("{}:", no_match_label));
+            next_check_label = no_match_label;
+        }
+
+        // Fall through from last no-match to positional append
+        self.emit_indent(&format!("jmp {}", append_pos_label));
+
+        self.emit(&format!("{}:", append_pos_label));
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", cur_off));
+        self.emit_indent("call _append_parsed_arg");
+        self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
+        self.emit_indent(&format!("jmp {}", continue_label));
+
+        self.emit(&format!("{}:", continue_label));
+        self.emit_indent(&format!("jmp {}", loop_label));
+
+        self.emit(&format!("{}:", done_label));
+        for (schema, seen_off, _) in &seen_entries {
+            if schema.required {
+                let ok_label = self.new_label("flag_required_ok");
+                self.emit_indent(&format!("cmp qword [rbp-{}], 1", seen_off));
+                self.emit_indent(&format!("je {}", ok_label));
+                self.emit_indent("EXIT 1");
+                self.emit(&format!("{}:", ok_label));
+            }
+        }
+        let _ = next_check_label;
     }
 
     fn emit_global_constant_format_fallback(&mut self, name: &str, format: Option<&String>) -> bool {
@@ -236,9 +404,28 @@ impl CodeGenerator {
     
     pub fn generate(&mut self, program: &Program) -> String {
         self.collect_global_constants(program);
+        self.collect_flag_schemas(program);
 
-        for stmt in &program.statements {
+        let explicit_parse_idx = program
+            .statements
+            .iter()
+            .position(|s| matches!(s, Statement::ParseFlags));
+        let auto_parse_idx = program
+            .statements
+            .iter()
+            .rposition(|s| matches!(s, Statement::FlagSchemaDecl { .. }))
+            .map(|i| i + 1);
+        let parse_insert_idx = explicit_parse_idx.or(auto_parse_idx);
+
+        for (idx, stmt) in program.statements.iter().enumerate() {
+            if parse_insert_idx == Some(idx) {
+                self.emit_flag_parse_routine();
+            }
             self.generate_statement(stmt);
+        }
+
+        if parse_insert_idx == Some(program.statements.len()) {
+            self.emit_flag_parse_routine();
         }
         
         let mut result = String::new();
@@ -465,6 +652,37 @@ impl CodeGenerator {
                         self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
                     }
                 }
+            }
+
+            Statement::FlagSchemaDecl { name, value_type, default, .. } => {
+                // Current bootstrap behavior: represent parsed flag value as a normal variable slot.
+                // Runtime schema parsing/assignment is emitted in a later iteration.
+                let offset = if let Some(&existing) = self.variables.get(name) {
+                    existing
+                } else {
+                    self.stack_offset += 8;
+                    self.variables.insert(name.clone(), self.stack_offset);
+                    self.stack_offset
+                };
+
+                let vt = match value_type {
+                    FlagValueType::Boolean => VarType::Boolean,
+                    FlagValueType::Number => VarType::Integer,
+                    FlagValueType::Text => VarType::String,
+                };
+                self.variable_types.insert(name.clone(), vt);
+
+                if let Some(expr) = default {
+                    self.generate_expr(expr);
+                    self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                } else {
+                    self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
+                }
+            }
+
+            Statement::ParseFlags => {
+                // Explicit parse point is currently a no-op placeholder. Runtime parsing is
+                // planned to be emitted around this marker in a subsequent iteration.
             }
             
             Statement::Assignment { name, value } => {
@@ -805,16 +1023,19 @@ impl CodeGenerator {
                 let continue_label = self.new_label("foreach_continue");
                 let end_label = self.new_label("foreach_end");
                 
-                // Special handling for ArgumentAll - iterate over argv[1..argc]
-                if matches!(collection, Expr::ArgumentAll) {
-                    // Get argc and store as loop limit
-                    self.emit_indent("call _get_argc");
+                // Special handling for arguments lists
+                if matches!(collection, Expr::ArgumentAll | Expr::ArgumentRaw) {
+                    if matches!(collection, Expr::ArgumentAll) {
+                        self.emit_indent("call _get_parsed_argc");
+                    } else {
+                        self.emit_indent("call _get_raw_argc");
+                    }
                     let argc_var = self.alloc_var(&format!("{}_argc", variable));
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; argc", argc_var));
-                    
-                    // Initialize index to 1 (skip program name)
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; arg count", argc_var));
+
+                    // Initialize index to 0 (user-arg-relative)
                     let index_var = self.alloc_var(&format!("{}_idx", variable));
-                    self.emit_indent(&format!("mov qword [rbp-{}], 1  ; start at argv[1]", index_var));
+                    self.emit_indent(&format!("mov qword [rbp-{}], 0", index_var));
                     
                     // Allocate variable for current element
                     let elem_var = self.alloc_var(variable);
@@ -823,14 +1044,18 @@ impl CodeGenerator {
                     
                     self.emit(&format!("{}:", start_label));
                     
-                    // Check if index < argc
+                    // Check if index < count
                     self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
-                    self.emit_indent(&format!("cmp rax, [rbp-{}]  ; compare with argc", argc_var));
+                    self.emit_indent(&format!("cmp rax, [rbp-{}]  ; compare with count", argc_var));
                     self.emit_indent(&format!("jge {}", end_label));
                     
-                    // Get current argument: _get_arg(index)
+                    // Get current argument pointer from selected view
                     self.emit_indent("mov rdi, rax");
-                    self.emit_indent("call _get_arg");
+                    if matches!(collection, Expr::ArgumentAll) {
+                        self.emit_indent("call _get_parsed_arg");
+                    } else {
+                        self.emit_indent("call _get_raw_arg");
+                    }
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
                     
                     // Generate body
@@ -2531,6 +2756,11 @@ impl CodeGenerator {
                 // This is handled specially in ForEach codegen
                 // If used elsewhere, we can't return a list directly
                 self.emit_indent("; ArgumentAll - handled by ForEach");
+            }
+
+            Expr::ArgumentRaw => {
+                // Same temporary behavior as ArgumentAll for now.
+                self.emit_indent("; ArgumentRaw - handled by ForEach/list runtime in future iteration");
             }
 
             Expr::ArgumentHas { value } => {

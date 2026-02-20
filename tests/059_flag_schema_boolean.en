@@ -1,0 +1,8 @@
+a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+
+If verbose then,
+  Print "verbose:on".
+Otherwise,
+  Print "verbose:off".
+
+Print each item from arguments's all.

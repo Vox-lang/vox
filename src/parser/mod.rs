@@ -139,6 +139,32 @@ mod file_line_read_and_seek_tests {
     }
 
     #[test]
+    fn test_on_error_sentence_can_return_to_parent_if_block() {
+        let input = r#"
+            If arguments's empty then,
+                Open a file for reading called "source" at "/dev/stdin",
+                On error print "cat: /dev/stdin: No such file or directory", exit 1.
+                Read line from source into content,
+                While content is not empty,
+                    Read line from source into content.
+        "#;
+
+        let result = parse_input(input).expect("if block should continue after on error sentence");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::If { then_block, .. } => {
+                assert_eq!(then_block.len(), 4, "then block should include statements after on error");
+                assert!(matches!(then_block[0], Statement::FileOpen { .. }));
+                assert!(matches!(then_block[1], Statement::OnError { .. }));
+                assert!(matches!(then_block[2], Statement::FileReadLine { .. }));
+                assert!(matches!(then_block[3], Statement::While { .. }));
+            }
+            other => panic!("Expected If, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_parse_zero_param_function_def_with_comma_signature() {
         let input = r#"
             To "show version",
@@ -176,6 +202,109 @@ mod file_line_read_and_seek_tests {
                 assert!(args.is_empty(), "expected no call arguments");
             }
             other => panic!("Expected FunctionCall, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_def_with_file_parameter_type() {
+        let input = r#"
+            To "handle file" with a file called source,
+                Read line from source into content.
+        "#;
+
+        let result = parse_input(input).expect("function definition with file parameter should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { name, params, body, .. } => {
+                assert_eq!(name, "handle file");
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].0, "source");
+                assert_eq!(params[0].1, Type::File);
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Statement::FileReadLine { .. }));
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_set_assignment_supports_quoted_variable_name() {
+        let input = r#"
+            A boolean called "failed to open a file" is false.
+            Set "failed to open a file" to true.
+        "#;
+
+        let result = parse_input(input).expect("quoted variable assignment with set should parse");
+        assert_eq!(result.statements.len(), 2);
+
+        match &result.statements[1] {
+            Statement::VarDecl { name, value, .. } => {
+                assert_eq!(name, "failed to open a file");
+                assert!(matches!(value, Some(Expr::BoolLit(true))));
+            }
+            other => panic!("Expected Set to parse as VarDecl assignment-style statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_flag_schema_boolean_required() {
+        let input = r#"a flag called "numbering" is "-n" or "--number", it is a boolean and is required."#;
+        let result = parse_input(input).expect("flag schema should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FlagSchemaDecl { name, short, long, value_type, required, default } => {
+                assert_eq!(name, "numbering");
+                assert_eq!(short, "-n");
+                assert_eq!(long, "--number");
+                assert!(matches!(value_type, FlagValueType::Boolean));
+                assert!(*required);
+                assert!(default.is_none());
+            }
+            other => panic!("Expected FlagSchemaDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_flag_schema_text_with_default() {
+        let input = r#"a flag called "output" is "-o" or "--output", it is a text with default "out.txt"."#;
+        let result = parse_input(input).expect("flag schema with default should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FlagSchemaDecl { name, value_type, required, default, .. } => {
+                assert_eq!(name, "output");
+                assert!(matches!(value_type, FlagValueType::Text));
+                assert!(!required);
+                assert!(matches!(default, Some(Expr::StringLit(s)) if s == "out.txt"));
+            }
+            other => panic!("Expected FlagSchemaDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_parse_flags_statement() {
+        let input = r#"
+            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            parse flags.
+        "#;
+        let result = parse_input(input).expect("parse flags statement should parse");
+        assert_eq!(result.statements.len(), 2);
+        assert!(matches!(result.statements[1], Statement::ParseFlags));
+    }
+
+    #[test]
+    fn test_parse_arguments_raw_property() {
+        let input = r#"Print arguments's raw."#;
+        let result = parse_input(input).expect("arguments's raw should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::Print { value, .. } => {
+                assert!(matches!(value, Expr::ArgumentRaw));
+            }
+            other => panic!("Expected Print statement, got {:?}", other),
         }
     }
 }
@@ -372,6 +501,7 @@ impl Parser {
             Token::Print => self.parse_print(),
             Token::Set | Token::Create => self.parse_var_decl(),
             Token::A | Token::An => self.parse_typed_var_decl(),
+            Token::Parse => self.parse_parse_flags(),
             Token::The => self.parse_the_statement(),
             Token::If | Token::When => self.parse_if(),
             Token::While => self.parse_while(),
@@ -410,6 +540,25 @@ impl Parser {
             Token::Identifier(_) => self.parse_identifier_statement(),
             Token::StringLiteral(_) => self.parse_function_call_statement(),
             _ => Err(self.err_expected("a statement", self.current())),
+        }
+    }
+
+    fn parse_parse_flags(&mut self) -> Result<Statement, CompileError> {
+        self.advance(); // consume parse
+        self.skip_noise();
+
+        if matches!(self.current(), Token::Flag) {
+            self.advance();
+            Ok(Statement::ParseFlags)
+        } else if let Token::Identifier(id) = self.current().clone() {
+            if id.eq_ignore_ascii_case("flags") || id.eq_ignore_ascii_case("flag") {
+                self.advance();
+                Ok(Statement::ParseFlags)
+            } else {
+                Err(self.err("Expected 'flag' or 'flags' after 'parse'"))
+            }
+        } else {
+            Err(self.err("Expected 'flag' or 'flags' after 'parse'"))
         }
     }
     
@@ -706,9 +855,21 @@ impl Parser {
         } else {
             // Check for keyword used as variable name
             self.check_not_keyword(self.current())?;
-            // Otherwise expect identifier directly
+            // Otherwise expect identifier or quoted name directly
             match self.current().clone() {
                 Token::Identifier(n) => { self.advance(); n }
+                Token::StringLiteral(n) => {
+                    // Also check if the string content is a keyword
+                    if let Some(kw) = Token::string_is_keyword(&n) {
+                        return Err(self.make_error(&format!(
+                            "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
+                             Tip: Try a more descriptive name like '{}_value' or 'my_{}'",
+                            n, kw, kw
+                        )));
+                    }
+                    self.advance();
+                    n
+                }
                 _ => return Err(self.err("Expected variable name")),
             }
         };
@@ -749,10 +910,136 @@ impl Parser {
             value,
         })
     }
+
+    fn parse_flag_schema_decl(&mut self) -> Result<Statement, CompileError> {
+        self.expect(&Token::Flag);
+        self.skip_noise();
+
+        self.expect(&Token::Called);
+        self.skip_noise();
+
+        let name = match self.current().clone() {
+            Token::StringLiteral(n) => {
+                self.advance();
+                n
+            }
+            Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            _ => return Err(self.err("Expected flag variable name after 'called'")),
+        };
+
+        self.skip_noise();
+        self.expect(&Token::Is);
+        self.skip_noise();
+
+        let short = match self.current().clone() {
+            Token::StringLiteral(v) => {
+                self.advance();
+                v
+            }
+            _ => return Err(self.err("Expected short flag alias string like '-n'")),
+        };
+
+        self.skip_noise();
+        self.expect(&Token::Or);
+        self.skip_noise();
+
+        let long = match self.current().clone() {
+            Token::StringLiteral(v) => {
+                self.advance();
+                v
+            }
+            _ => return Err(self.err("Expected long flag alias string like '--number'")),
+        };
+
+        self.skip_noise();
+        self.expect(&Token::Comma);
+        self.skip_noise();
+
+        // optional "it"
+        if let Token::Identifier(id) = self.current().clone() {
+            if id.eq_ignore_ascii_case("it") {
+                self.advance();
+                self.skip_noise();
+            }
+        }
+
+        self.expect(&Token::Is);
+        self.skip_noise();
+
+        // optional article before type
+        if matches!(self.current(), Token::A | Token::An | Token::The) {
+            self.advance();
+            self.skip_noise();
+        }
+
+        let value_type = match self.current() {
+            Token::Boolean => {
+                self.advance();
+                FlagValueType::Boolean
+            }
+            Token::Number | Token::Int => {
+                self.advance();
+                FlagValueType::Number
+            }
+            Token::Text => {
+                self.advance();
+                FlagValueType::Text
+            }
+            _ => return Err(self.err("Expected flag value type: boolean, number, or text")),
+        };
+
+        let mut required = false;
+        let mut default = None;
+
+        loop {
+            self.skip_noise();
+            match self.current() {
+                Token::And => {
+                    self.advance();
+                    self.skip_noise();
+                    if self.expect(&Token::Is) {
+                        self.skip_noise();
+                    }
+
+                    if self.expect(&Token::Required) {
+                        required = true;
+                    } else {
+                        return Err(self.err("Expected 'required' after 'and is' in flag schema"));
+                    }
+                }
+                Token::With => {
+                    self.advance();
+                    self.skip_noise();
+                    if !self.expect(&Token::Default) {
+                        return Err(self.err("Expected 'default' after 'with' in flag schema"));
+                    }
+                    self.skip_noise();
+                    default = Some(self.parse_expression()?);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(Statement::FlagSchemaDecl {
+            name,
+            short,
+            long,
+            value_type,
+            required,
+            default,
+        })
+    }
     
     fn parse_typed_var_decl(&mut self) -> Result<Statement, CompileError> {
         self.advance(); // consume 'a' or 'an'
         self.skip_noise();
+
+        if *self.current() == Token::Flag {
+            return self.parse_flag_schema_decl();
+        }
         
         // Parse type: number, int, float, text, boolean, list, buffer, file
         let var_type = match self.current() {
@@ -2617,6 +2904,7 @@ impl Parser {
                         Token::Number => { self.advance(); Type::Integer }
                         Token::Text => { self.advance(); Type::String }
                         Token::Boolean => { self.advance(); Type::Boolean }
+                        Token::File => { self.advance(); Type::File }
                         Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
                         _ => Type::Unknown,
                     };
@@ -2672,11 +2960,12 @@ impl Parser {
                 self.skip_noise();
             }
             
-            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean) {
+            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File) {
                 return_type = match self.current() {
                     Token::Number => { self.advance(); Type::Integer }
                     Token::Text => { self.advance(); Type::String }
                     Token::Boolean => { self.advance(); Type::Boolean }
+                    Token::File => { self.advance(); Type::File }
                     _ => Type::Void,
                 };
                 self.skip_noise();
@@ -2783,17 +3072,39 @@ impl Parser {
         
         let stmt = self.parse_statement()?;
         statements.push(stmt);
+        let mut last_stmt_was_on_error = matches!(statements.last(), Some(Statement::OnError { .. }));
         
-        while matches!(self.current(), Token::Comma) && 
-              !matches!(self.peek(1), Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak) {
-            self.advance();
-            self.skip_noise();
-            
-            if matches!(self.current(), Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak) {
+        loop {
+            let continue_with_comma = matches!(self.current(), Token::Comma)
+                && !matches!(
+                    self.peek(1),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                );
+
+            let continue_after_on_error = last_stmt_was_on_error
+                && !matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak
+                );
+
+            if !continue_with_comma && !continue_after_on_error {
                 break;
             }
-            
+
+            if continue_with_comma {
+                self.advance();
+                self.skip_noise();
+
+                if matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak
+                ) {
+                    break;
+                }
+            }
+
             let stmt = self.parse_statement()?;
+            last_stmt_was_on_error = matches!(stmt, Statement::OnError { .. });
             statements.push(stmt);
         }
         
@@ -3602,7 +3913,8 @@ impl Parser {
                                 Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
                                 Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                _ => Err(self.err_expected("arguments property (count, first, last, empty, all)", self.current())),
+                                Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
+                                _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
                             };
                         }
                     }
@@ -3667,7 +3979,8 @@ impl Parser {
                                     Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
                                     Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
                                     Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                    _ => Err(self.err_expected("arguments property (count, first, last, empty, all)", self.current())),
+                                    Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
+                                    _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
                                 };
                             }
                             

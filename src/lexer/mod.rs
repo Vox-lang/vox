@@ -16,6 +16,9 @@ pub enum Token {
     
     // Functions
     With, Called, Modulo,
+
+    // Flag schema
+    Flag, Parse, Required, Default,
     
     // Comparisons
     Is, Are, Equals, Equal, Greater, Less, Than, Not, And, Or,
@@ -43,7 +46,7 @@ pub enum Token {
     See, Library, Version,
     
     // Arguments and Environment
-    Argument, Arguments, Environment, Variable, Count,
+    Argument, Arguments, Environment, Variable, Count, Raw,
     
     // Time and Timers
     Wait, Sleep, Timer, Stop, Begin, Finish,
@@ -113,6 +116,10 @@ impl Token {
             // Functions
             "with" | "using" | "given" | "taking" => Some("with"),
             "called" | "named" => Some("called"),
+            "parse" => Some("parse"),
+            "flag" => Some("flag"),
+            "required" => Some("required"),
+            "default" => Some("default"),
             // Comparisons
             "is" | "equals" | "equal" | "==" => Some("is"),
             "are" => Some("are"),
@@ -141,7 +148,7 @@ impl Token {
             "float" | "decimal" | "real" => Some("float"),
             "int" | "integer" => Some("int"),
             "text" | "string" | "message" => Some("text"),
-            "boolean" | "bool" | "flag" => Some("boolean"),
+            "boolean" | "bool" => Some("boolean"),
             "list" | "array" | "collection" => Some("list"),
             "true" | "yes" => Some("true"),
             "false" | "no" => Some("false"),
@@ -201,6 +208,7 @@ impl Token {
             "environment" | "env" => Some("environment"),
             "variable" | "var" => Some("variable"),
             "count" => Some("count"),
+            "raw" => Some("raw"),
             // Time and timers
             "wait" | "pause" => Some("wait"),
             "sleep" | "delay" => Some("sleep"),
@@ -278,6 +286,10 @@ impl Token {
             Token::With => Some("with"),
             Token::Called => Some("called"),
             Token::Modulo => Some("modulo"),
+            Token::Parse => Some("parse"),
+            Token::Flag => Some("flag"),
+            Token::Required => Some("required"),
+            Token::Default => Some("default"),
             // Comparisons
             Token::Is => Some("is"),
             Token::Are => Some("are"),
@@ -361,6 +373,7 @@ impl Token {
             Token::Environment => Some("environment"),
             Token::Variable => Some("variable"),
             Token::Count => Some("count"),
+            Token::Raw => Some("raw"),
             // Time and Timers
             Token::Wait => Some("wait"),
             Token::Sleep => Some("sleep"),
@@ -747,6 +760,11 @@ impl<'a> Lexer<'a> {
             "with" => Token::With,
             "called" | "named" => Token::Called,
             "modulo" | "mod" | "remainder" => Token::Modulo,
+            "parse" => Token::Parse,
+            "flag" => Token::Flag,
+            "flags" => Token::Identifier("flags".to_string()),
+            "required" => Token::Required,
+            "default" => Token::Default,
             "is" | "it's" => Token::Is,
             "it" => Token::Identifier("it".to_string()),
             "are" | "they're" => Token::Are,
@@ -773,7 +791,7 @@ impl<'a> Lexer<'a> {
             "float" | "decimal" | "real" => Token::Float,
             "int" | "integer" => Token::Int,
             "text" | "string" | "message" => Token::Text,
-            "boolean" | "bool" | "flag" => Token::Boolean,
+            "boolean" | "bool" => Token::Boolean,
             "list" | "array" | "collection" => Token::List,
             "true" | "yes" => Token::True,
             "false" | "no" => Token::False,
@@ -830,6 +848,7 @@ impl<'a> Lexer<'a> {
             "environment" | "env" => Token::Environment,
             "variable" | "var" => Token::Variable,
             "count" => Token::Count,
+            "raw" => Token::Raw,
             "treating" | "treat" => Token::Treating,
             // Time and Timers
             "wait" | "pause" => Token::Wait,

@@ -69,11 +69,9 @@ EC_BIN="$SCRIPT_DIR/target/release/ec"
 echo -e "${BLUE}${BOLD}=== ec test runner ===${NC}"
 echo ""
 
-if [[ ! -f "$EC_BIN" ]]; then
-    echo -e "${YELLOW}Building compiler...${NC}"
-    make build
-    echo ""
-fi
+echo -e "${YELLOW}Building compiler...${NC}"
+make build
+echo ""
 
 cargo_test() {
     echo -e "${YELLOW}Running cargo tests...${NC}"
@@ -89,6 +87,7 @@ run_test() {
     local test_name="${test_file%.en}"
     local expected_file="${test_name}.expected"
     local expected_exit_file="${test_name}.exit"
+    local args_file="${test_name}.args"
     local basename=$(basename "$test_name")
     
     # Check if expected file exists
@@ -102,9 +101,23 @@ run_test() {
     local tmp_out=$(mktemp)
     local tmp_err=$(mktemp)
     
-    # Run the test
+    # Load runtime arguments from optional .args file (one arg per non-empty line)
+    local run_args=()
+    if [[ -f "$args_file" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            run_args+=("$line")
+        done < "$args_file"
+    fi
+
+    # Compile then run the produced executable so we can pass runtime args
     local actual_exit=0
-    "$EC_BIN" "$test_file" --run > "$tmp_out" 2> "$tmp_err" || actual_exit=$?
+    local exe_path="$SCRIPT_DIR/$basename"
+    "$EC_BIN" "$test_file" > "$tmp_err" 2>&1 || actual_exit=$?
+
+    if [[ "$actual_exit" == "0" ]]; then
+        "$exe_path" "${run_args[@]}" > "$tmp_out" 2>> "$tmp_err" || actual_exit=$?
+    fi
     
     # Check expected exit code if specified
     local expected_exit=0
@@ -135,7 +148,8 @@ run_test() {
         fi
     fi
     
-    # Cleanup temp files
+    # Cleanup temp files and generated executable
+    rm -f "$exe_path"
     rm -f "$tmp_out" "$tmp_err"
 }
 

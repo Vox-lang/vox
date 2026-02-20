@@ -1,0 +1,4 @@
+a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
+
+Print "output:{output}".
+Print each item from arguments's all.

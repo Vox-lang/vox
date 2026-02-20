@@ -15,6 +15,13 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FlagValueType {
+    Boolean,
+    Number,
+    Text,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum FileMode {
     Reading,
     Writing,
@@ -87,6 +94,7 @@ pub enum Expr {
     ArgumentLast,       // last user argument (or program name if no args)
     ArgumentEmpty,      // true if argc <= 1 (no user args)
     ArgumentAll,        // all user arguments as a list (argv[1..])
+    ArgumentRaw,        // raw user arguments as a list (argv[1..], unfiltered)
     ArgumentHas {
         value: Box<Expr>,
     },
@@ -242,6 +250,17 @@ pub enum Statement {
         var_type: Option<Type>,
         value: Option<Expr>,
     },
+
+    FlagSchemaDecl {
+        name: String,
+        short: String,
+        long: String,
+        value_type: FlagValueType,
+        required: bool,
+        default: Option<Expr>,
+    },
+
+    ParseFlags,
     
     Assignment {
         name: String,

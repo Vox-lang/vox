@@ -1,0 +1,3 @@
+a flag called "iterations" is "-i" or "--iterations", it is a number and is required.
+
+Print "iterations:{iterations}".

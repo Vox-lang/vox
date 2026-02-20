@@ -1,6 +1,6 @@
 # EC Language Specification
 
-**Version 0.1.4**
+**Version 0.1.5**
 
 This document defines the syntax and semantics of EC (sentence based code).
 
@@ -1589,6 +1589,8 @@ Access command-line arguments using the `'s` property syntax.
 | `second` | `arguments's second` | Second user argument (argv[2]) |
 | `last` | `arguments's last` | Last argument |
 | `empty` | `arguments's empty` | True if no user arguments (argc ≤ 1) |
+| `all` | `arguments's all` | User arguments as a collection (for loop expansion) |
+| `raw` | `arguments's raw` | Original unfiltered user arguments as a collection |
 
 ### Basic Usage
 
@@ -1628,6 +1630,113 @@ For accessing arguments by a computed index, use the `argument at` syntax:
 ```
 a number called "i" is 2.
 a text called "arg" is the argument at the i.
+```
+
+### Declarative Flag Parsing
+
+EC supports declarative CLI flag parsing with a schema-first style.
+
+#### 1) Declare a flag schema
+
+Define each supported flag once, including aliases and type:
+
+```
+a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+a flag called "output" is "-o" or "--output", it is a text.
+a flag called "retries" is "-r" or "--retries", it is a number.
+```
+
+Supported flag value types:
+
+- `boolean` (presence sets true)
+- `text` (consumes the next token as text)
+- `number` (consumes the next token and parses it as a number)
+
+#### 2) Optional schema modifiers
+
+Flags may be marked as required and/or given defaults:
+
+```
+a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
+a flag called "retries" is "-r" or "--retries", it is a number and is required.
+```
+
+- `with default ...` initializes the flag value if the flag is not passed.
+- `and is required` requires the flag to be present at runtime.
+
+#### 3) Parse point: explicit or automatic
+
+You can parse flags explicitly:
+
+```
+Parse flags.
+```
+
+Or omit it. If omitted, EC inserts parsing automatically **immediately after the last flag schema declaration**.
+
+#### 4) Placement rules
+
+Flag schema declarations are valid as long as they appear **before parsing occurs**.
+
+- You may place normal code before/between schema declarations.
+- You may use explicit `Parse flags.` to choose exactly when parsing happens.
+- Declaring new schemas **after** `Parse flags.` is a compile-time error.
+- Using flag variables before the parse point is a compile-time error.
+
+#### 5) `arguments's all` vs `arguments's raw`
+
+After parsing:
+
+- `arguments's all` is the filtered positional argument view (recognized flags removed).
+- `arguments's raw` keeps the original user-provided argument sequence unchanged.
+
+Example:
+
+```
+a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
+Parse flags.
+
+Print "output:{output}".
+
+Print "ALL".
+Print each item from arguments's all.
+
+Print "RAW".
+Print each item from arguments's raw.
+```
+
+#### 6) Unix `--` separator
+
+`--` stops flag processing. Tokens after `--` are treated as positional arguments.
+
+Example invocation:
+
+```
+myprog --verbose -- -v file.txt
+```
+
+In this case:
+
+- `--verbose` is parsed as a flag
+- `-v` after `--` is treated as a normal positional argument
+
+#### 7) Practical pattern
+
+```
+a flag called "help" is "-h" or "--help", it is a boolean.
+a flag called "version" is "-V" or "--version", it is a boolean.
+a flag called "number" is "-n" or "--number", it is a boolean.
+
+Parse flags.
+
+If help then,
+    Print "Usage: myprog [options] [files]".
+
+If version then,
+    Print "myprog 1.0.0".
+
+Print each item from arguments's all.
 ```
 
 ---

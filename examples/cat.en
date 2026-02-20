@@ -1,16 +1,27 @@
 (reimplementation of core utils CAT command in ec)
 
-A text called "Program Version" is "0.1.4".
+A text called "Program Version" is "0.1.5".
+
+Open a file for writing called "output" at "/dev/stdout".
+On error print "cat: /dev/stdout: No such file or directory", exit 1.
+
+Create a buffer called "content" of size 1024.
+On error print "cat: failed to create buffer", exit 1.
+
+a boolean called "failed to open a file" is false.
+
+(Parse the flags now)
+A flag called "wants help" is "--help" or "-h", it is a boolean.
+A flag called "wants version" is "--version" or "-v", it is a boolean.
+A flag called "we are numbering lines" is "--number" or "-n", it is a boolean.
+Parse Flags.
 
 To "show version".
   A text called "Program" is arguments's name.
   Print "{Program} (ec) {Program Version} by Josjuar Lister".
   Exit 0.
 
-Open a file for writing called "output" at "/dev/stdout".
-Create a buffer called "content" of size 1024.
-
-If arguments has "--help" or arguments has "-h" then,
+If "wants help" then,
   A text called "Program" is arguments's name,
   Print "Usage: {Program} [OPTION]... [FILE]...",
   Print "Concatenate FILE(s) to standard output.",
@@ -22,15 +33,15 @@ If arguments has "--help" or arguments has "-h" then,
   Print "  -v, --version  output version information and exit",
   Exit 0.
 
-If arguments has "--version" or arguments has "-v" then,
+If "wants version" then,
   "show version".
 
-If arguments has "--number" or arguments has "-n" then,
-  A boolean called "we are numbering lines" is true,
+If "we are numbering lines" then,
   A number called "Line Number" is 1.
 
-If arguments's empty or arguments has "-n"(Special case) then,
+If arguments's empty then,
   Open a file for reading called "source" at "/dev/stdin",
+  On error print "cat: /dev/stdin: No such file or directory", exit 1.
   read line from source into content,
   while content is not empty,
     if "we are numbering lines" then,
@@ -41,8 +52,9 @@ If arguments's empty or arguments has "-n"(Special case) then,
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
-  if "we are numbering lines" then,
-    the "Line Number" is 1 (We reset the line number before processing each file).
+  On error print "cat: {filename}: No such file or directory",
+    set "failed to open a file" to true,
+    continue.
   read line from the source into content,
   while the content is not empty,
     if "we are numbering lines" then,
@@ -50,3 +62,9 @@ Open a file called "source" for reading at each filename from arguments's all tr
       increment the "Line Number".
     Write the content to output,
     read line from the source into content.
+  Close source.
+  
+If "failed to open a file" then,
+  Exit 1.
+Otherwise,
+  Exit 0.
