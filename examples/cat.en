@@ -23,14 +23,18 @@ To "show version".
 
 If "wants help" then,
   A text called "Program" is arguments's name,
+  Print "cat - contatonate files and print on the standard output",
   Print "Usage: {Program} [OPTION]... [FILE]...",
-  Print "Concatenate FILE(s) to standard output.",
   Print "With no FILE, or when FILE is -, read standard input.",
-  Print "",
-  Print "Options:",
+  Print "\nOptions:",
   Print "  -h, --help     display this help and exit",
   Print "  -n, --number   number all output lines",
   Print "  -v, --version  output version information and exit",
+  Print "\nExamples:",
+  Print "\ncat f - g",
+  Print "\tOutput f's content, then standard input, then g's contents",
+  Print "\ncat",
+  Print "\tCopy standard input to standard output",
   Exit 0.
 
 If "wants version" then,
