@@ -199,10 +199,10 @@ sudo make uninstall
 
 ```sh
 # Compile and run
-ec example.en --run
+vox example.en --run
 
 # Compile only
-ec example.en
+vox example.en
 ```
 
 ---
