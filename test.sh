@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# vox test runner - pytest-style testing for the English compiler
+# vox test runner - pytest-style testing for the Vox compiler
 #
 # Usage:
 #   ./test.sh              Run all tests
 #   ./test.sh tests/       Run tests in specific directory
-#   ./test.sh file.en      Run a single test
+#   ./test.sh file.vox      Run a single test
 #   ./test.sh -v           Verbose mode (show diff on failure)
 #
 
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
             echo "Examples:"
             echo "  $0               Run all tests in tests/"
             echo "  $0 tests/        Run tests in specific directory"
-            echo "  $0 tests/hello.en  Run a single test"
+            echo "  $0 tests/hello.vox  Run a single test"
             exit 0
             ;;
         *)
@@ -84,7 +84,7 @@ cargo_test() {
 # Function to run a single test
 run_test() {
     local test_file="$1"
-    local test_name="${test_file%.en}"
+    local test_name="${test_file%.vox}"
     local expected_file="${test_name}.expected"
     local expected_exit_file="${test_name}.exit"
     local args_file="${test_name}.args"
@@ -157,7 +157,7 @@ run_test() {
 if [[ -n "$SPECIFIC_FILE" ]]; then
     TEST_FILES=("$SPECIFIC_FILE")
 else
-    mapfile -t TEST_FILES < <(find "$SCRIPT_DIR/$TEST_DIR" -maxdepth 1 -name "*.en" -type f | sort)
+    mapfile -t TEST_FILES < <(find "$SCRIPT_DIR/$TEST_DIR" -maxdepth 1 -name "*.vox" -type f | sort)
 fi
 
 # Run tests
