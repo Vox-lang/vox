@@ -3,13 +3,9 @@
 > **Syntax highlighting for Vox (sentence based code)**
 
 Vox is a systems-level programming language with natural language syntax. This extension provides rich syntax highlighting for `.vx`, `.vox`, `.en` and `.eng` files.
+## Installation
 
-## Quick Setup
-
-```bash
-# Run the auto-setup script (Linux/macOS)
-./setup.sh
-```
+This extension is available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=vox.vox). Simply search for "Vox" in the Extensions panel and click Install.
 
 Or see [Manual Installation](#installation-before-marketplace-release) below.
 

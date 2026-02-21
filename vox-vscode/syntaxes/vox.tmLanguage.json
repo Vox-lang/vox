@@ -73,23 +73,23 @@
     },
     "control-keywords": {
       "name": "keyword.control.vox",
-      "match": "\\b(If|if|then|Otherwise|Else|else|While|while|For|for|from|to|Return|return|Exit|exit|Break|break|Continue|continue|Repeat|repeat|times)\\b"
+      "match": "\\b(?i:(if|then|otherwise|else|while|for|from|to|return|exit|break|continue|repeat|times))\\b"
     },
     "action-keywords": {
       "name": "keyword.other.vox",
-      "match": "\\b(Print|print|Set|set|Create|create|Increment|Decrement|increment|decrement|is|are|was|treating|as|enable|disable|error|catching)\\b"
+      "match": "\\b(?i:(print|set|create|increment|decrement|is|are|was|treating|as|enable|disable|error|catching|flag|flags|parse|required|default|argument|arguments))\\b"
     },
     "io-keywords": {
       "name": "support.function.vox",
-      "match": "\\b(Open|open|Close|close|Read|read|Write|write|Delete|delete|Resize|resize|reading|writing|appending)\\b"
+      "match": "\\b(?i:(open|close|read|write|delete|resize|reading|writing|appending))\\b"
     },
     "types": {
       "name": "storage.type.vox",
-      "match": "\\b(number|text|boolean|buffer|file|float|list|newline)\\b"
+      "match": "\\b(?i:(number|text|boolean|buffer|file|float|list|newline))\\b"
     },
     "operators": {
       "name": "keyword.operator.vox",
-      "match": "\\b(add|subtract|multiply|divide|modulo|plus|minus|greater|less|equal|than|and|or|not)\\b"
+      "match": "\\b(?i:(add|subtract|multiply|divide|modulo|plus|minus|greater|less|equal|than|and|or|not))\\b"
     },
     "properties": {
       "match": "('s)\\s*(capacity|size|absolute|sign|even|odd|positive|negative|descriptor|modified|permissions|all|count|first|last)",
@@ -104,7 +104,7 @@
     },
     "booleans": {
       "name": "constant.language.boolean.vox",
-      "match": "\\b(true|false)\\b"
+      "match": "\\b(?i:(true|false))\\b"
     },
     "numbers": {
       "patterns": [

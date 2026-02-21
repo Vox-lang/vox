@@ -1,13 +1,22 @@
 {
   "name": "vox",
-  "displayName": "Vox",
-  "description": "Syntax highlighting for Vox (sentence based code) (.en files)",
-  "version": "0.1.1",
-  "publisher": "vox",
+  "displayName": "Vox syntax highlighting",
+  "description": "Syntax highlighting for Vox (sentence based code) (.vox files)",
+  "version": "0.1.5",
+  "publisher": "vox-lang",
   "engines": {
     "vscode": "^1.75.0"
   },
+  "icon": "images/icon.png",
   "readme": "README.md",
+  "files": [
+    "README.md",
+    "package.json",
+    "language-configuration.json",
+    "LICENSE",
+    "syntaxes/",
+    "images/"
+  ],
   "categories": [
     "Programming Languages"
   ],
@@ -17,6 +26,10 @@
         "id": "vox",
         "aliases": ["Vox", "vox", "English", "english", "en"],
         "extensions": [".en", ".eng", ".vox", ".vx"],
+        "icon": {
+          "light": "./images/icon.png",
+          "dark": "./images/icon.png"
+        },
         "configuration": "./language-configuration.json"
       }
     ],
@@ -112,7 +125,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/eng-c/ec"
+    "url": "https://github.com/vox-lang/vox"
   },
   "license": "MIT"
 }

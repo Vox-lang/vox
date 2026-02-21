@@ -14,7 +14,6 @@ a boolean called "failed to open a file" is false.
 A flag called "wants help" is "--help" or "-h", it is a boolean.
 A flag called "wants version" is "--version" or "-v", it is a boolean.
 A flag called "we are numbering lines" is "--number" or "-n", it is a boolean.
-Parse Flags.
 
 To "show version".
   A text called "Program" is arguments's name.
