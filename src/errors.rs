@@ -229,6 +229,7 @@ pub fn find_similar_keyword(word: &str, keywords: &[&str]) -> Option<String> {
 pub const ENGLISH_KEYWORDS: &[&str] = &[
     "print", "set", "create", "add", "subtract", "multiply", "divide",
     "increment", "decrement", "call", "allocate", "free",
+    "append", "copy", "clear",
     "open", "read", "write", "close", "delete", "exists", "resize", "seek",
     "if", "when", "then", "else", "but", "otherwise", "while", "until",
     "for", "each", "every", "loop", "repeat", "times", "break", "continue",

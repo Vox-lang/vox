@@ -362,6 +362,17 @@ pub enum Statement {
         list: String,
         value: Expr,
     },
+
+    // Copy buffer contents into another buffer (clobber destination)
+    BufferCopy {
+        source: String,
+        destination: String,
+    },
+
+    // Clear buffer contents (set length to zero, preserve capacity)
+    BufferClear {
+        name: String,
+    },
     
     FileOpen {
         name: String,

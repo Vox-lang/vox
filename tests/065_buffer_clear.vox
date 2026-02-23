@@ -1,0 +1,15 @@
+(Buffer clear semantics and reuse)
+
+a buffer called "data" is "Hello".
+Print data's size.
+clear data.
+Print data's size.
+
+a buffer called "fixed" is 4 bytes in size.
+a buffer called "src" is "ABCD".
+copy src to fixed.
+Print fixed.
+clear fixed.
+Print fixed's size.
+append src to fixed.
+Print fixed.

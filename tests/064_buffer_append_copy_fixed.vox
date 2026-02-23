@@ -1,0 +1,15 @@
+(Buffer append/copy fixed-buffer truncation behavior)
+
+a buffer called "src" is "ABCDEFG".
+
+a buffer called "dst" is 5 bytes in size.
+append src to dst.
+Print dst's size.
+Print dst.
+On error print "append overflow".
+
+a buffer called "dst2" is 4 bytes in size.
+copy src to dst2.
+Print dst2's size.
+Print dst2.
+On error print "copy overflow".

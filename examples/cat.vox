@@ -1,12 +1,14 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.5".
+A text called "Program Version" is "0.1.6".
 
 Open a file for writing called "output" at "/dev/stdout".
 On error print "cat: /dev/stdout: No such file or directory", exit 1.
 
-Create a buffer called "content" of size 1024.
+Create a buffer called "content".
 On error print "cat: failed to create buffer", exit 1.
+
+Create a buffer called "staged_output".
 
 a boolean called "failed to open a file" is false.
 
@@ -49,9 +51,18 @@ If arguments's empty then,
   while content is not empty,
     if "we are numbering lines" then,
       Print "{Line Number:6}\t" without newline,
-      increment the "Line Number".
-    Write content to output,
+      increment the "Line Number",
+      Write content to output.
+    Otherwise,
+      append content to staged_output,
+      if staged_output's size is greater than 65535 then,
+        Write staged_output to output,
+        clear staged_output.
     read line from the source into content.
+
+  if staged_output is not empty then,
+    Write staged_output to output,
+    clear staged_output.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
@@ -63,8 +74,19 @@ Open a file called "source" for reading at each filename from arguments's all tr
     if "we are numbering lines" then,
       Print "{Line Number:6}\t" without newline,
       increment the "Line Number".
-    Write the content to output,
+    if "we are numbering lines" then,
+      Write the content to output.
+    Otherwise,
+      append content to staged_output,
+      if staged_output's size is greater than 65535 then,
+        Write staged_output to output,
+        clear staged_output.
     read line from the source into content.
+
+  if staged_output is not empty then,
+    Write staged_output to output,
+    clear staged_output.
+
   Close source.
   
 If "failed to open a file" then,

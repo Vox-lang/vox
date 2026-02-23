@@ -1,0 +1,14 @@
+(Buffer append/copy happy path)
+
+a buffer called "left" is "Hello".
+a buffer called "right" is " World".
+
+append right to left.
+Print left.
+Print right.
+
+copy left to right.
+Print right.
+
+append right to left.
+Print left.

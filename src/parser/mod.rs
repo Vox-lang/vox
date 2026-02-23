@@ -11,6 +11,77 @@ pub struct Parser {
 }
 
 #[cfg(test)]
+mod buffer_copy_statement_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse_input(input: &str) -> Result<Program, CompileError> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
+    }
+
+    #[test]
+    fn test_parse_copy_statement() {
+        let input = r#"copy source to destination."#;
+        let result = parse_input(input).expect("copy statement should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferCopy { source, destination } => {
+                assert_eq!(source, "source");
+                assert_eq!(destination, "destination");
+            }
+            other => panic!("Expected BufferCopy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_copy_statement_with_optional_articles() {
+        let input = r#"copy the source to the destination."#;
+        let result = parse_input(input).expect("copy statement with articles should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferCopy { source, destination } => {
+                assert_eq!(source, "source");
+                assert_eq!(destination, "destination");
+            }
+            other => panic!("Expected BufferCopy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_clear_statement() {
+        let input = r#"clear destination."#;
+        let result = parse_input(input).expect("clear statement should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferClear { name } => {
+                assert_eq!(name, "destination");
+            }
+            other => panic!("Expected BufferClear, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_clear_statement_with_optional_article() {
+        let input = r#"clear the destination."#;
+        let result = parse_input(input).expect("clear statement with article should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferClear { name } => {
+                assert_eq!(name, "destination");
+            }
+            other => panic!("Expected BufferClear, got {:?}", other),
+        }
+    }
+}
+
+#[cfg(test)]
 mod file_line_read_and_seek_tests {
     use super::*;
     use crate::lexer::Lexer;
@@ -529,6 +600,8 @@ impl Parser {
             Token::Disable => self.parse_disable(),
             Token::Resize => self.parse_resize(),
             Token::Append => self.parse_append(),
+            Token::Copy => self.parse_copy(),
+            Token::Clear => self.parse_clear(),
             Token::Library => self.parse_library_decl(),
             Token::See => self.parse_see(),
             // Time and Timer statements
@@ -2707,6 +2780,86 @@ impl Parser {
         };
         
         Ok(Statement::ListAppend { list, value })
+    }
+
+    fn parse_copy(&mut self) -> Result<Statement, CompileError> {
+        // "copy <buffer> to <buffer>"
+        self.advance(); // consume 'copy'
+        self.skip_noise();
+
+        let source = match self.current().clone() {
+            Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                match self.current().clone() {
+                    Token::Identifier(n) => {
+                        self.advance();
+                        n
+                    }
+                    _ => return Err(self.err("Expected source buffer name after 'the'")),
+                }
+            }
+            _ => return Err(self.err("Expected source buffer name after 'copy'")),
+        };
+
+        self.skip_noise();
+        if *self.current() != Token::To {
+            return Err(self.err("Expected 'to' after source buffer in copy statement"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let destination = match self.current().clone() {
+            Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                match self.current().clone() {
+                    Token::Identifier(n) => {
+                        self.advance();
+                        n
+                    }
+                    _ => return Err(self.err("Expected destination buffer name after 'the'")),
+                }
+            }
+            _ => return Err(self.err("Expected destination buffer name after 'to'")),
+        };
+
+        Ok(Statement::BufferCopy { source, destination })
+    }
+
+    fn parse_clear(&mut self) -> Result<Statement, CompileError> {
+        // "clear <buffer>"
+        self.advance(); // consume 'clear'
+        self.skip_noise();
+
+        let name = match self.current().clone() {
+            Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                match self.current().clone() {
+                    Token::Identifier(n) => {
+                        self.advance();
+                        n
+                    }
+                    _ => return Err(self.err("Expected buffer name after 'the'")),
+                }
+            }
+            _ => return Err(self.err("Expected buffer name after 'clear'")),
+        };
+
+        Ok(Statement::BufferClear { name })
     }
     
     fn parse_library_decl(&mut self) -> Result<Statement, CompileError> {

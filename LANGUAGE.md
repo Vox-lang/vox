@@ -738,6 +738,13 @@ append 5 to numbers.
 print numbers's length.       (prints 5)
 ```
 
+`append` is overloaded by destination type:
+- `append <value> to <list>` appends one list element.
+- `append <source_buffer> to <destination_buffer>` appends source bytes to destination buffer bytes.
+
+Use `copy <source_buffer> to <destination_buffer>` to replace destination buffer contents.
+Use `clear <buffer>` to reset a buffer to empty while preserving capacity.
+
 **Key features:**
 - **Dynamic growth**: Lists automatically allocate more memory as needed
 - **Type tracking**: The first append determines the list's element type for printing
@@ -1104,6 +1111,24 @@ Set byte 1 of "Hello World" to 'J'.
 - Errors can be caught with `On error`
 - Buffer overflow is impossible - the compiler enforces bounds
 
+#### Buffer Append and Copy
+
+Efficiently combine buffers without byte-by-byte loops:
+
+```
+append source to destination.
+copy source to destination.
+clear destination.
+```
+
+**Behavior:**
+- `append source to destination` adds source bytes to the end of destination.
+- `copy source to destination` replaces destination contents with source bytes.
+- `clear destination` sets destination length to `0` and preserves destination capacity.
+- Dynamic destination buffers grow automatically as needed.
+- Fixed destination buffers truncate when full and set the error flag.
+- Source buffer is never modified.
+
 **Example:**
 ```
 Create a buffer called "data" with size 16.
@@ -1245,6 +1270,15 @@ open a file at "./log.txt" called log for appending.
 
 ### Reading
 
+**At a glance:**
+- Use **`Read from ... into ...`** when you want to read raw bytes in chunks.
+- Use **`Read line from ... into ...`** when you want one logical line at a time.
+
+High-level behavior:
+- `Read` appends incoming data to the buffer and is best for bulk/stream processing.
+- `Read line` replaces the buffer with the next line and is best for line-by-line loops.
+- Both can read from files or standard input.
+
 Read from files or standard input into a buffer:
 
 ```
@@ -1260,7 +1294,7 @@ Read line from standard input into linebuf.
 ```
 
 **`Read line` behavior:**
-- Consumes the trailing newline but does **not** include it in the buffer
+- Includes the trailing newline in the buffer (when a newline is present)
 - Returns an empty buffer at EOF
 - Resets buffer contents before each read (replace, not append)
 - For fixed-size buffers, overlong lines are truncated and set the error flag
