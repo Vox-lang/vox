@@ -5,7 +5,7 @@
 Vox is a systems-level programming language with natural language syntax. This extension provides rich syntax highlighting for `.vx`, `.vox`, `.en` and `.eng` files.
 ## Installation
 
-This extension is available on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=vox.vox). Simply search for "Vox" in the Extensions panel and click Install.
+This extension is available on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox). Simply search for "Vox" in the Extensions panel and click Install.
 
 Or see [Manual Installation](#installation-before-marketplace-release) below.
 
