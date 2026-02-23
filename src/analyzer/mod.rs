@@ -12,6 +12,79 @@ pub struct Dependencies {
 }
 
 #[cfg(test)]
+mod buffer_append_copy_analysis_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+
+    fn analyze_input(input: &str) -> Analyzer {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        let mut program = parser.parse().expect("input should parse");
+        let mut analyzer = Analyzer::new().with_source("test.en", input);
+        analyzer.analyze(&mut program);
+        analyzer
+    }
+
+    #[test]
+    fn append_requires_buffer_source_when_destination_is_buffer() {
+        let input = r#"
+            a buffer called "dst" is "hello".
+            a number called "n" is 7.
+            append n to dst.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Buffer append requires")),
+            "expected buffer-append type error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn copy_requires_buffers_for_both_operands() {
+        let input = r#"
+            a buffer called "dst" is "hello".
+            a number called "n" is 7.
+            copy n to dst.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Copy source must be a buffer")),
+            "expected copy-source type error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn clear_requires_buffer_operand() {
+        let input = r#"
+            a number called "n" is 7.
+            clear n.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Clear target must be a buffer")),
+            "expected clear-target type error, got: {:?}",
+            analyzer.errors
+        );
+    }
+}
+
+#[cfg(test)]
 mod guard_env_tests {
     use super::*;
     use crate::lexer::Lexer;
@@ -303,6 +376,8 @@ pub struct Analyzer {
     block_depth: usize,
     global_variables: HashSet<String>,
     flag_variables: HashSet<String>,
+    buffer_variables: HashSet<String>,
+    list_variables: HashSet<String>,
 }
 
 #[derive(Clone, Default)]
@@ -327,6 +402,8 @@ impl Analyzer {
             block_depth: 0,
             global_variables: HashSet::new(),
             flag_variables: HashSet::new(),
+            buffer_variables: HashSet::new(),
+            list_variables: HashSet::new(),
         }
     }
 
@@ -344,9 +421,20 @@ impl Analyzer {
                 Statement::FunctionDef { name, .. } => {
                     self.functions.insert(name.clone());
                 }
-                Statement::VarDecl { name, .. }
-                | Statement::BufferDecl { name, .. }
-                | Statement::Allocate { name, .. }
+                Statement::VarDecl { name, var_type, .. } => {
+                    self.global_variables.insert(name.clone());
+                    if let Some(Type::Buffer) = var_type {
+                        self.buffer_variables.insert(name.clone());
+                    }
+                    if let Some(Type::List(_)) = var_type {
+                        self.list_variables.insert(name.clone());
+                    }
+                }
+                Statement::BufferDecl { name, .. } => {
+                    self.global_variables.insert(name.clone());
+                    self.buffer_variables.insert(name.clone());
+                }
+                Statement::Allocate { name, .. }
                 | Statement::TimerDecl { name }
                 | Statement::FileOpen { name, .. } => {
                     self.global_variables.insert(name.clone());
@@ -730,6 +818,14 @@ impl Analyzer {
         false
     }
 
+    fn is_buffer_variable(&self, name: &str) -> bool {
+        self.buffer_variables.contains(name)
+    }
+
+    fn is_list_variable(&self, name: &str) -> bool {
+        self.list_variables.contains(name)
+    }
+
     fn statement_always_terminates(&self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Return { .. } | Statement::Exit { .. } => true,
@@ -936,6 +1032,7 @@ impl Analyzer {
             // File I/O statements
             Statement::BufferDecl { name, size } => {
                 self.variables.insert(name.clone());
+                self.buffer_variables.insert(name.clone());
                 self.analyze_expr(size);
                 self.deps.uses_heap = true;
             }
@@ -955,6 +1052,65 @@ impl Analyzer {
             Statement::ListAppend { list, value } => {
                 self.track_identifier(list);
                 self.analyze_expr(value);
+
+                if self.is_buffer_variable(list) {
+                    match value {
+                        Expr::Identifier(source) => {
+                            if !self.is_variable_available(source) {
+                                self.push_error(format!("Unknown buffer: {}", source), Some(source));
+                            } else if !self.is_buffer_variable(source) {
+                                self.push_error(
+                                    format!("Buffer append requires a buffer source: {}", source),
+                                    Some(source),
+                                );
+                            }
+                        }
+                        _ => {
+                            self.push_error(
+                                "Buffer append requires a buffer variable source".to_string(),
+                                Some(list),
+                            );
+                        }
+                    }
+                } else if self.is_list_variable(list) {
+                    // Valid list append path.
+                }
+            }
+
+            Statement::BufferCopy { source, destination } => {
+                self.track_identifier(source);
+                self.track_identifier(destination);
+
+                if !self.is_variable_available(source) {
+                    self.push_error(format!("Unknown buffer: {}", source), Some(source));
+                } else if !self.is_buffer_variable(source) {
+                    self.push_error(
+                        format!("Copy source must be a buffer: {}", source),
+                        Some(source),
+                    );
+                }
+
+                if !self.is_variable_available(destination) {
+                    self.push_error(format!("Unknown buffer: {}", destination), Some(destination));
+                } else if !self.is_buffer_variable(destination) {
+                    self.push_error(
+                        format!("Copy destination must be a buffer: {}", destination),
+                        Some(destination),
+                    );
+                }
+            }
+
+            Statement::BufferClear { name } => {
+                self.track_identifier(name);
+
+                if !self.is_variable_available(name) {
+                    self.push_error(format!("Unknown buffer: {}", name), Some(name));
+                } else if !self.is_buffer_variable(name) {
+                    self.push_error(
+                        format!("Clear target must be a buffer: {}", name),
+                        Some(name),
+                    );
+                }
             }
             
             Statement::FileOpen { name, path, .. } => {

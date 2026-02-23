@@ -4,6 +4,8 @@
 ; Maximum tracked resources
 %define MAX_FDS 64
 %define MAX_BUFFERS 64
+%define READAHEAD_SLOTS 8
+%define READAHEAD_BUF_SIZE 8192
 
 ; Buffer structure offsets
 %define BUF_CAPACITY 0      ; 8 bytes: allocated size
@@ -30,6 +32,15 @@ section .bss
     
     ; Note: _last_error is defined in core.asm (always available)
     line_read_tmp: resb 1
+    line_read_fallback_tmp: resb 1
+
+    ; Read-ahead cache for line reading
+    ; Slots are assigned per-fd on demand.
+    ra_used: resb READAHEAD_SLOTS
+    ra_fd: resq READAHEAD_SLOTS
+    ra_pos: resq READAHEAD_SLOTS
+    ra_filled: resq READAHEAD_SLOTS
+    ra_data: resb READAHEAD_SLOTS * READAHEAD_BUF_SIZE
 
 section .text
 
@@ -63,6 +74,88 @@ _register_fd:
     pop rbx
     ret
 
+; Find or assign read-ahead slot for fd
+; Args: fd in rdi
+; Returns: slot index in rax, or -1 if no slot available
+; Clobbers: rcx, rdx
+_get_readahead_slot:
+    xor rcx, rcx
+    mov rdx, -1                 ; first free slot (or -1)
+
+.slot_scan:
+    cmp rcx, READAHEAD_SLOTS
+    jge .slot_done_scan
+
+    movzx eax, byte [ra_used + rcx]
+    test eax, eax
+    jz .slot_is_free
+
+    mov rax, [ra_fd + rcx*8]
+    cmp rax, rdi
+    je .slot_found_existing
+
+    inc rcx
+    jmp .slot_scan
+
+.slot_is_free:
+    cmp rdx, -1
+    jne .slot_continue_scan
+    mov rdx, rcx
+
+.slot_continue_scan:
+    inc rcx
+    jmp .slot_scan
+
+.slot_found_existing:
+    mov rax, rcx
+    ret
+
+.slot_done_scan:
+    cmp rdx, -1
+    je .slot_none
+
+    mov rcx, rdx
+    mov byte [ra_used + rcx], 1
+    mov [ra_fd + rcx*8], rdi
+    mov qword [ra_pos + rcx*8], 0
+    mov qword [ra_filled + rcx*8], 0
+    mov rax, rcx
+    ret
+
+.slot_none:
+    mov rax, -1
+    ret
+
+; Flush read-ahead state for a specific fd
+; Args: fd in rdi
+; Clobbers: rax, rcx
+_flush_readahead_fd:
+    xor rcx, rcx
+
+.flush_scan:
+    cmp rcx, READAHEAD_SLOTS
+    jge .flush_done
+
+    movzx eax, byte [ra_used + rcx]
+    test eax, eax
+    jz .flush_next
+
+    mov rax, [ra_fd + rcx*8]
+    cmp rax, rdi
+    jne .flush_next
+
+    mov byte [ra_used + rcx], 0
+    mov qword [ra_fd + rcx*8], 0
+    mov qword [ra_pos + rcx*8], 0
+    mov qword [ra_filled + rcx*8], 0
+
+.flush_next:
+    inc rcx
+    jmp .flush_scan
+
+.flush_done:
+    ret
+
 ; Read a single line from fd into buffer (stops at '\n' or EOF)
 ; Args: fd in rdi, buffer pointer in rsi
 ; Returns: bytes read in rax (including newline when present), updated buffer pointer in rsi
@@ -85,16 +178,138 @@ _read_line_into_buffer:
     xor r14, r14                 ; bytes read this call
     mov r15, [rsi + BUF_FLAGS]   ; buffer flags
 
-.line_loop:
+    ; Acquire read-ahead slot. If unavailable, fall back to byte reads.
+    mov rdi, r12
+    call _get_readahead_slot
+    cmp rax, -1
+    je .line_loop_fallback
+
+    ; Slot-backed mode setup
+    mov rbx, rax
+    lea r8, [ra_pos + rbx*8]      ; &ra_pos[slot]
+    lea r9, [ra_filled + rbx*8]   ; &ra_filled[slot]
+
+    mov rax, rbx
+    imul rax, READAHEAD_BUF_SIZE
+    lea r10, [ra_data + rax]      ; slot data pointer
+
+.line_loop_slot:
     ; Ensure at least 1 byte of data capacity remains
     mov rax, [r13 + BUF_CAPACITY]
     sub rax, [r13 + BUF_LENGTH]
     cmp rax, 1
-    jge .do_read_byte
+    jge .slot_have_space
 
     ; Need more space - grow if dynamic, otherwise truncate safely
     test r15, BUF_FLAG_FIXED
-    jnz .fixed_overflow
+    jnz .fixed_overflow_slot
+
+    mov rdi, r13
+    mov rsi, [r13 + BUF_CAPACITY]
+    shl rsi, 1
+    cmp rsi, 1
+    jge .slot_grow_ok
+    mov rsi, 1
+.slot_grow_ok:
+    call _grow_buffer
+    mov r13, rax
+
+    ; _grow_buffer may clobber caller-saved registers; rebuild slot pointers.
+    lea r8, [ra_pos + rbx*8]
+    lea r9, [ra_filled + rbx*8]
+    mov rax, rbx
+    imul rax, READAHEAD_BUF_SIZE
+    lea r10, [ra_data + rax]
+
+    jmp .line_loop_slot
+
+.slot_have_space:
+    ; Ensure cached bytes are available; refill if exhausted.
+    mov rax, [r8]
+    cmp rax, [r9]
+    jl .slot_consume_byte
+
+    mov rax, 0                    ; SYS_READ
+    mov rdi, r12
+    mov rsi, r10
+    mov rdx, READAHEAD_BUF_SIZE
+    syscall
+
+    cmp rax, 0
+    je .line_done
+    js .line_read_error
+
+    mov qword [r8], 0
+    mov [r9], rax
+
+.slot_consume_byte:
+    mov rcx, [r8]
+    movzx edx, byte [r10 + rcx]
+    inc rcx
+    mov [r8], rcx
+
+    cmp dl, 10                    ; '\n'
+    jne .store_byte_slot
+
+    ; Preserve newline in output.
+    lea rcx, [r13 + BUF_DATA]
+    add rcx, [r13 + BUF_LENGTH]
+    mov byte [rcx], 10
+    inc qword [r13 + BUF_LENGTH]
+    inc r14
+    jmp .line_done
+
+.store_byte_slot:
+    lea rcx, [r13 + BUF_DATA]
+    add rcx, [r13 + BUF_LENGTH]
+    mov [rcx], dl
+    inc qword [r13 + BUF_LENGTH]
+    inc r14
+    jmp .line_loop_slot
+
+.fixed_overflow_slot:
+    ; Truncated line in fixed-size buffer: set overflow error and drain until newline/EOF
+    mov qword [rel _last_error], 1
+
+.drain_line_slot:
+    ; Consume cached bytes first; refill when exhausted.
+    mov rax, [r8]
+    cmp rax, [r9]
+    jl .drain_cached_byte_slot
+
+    mov rax, 0                    ; SYS_READ
+    mov rdi, r12
+    mov rsi, r10
+    mov rdx, READAHEAD_BUF_SIZE
+    syscall
+
+    cmp rax, 0
+    je .line_done
+    js .line_read_error
+
+    mov qword [r8], 0
+    mov [r9], rax
+    jmp .drain_line_slot
+
+.drain_cached_byte_slot:
+    mov rcx, [r8]
+    movzx edx, byte [r10 + rcx]
+    inc rcx
+    mov [r8], rcx
+    cmp dl, 10
+    jne .drain_line_slot
+    jmp .line_done
+
+.line_loop_fallback:
+    ; Ensure at least 1 byte of data capacity remains
+    mov rax, [r13 + BUF_CAPACITY]
+    sub rax, [r13 + BUF_LENGTH]
+    cmp rax, 1
+    jge .do_read_byte_fallback
+
+    ; Need more space - grow if dynamic, otherwise truncate safely
+    test r15, BUF_FLAG_FIXED
+    jnz .fixed_overflow_fallback
 
     mov rdi, r13
     mov rsi, [r13 + BUF_CAPACITY]
@@ -105,12 +320,12 @@ _read_line_into_buffer:
 .grow_ok:
     call _grow_buffer
     mov r13, rax
-    jmp .line_loop
+    jmp .line_loop_fallback
 
-.do_read_byte:
+.do_read_byte_fallback:
     mov rax, 0                   ; SYS_READ
     mov rdi, r12
-    lea rsi, [rel line_read_tmp]
+    lea rsi, [rel line_read_fallback_tmp]
     mov rdx, 1
     syscall
 
@@ -119,16 +334,16 @@ _read_line_into_buffer:
     je .line_done
     js .line_read_error
 
-    movzx ebx, byte [rel line_read_tmp]
+    movzx ebx, byte [rel line_read_fallback_tmp]
     cmp bl, 10                   ; '\n'
-    jne .store_byte
+    jne .store_byte_fallback
 
     ; Preserve newline in output so line-based read/write can round-trip file content.
     ; Ensure one byte can be stored.
     mov rax, [r13 + BUF_CAPACITY]
     sub rax, [r13 + BUF_LENGTH]
     cmp rax, 1
-    jl .fixed_overflow
+    jl .fixed_overflow_fallback
 
     lea rcx, [r13 + BUF_DATA]
     add rcx, [r13 + BUF_LENGTH]
@@ -137,23 +352,23 @@ _read_line_into_buffer:
     inc r14
     jmp .line_done
 
-.store_byte:
+.store_byte_fallback:
     ; Store non-newline byte
     lea rcx, [r13 + BUF_DATA]
     add rcx, [r13 + BUF_LENGTH]
     mov [rcx], bl
     inc qword [r13 + BUF_LENGTH]
     inc r14
-    jmp .line_loop
+    jmp .line_loop_fallback
 
-.fixed_overflow:
+.fixed_overflow_fallback:
     ; Truncated line in fixed-size buffer: set overflow error and drain until newline/EOF
     mov qword [rel _last_error], 1
 
-.drain_line:
+.drain_line_fallback:
     mov rax, 0                   ; SYS_READ
     mov rdi, r12
-    lea rsi, [rel line_read_tmp]
+    lea rsi, [rel line_read_fallback_tmp]
     mov rdx, 1
     syscall
 
@@ -161,9 +376,9 @@ _read_line_into_buffer:
     je .line_done
     js .line_read_error
 
-    movzx ebx, byte [rel line_read_tmp]
+    movzx ebx, byte [rel line_read_fallback_tmp]
     cmp bl, 10
-    jne .drain_line
+    jne .drain_line_fallback
     jmp .line_done
 
 .line_read_error:
@@ -193,6 +408,9 @@ _read_line_into_buffer:
 global _seek_fd_byte
 _seek_fd_byte:
     push rbx
+
+    ; Seek invalidates any cached read-ahead for this fd.
+    call _flush_readahead_fd
 
     cmp rsi, 1
     jl .seek_byte_error
@@ -227,6 +445,10 @@ _seek_fd_line:
 
     mov r12, rdi                 ; fd
     mov r13, rsi                 ; target line
+
+    ; Seek invalidates any cached read-ahead for this fd.
+    mov rdi, r12
+    call _flush_readahead_fd
 
     cmp r13, 1
     jl .seek_line_error
@@ -299,6 +521,9 @@ global _unregister_fd
 _unregister_fd:
     push rbx
     push rcx
+
+    ; Closing/unregistering an fd must drop cached read-ahead state.
+    call _flush_readahead_fd
     
     xor rcx, rcx
 .find_fd:
@@ -840,6 +1065,206 @@ _buffer_data:
 global _buffer_length
 _buffer_length:
     mov rax, [rdi + BUF_LENGTH]
+    ret
+
+; Append source buffer into destination buffer
+; Args: destination buffer in rdi, source buffer in rsi
+; Returns: destination buffer pointer in rax (may be reallocated)
+global _buffer_append
+_buffer_append:
+    push rbx
+    push rcx
+    push rdx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                    ; destination buffer
+    mov r13, rsi                    ; source buffer
+
+    mov r14, [r12 + BUF_LENGTH]     ; destination length (original)
+    mov r15, [r13 + BUF_LENGTH]     ; source length
+    test r15, r15
+    jz .append_done
+
+    mov rax, r14
+    add rax, r15                    ; required size
+
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
+    jnz .append_fixed
+
+    cmp rax, [r12 + BUF_CAPACITY]
+    jle .append_have_space
+
+    mov rdi, r12
+    mov rsi, rax
+    call _grow_buffer
+    test rax, rax
+    jz .append_grow_failed
+    mov r12, rax
+
+.append_have_space:
+    lea rdi, [r12 + BUF_DATA]
+    add rdi, r14                    ; destination write pointer
+
+    cmp r12, r13
+    jne .append_copy_external
+
+    ; Self-append: source starts at destination buffer start.
+    lea rsi, [r12 + BUF_DATA]
+    mov rcx, r15
+    rep movsb
+    jmp .append_finish_update
+
+.append_copy_external:
+    lea rsi, [r13 + BUF_DATA]
+    mov rcx, r15
+    rep movsb
+    jmp .append_finish_update
+
+.append_fixed:
+    mov rdx, [r12 + BUF_CAPACITY]
+    sub rdx, r14                    ; available space
+    cmp rdx, 0
+    jle .append_fixed_no_space
+
+    cmp r15, rdx
+    jle .append_fixed_fit
+
+    ; Truncate append for fixed-size destination.
+    mov qword [rel _last_error], 1
+    mov r15, rdx
+
+.append_fixed_fit:
+    lea rdi, [r12 + BUF_DATA]
+    add rdi, r14
+
+    cmp r12, r13
+    jne .append_fixed_external
+
+    lea rsi, [r12 + BUF_DATA]
+    mov rcx, r15
+    rep movsb
+    jmp .append_finish_update
+
+.append_fixed_external:
+    lea rsi, [r13 + BUF_DATA]
+    mov rcx, r15
+    rep movsb
+    jmp .append_finish_update
+
+.append_fixed_no_space:
+    mov qword [rel _last_error], 1
+    jmp .append_done
+
+.append_finish_update:
+    add r14, r15
+    mov [r12 + BUF_LENGTH], r14
+    lea rax, [r12 + BUF_DATA]
+    add rax, r14
+    mov byte [rax], 0
+
+.append_done:
+    mov rax, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+.append_grow_failed:
+    mov qword [rel _last_error], 1
+    jmp .append_done
+
+; Copy source buffer into destination buffer (clobber destination contents)
+; Args: destination buffer in rdi, source buffer in rsi
+; Returns: destination buffer pointer in rax (may be reallocated)
+global _buffer_copy
+_buffer_copy:
+    push rbx
+    push rcx
+    push rdx
+    push r12
+    push r13
+    push r14
+
+    mov r12, rdi                    ; destination buffer
+    mov r13, rsi                    ; source buffer
+    mov r14, [r13 + BUF_LENGTH]     ; source length
+
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
+    jnz .copy_fixed
+
+    cmp r14, [r12 + BUF_CAPACITY]
+    jle .copy_have_space
+
+    mov rdi, r12
+    mov rsi, r14
+    call _grow_buffer
+    test rax, rax
+    jz .copy_grow_failed
+    mov r12, rax
+
+.copy_have_space:
+    lea rdi, [r12 + BUF_DATA]
+    lea rsi, [r13 + BUF_DATA]
+    mov rcx, r14
+    rep movsb
+    jmp .copy_set_length
+
+.copy_fixed:
+    mov rcx, [r12 + BUF_CAPACITY]
+    cmp r14, rcx
+    jle .copy_fixed_fit
+
+    ; Truncate copy for fixed-size destination.
+    mov qword [rel _last_error], 1
+    mov r14, rcx
+
+.copy_fixed_fit:
+    lea rdi, [r12 + BUF_DATA]
+    lea rsi, [r13 + BUF_DATA]
+    mov rcx, r14
+    rep movsb
+
+.copy_set_length:
+    mov [r12 + BUF_LENGTH], r14
+    lea rax, [r12 + BUF_DATA]
+    add rax, r14
+    mov byte [rax], 0
+
+    mov rax, r12
+    pop r14
+    pop r13
+    pop r12
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+.copy_grow_failed:
+    mov qword [rel _last_error], 1
+    mov rax, r12
+    pop r14
+    pop r13
+    pop r12
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Clear buffer contents
+; Args: buffer pointer in rdi
+; Returns: same buffer pointer in rax
+global _buffer_clear
+_buffer_clear:
+    mov qword [rdi + BUF_LENGTH], 0
+    mov byte [rdi + BUF_DATA], 0
+    mov rax, rdi
     ret
 
 ; Reallocate buffer to new size

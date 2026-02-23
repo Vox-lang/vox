@@ -1213,6 +1213,19 @@ impl CodeGenerator {
             }
             
             Statement::ListAppend { list, value } => {
+                if self.variable_types.get(list) == Some(&VarType::Buffer) {
+                    self.uses_buffers = true;
+                    self.emit_indent("; Append source buffer to destination buffer");
+                    if let Some(dst_offset) = self.get_var(list) {
+                        self.emit_indent(&format!("mov rdi, [rbp-{}]  ; destination buffer", dst_offset));
+                        self.generate_expr(value);
+                        self.emit_indent("mov rsi, rax  ; source buffer");
+                        self.emit_indent("call _buffer_append");
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination buffer", dst_offset));
+                    }
+                    return;
+                }
+
                 self.uses_lists = true;
                 self.emit_indent("; Append value to list");
                 
@@ -1277,6 +1290,27 @@ impl CodeGenerator {
                     
                     // Store potentially new list pointer back
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
+                }
+            }
+
+            Statement::BufferCopy { source, destination } => {
+                self.uses_buffers = true;
+                self.emit_indent("; Copy source buffer into destination buffer");
+                if let (Some(src_offset), Some(dst_offset)) = (self.get_var(source), self.get_var(destination)) {
+                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; destination buffer", dst_offset));
+                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; source buffer", src_offset));
+                    self.emit_indent("call _buffer_copy");
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination buffer", dst_offset));
+                }
+            }
+
+            Statement::BufferClear { name } => {
+                self.uses_buffers = true;
+                self.emit_indent("; Clear buffer contents");
+                if let Some(offset) = self.get_var(name) {
+                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; buffer", offset));
+                    self.emit_indent("call _buffer_clear");
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer (unchanged pointer)", offset));
                 }
             }
             
