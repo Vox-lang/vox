@@ -30,10 +30,27 @@ mod buffer_copy_statement_tests {
 
         match &result.statements[0] {
             Statement::BufferCopy { source, destination } => {
-                assert_eq!(source, "source");
+                assert!(matches!(source, Expr::Identifier(s) if s == "source"));
                 assert_eq!(destination, "destination");
             }
             other => panic!("Expected BufferCopy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_the_buffer_assignment_format_string() {
+        let input = r#"
+            a buffer called "out" is "".
+            the buffer out is "line {n:06}".
+        "#;
+        let result = parse_input(input).expect("the buffer assignment should parse");
+        assert_eq!(result.statements.len(), 2);
+        match &result.statements[1] {
+            Statement::Assignment { name, value } => {
+                assert_eq!(name, "out");
+                assert!(matches!(value, Expr::FormatString { .. }));
+            }
+            other => panic!("Expected Assignment, got {:?}", other),
         }
     }
 
@@ -45,7 +62,22 @@ mod buffer_copy_statement_tests {
 
         match &result.statements[0] {
             Statement::BufferCopy { source, destination } => {
-                assert_eq!(source, "source");
+                assert!(matches!(source, Expr::Identifier(s) if s == "source"));
+                assert_eq!(destination, "destination");
+            }
+            other => panic!("Expected BufferCopy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_copy_format_string_source() {
+        let input = r#"copy "line {n:06}" to destination."#;
+        let result = parse_input(input).expect("copy format string should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferCopy { source, destination } => {
+                assert!(matches!(source, Expr::FormatString { .. }));
                 assert_eq!(destination, "destination");
             }
             other => panic!("Expected BufferCopy, got {:?}", other),
@@ -75,6 +107,50 @@ mod buffer_copy_statement_tests {
         match &result.statements[0] {
             Statement::BufferClear { name } => {
                 assert_eq!(name, "destination");
+            }
+            other => panic!("Expected BufferClear, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_append_to_quoted_name() {
+        let input = r#"append "hello" to "staged output"."#;
+        let result = parse_input(input).expect("append to quoted destination should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::ListAppend { list, value } => {
+                assert_eq!(list, "staged output");
+                assert!(matches!(value, Expr::StringLit(s) if s == "hello"));
+            }
+            other => panic!("Expected ListAppend, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_copy_to_quoted_destination() {
+        let input = r#"copy source to "staged output"."#;
+        let result = parse_input(input).expect("copy to quoted destination should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferCopy { source, destination } => {
+                assert!(matches!(source, Expr::Identifier(s) if s == "source"));
+                assert_eq!(destination, "staged output");
+            }
+            other => panic!("Expected BufferCopy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_clear_quoted_name() {
+        let input = r#"clear "staged output"."#;
+        let result = parse_input(input).expect("clear quoted destination should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::BufferClear { name } => {
+                assert_eq!(name, "staged output");
             }
             other => panic!("Expected BufferClear, got {:?}", other),
         }
@@ -1354,7 +1430,7 @@ impl Parser {
             Token::Identifier(n) => { self.advance(); n }
             Token::StringLiteral(n) => { self.advance(); n }
             // Handle "the number called <name>" or "the number" (loop iterator)
-            Token::Number | Token::Text | Token::Boolean => {
+            Token::Number | Token::Text | Token::Boolean | Token::Buffer => {
                 self.advance(); // consume type
                 self.skip_noise();
                 if *self.current() == Token::Called {
@@ -1365,6 +1441,9 @@ impl Parser {
                         Token::Identifier(n) => { self.advance(); n }
                         _ => return Err(self.err("Expected variable name after 'called'")),
                     }
+                } else if let Token::Identifier(n) = self.current().clone() {
+                    self.advance();
+                    n
                 } else {
                     // "the number" without "called" - could be loop iterator reference
                     // But as a statement, this needs "is" to be an assignment
@@ -2686,11 +2765,13 @@ impl Parser {
             
             let list_name = match self.current().clone() {
                 Token::Identifier(n) => { self.advance(); n }
+                Token::StringLiteral(n) => { self.advance(); n }
                 Token::The => {
                     self.advance();
                     self.skip_noise();
                     match self.current().clone() {
                         Token::Identifier(n) => { self.advance(); n }
+                        Token::StringLiteral(n) => { self.advance(); n }
                         _ => return Err(self.err("Expected list name after 'the'")),
                     }
                 }
@@ -2768,11 +2849,13 @@ impl Parser {
         // Get list name
         let list = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
+            Token::StringLiteral(n) => { self.advance(); n }
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
                     Token::Identifier(n) => { self.advance(); n }
+                    Token::StringLiteral(n) => { self.advance(); n }
                     _ => return Err(self.err("Expected list name after 'the'")),
                 }
             }
@@ -2783,12 +2866,80 @@ impl Parser {
     }
 
     fn parse_copy(&mut self) -> Result<Statement, CompileError> {
-        // "copy <buffer> to <buffer>"
+        // "copy <source> to <buffer>"
         self.advance(); // consume 'copy'
         self.skip_noise();
 
+        // Parse just the source value, preserving `to` as separator.
         let source = match self.current().clone() {
+            Token::IntegerLiteral(n) => {
+                self.advance();
+                Expr::IntegerLit(n)
+            }
+            Token::FloatLiteral(n) => {
+                self.advance();
+                Expr::FloatLit(n)
+            }
+            Token::StringLiteral(s) => {
+                self.advance();
+                if s.contains('{') && !s.starts_with("{{") {
+                    let parts = self.parse_format_string(&s);
+                    if !parts.is_empty()
+                        && parts
+                            .iter()
+                            .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
+                    {
+                        Expr::FormatString { parts }
+                    } else {
+                        Expr::StringLit(s)
+                    }
+                } else {
+                    Expr::StringLit(s)
+                }
+            }
+            Token::True => {
+                self.advance();
+                Expr::BoolLit(true)
+            }
+            Token::False => {
+                self.advance();
+                Expr::BoolLit(false)
+            }
+            Token::Identifier(name) => {
+                self.advance();
+                Expr::Identifier(name)
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                match self.current().clone() {
+                    Token::Identifier(name) => {
+                        self.advance();
+                        Expr::Identifier(name)
+                    }
+                    Token::StringLiteral(s) => {
+                        self.advance();
+                        Expr::StringLit(s)
+                    }
+                    _ => return Err(self.err("Expected source value after 'the'")),
+                }
+            }
+            _ => return Err(self.err("Expected source value after 'copy'")),
+        };
+
+        self.skip_noise();
+        if *self.current() != Token::To {
+            return Err(self.err("Expected 'to' after source in copy statement"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let destination = match self.current().clone() {
             Token::Identifier(n) => {
+                self.advance();
+                n
+            }
+            Token::StringLiteral(n) => {
                 self.advance();
                 n
             }
@@ -2800,29 +2951,7 @@ impl Parser {
                         self.advance();
                         n
                     }
-                    _ => return Err(self.err("Expected source buffer name after 'the'")),
-                }
-            }
-            _ => return Err(self.err("Expected source buffer name after 'copy'")),
-        };
-
-        self.skip_noise();
-        if *self.current() != Token::To {
-            return Err(self.err("Expected 'to' after source buffer in copy statement"));
-        }
-        self.advance();
-        self.skip_noise();
-
-        let destination = match self.current().clone() {
-            Token::Identifier(n) => {
-                self.advance();
-                n
-            }
-            Token::The => {
-                self.advance();
-                self.skip_noise();
-                match self.current().clone() {
-                    Token::Identifier(n) => {
+                    Token::StringLiteral(n) => {
                         self.advance();
                         n
                     }
@@ -2845,11 +2974,19 @@ impl Parser {
                 self.advance();
                 n
             }
+            Token::StringLiteral(n) => {
+                self.advance();
+                n
+            }
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
                     Token::Identifier(n) => {
+                        self.advance();
+                        n
+                    }
+                    Token::StringLiteral(n) => {
                         self.advance();
                         n
                     }

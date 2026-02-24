@@ -82,6 +82,44 @@ mod buffer_append_copy_analysis_tests {
             analyzer.errors
         );
     }
+
+    #[test]
+    fn append_allows_format_string_when_destination_is_buffer() {
+        let input = r#"
+            a number called "n" is 7.
+            a buffer called "dst" is "".
+            append "N={n:04}" to dst.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Buffer append requires")),
+            "unexpected buffer-append error(s): {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn copy_allows_format_string_source() {
+        let input = r#"
+            a number called "n" is 7.
+            a buffer called "dst" is "".
+            copy "N={n:04}" to dst.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Copy source must be a buffer") && !e.message.contains("Copy source must be a buffer or format/literal text")),
+            "unexpected copy-source error(s): {:?}",
+            analyzer.errors
+        );
+    }
 }
 
 #[cfg(test)]
@@ -883,6 +921,17 @@ impl Analyzer {
                 if !self.is_variable_available(name) {
                     self.declare_variable_in_current_scope(name);
                 }
+
+                if matches!(value, Expr::FormatString { .. })
+                    && self.is_variable_available(name)
+                    && !self.is_buffer_variable(name)
+                {
+                    self.push_error(
+                        format!("Format-string assignment requires a buffer destination: {}", name),
+                        Some(name),
+                    );
+                }
+
                 self.analyze_expr(value);
             }
             
@@ -1065,9 +1114,12 @@ impl Analyzer {
                                 );
                             }
                         }
+                        Expr::StringLit(_) | Expr::FormatString { .. } => {
+                            // Allowed: append text/format output into destination buffer.
+                        }
                         _ => {
                             self.push_error(
-                                "Buffer append requires a buffer variable source".to_string(),
+                                "Buffer append requires a buffer source or format/literal text".to_string(),
                                 Some(list),
                             );
                         }
@@ -1078,16 +1130,33 @@ impl Analyzer {
             }
 
             Statement::BufferCopy { source, destination } => {
-                self.track_identifier(source);
+                if let Expr::Identifier(source_name) = source {
+                    self.track_identifier(source_name);
+                }
                 self.track_identifier(destination);
 
-                if !self.is_variable_available(source) {
-                    self.push_error(format!("Unknown buffer: {}", source), Some(source));
-                } else if !self.is_buffer_variable(source) {
-                    self.push_error(
-                        format!("Copy source must be a buffer: {}", source),
-                        Some(source),
-                    );
+                self.analyze_expr(source);
+
+                match source {
+                    Expr::Identifier(source_name) => {
+                        if !self.is_variable_available(source_name) {
+                            self.push_error(format!("Unknown buffer: {}", source_name), Some(source_name));
+                        } else if !self.is_buffer_variable(source_name) {
+                            self.push_error(
+                                format!("Copy source must be a buffer: {}", source_name),
+                                Some(source_name),
+                            );
+                        }
+                    }
+                    Expr::StringLit(_) | Expr::FormatString { .. } => {
+                        // Allowed: copy literal/format output into destination buffer.
+                    }
+                    _ => {
+                        self.push_error(
+                            "Copy source must be a buffer or format/literal text".to_string(),
+                            Some(destination),
+                        );
+                    }
                 }
 
                 if !self.is_variable_available(destination) {

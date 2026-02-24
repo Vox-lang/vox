@@ -1,0 +1,20 @@
+(Format strings can build into buffers via set/append/copy)
+
+a number called "n" is 42.
+a buffer called "prefix" is "pre".
+a buffer called "out" is "".
+
+set out to "N={n:04}".
+print out.
+
+append " HEX={n:04X}" to out.
+print out.
+
+copy "BIN={n:b}" to out.
+print out.
+
+append " + tail" to out.
+print out.
+
+set out to "{prefix}-{n:03}-{n add 2}".
+print out.

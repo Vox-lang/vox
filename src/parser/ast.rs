@@ -365,7 +365,7 @@ pub enum Statement {
 
     // Copy buffer contents into another buffer (clobber destination)
     BufferCopy {
-        source: String,
+        source: Expr,
         destination: String,
     },
 

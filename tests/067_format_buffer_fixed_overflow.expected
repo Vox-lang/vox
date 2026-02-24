@@ -1,0 +1,7 @@
+8
+X=123456
+set overflow
+Y=123456
+copy overflow
+Z=123456
+append overflow
