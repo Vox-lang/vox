@@ -2,7 +2,7 @@
   "name": "vox",
   "displayName": "Vox syntax highlighting",
   "description": "Syntax highlighting for Vox (sentence based code) (.vox files)",
-  "version": "0.1.61",
+  "version": "0.1.71",
   "publisher": "vox-lang",
   "engines": {
     "vscode": "^1.75.0"
