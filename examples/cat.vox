@@ -59,7 +59,7 @@ If arguments's empty then,
       Clear staged_output.
     read line from the source into content.
 if arguments's empty then,
-  Write staged_output to output.
+  Write staged_output to output,
   clear staged_output.
 
 (Loop expansion: open a file for each filename in arguments's all)
