@@ -1392,7 +1392,7 @@ If buffer's size is equal to buffer's capacity then,
 
 ### Resource Safety
 
-`ec` provides **Rust-like memory safety** through automatic resource management.
+`vox` provides **memory safety** through automatic resource management.
 
 #### Memory Safety Guarantees
 
