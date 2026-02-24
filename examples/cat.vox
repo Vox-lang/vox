@@ -47,20 +47,20 @@ If "we are numbering lines" then,
 If arguments's empty then,
   Open a file for reading called "source" at "/dev/stdin",
   On error print "cat: /dev/stdin: No such file or directory", exit 1.
-  read line from source into content,
-  while content is not empty,
+  Read line from source into content,
+  While content is not empty,
     if "we are numbering lines" then,
-      append "{Line Number:6}\t{content}" to staged_output,
+      Append "{Line Number:6}\t{content}" to staged_output,
       increment the "Line Number".
     Otherwise,
-      append content to staged_output.
+      Append content to staged_output.
     if staged_output's size is greater than 65535 then,
       Write staged_output to output,
       Clear staged_output.
     read line from the source into content.
 if arguments's empty then,
   Write staged_output to output,
-  clear staged_output.
+  Clear staged_output.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",

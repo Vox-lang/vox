@@ -77,7 +77,7 @@
     },
     "action-keywords": {
       "name": "keyword.other.vox",
-      "match": "\\b(?i:(print|set|create|increment|decrement|is|are|was|treating|as|enable|disable|error|catching|flag|flags|parse|required|default|argument|arguments))\\b"
+      "match": "\\b(?i:(print|set|create|append|copy|clear|increment|decrement|is|are|was|treating|as|enable|disable|error|catching|flag|flags|parse|required|default|argument|arguments))\\b"
     },
     "io-keywords": {
       "name": "support.function.vox",
@@ -100,7 +100,7 @@
     },
     "articles": {
       "name": "punctuation.definition.vox",
-      "match": "\\b(?i:(a|an|the|called|with|of|on|at|into|for|in|bytes|size))\\b"
+      "match": "\\b(?i:(a|an|the|called|with|of|on|at|into|for|in|bytes|size|line))\\b"
     },
     "booleans": {
       "name": "constant.language.boolean.vox",
