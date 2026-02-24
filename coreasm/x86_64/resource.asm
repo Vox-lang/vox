@@ -33,6 +33,7 @@ section .bss
     ; Note: _last_error is defined in core.asm (always available)
     line_read_tmp: resb 1
     line_read_fallback_tmp: resb 1
+    fmt_i64_buf: resb 128
 
     ; Read-ahead cache for line reading
     ; Slots are assigned per-fd on demand.
@@ -1179,6 +1180,317 @@ _buffer_append:
 .append_grow_failed:
     mov qword [rel _last_error], 1
     jmp .append_done
+
+; Append raw bytes into destination buffer
+; Args: destination buffer in rdi, source ptr in rsi, source length in rdx
+; Returns: destination buffer pointer in rax (may be reallocated)
+global _buffer_append_bytes
+_buffer_append_bytes:
+    push rbx
+    push rcx
+    push r8
+    push r9
+    push r12
+    push r13
+    push r14
+
+    mov r12, rdi                    ; destination buffer
+    mov r13, rsi                    ; source bytes pointer
+    mov r14, rdx                    ; source length
+
+    test r14, r14
+    jz .append_bytes_done
+
+    mov r8, [r12 + BUF_LENGTH]      ; destination length
+    mov rax, r8
+    add rax, r14                    ; required size
+
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
+    jnz .append_bytes_fixed
+
+    cmp rax, [r12 + BUF_CAPACITY]
+    jle .append_bytes_have_space
+
+    mov rdi, r12
+    mov rsi, rax
+    call _grow_buffer
+    test rax, rax
+    jz .append_bytes_grow_failed
+    mov r12, rax
+
+.append_bytes_have_space:
+    lea rdi, [r12 + BUF_DATA]
+    add rdi, r8
+    mov rsi, r13
+    mov rcx, r14
+    rep movsb
+    jmp .append_bytes_finish
+
+.append_bytes_fixed:
+    mov r9, [r12 + BUF_CAPACITY]
+    sub r9, r8
+    cmp r9, 0
+    jle .append_bytes_no_space
+
+    cmp r14, r9
+    jle .append_bytes_fixed_fit
+
+    mov qword [rel _last_error], 1
+    mov r14, r9
+
+.append_bytes_fixed_fit:
+    lea rdi, [r12 + BUF_DATA]
+    add rdi, r8
+    mov rsi, r13
+    mov rcx, r14
+    rep movsb
+    jmp .append_bytes_finish
+
+.append_bytes_no_space:
+    mov qword [rel _last_error], 1
+    jmp .append_bytes_done
+
+.append_bytes_finish:
+    add r8, r14
+    mov [r12 + BUF_LENGTH], r8
+    lea rax, [r12 + BUF_DATA]
+    add rax, r8
+    mov byte [rax], 0
+
+.append_bytes_done:
+    mov rax, r12
+    pop r14
+    pop r13
+    pop r12
+    pop r9
+    pop r8
+    pop rcx
+    pop rbx
+    ret
+
+.append_bytes_grow_failed:
+    mov qword [rel _last_error], 1
+    jmp .append_bytes_done
+
+; Append null-terminated C-string into destination buffer
+; Args: destination buffer in rdi, source C-string ptr in rsi
+; Returns: destination buffer pointer in rax
+global _buffer_append_cstr
+_buffer_append_cstr:
+    push rcx
+    push r12
+    push r13
+
+    mov r12, rdi
+    mov r13, rsi
+    xor rcx, rcx
+
+.append_cstr_len:
+    cmp byte [r13 + rcx], 0
+    je .append_cstr_have_len
+    inc rcx
+    jmp .append_cstr_len
+
+.append_cstr_have_len:
+    mov rdi, r12
+    mov rsi, r13
+    mov rdx, rcx
+    call _buffer_append_bytes
+
+    pop r13
+    pop r12
+    pop rcx
+    ret
+
+; Append formatted integer into destination buffer
+; Args:
+;   rdi = destination buffer
+;   rsi = value (i64)
+;   rdx = width (0 means no minimum width)
+;   rcx = zero_pad flag (0/1)
+;   r8  = base (0=decimal, 1=hex, 2=binary, 3=octal)
+;   r9  = uppercase (hex only, 0/1)
+; Returns: destination buffer pointer in rax
+global _buffer_append_formatted_int
+_buffer_append_formatted_int:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                    ; destination buffer
+    mov r13, rsi                    ; value
+    mov r14, rdx                    ; width
+    mov r15, rcx                    ; zero_pad flag
+    mov r10, r8                     ; base selector
+    mov r11, r9                     ; uppercase flag
+
+    lea rbp, [rel fmt_i64_buf]
+    lea r8, [rel fmt_i64_buf + 127] ; write pointer (backwards)
+    xor r9, r9                      ; digits length
+    xor rbx, rbx                    ; sign flag for decimal
+
+    cmp r10, 0
+    jne .fmt_non_decimal
+
+.fmt_decimal:
+
+    ; Decimal conversion (signed)
+    mov rax, r13
+    test rax, rax
+    jns .fmt_dec_positive
+    neg rax
+    mov bl, 1
+
+.fmt_dec_positive:
+    test rax, rax
+    jnz .fmt_dec_loop
+    dec r8
+    mov byte [r8], '0'
+    inc r9
+    jmp .fmt_dec_done
+
+.fmt_dec_loop:
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx
+    add dl, '0'
+    dec r8
+    mov [r8], dl
+    inc r9
+    test rax, rax
+    jnz .fmt_dec_loop
+
+.fmt_dec_done:
+    test bl, bl
+    jz .fmt_digits_ready
+    dec r8
+    mov byte [r8], '-'
+    inc r9
+    jmp .fmt_digits_ready
+
+.fmt_non_decimal:
+    mov rax, r13
+    cmp r10, 1
+    je .fmt_hex_loop_entry
+    cmp r10, 2
+    je .fmt_binary_loop_entry
+    cmp r10, 3
+    je .fmt_octal_loop_entry
+    jmp .fmt_decimal
+
+.fmt_hex_loop_entry:
+    test rax, rax
+    jnz .fmt_hex_loop
+    dec r8
+    mov byte [r8], '0'
+    inc r9
+    jmp .fmt_digits_ready
+
+.fmt_hex_loop:
+    mov rdx, rax
+    and rdx, 0xF
+    cmp dl, 9
+    jle .fmt_hex_digit_num
+    test r11, r11
+    jz .fmt_hex_digit_lower
+    add dl, 'A' - 10
+    jmp .fmt_hex_store
+
+.fmt_hex_digit_lower:
+    add dl, 'a' - 10
+    jmp .fmt_hex_store
+
+.fmt_hex_digit_num:
+    add dl, '0'
+
+.fmt_hex_store:
+    dec r8
+    mov [r8], dl
+    inc r9
+    shr rax, 4
+    test rax, rax
+    jnz .fmt_hex_loop
+    jmp .fmt_digits_ready
+
+.fmt_binary_loop_entry:
+    test rax, rax
+    jnz .fmt_binary_loop
+    dec r8
+    mov byte [r8], '0'
+    inc r9
+    jmp .fmt_digits_ready
+
+.fmt_binary_loop:
+    mov rdx, rax
+    and rdx, 1
+    add dl, '0'
+    dec r8
+    mov [r8], dl
+    inc r9
+    shr rax, 1
+    test rax, rax
+    jnz .fmt_binary_loop
+    jmp .fmt_digits_ready
+
+.fmt_octal_loop_entry:
+    test rax, rax
+    jnz .fmt_octal_loop
+    dec r8
+    mov byte [r8], '0'
+    inc r9
+    jmp .fmt_digits_ready
+
+.fmt_octal_loop:
+    mov rdx, rax
+    and rdx, 7
+    add dl, '0'
+    dec r8
+    mov [r8], dl
+    inc r9
+    shr rax, 3
+    test rax, rax
+    jnz .fmt_octal_loop
+
+.fmt_digits_ready:
+    ; Left pad to width (if needed)
+    mov rax, r14
+    sub rax, r9
+    jle .fmt_append_digits
+
+    mov byte [rbp], ' '
+    test r15, r15
+    jz .fmt_pad_loop
+    mov byte [rbp], '0'
+
+.fmt_pad_loop:
+    test rax, rax
+    jz .fmt_append_digits
+    push rax
+    mov rdi, r12
+    lea rsi, [rbp]
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+    pop rax
+    dec rax
+    jmp .fmt_pad_loop
+
+.fmt_append_digits:
+    mov rdi, r12
+    mov rsi, r8
+    mov rdx, r9
+    call _buffer_append_bytes
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
 
 ; Copy source buffer into destination buffer (clobber destination contents)
 ; Args: destination buffer in rdi, source buffer in rsi

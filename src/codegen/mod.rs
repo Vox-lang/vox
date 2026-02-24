@@ -101,6 +101,149 @@ impl CodeGenerator {
             target_arch: "x86_64".to_string(),
         }
     }
+
+    fn emit_clear_buffer_slot(&mut self, offset: i64) {
+        self.uses_buffers = true;
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_indent("call _buffer_clear");
+        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+    }
+
+    fn emit_append_literal_to_buffer_slot(&mut self, offset: i64, text: &str) {
+        self.uses_buffers = true;
+        let label = self.add_string(text);
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_indent(&format!("lea rsi, [{}]", label));
+        self.emit_indent(&format!("mov rdx, {}_len", label));
+        self.emit_indent("call _buffer_append_bytes");
+        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+    }
+
+    fn emit_append_formatted_int_to_buffer_slot(&mut self, offset: i64, fmt: FormatSpec) {
+        self.uses_buffers = true;
+        let (base, uppercase) = match fmt.base {
+            IntegerBase::Decimal => (0, 0),
+            IntegerBase::HexLower => (1, 0),
+            IntegerBase::HexUpper => (1, 1),
+            IntegerBase::Binary => (2, 0),
+            IntegerBase::Octal => (3, 0),
+        };
+        let width = fmt.width.unwrap_or(0);
+        let zero_pad = if fmt.zero_pad { 1 } else { 0 };
+
+        self.emit_indent("mov rsi, rax");
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_indent(&format!("mov rdx, {}", width));
+        self.emit_indent(&format!("mov rcx, {}", zero_pad));
+        self.emit_indent(&format!("mov r8, {}", base));
+        self.emit_indent(&format!("mov r9, {}", uppercase));
+        self.emit_indent("call _buffer_append_formatted_int");
+        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+    }
+
+    fn emit_append_runtime_value_to_buffer_slot(&mut self, offset: i64, value_type: Option<VarType>, fmt: FormatSpec) {
+        match value_type {
+            Some(VarType::Buffer) => {
+                self.uses_buffers = true;
+                self.emit_indent("mov rsi, rax");
+                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                self.emit_indent("call _buffer_append");
+                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+            }
+            Some(VarType::String) => {
+                self.uses_buffers = true;
+                self.emit_indent("mov rsi, rax");
+                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                self.emit_indent("call _buffer_append_cstr");
+                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+            }
+            _ => {
+                self.emit_append_formatted_int_to_buffer_slot(offset, fmt);
+            }
+        }
+    }
+
+    fn emit_format_parts_into_buffer_slot(&mut self, offset: i64, parts: &[FormatPart], clear_first: bool) {
+        if clear_first {
+            self.emit_clear_buffer_slot(offset);
+        }
+
+        for part in parts {
+            match part {
+                FormatPart::Literal(s) => self.emit_append_literal_to_buffer_slot(offset, s),
+                FormatPart::Variable { name, format } => {
+                    if let Some(src_offset) = self.get_var(name) {
+                        self.emit_indent(&format!("mov rax, [rbp-{}]", src_offset));
+                        let value_type = self.variable_types.get(name).cloned();
+                        let fmt_spec = self.parse_format_spec(format.as_deref());
+                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                    } else if let Some(expr) = self.global_constants.get(name).cloned() {
+                        match expr {
+                            Expr::StringLit(s) => self.emit_append_literal_to_buffer_slot(offset, &s),
+                            Expr::IntegerLit(n) => {
+                                self.emit_indent(&format!("mov rax, {}", n));
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
+                            }
+                            Expr::BoolLit(b) => {
+                                self.emit_indent(&format!("mov rax, {}", if b { 1 } else { 0 }));
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                FormatPart::Expression { expr, format } => {
+                    self.generate_expr(expr);
+                    let expr_type = self.infer_expr_type(expr);
+                    let fmt_spec = self.parse_format_spec(format.as_deref());
+                    self.emit_append_runtime_value_to_buffer_slot(offset, expr_type, fmt_spec);
+                }
+            }
+        }
+    }
+
+    fn emit_copy_expr_into_buffer_slot(&mut self, offset: i64, value: &Expr, clear_first: bool) -> bool {
+        match value {
+            Expr::FormatString { parts } => {
+                self.emit_format_parts_into_buffer_slot(offset, parts, clear_first);
+                true
+            }
+            Expr::StringLit(s) => {
+                if let Some(src_offset) = self.get_var(s) {
+                    if self.variable_types.get(s) == Some(&VarType::Buffer) {
+                        self.uses_buffers = true;
+                        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                        self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
+                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
+                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        return true;
+                    }
+                }
+
+                if clear_first {
+                    self.emit_clear_buffer_slot(offset);
+                }
+                self.emit_append_literal_to_buffer_slot(offset, s);
+                true
+            }
+            Expr::Identifier(name) => {
+                if self.variable_types.get(name) == Some(&VarType::Buffer) {
+                    if let Some(src_offset) = self.get_var(name) {
+                        self.uses_buffers = true;
+                        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                        self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
+                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
+                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
     
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
         self.shared_lib_mode = enabled;
@@ -549,6 +692,7 @@ impl CodeGenerator {
             
             Statement::VarDecl { name, var_type, value } => {
                 // Reuse existing slot for reassignment, otherwise allocate new
+                let had_existing_slot = self.variables.contains_key(name);
                 let offset = if let Some(&existing) = self.variables.get(name) {
                     existing
                 } else {
@@ -600,32 +744,22 @@ impl CodeGenerator {
                         self.variable_types.insert(name.clone(), VarType::String);
                     }
                     
-                    // Special handling for buffer initialization with string literal
-                    if matches!(var_type, Some(Type::Buffer)) {
-                        if let Expr::StringLit(s) = val {
-                            // For buffer initialized with string, allocate and copy the string
-                            let str_label = self.add_string(s);
-                            let str_len = s.len();
-                            // Allocate buffer with enough capacity (at least string length + 1)
-                            let capacity = std::cmp::max(str_len + 1, 1024);
-                            self.emit_indent(&format!("mov rdi, {}  ; buffer capacity", capacity));
+                    // Special handling for buffer initialization/assignment with text/format/buffer source
+                    let is_buffer_target = matches!(var_type, Some(Type::Buffer))
+                        || self.variable_types.get(name) == Some(&VarType::Buffer);
+                    if is_buffer_target {
+                        if !had_existing_slot {
+                            self.emit_indent("mov rdi, 1024  ; default buffer size");
                             self.emit_indent("call _alloc_buffer");
-                            self.emit_indent(&format!("mov [rbp-{}], rax  ; store buffer pointer", offset));
-                            // Copy string data into buffer data area (offset 24 = BUF_DATA)
-                            self.emit_indent("lea rdi, [rax + 24]  ; dest = buffer data area");
-                            self.emit_indent(&format!("lea rsi, [rel {}]  ; source string", str_label));
-                            self.emit_indent(&format!("mov rcx, {}  ; string length", str_len));
-                            self.emit_indent("rep movsb  ; copy bytes");
-                            // Null-terminate the buffer
-                            self.emit_indent("mov byte [rdi], 0");
-                            // Update buffer length field (offset 8 = BUF_LENGTH)
-                            self.emit_indent(&format!("mov rax, [rbp-{}]  ; reload buffer pointer", offset));
-                            self.emit_indent(&format!("mov qword [rax + 8], {}  ; set buffer length", str_len));
-                            self.uses_buffers = true;
-                        } else {
-                            // Non-string initializer for buffer - evaluate and store
-                            self.generate_expr(val);
                             self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                            self.uses_buffers = true;
+                        }
+
+                        if !self.emit_copy_expr_into_buffer_slot(offset, val, true) {
+                            self.generate_expr(val);
+                            self.emit_clear_buffer_slot(offset);
+                            let fmt_spec = self.parse_format_spec(None);
+                            self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(val), fmt_spec);
                         }
                     } else {
                         self.generate_expr(val);
@@ -686,10 +820,20 @@ impl CodeGenerator {
             }
             
             Statement::Assignment { name, value } => {
-                self.generate_expr(value);
                 if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                    if self.variable_types.get(name) == Some(&VarType::Buffer) {
+                        if !self.emit_copy_expr_into_buffer_slot(offset, value, true) {
+                            self.generate_expr(value);
+                            self.emit_clear_buffer_slot(offset);
+                            let fmt_spec = self.parse_format_spec(None);
+                            self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(value), fmt_spec);
+                        }
+                    } else {
+                        self.generate_expr(value);
+                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                    }
                 } else {
+                    self.generate_expr(value);
                     let offset = self.alloc_var(name);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                 }
@@ -1214,14 +1358,12 @@ impl CodeGenerator {
             
             Statement::ListAppend { list, value } => {
                 if self.variable_types.get(list) == Some(&VarType::Buffer) {
-                    self.uses_buffers = true;
-                    self.emit_indent("; Append source buffer to destination buffer");
                     if let Some(dst_offset) = self.get_var(list) {
-                        self.emit_indent(&format!("mov rdi, [rbp-{}]  ; destination buffer", dst_offset));
-                        self.generate_expr(value);
-                        self.emit_indent("mov rsi, rax  ; source buffer");
-                        self.emit_indent("call _buffer_append");
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination buffer", dst_offset));
+                        if !self.emit_copy_expr_into_buffer_slot(dst_offset, value, false) {
+                            self.generate_expr(value);
+                            let fmt_spec = self.parse_format_spec(None);
+                            self.emit_append_runtime_value_to_buffer_slot(dst_offset, self.infer_expr_type(value), fmt_spec);
+                        }
                     }
                     return;
                 }
@@ -1294,13 +1436,13 @@ impl CodeGenerator {
             }
 
             Statement::BufferCopy { source, destination } => {
-                self.uses_buffers = true;
-                self.emit_indent("; Copy source buffer into destination buffer");
-                if let (Some(src_offset), Some(dst_offset)) = (self.get_var(source), self.get_var(destination)) {
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; destination buffer", dst_offset));
-                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; source buffer", src_offset));
-                    self.emit_indent("call _buffer_copy");
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination buffer", dst_offset));
+                if let Some(dst_offset) = self.get_var(destination) {
+                    if !self.emit_copy_expr_into_buffer_slot(dst_offset, source, true) {
+                        self.generate_expr(source);
+                        self.emit_clear_buffer_slot(dst_offset);
+                        let fmt_spec = self.parse_format_spec(None);
+                        self.emit_append_runtime_value_to_buffer_slot(dst_offset, self.infer_expr_type(source), fmt_spec);
+                    }
                 }
             }
 

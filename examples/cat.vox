@@ -1,6 +1,6 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.6".
+A text called "Program Version" is "0.1.7".
 
 Open a file for writing called "output" at "/dev/stdout".
 On error print "cat: /dev/stdout: No such file or directory", exit 1.
@@ -50,19 +50,17 @@ If arguments's empty then,
   read line from source into content,
   while content is not empty,
     if "we are numbering lines" then,
-      Print "{Line Number:6}\t" without newline,
-      increment the "Line Number",
-      Write content to output.
+      append "{Line Number:6}\t{content}" to staged_output,
+      increment the "Line Number".
     Otherwise,
-      append content to staged_output,
-      if staged_output's size is greater than 65535 then,
-        Write staged_output to output,
-        clear staged_output.
+      append content to staged_output.
+    if staged_output's size is greater than 65535 then,
+      Write staged_output to output,
+      Clear staged_output.
     read line from the source into content.
-
-  if staged_output is not empty then,
-    Write staged_output to output,
-    clear staged_output.
+if arguments's empty then,
+  Write staged_output to output.
+  clear staged_output.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
@@ -72,23 +70,18 @@ Open a file called "source" for reading at each filename from arguments's all tr
   read line from the source into content,
   while the content is not empty,
     if "we are numbering lines" then,
-      Print "{Line Number:6}\t" without newline,
+      append "{Line Number:6}\t{content}" to staged_output,
       increment the "Line Number".
-    if "we are numbering lines" then,
-      Write the content to output.
     Otherwise,
-      append content to staged_output,
-      if staged_output's size is greater than 65535 then,
-        Write staged_output to output,
-        clear staged_output.
+      append content to staged_output.
+    if staged_output's size is greater than 65535 then,
+      Write staged_output to output,
+      Clear staged_output.
     read line from the source into content.
-
-  if staged_output is not empty then,
-    Write staged_output to output,
-    clear staged_output.
-
-  Close source.
-  
+  Close source,
+  Write staged_output to output,
+  Clear staged_output.
+    
 If "failed to open a file" then,
   Exit 1.
 Otherwise,

@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.5**
+**Version 0.1.6**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -1119,12 +1119,19 @@ Efficiently combine buffers without byte-by-byte loops:
 append source to destination.
 copy source to destination.
 clear destination.
+
+set destination to "line {n:06}\t{content}".
+a buffer called "destination" is "line {n:06}\t{content}".
+append "line {n:06}\t{content}" to destination.
+copy "line {n:06}\t{content}" to destination.
 ```
 
 **Behavior:**
 - `append source to destination` adds source bytes to the end of destination.
 - `copy source to destination` replaces destination contents with source bytes.
 - `clear destination` sets destination length to `0` and preserves destination capacity.
+- When destination is a buffer, format-string sources are supported for `set`, `is`, `append`, and `copy`.
+- Format-string buffer writes are built in-place: literals/parts are appended directly to the destination buffer.
 - Dynamic destination buffers grow automatically as needed.
 - Fixed destination buffers truncate when full and set the error flag.
 - Source buffer is never modified.

@@ -1,0 +1,17 @@
+(Fixed-size buffer truncation with format strings)
+
+a buffer called "dst" is 8 bytes in size.
+
+set dst to "X={1234567 add 0}".
+print dst's size.
+print dst.
+on error print "set overflow".
+
+copy "Y={1234567 add 0}" to dst.
+print dst.
+on error print "copy overflow".
+
+clear dst.
+append "Z={1234567 add 0}" to dst.
+print dst.
+on error print "append overflow".
