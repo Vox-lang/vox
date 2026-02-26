@@ -29,6 +29,7 @@ pub struct CodeGenerator {
     uses_lists: bool,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
+    parsed_args_active: bool,
     target_arch: String,
 }
 
@@ -98,6 +99,7 @@ impl CodeGenerator {
             uses_lists: false,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
+            parsed_args_active: false,
             target_arch: "x86_64".to_string(),
         }
     }
@@ -544,6 +546,10 @@ impl CodeGenerator {
         self.output.push_str(code);
         self.output.push('\n');
     }
+
+    fn argument_view_uses_parsed(&self) -> bool {
+        self.parsed_args_active
+    }
     
     pub fn generate(&mut self, program: &Program) -> String {
         self.collect_global_constants(program);
@@ -559,6 +565,7 @@ impl CodeGenerator {
             .rposition(|s| matches!(s, Statement::FlagSchemaDecl { .. }))
             .map(|i| i + 1);
         let parse_insert_idx = explicit_parse_idx.or(auto_parse_idx);
+        self.parsed_args_active = parse_insert_idx.is_some() && !self.flag_schemas.is_empty();
 
         for (idx, stmt) in program.statements.iter().enumerate() {
             if parse_insert_idx == Some(idx) {
@@ -2241,6 +2248,7 @@ impl CodeGenerator {
             
             _ => {
                 let is_float = self.is_float_expr(value);
+                let expr_type = self.infer_expr_type(value);
                 self.generate_expr(value);
                 if is_float {
                     self.emit_indent("movq xmm0, rax");
@@ -2248,7 +2256,11 @@ impl CodeGenerator {
                     self.uses_floats = true;
                 } else {
                     self.emit_indent("mov rdi, rax");
-                    self.emit_indent("PRINT_INT rdi");
+                    if matches!(expr_type, Some(VarType::String)) {
+                        self.emit_indent("PRINT_CSTR rdi");
+                    } else {
+                        self.emit_indent("PRINT_INT rdi");
+                    }
                 }
             }
         }
@@ -2917,13 +2929,34 @@ impl CodeGenerator {
             
             // Command-line arguments
             Expr::ArgumentCount => {
-                self.emit_indent("call _get_argc");
+                if self.argument_view_uses_parsed() {
+                    // Keep historical semantics: include program name in count.
+                    self.emit_indent("call _get_parsed_argc");
+                    self.emit_indent("inc rax");
+                } else {
+                    self.emit_indent("call _get_argc");
+                }
             }
             
             Expr::ArgumentAt { index } => {
                 self.generate_expr(index);
-                self.emit_indent("mov rdi, rax");
-                self.emit_indent("call _get_arg");
+                if self.argument_view_uses_parsed() {
+                    let not_name_label = self.new_label("arg_at_not_name");
+                    let done_label = self.new_label("arg_at_done");
+                    self.emit_indent("cmp rax, 0");
+                    self.emit_indent(&format!("jne {}", not_name_label));
+                    self.emit_indent("xor rdi, rdi  ; index 0 = program name");
+                    self.emit_indent("call _get_arg");
+                    self.emit_indent(&format!("jmp {}", done_label));
+                    self.emit(&format!("{}:", not_name_label));
+                    self.emit_indent("dec rax  ; map user-facing index to parsed positional index");
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("call _get_parsed_arg");
+                    self.emit(&format!("{}:", done_label));
+                } else {
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("call _get_arg");
+                }
             }
             
             Expr::ArgumentName => {
@@ -2932,27 +2965,60 @@ impl CodeGenerator {
             }
             
             Expr::ArgumentFirst => {
-                self.emit_indent("mov rdi, 1  ; index 1 - first user arg");
-                self.emit_indent("call _get_arg");
+                if self.argument_view_uses_parsed() {
+                    self.emit_indent("xor rdi, rdi  ; parsed index 0 - first user arg");
+                    self.emit_indent("call _get_parsed_arg");
+                } else {
+                    self.emit_indent("mov rdi, 1  ; index 1 - first user arg");
+                    self.emit_indent("call _get_arg");
+                }
             }
             
             Expr::ArgumentSecond => {
-                self.emit_indent("mov rdi, 2  ; index 2 - second user arg");
-                self.emit_indent("call _get_arg");
+                if self.argument_view_uses_parsed() {
+                    self.emit_indent("mov rdi, 1  ; parsed index 1 - second user arg");
+                    self.emit_indent("call _get_parsed_arg");
+                } else {
+                    self.emit_indent("mov rdi, 2  ; index 2 - second user arg");
+                    self.emit_indent("call _get_arg");
+                }
             }
             
             Expr::ArgumentLast => {
-                self.emit_indent("call _get_argc");
-                self.emit_indent("dec rax  ; last index = argc - 1");
-                self.emit_indent("mov rdi, rax");
-                self.emit_indent("call _get_arg");
+                if self.argument_view_uses_parsed() {
+                    let has_user_args_label = self.new_label("arg_last_has_user");
+                    let done_label = self.new_label("arg_last_done");
+                    self.emit_indent("call _get_parsed_argc");
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent(&format!("jnz {}", has_user_args_label));
+                    self.emit_indent("xor rdi, rdi  ; fallback to program name when no user args");
+                    self.emit_indent("call _get_arg");
+                    self.emit_indent(&format!("jmp {}", done_label));
+                    self.emit(&format!("{}:", has_user_args_label));
+                    self.emit_indent("dec rax  ; last parsed index = parsed argc - 1");
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("call _get_parsed_arg");
+                    self.emit(&format!("{}:", done_label));
+                } else {
+                    self.emit_indent("call _get_argc");
+                    self.emit_indent("dec rax  ; last index = argc - 1");
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("call _get_arg");
+                }
             }
             
             Expr::ArgumentEmpty => {
-                self.emit_indent("call _get_argc");
-                self.emit_indent("cmp rax, 1");
-                self.emit_indent("setle al  ; 1 if argc <= 1 (no user args)");
-                self.emit_indent("movzx rax, al");
+                if self.argument_view_uses_parsed() {
+                    self.emit_indent("call _get_parsed_argc");
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent("setz al  ; 1 if no positional args after flag parsing");
+                    self.emit_indent("movzx rax, al");
+                } else {
+                    self.emit_indent("call _get_argc");
+                    self.emit_indent("cmp rax, 1");
+                    self.emit_indent("setle al  ; 1 if argc <= 1 (no user args)");
+                    self.emit_indent("movzx rax, al");
+                }
             }
             
             Expr::ArgumentAll => {
@@ -2975,19 +3041,29 @@ impl CodeGenerator {
                 self.generate_expr(value);
                 self.emit_indent("mov rbx, rax  ; target argument value");
 
-                // argc in rcx, start index in r8 (skip argv[0])
-                self.emit_indent("call _get_argc");
-                self.emit_indent("mov rcx, rax  ; argc");
-                self.emit_indent("mov r8, 1  ; start at argv[1]");
+                // count in rcx, start index in r8
+                if self.argument_view_uses_parsed() {
+                    self.emit_indent("call _get_parsed_argc");
+                    self.emit_indent("mov rcx, rax  ; parsed positional argc");
+                    self.emit_indent("xor r8, r8  ; start at parsed[0]");
+                } else {
+                    self.emit_indent("call _get_raw_argc");
+                    self.emit_indent("mov rcx, rax  ; raw user argc");
+                    self.emit_indent("xor r8, r8  ; start at raw[0]");
+                }
                 self.emit_indent("xor rax, rax  ; default result: false");
 
                 self.emit(&format!("{}:", loop_label));
                 self.emit_indent("cmp r8, rcx");
                 self.emit_indent(&format!("jge {}", done_label));
 
-                // current arg = _get_arg(index)
+                // current arg from selected argument view
                 self.emit_indent("mov rdi, r8");
-                self.emit_indent("call _get_arg");
+                if self.argument_view_uses_parsed() {
+                    self.emit_indent("call _get_parsed_arg");
+                } else {
+                    self.emit_indent("call _get_raw_arg");
+                }
 
                 // compare current arg with target
                 self.emit_indent("mov rdi, rax");
@@ -3377,6 +3453,10 @@ impl CodeGenerator {
             Expr::FloatLit(_) => Some(VarType::Float),
             Expr::StringLit(_) => Some(VarType::String),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
+            Expr::ArgumentCount => Some(VarType::Integer),
+            Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst
+            | Expr::ArgumentSecond | Expr::ArgumentLast => Some(VarType::String),
+            Expr::ArgumentEmpty | Expr::ArgumentHas { .. } => Some(VarType::Integer),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type

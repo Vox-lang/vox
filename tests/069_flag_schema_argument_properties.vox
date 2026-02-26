@@ -1,0 +1,33 @@
+a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+
+Print "count:{arguments's count}".
+If arguments's empty then,
+  Print "empty:1".
+Otherwise,
+  Print "empty:0".
+
+Print "first".
+Print arguments's first.
+Print "second".
+Print arguments's second.
+Print "last".
+Print arguments's last.
+Print "at1".
+Print the argument at 1.
+Print "at2".
+Print the argument at 2.
+
+If arguments has "--verbose" then,
+  Print "has-verbose:1".
+Otherwise,
+  Print "has-verbose:0".
+
+If arguments has "alpha" then,
+  Print "has-alpha:1".
+Otherwise,
+  Print "has-alpha:0".
+
+Print "ALL".
+Print each item from arguments's all.
+Print "RAW".
+Print each item from arguments's raw.
