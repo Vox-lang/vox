@@ -1,6 +1,6 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.8".
+A text called "Program Version" is "0.1.9".
 
 (Parse the flags now)
 A flag called "wants help" is "--help" or "-h", it is a boolean.
