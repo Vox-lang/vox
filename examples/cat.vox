@@ -1,16 +1,6 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.7".
-a boolean called "failed to open a file" is false.
-
-Open a file for writing called "output" at "/dev/stdout".
-On error print "cat: /dev/stdout: No such file or directory", exit 1.
-
-Create a buffer called "content".
-On error print "cat: failed to create buffer", exit 1.
-
-Create a buffer called "staged_output".
-On error print "cat: failed to create buffer", exit 1.
+A text called "Program Version" is "0.1.8".
 
 (Parse the flags now)
 A flag called "wants help" is "--help" or "-h", it is a boolean.
@@ -39,12 +29,24 @@ If "wants help" then,
 If "wants version" then,
   "show version".
 
+(Prepare to cat)
+a boolean called "failed to open a file" is false.
+
+Open a file for writing called "output" at 1(fd - stdout).
+On error print "cat: /dev/stdout: Could not open pipe", exit 1.
+
+Create a buffer called "content".
+On error print "cat: failed to create buffer", exit 1.
+
+Create a buffer called "staged_output".
+On error print "cat: failed to create buffer", exit 1.
+
 If "we are numbering lines" then,
   A number called "Line Number" is 1.
 
 If arguments's empty then,
-  Open a file for reading called "source" at "/dev/stdin",
-  On error print "cat: /dev/stdin: No such file or directory", exit 1.
+  Open a file for reading called "source" at 0(fd - stdin),
+  On error print "cat: /dev/stdin: Could not open pipe", exit 1.
   Read line from source into content,
   While content is not empty,
     if "we are numbering lines" then,
@@ -84,3 +86,4 @@ If "failed to open a file" then,
   Exit 1.
 Otherwise,
   Exit 0.
+  

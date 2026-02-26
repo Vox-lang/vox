@@ -2069,10 +2069,14 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
-        // Parse match value (simple: string or identifier only)
+        // Parse match value (simple scalar expressions)
         let match_value = match self.current().clone() {
             Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
+            Token::True => { self.advance(); Expr::BoolLit(true) }
+            Token::False => { self.advance(); Expr::BoolLit(false) }
             _ => return Err(self.err(
                 "Missing match value after 'treating'\n  \
                  Syntax: treating <match> as <replacement>\n  \
@@ -2107,14 +2111,18 @@ impl Parser {
             )));
         }
         
-        // Parse replacement (simple: string or identifier only)
+        // Parse replacement (simple scalar expressions)
         let replacement = match self.current().clone() {
             Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
+            Token::True => { self.advance(); Expr::BoolLit(true) }
+            Token::False => { self.advance(); Expr::BoolLit(false) }
             _ => return Err(self.err(
                 "Missing replacement value after 'as'\n  \
                  Syntax: treating <match> as <replacement>\n  \
-                 Example: treating \"-\" as \"/dev/stdin\""
+                 Example: treating \"-\" as \"/dev/stdin\" (or treating \"-\" as 0 for fd stdin)"
             )),
         };
         self.skip_noise();
