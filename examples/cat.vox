@@ -14,7 +14,7 @@ To "show version".
 
 If "wants help" then,
   A text called "Program" is arguments's name,
-  Print "{Program} - contatonate files and print on the standard output",
+  Print "{Program} - concatenate files and print on the standard output",
   Print "Usage: {Program} [OPTION]... [FILE]...",
   Print "With no FILE, or when FILE is -, read standard input.",
   Print "\nOptions:",
@@ -22,8 +22,9 @@ If "wants help" then,
   Print "  -n, --number   number all output lines",
   Print "  -v, --version  output version information and exit",
   Print "\nExamples:",
-  Print "\t{Program} f - g\tOutput f's content, then standard input, then g's contents",
+  Print "\t{Program} f - g\tOutput f's contents, then standard input, then g's contents",
   Print "\t{Program}\t\tCopy standard input to standard output",
+  Print "See https://github.com/vox-lang/vox for more information."
   Exit 0.
 
 If "wants version" then,
