@@ -1,4 +1,7 @@
 (Open-at numeric path should be treated as a file descriptor)
+(This test verifies that a numeric path like 1 is handled as the already-open)
+(file descriptor for stdout, not as a filesystem path, and contrasts it with)
+(opening "/dev/stdout" via a string path.)
 
 Open a file for writing called out at 1.
 On error print "failed to use fd 1".
