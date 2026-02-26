@@ -22,3 +22,5 @@ target
 
 *.vsix
 release.sh
+*.7z
+*.asm
