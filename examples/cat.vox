@@ -70,7 +70,7 @@ Open a file called "source" for reading at each filename from arguments's all tr
     continue.
   read line from the source into content,
   while the content is not empty,
-    if "we are numbering lines" then,
+    If "we are numbering lines" then,
       append "{Line Number:6}\t{content}" to staged_output,
       increment the "Line Number".
     Otherwise,
