@@ -1262,6 +1262,16 @@ open a file for writing called output at "./result.txt".
 open a file for appending called log at "./log.txt".
 ```
 
+You can also open an existing file descriptor directly by number:
+
+```
+open a file for reading called stdin_handle at 0.
+open a file for writing called stdout_handle at 1.
+open a file for writing called stderr_handle at 2.
+```
+
+When `at` is numeric, Vox treats it as a borrowed file descriptor instead of a filesystem path.
+
 **Flexible argument order:** The clauses `for reading/writing/appending`, `called <name>`, and `at <path>` can appear in any order:
 
 ```
@@ -1274,6 +1284,12 @@ open a file at "./log.txt" called log for appending.
 - `reading` - Read from existing file
 - `writing` - Create/overwrite file
 - `appending` - Add to end of file
+
+**`at` value rules (compile-time validation):**
+- Use text for filesystem paths: `at "/path/to/file"`
+- Use integers for file descriptors: `at 0`, `at 1`, `at 2`
+- File descriptor literals must be in range `0..2147483647`
+- Invalid types (for example `at 1.5` or `at true`) are compile-time errors
 
 ### Reading
 

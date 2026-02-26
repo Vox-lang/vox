@@ -120,6 +120,109 @@ mod buffer_append_copy_analysis_tests {
             analyzer.errors
         );
     }
+
+    #[test]
+    fn file_open_rejects_float_path_literal() {
+        let input = r#"
+            open a file for reading called source at 1.5.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Open path must be either a text path")),
+            "expected open-path type error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn file_open_rejects_boolean_path_literal() {
+        let input = r#"
+            open a file for reading called source at true.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Open path must be either a text path")),
+            "expected open-path type error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn file_open_rejects_fd_literal_out_of_range() {
+        let input = r#"
+            open a file for reading called source at -1.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("File descriptor out of range")),
+            "expected fd-range error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn file_open_accepts_string_path_and_fd_literal() {
+        let input = r#"
+            open a file for reading called source at "./data.txt".
+            open a file for writing called output at 1.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Open path must be either a text path") && !e.message.contains("File descriptor out of range")),
+            "unexpected open-path errors: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn treating_rejects_mismatched_match_and_replacement_types() {
+        let input = r#"
+            print each filename from arguments's all treating "-" as 0.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Treating match and replacement must be the same type")),
+            "expected treating type mismatch error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn treating_allows_same_type_substitution() {
+        let input = r#"
+            print each filename from arguments's all treating "-" as "/dev/stdin".
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Treating match and replacement must be the same type")),
+            "unexpected treating type mismatch error(s): {:?}",
+            analyzer.errors
+        );
+    }
 }
 
 #[cfg(test)]
@@ -864,6 +967,179 @@ impl Analyzer {
         self.list_variables.contains(name)
     }
 
+    fn expr_integer_literal_value(&self, expr: &Expr) -> Option<i64> {
+        match expr {
+            Expr::IntegerLit(v) => Some(*v),
+            Expr::UnaryOp { op: UnaryOperator::Negate, operand } => {
+                match operand.as_ref() {
+                    Expr::IntegerLit(v) => Some(-*v),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_simple_expr_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::IntegerLit(_) | Expr::LastError | Expr::ArgumentCount | Expr::EnvironmentVariableCount => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::StringLit(_) | Expr::FormatString { .. }
+            | Expr::ArgumentName | Expr::ArgumentFirst | Expr::ArgumentSecond | Expr::ArgumentLast
+            | Expr::ArgumentAt { .. } | Expr::EnvironmentVariable { .. }
+            | Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
+            | Expr::EnvironmentVariableAt { .. } => Some(Type::String),
+            Expr::BoolLit(_) | Expr::ArgumentEmpty | Expr::EnvironmentVariableEmpty | Expr::EnvironmentVariableExists { .. }
+            | Expr::PropertyCheck { .. } => Some(Type::Boolean),
+            Expr::ListLit { .. } | Expr::ArgumentAll | Expr::ArgumentRaw => Some(Type::List(Box::new(Type::Unknown))),
+            Expr::Identifier(name) => {
+                if self.is_buffer_variable(name) {
+                    Some(Type::Buffer)
+                } else if self.is_list_variable(name) {
+                    Some(Type::List(Box::new(Type::Unknown)))
+                } else if self.flag_variables.contains(name) {
+                    Some(Type::Boolean)
+                } else {
+                    None
+                }
+            }
+            Expr::BinaryOp { op, left, right } => {
+                match op {
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                    | BinaryOperator::Greater | BinaryOperator::Less
+                    | BinaryOperator::GreaterEqual | BinaryOperator::LessEqual
+                    | BinaryOperator::And | BinaryOperator::Or => Some(Type::Boolean),
+                    _ => {
+                        let left_ty = self.infer_simple_expr_type(left);
+                        let right_ty = self.infer_simple_expr_type(right);
+                        if matches!(left_ty, Some(Type::Float)) || matches!(right_ty, Some(Type::Float)) {
+                            Some(Type::Float)
+                        } else if matches!(left_ty, Some(Type::Integer)) && matches!(right_ty, Some(Type::Integer)) {
+                            Some(Type::Integer)
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+            Expr::UnaryOp { op, operand } => {
+                match op {
+                    UnaryOperator::Negate => self.infer_simple_expr_type(operand),
+                    UnaryOperator::Not => Some(Type::Boolean),
+                }
+            }
+            Expr::Cast { target_type, .. } => Some(target_type.clone()),
+            Expr::DurationCast { .. } => Some(Type::Integer),
+            Expr::TreatingAs { value, .. } => self.infer_simple_expr_type(value),
+            _ => None,
+        }
+    }
+
+    fn treating_types_compatible(&self, left: &Type, right: &Type) -> bool {
+        match (left, right) {
+            (Type::Integer, Type::Integer)
+            | (Type::Float, Type::Float)
+            | (Type::String, Type::String)
+            | (Type::Boolean, Type::Boolean)
+            | (Type::Buffer, Type::Buffer)
+            | (Type::File, Type::File)
+            | (Type::Time, Type::Time)
+            | (Type::Timer, Type::Timer) => true,
+            (Type::List(_), Type::List(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn type_name(&self, ty: &Type) -> &'static str {
+        match ty {
+            Type::Integer => "number",
+            Type::Float => "float",
+            Type::String => "text",
+            Type::Boolean => "boolean",
+            Type::List(_) => "list",
+            Type::Buffer => "buffer",
+            Type::File => "file",
+            Type::Time => "time",
+            Type::Timer => "timer",
+            Type::Void => "void",
+            Type::Unknown => "unknown",
+        }
+    }
+
+    fn validate_treating_expr(&mut self, value: &Expr, match_value: &Expr, replacement: &Expr) {
+        if let (Some(match_ty), Some(replacement_ty)) = (
+            self.infer_simple_expr_type(match_value),
+            self.infer_simple_expr_type(replacement),
+        ) {
+            if !self.treating_types_compatible(&match_ty, &replacement_ty) {
+                self.push_error(
+                    format!(
+                        "Treating match and replacement must be the same type (got {} vs {}).",
+                        self.type_name(&match_ty),
+                        self.type_name(&replacement_ty)
+                    ),
+                    None,
+                );
+            }
+        }
+
+        if let (Some(value_ty), Some(match_ty)) = (
+            self.infer_simple_expr_type(value),
+            self.infer_simple_expr_type(match_value),
+        ) {
+            if !self.treating_types_compatible(&value_ty, &match_ty) {
+                self.push_error(
+                    format!(
+                        "Treating value and match must be the same type (got {} vs {}).",
+                        self.type_name(&value_ty),
+                        self.type_name(&match_ty)
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+
+    fn validate_file_open_path(&mut self, path: &Expr) {
+        const FD_MAX: i64 = 2_147_483_647;
+        const OPEN_PATH_GUIDANCE: &str = "Open path must be either a text path like \"/path/to/file\" or a file descriptor number (0 = stdin, 1 = stdout, 2 = stderr).";
+
+        if let Some(fd) = self.expr_integer_literal_value(path) {
+            if fd < 0 || fd > FD_MAX {
+                self.push_error(
+                    format!(
+                        "File descriptor out of range after 'at': {}. Valid range is 0..{} (0 = stdin).",
+                        fd, FD_MAX
+                    ),
+                    None,
+                );
+            }
+            return;
+        }
+
+        match path {
+            Expr::StringLit(_) | Expr::FormatString { .. } => {}
+            Expr::Identifier(name) => {
+                if self.is_buffer_variable(name) || self.is_list_variable(name) {
+                    self.push_error(OPEN_PATH_GUIDANCE.to_string(), Some(name));
+                }
+            }
+            Expr::FloatLit(_)
+            | Expr::BoolLit(_)
+            | Expr::ListLit { .. }
+            | Expr::Range { .. }
+            | Expr::PropertyCheck { .. } => {
+                self.push_error(OPEN_PATH_GUIDANCE.to_string(), None);
+            }
+            Expr::Cast { target_type, .. } => {
+                if !matches!(target_type, Type::Integer | Type::String) {
+                    self.push_error(OPEN_PATH_GUIDANCE.to_string(), None);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn statement_always_terminates(&self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Return { .. } | Statement::Exit { .. } => true,
@@ -1185,6 +1461,7 @@ impl Analyzer {
             Statement::FileOpen { name, path, .. } => {
                 self.variables.insert(name.clone());
                 self.analyze_expr(path);
+                self.validate_file_open_path(path);
                 self.deps.uses_io = true;
             }
             
@@ -1401,6 +1678,7 @@ impl Analyzer {
                 self.analyze_expr(value);
                 self.analyze_expr(match_value);
                 self.analyze_expr(replacement);
+                self.validate_treating_expr(value, match_value, replacement);
             }
             
             Expr::ArgumentAt { index } => {

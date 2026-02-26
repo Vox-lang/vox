@@ -1458,23 +1458,52 @@ impl CodeGenerator {
             
             Statement::FileOpen { name, path, mode } => {
                 self.uses_files = true;
-                // Generate path - either label or expression result
-                let use_rdi = match path {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("lea rdi, [{}]", label));
-                        true
-                    }
-                    _ => {
-                        self.generate_expr(path);
-                        self.emit_indent("mov rdi, rax  ; path pointer");
-                        true
-                    }
-                };
+                let path_is_fd = self.is_fd_path_expr(path);
                 
                 // Track if file is writable based on mode
                 let is_writable = matches!(mode, FileMode::Writing | FileMode::Appending);
                 self.file_writable.insert(name.clone(), is_writable);
+
+                let offset = self.alloc_var(name);
+
+                if path_is_fd {
+                    let fd_ok_label = self.new_label("fd_ok");
+                    let fd_invalid_label = self.new_label("fd_invalid");
+                    let fd_done_label = self.new_label("fd_done");
+
+                    self.generate_expr(path);
+                    self.emit_indent("; Treat numeric open path as file descriptor");
+                    self.emit_indent("cmp rax, 0");
+                    self.emit_indent(&format!("jl {}", fd_invalid_label));
+                    self.emit_indent("mov rcx, 2147483647  ; i32::MAX");
+                    self.emit_indent("cmp rax, rcx");
+                    self.emit_indent(&format!("jle {}", fd_ok_label));
+                    self.emit_indent(&format!("jmp {}", fd_invalid_label));
+
+                    self.emit(&format!("{}:", fd_ok_label));
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; borrowed file descriptor", offset));
+                    self.emit_indent("mov qword [rel _last_error], 0");
+                    self.emit_indent(&format!("jmp {}", fd_done_label));
+
+                    self.emit(&format!("{}:", fd_invalid_label));
+                    self.emit_indent(&format!("mov qword [rbp-{}], -1  ; invalid fd", offset));
+                    self.emit_indent("mov qword [rel _last_error], 22  ; EINVAL");
+
+                    self.emit(&format!("{}:", fd_done_label));
+                    return;
+                }
+
+                // Generate path pointer for filesystem opens
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("mov rdi, rax  ; path pointer");
+                    }
+                }
                 
                 // Open file with appropriate mode (path is in rdi)
                 match mode {
@@ -1488,10 +1517,8 @@ impl CodeGenerator {
                         self.emit_indent("FILE_OPEN_APPEND rdi");
                     }
                 }
-                let _ = use_rdi;
                 
                 // Store file descriptor and register for tracking (only if valid)
-                let offset = self.alloc_var(name);
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; file descriptor", offset));
                 
                 // Check for error (negative fd) and set _last_error
@@ -2983,6 +3010,7 @@ impl CodeGenerator {
                 // Inline substitution: if value == match_value, use replacement
                 let skip_label = self.new_label("treating_skip");
                 let done_label = self.new_label("treating_done");
+                let treating_type = self.infer_expr_type(value);
                 
                 // Check if value is a buffer variable
                 let is_buffer = if let Expr::Identifier(ref name) = **value {
@@ -2990,35 +3018,53 @@ impl CodeGenerator {
                 } else {
                     false
                 };
-                
-                // Evaluate the value
-                self.generate_expr(value);
-                self.emit_indent("push rax  ; save original value");
-                
-                // If buffer, get pointer to data (offset 24) for comparison
-                if is_buffer {
-                    self.emit_indent("add rax, 24  ; buffer data offset");
+
+                if is_buffer || matches!(treating_type, Some(VarType::String)) {
+                    // Evaluate the value
+                    self.generate_expr(value);
+                    self.emit_indent("push rax  ; save original value");
+
+                    // If buffer, get pointer to data (offset 24) for comparison
+                    if is_buffer {
+                        self.emit_indent("add rax, 24  ; buffer data offset");
+                    }
+                    self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
+
+                    // Evaluate match_value
+                    self.generate_expr(match_value);
+                    self.emit_indent("mov rsi, rax  ; match value in rsi");
+
+                    // Compare strings
+                    self.emit_indent("call _str_eq");
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent(&format!("jz {}", skip_label));
+
+                    // Match found - use replacement
+                    self.emit_indent("add rsp, 8  ; discard saved value");
+                    self.generate_expr(replacement);
+                    self.emit_indent(&format!("jmp {}", done_label));
+
+                    // No match - use original value
+                    self.emit(&format!("{}:", skip_label));
+                    self.emit_indent("pop rax  ; restore original value");
+                } else {
+                    // Non-string treating uses value comparison in registers.
+                    self.generate_expr(value);
+                    self.emit_indent("push rax  ; save original value");
+                    self.generate_expr(match_value);
+                    self.emit_indent("mov rbx, rax  ; match value");
+                    self.emit_indent("pop rax  ; restore original value");
+                    self.emit_indent("cmp rax, rbx");
+                    self.emit_indent(&format!("jne {}", skip_label));
+
+                    // Match found - use replacement
+                    self.generate_expr(replacement);
+                    self.emit_indent(&format!("jmp {}", done_label));
+
+                    // No match - keep original value in rax
+                    self.emit(&format!("{}:", skip_label));
                 }
-                self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
-                
-                // Evaluate match_value
-                self.generate_expr(match_value);
-                self.emit_indent("mov rsi, rax  ; match value in rsi");
-                
-                // Compare strings
-                self.emit_indent("call _str_eq");
-                self.emit_indent("test rax, rax");
-                self.emit_indent(&format!("jz {}", skip_label));
-                
-                // Match found - use replacement
-                self.emit_indent("add rsp, 8  ; discard saved value");
-                self.generate_expr(replacement);
-                self.emit_indent(&format!("jmp {}", done_label));
-                
-                // No match - use original value
-                self.emit(&format!("{}:", skip_label));
-                self.emit_indent("pop rax  ; restore original value");
-                
+
                 self.emit(&format!("{}:", done_label));
             }
             
@@ -3373,6 +3419,26 @@ impl CodeGenerator {
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
             Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
             _ => Some(VarType::Integer), // Default to integer for complex expressions
+        }
+    }
+
+    fn is_fd_path_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::IntegerLit(_) => true,
+            Expr::Identifier(name) => matches!(
+                self.variable_types.get(name),
+                Some(VarType::Integer)
+            ),
+            Expr::BinaryOp { .. }
+            | Expr::UnaryOp { .. }
+            | Expr::PropertyAccess { .. }
+            | Expr::ByteAccess { .. }
+            | Expr::ElementAccess { .. }
+            | Expr::DurationCast { .. }
+            | Expr::LastError
+            | Expr::TreatingAs { .. } => self.infer_expr_type(expr) == Some(VarType::Integer),
+            Expr::Cast { target_type, .. } => *target_type == Type::Integer,
+            _ => false,
         }
     }
 }

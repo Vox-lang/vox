@@ -1,0 +1,9 @@
+(Open-at numeric path should be treated as a file descriptor)
+
+Open a file for writing called out at 1.
+On error print "failed to use fd 1".
+Write "fd-open-ok" to out.
+
+Open a file for appending called devout at "/dev/stdout".
+On error print "failed to open /dev/stdout".
+Write "/dev/stdout-open-ok" to devout.
