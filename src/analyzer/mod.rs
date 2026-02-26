@@ -2,6 +2,8 @@ use crate::parser::ast::*;
 use crate::errors::{CompileError, SourceFile, SourceLocation, find_similar_keyword, ENGLISH_KEYWORDS};
 use std::collections::{HashMap, HashSet};
 
+const FD_MAX: i64 = 2_147_483_647;
+
 #[derive(Debug, Default)]
 pub struct Dependencies {
     pub uses_io: bool,
@@ -1101,7 +1103,6 @@ impl Analyzer {
     }
 
     fn validate_file_open_path(&mut self, path: &Expr) {
-        const FD_MAX: i64 = 2_147_483_647;
         const OPEN_PATH_GUIDANCE: &str = "Open path must be either a text path like \"/path/to/file\" or a file descriptor number (0 = stdin, 1 = stdout, 2 = stderr).";
 
         if let Some(fd) = self.expr_integer_literal_value(path) {
