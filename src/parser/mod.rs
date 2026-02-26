@@ -332,6 +332,52 @@ mod file_line_read_and_seek_tests {
     }
 
     #[test]
+    fn test_parse_function_def_with_buffer_parameter_type() {
+        let input = r#"
+            To "handle content" with a buffer called "content",
+                Clear content.
+        "#;
+
+        let result = parse_input(input).expect("function definition with buffer parameter should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { name, params, body, .. } => {
+                assert_eq!(name, "handle content");
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].0, "content");
+                assert_eq!(params[0].1, Type::Buffer);
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Statement::BufferClear { .. }));
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_def_with_file_and_buffer_parameters() {
+        let input = r#"
+            To "copy line" with a file called source and a buffer called destination,
+                Read line from source into destination.
+        "#;
+
+        let result = parse_input(input).expect("function definition with file and buffer parameters should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { name, params, body, .. } => {
+                assert_eq!(name, "copy line");
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0], ("source".to_string(), Type::File));
+                assert_eq!(params[1], ("destination".to_string(), Type::Buffer));
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Statement::FileReadLine { .. }));
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_parse_zero_param_function_call_statement() {
         let input = r#"
             To "show version",
@@ -3203,6 +3249,7 @@ impl Parser {
                         Token::Text => { self.advance(); Type::String }
                         Token::Boolean => { self.advance(); Type::Boolean }
                         Token::File => { self.advance(); Type::File }
+                        Token::Buffer => { self.advance(); Type::Buffer }
                         Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
                         _ => Type::Unknown,
                     };
@@ -4205,6 +4252,7 @@ impl Parser {
                                     self.advance(); Ok(Expr::ArgumentName) 
                                 }
                                 Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
+                                Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
                                 Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
                                     self.advance(); Ok(Expr::ArgumentSecond) 
                                 }
@@ -4271,6 +4319,7 @@ impl Parser {
                                         self.advance(); Ok(Expr::ArgumentName) 
                                     }
                                     Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
+                                    Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
                                     Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
                                         self.advance(); Ok(Expr::ArgumentSecond) 
                                     }
