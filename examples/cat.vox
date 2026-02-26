@@ -24,7 +24,7 @@ If "wants help" then,
   Print "\nExamples:",
   Print "\t{Program} f - g\tOutput f's contents, then standard input, then g's contents",
   Print "\t{Program}\t\tCopy standard input to standard output",
-  Print "See https://github.com/vox-lang/vox for more information."
+  Print "See https://github.com/vox-lang/vox for more information.",
   Exit 0.
 
 If "wants version" then,
