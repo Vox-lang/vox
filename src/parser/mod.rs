@@ -312,6 +312,106 @@ mod file_line_read_and_seek_tests {
     }
 
     #[test]
+    fn test_function_call_expression_curly_grouping_parses() {
+        let input = r#"
+            To "fib" with a number called "n".
+                Return a number, {"fibonacci" of n subtract 1} add {"fibonacci" of n subtract 2}.
+        "#;
+
+        let result = parse_input(input).expect("function-call expression with curly grouping should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    Statement::Return { value: Some(Expr::BinaryOp { op, .. }) } => {
+                        assert!(matches!(op, BinaryOperator::Add));
+                    }
+                    other => panic!("Expected Return(BinaryOp Add), got {:?}", other),
+                }
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_function_call_expression_comma_add_is_rejected() {
+        let input = r#"
+            To "fib" with a number called "n".
+                Return a number, "fibonacci" of n subtract 1, add "fibonacci" of n subtract 2.
+        "#;
+
+        let err = parse_input(input).expect_err("comma-delimited arithmetic should be rejected");
+        assert!(
+            err.to_string().contains("Expected a statement, got Add"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_curly_grouping_changes_arithmetic_shape() {
+        let input = r#"
+            To "math" with a number called "n".
+                Return a number, {n add 1} multiply {n subtract 1}.
+        "#;
+
+        let result = parse_input(input).expect("curly grouped arithmetic should parse");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::FunctionDef { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    Statement::Return {
+                        value:
+                            Some(Expr::BinaryOp {
+                                op: BinaryOperator::Multiply,
+                                left,
+                                right,
+                            }),
+                    } => {
+                        assert!(matches!(&**left, Expr::BinaryOp { op: BinaryOperator::Add, .. }));
+                        assert!(matches!(&**right, Expr::BinaryOp { op: BinaryOperator::Subtract, .. }));
+                    }
+                    other => panic!("Expected grouped multiply return, got {:?}", other),
+                }
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_function_call_in_comma_separated_if_block() {
+        let input = r#"
+            If arguments's empty then,
+                Open a file for reading called "source" at 0,
+                On error print "cat: /dev/stdin: Could not open pipe", exit 1.
+                a buffer called "staged_output" is "read the file" with "source",
+                Write staged_output to output,
+                Clear staged_output,
+                Exit 0.
+        "#;
+
+        let result = parse_input(input).expect("if block should continue after function call expression statement");
+        assert_eq!(result.statements.len(), 1);
+
+        match &result.statements[0] {
+            Statement::If { then_block, .. } => {
+                assert_eq!(then_block.len(), 6, "then block should include statements after function call expression var decl");
+                assert!(matches!(then_block[0], Statement::FileOpen { .. }));
+                assert!(matches!(then_block[1], Statement::OnError { .. }));
+                assert!(matches!(then_block[2], Statement::VarDecl { .. }));
+                assert!(matches!(then_block[3], Statement::FileWrite { .. }));
+                assert!(matches!(then_block[4], Statement::BufferClear { .. }));
+                assert!(matches!(then_block[5], Statement::Exit { .. }));
+            }
+            other => panic!("Expected If, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_parse_zero_param_function_def_with_comma_signature() {
         let input = r#"
             To "show version",
@@ -3423,7 +3523,7 @@ impl Parser {
             let continue_with_comma = matches!(self.current(), Token::Comma)
                 && !matches!(
                     self.peek(1),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF
                 );
 
             let continue_after_on_error = last_stmt_was_on_error
@@ -3439,10 +3539,14 @@ impl Parser {
             if continue_with_comma {
                 self.advance();
                 self.skip_noise();
+                while matches!(self.current(), Token::ParagraphBreak) {
+                    self.advance();
+                    self.skip_noise();
+                }
 
                 if matches!(
                     self.current(),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period
                 ) {
                     break;
                 }
@@ -3980,6 +4084,14 @@ impl Parser {
                     operand: Box::new(operand),
                 })
             }
+            Token::OpenBrace => {
+                self.advance();
+                self.skip_noise();
+                let expr = self.parse_expression()?;
+                self.skip_noise();
+                self.expect(&Token::CloseBrace);
+                Ok(expr)
+            }
             Token::Byte => {
                 // byte N of buffer
                 self.advance();
@@ -4047,20 +4159,9 @@ impl Parser {
                         self.skip_noise();
 
                         if *self.current() == Token::Comma {
-                            self.advance();        // <-- NEW: comma terminates the argument
-                            self.skip_noise();
-                            // do NOT break; comma means “argument ended”, but you might
-                            // still have `and` for another argument OR you might just continue
-                            // parsing the surrounding expression after the call.
-                            // For call-args specifically, comma usually means:
-                            // - end current arg, and continue parsing more args only if "and" follows
-                            if *self.current() == Token::And {
-                                self.advance();
-                                self.skip_noise();
-                                continue;
-                            } else {
-                                break;             // comma used as terminator without "and"
-                            }
+                            // Comma belongs to the enclosing sentence; do not consume it
+                            // as expression continuation.
+                            break;
                         }
                         
                         if *self.current() == Token::And {

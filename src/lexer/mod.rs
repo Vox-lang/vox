@@ -69,7 +69,7 @@ pub enum Token {
     Identifier(String),
     
     // Punctuation
-    Period, Comma, Colon, OpenBracket, CloseBracket, Minus,
+    Period, Comma, Colon, OpenBracket, CloseBracket, OpenBrace, CloseBrace, Minus,
     
     // Special
     Newline, ParagraphBreak, EOF,
@@ -422,6 +422,8 @@ impl Token {
             Token::Colon => None,
             Token::OpenBracket => None,
             Token::CloseBracket => None,
+            Token::OpenBrace => None,
+            Token::CloseBrace => None,
             Token::Minus => None,
             Token::Newline => None,
             Token::ParagraphBreak => None,
@@ -935,6 +937,8 @@ impl<'a> Lexer<'a> {
                     ')' => continue, // Stray close paren, ignore
                     '[' => Token::OpenBracket,
                     ']' => Token::CloseBracket,
+                    '{' => Token::OpenBrace,
+                    '}' => Token::CloseBrace,
                     '-' => Token::Minus,
                     '\'' => {
                         // Check if this is a character literal ('A'), single-quoted identifier, or apostrophe
