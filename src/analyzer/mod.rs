@@ -49,6 +49,50 @@ mod buffer_append_copy_analysis_tests {
     }
 
     #[test]
+    fn quoted_condition_unknown_variable_inside_function_is_reported() {
+        let input = r#"
+            To "mutate",
+                if "missing" then,
+                    Print "ok".
+
+            "mutate".
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Unknown variable: missing")),
+            "expected unknown-variable error, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn quoted_condition_top_level_global_inside_function_is_allowed() {
+        let input = r#"
+            a boolean called "counter" is true.
+
+            To "bump",
+                if "counter" then,
+                    Print "ok".
+
+            "bump".
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Unknown variable: counter")),
+            "unexpected unknown-variable errors: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
     fn copy_requires_buffers_for_both_operands() {
         let input = r#"
             a buffer called "dst" is "hello".
@@ -516,6 +560,7 @@ pub struct Analyzer {
     guarded_scopes: HashMap<String, HashSet<String>>,
     symbol_error_counts: HashMap<String, usize>,
     active_guards: Vec<String>,
+    in_function_scope: bool,
     block_depth: usize,
     global_variables: HashSet<String>,
     flag_variables: HashSet<String>,
@@ -542,6 +587,7 @@ impl Analyzer {
             guarded_scopes: HashMap::new(),
             symbol_error_counts: HashMap::new(),
             active_guards: Vec::new(),
+            in_function_scope: false,
             block_depth: 0,
             global_variables: HashSet::new(),
             flag_variables: HashSet::new(),
@@ -971,14 +1017,46 @@ impl Analyzer {
 
     fn expr_integer_literal_value(&self, expr: &Expr) -> Option<i64> {
         match expr {
-            Expr::IntegerLit(v) => Some(*v),
-            Expr::UnaryOp { op: UnaryOperator::Negate, operand } => {
-                match operand.as_ref() {
-                    Expr::IntegerLit(v) => Some(-*v),
-                    _ => None,
+            Expr::IntegerLit(value) => Some(*value),
+            Expr::UnaryOp {
+                op: UnaryOperator::Negate,
+                operand,
+            } => {
+                if let Expr::IntegerLit(value) = operand.as_ref() {
+                    value.checked_neg()
+                } else {
+                    None
                 }
             }
             _ => None,
+        }
+    }
+
+    fn validate_function_condition_variable_refs(&mut self, expr: &Expr) {
+        if !self.in_function_scope {
+            return;
+        }
+
+        match expr {
+            Expr::StringLit(name) => {
+                self.track_identifier(name);
+                if !self.is_variable_available(name) {
+                    self.push_unknown_variable(name);
+                }
+            }
+            Expr::UnaryOp {
+                op: UnaryOperator::Not,
+                operand,
+            } => {
+                self.validate_function_condition_variable_refs(operand);
+            }
+            Expr::BinaryOp { left, op, right }
+                if matches!(op, BinaryOperator::And | BinaryOperator::Or) =>
+            {
+                self.validate_function_condition_variable_refs(left);
+                self.validate_function_condition_variable_refs(right);
+            }
+            _ => {}
         }
     }
 
@@ -1196,7 +1274,11 @@ impl Analyzer {
             
             Statement::Assignment { name, value } => {
                 if !self.is_variable_available(name) {
-                    self.declare_variable_in_current_scope(name);
+                    if self.in_function_scope {
+                        self.push_unknown_variable(name);
+                    } else {
+                        self.declare_variable_in_current_scope(name);
+                    }
                 }
 
                 if matches!(value, Expr::FormatString { .. })
@@ -1213,6 +1295,7 @@ impl Analyzer {
             }
             
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
 
                 // Branches are analyzed with the same incoming scope.
@@ -1235,6 +1318,7 @@ impl Analyzer {
                 for (cond, block) in else_if_blocks {
                     let saved_env = self.current_env();
                     self.apply_env(&branch_env);
+                    self.validate_function_condition_variable_refs(cond);
                     self.analyze_expr(cond);
                     self.apply_env(&saved_env);
                     let (elif_env, elif_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
@@ -1258,6 +1342,7 @@ impl Analyzer {
             }
             
             Statement::While { condition, body } => {
+                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
                 for s in body {
                     self.analyze_statement(s);
@@ -1329,9 +1414,11 @@ impl Analyzer {
                 let saved_env = self.current_env();
                 let saved_guards = self.active_guards.clone();
                 let saved_block_depth = self.block_depth;
+                let saved_in_function_scope = self.in_function_scope;
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
+                self.in_function_scope = true;
                 self.block_depth = 0;
 
                 // Add function parameters to function scope.
@@ -1344,6 +1431,7 @@ impl Analyzer {
 
                 self.block_depth = saved_block_depth;
                 self.active_guards = saved_guards;
+                self.in_function_scope = saved_in_function_scope;
                 self.apply_env(&saved_env);
             }
             

@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.6**
+**Version 0.1.7**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -388,19 +388,24 @@ Print "add numbers" of x and y.
 ```
 the x add 5
 y subtract 3
-the a multiply b
+the lhs multiply rhs
 total divide 2
 x modulo 3
+{x add y} multiply z
+{"fibonacci" of n subtract 1} add {"fibonacci" of n subtract 2}
 ```
 
 Note: `the` is optional before variable names in expressions.
+
+For complex arithmetic subexpressions, use curly braces `{...}` to group each subexpression.
+Comma-separated arithmetic continuation (for example `..., add ...`) is not valid syntax.
 
 ### Comparisons
 
 ```
 the x is greater than 5
 y is less than 10
-a is equal to b
+lhs is equal to rhs
 x is 0
 ```
 
@@ -1084,7 +1089,7 @@ Read and write individual bytes in buffers and strings by position. Positions ar
 **Reading bytes:**
 ```
 a number called "first" is byte 1 of data.
-a number called "b" is byte i of buffer.
+a number called "byte value" is byte i of buffer.
 ```
 
 **Writing bytes:**
@@ -1908,33 +1913,29 @@ Print the user.
 
 | Operator | Keywords |
 |----------|----------|
-| Bitwise AND | `bit-and`, `bitwise and` |
-| Bitwise OR | `bit-or`, `bitwise or` |
-| Bitwise XOR | `bit-xor`, `bitwise xor` |
-| Bitwise NOT | `bit-not`, `bitwise not` |
-| Shift Left | `bit-shift-left`, `shift left` |
-| Shift Right | `bit-shift-right`, `shift right` |
+| Bitwise AND | `bit-and` |
+| Bitwise OR | `bit-or` |
+| Bitwise XOR | `bit-xor` |
+| Shift Left | `bit-shift-left` |
+| Shift Right | `bit-shift-right` |
 
 **Examples:**
 ```
-a number called "a" is 0b11110000.
-a number called "b" is 0b10101010.
+a number called "lhs" is 0b11110000.
+a number called "rhs" is 0b10101010.
 
 (Bitwise AND)
-a number called "result" is a bit-and b.
+a number called "result" is lhs bit-and rhs.
 
 (Bitwise OR)
-Set result to a bit-or b.
+Set result to lhs bit-or rhs.
 
 (Bitwise XOR)
-Set result to a bit-xor b.
-
-(Bitwise NOT)
-Set result to bit-not a.
+Set result to lhs bit-xor rhs.
 
 (Bit shifting)
-Set result to a shift left 2.
-Set result to a shift right 4.
+Set result to lhs bit-shift-left 2.
+Set result to lhs bit-shift-right 4.
 
 (Chained operations)
 Set result to value bit-shift-right 8 bit-and 0xFF.

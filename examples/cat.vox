@@ -36,19 +36,13 @@ a boolean called "failed to open a file" is false.
 Open a file for writing called "output" at 1(fd - stdout).
 On error print "cat: /dev/stdout: Could not open pipe", exit 1.
 
-Create a buffer called "content".
-On error print "cat: failed to create buffer", exit 1.
+A number called "Line Number" is 1.
 
-Create a buffer called "staged_output".
-On error print "cat: failed to create buffer", exit 1.
-
-If "we are numbering lines" then,
-  A number called "Line Number" is 1.
-
-If arguments's empty then,
-  Open a file for reading called "source" at 0(fd - stdin),
-  On error print "cat: /dev/stdin: Could not open pipe", exit 1.
-  Read line from source into content,
+To "read the file" with a file called "source".
+  Create a buffer called "staged_output".
+  Create a buffer called "content".
+  On error print "cat: failed to create buffer".
+  Read line from source into content.
   While content is not empty,
     if "we are numbering lines" then,
       Append "{Line Number:6}\t{content}" to staged_output,
@@ -59,27 +53,24 @@ If arguments's empty then,
       Write staged_output to output,
       Clear staged_output.
     read line from the source into content.
-if arguments's empty then,
+  Close source.
+  Return staged_output.
+
+If arguments's empty then,
+  Open a file for reading called "source" at 0(fd - stdin),
+  On error print "cat: /dev/stdin: Could not open pipe",
+    exit 1.
+  a buffer called "staged_output" is "read the file" with "source",
   Write staged_output to output,
-  Clear staged_output.
+  Clear staged_output,
+  Exit 0.
 
 (Loop expansion: open a file for each filename in arguments's all)
 Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
   On error print "cat: {filename}: No such file or directory",
     set "failed to open a file" to true,
     continue.
-  read line from the source into content,
-  while the content is not empty,
-    if "we are numbering lines" then,
-      append "{Line Number:6}\t{content}" to staged_output,
-      increment the "Line Number".
-    Otherwise,
-      append content to staged_output.
-    if staged_output's size is greater than 65535 then,
-      Write staged_output to output,
-      Clear staged_output.
-    read line from the source into content.
-  Close source,
+  a buffer called "staged_output" is "read the file" with "source",
   Write staged_output to output,
   Clear staged_output.
     

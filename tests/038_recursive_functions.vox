@@ -8,16 +8,8 @@ To "factorial" with a number called "n".
 (Recursive Fibonacci)
 To "fibonacci" with a number called "n".
     If n is less than or equal to 0 then, return a number, 0.
-    Otherwise Return a number, "fibonacci" of n subtract 1, add "fibonacci" of n subtract 2.
-    (The obove line needs to become valid... Complex expressions need to have a delimiter)
-    (This would stop the parser from getting stuck in an infinite loop and cause a stack)
-
-(Below is a version that works in the current state of the language)
-To "fibonacci2" with a number called "n".
-    If n is less than or equal to 0 then, return a number, 0.
     Otherwise If n is equal to 1 then, return a number, 1.
-    Otherwise a number called m is "fibonacci2" of n subtract 1.
-    Return a number, m add "fibonacci2" of n subtract 2.
+    Otherwise Return a number, {"fibonacci" of n subtract 1} add {"fibonacci" of n subtract 2}.
 
 (Recursive GCD)
 To "gcd" with a number called "a" and a number called "b".
@@ -30,7 +22,7 @@ Print "factorial" of 5.
 Print "Factorial of 0: ".
 Print "factorial" of 0.
 Print "Fibonacci of 7: ".
-Print "fibonacci2" of 7.
+Print "fibonacci" of 7.
 Print "GCD of 48 and 18: ".
 Print "gcd" of 48 and 18.
 Print "GCD of 0 and 5: ".

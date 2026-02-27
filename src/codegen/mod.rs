@@ -30,6 +30,9 @@ pub struct CodeGenerator {
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
+    global_var_labels: HashMap<String, String>,
+    global_var_counter: usize,
+    in_function_codegen: bool,
     target_arch: String,
 }
 
@@ -100,7 +103,45 @@ impl CodeGenerator {
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
+            global_var_labels: HashMap::new(),
+            global_var_counter: 0,
+            in_function_codegen: false,
             target_arch: "x86_64".to_string(),
+        }
+    }
+
+    fn ensure_global_var_label(&mut self, name: &str) {
+        if self.global_var_labels.contains_key(name) {
+            return;
+        }
+        let label = format!("gvar_{}", self.global_var_counter);
+        self.global_var_counter += 1;
+        self.global_var_labels.insert(name.to_string(), label.clone());
+        self.bss_section.push_str(&format!("    {}: resq 1\n", label));
+    }
+
+    fn global_var_label(&self, name: &str) -> Option<&String> {
+        self.global_var_labels.get(name)
+    }
+
+    fn emit_mirror_stack_var_to_global_if_needed(&mut self, name: &str, offset: i64) {
+        if !self.in_function_codegen {
+            if let Some(label) = self.global_var_label(name).cloned() {
+                self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                self.emit_indent(&format!("mov [rel {}], rax", label));
+            }
+        }
+    }
+
+    fn emit_load_named_var_into_rax(&mut self, name: &str) -> bool {
+        if let Some(offset) = self.get_var(name) {
+            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+            true
+        } else if let Some(label) = self.global_var_label(name).cloned() {
+            self.emit_indent(&format!("mov rax, [rel {}]", label));
+            true
+        } else {
+            false
         }
     }
 
@@ -176,6 +217,11 @@ impl CodeGenerator {
                 FormatPart::Variable { name, format } => {
                     if let Some(src_offset) = self.get_var(name) {
                         self.emit_indent(&format!("mov rax, [rbp-{}]", src_offset));
+                        let value_type = self.variable_types.get(name).cloned();
+                        let fmt_spec = self.parse_format_spec(format.as_deref());
+                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                    } else if let Some(label) = self.global_var_label(name).cloned() {
+                        self.emit_indent(&format!("mov rax, [rel {}]", label));
                         let value_type = self.variable_types.get(name).cloned();
                         let fmt_spec = self.parse_format_spec(format.as_deref());
                         self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
@@ -465,6 +511,12 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", ok_label));
             }
         }
+        for (schema, _, flag_off) in &seen_entries {
+            if let Some(label) = self.global_var_label(&schema.name).cloned() {
+                self.emit_indent(&format!("mov rax, [rbp-{}]", flag_off));
+                self.emit_indent(&format!("mov [rel {}], rax", label));
+            }
+        }
         let _ = next_check_label;
     }
 
@@ -554,6 +606,19 @@ impl CodeGenerator {
     pub fn generate(&mut self, program: &Program) -> String {
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
+
+        self.global_var_labels.clear();
+        self.global_var_counter = 0;
+        for stmt in &program.statements {
+            match stmt {
+                Statement::VarDecl { name, .. }
+                | Statement::FlagSchemaDecl { name, .. }
+                | Statement::FileOpen { name, .. } => {
+                    self.ensure_global_var_label(name);
+                }
+                _ => {}
+            }
+        }
 
         let explicit_parse_idx = program
             .statements
@@ -755,6 +820,13 @@ impl CodeGenerator {
                     let is_buffer_target = matches!(var_type, Some(Type::Buffer))
                         || self.variable_types.get(name) == Some(&VarType::Buffer);
                     if is_buffer_target {
+                        if matches!(val, Expr::FunctionCall { .. }) {
+                            // Buffer declarations initialized from function calls should take
+                            // the returned buffer pointer directly (rax), not format-append it.
+                            self.generate_expr(val);
+                            self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                            self.uses_buffers = true;
+                        } else {
                         if !had_existing_slot {
                             self.emit_indent("mov rdi, 1024  ; default buffer size");
                             self.emit_indent("call _alloc_buffer");
@@ -767,6 +839,7 @@ impl CodeGenerator {
                             self.emit_clear_buffer_slot(offset);
                             let fmt_spec = self.parse_format_spec(None);
                             self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(val), fmt_spec);
+                        }
                         }
                     } else {
                         self.generate_expr(val);
@@ -793,6 +866,8 @@ impl CodeGenerator {
                         self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
                     }
                 }
+
+                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
             }
 
             Statement::FlagSchemaDecl { name, value_type, default, .. } => {
@@ -819,6 +894,8 @@ impl CodeGenerator {
                 } else {
                     self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
                 }
+
+                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
             }
 
             Statement::ParseFlags => {
@@ -839,6 +916,10 @@ impl CodeGenerator {
                         self.generate_expr(value);
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                     }
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.generate_expr(value);
+                    self.emit_indent(&format!("mov [rel {}], rax", label));
                 } else {
                     self.generate_expr(value);
                     let offset = self.alloc_var(name);
@@ -990,12 +1071,18 @@ impl CodeGenerator {
             Statement::Increment { name } => {
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("inc qword [rbp-{}]", offset));
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.emit_indent(&format!("inc qword [rel {}]", label));
                 }
             }
             
             Statement::Decrement { name } => {
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("dec qword [rbp-{}]", offset));
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.emit_indent(&format!("dec qword [rel {}]", label));
                 }
             }
             
@@ -1072,12 +1159,14 @@ impl CodeGenerator {
                 let saved_vars = std::mem::take(&mut self.variables);
                 let saved_stack = self.stack_offset;
                 let saved_loop_stack = std::mem::take(&mut self.loop_stack);
+                let saved_in_function_codegen = self.in_function_codegen;
 
                 // Fresh function-local state
                 self.output = String::new();
                 self.variables = std::collections::HashMap::new(); // or whatever your type is
                 self.stack_offset = 0;
                 self.loop_stack = Vec::new();
+                self.in_function_codegen = true;
 
                 // ------------------------------------------------------------
                 // PASS 1: Allocate stack slots for params, then generate body
@@ -1162,6 +1251,7 @@ impl CodeGenerator {
                 self.variables = saved_vars;
                 self.stack_offset = saved_stack;
                 self.loop_stack = saved_loop_stack;
+                self.in_function_codegen = saved_in_function_codegen;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -1497,6 +1587,7 @@ impl CodeGenerator {
                     self.emit_indent("mov qword [rel _last_error], 22  ; EINVAL");
 
                     self.emit(&format!("{}:", fd_done_label));
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                     return;
                 }
 
@@ -1546,6 +1637,7 @@ impl CodeGenerator {
                 self.emit_indent("call _register_fd  ; track for auto-cleanup");
                 
                 self.emit(&format!("{}:", done_label));
+                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
             }
             
             Statement::FileRead { source, buffer } => {
@@ -1606,6 +1698,8 @@ impl CodeGenerator {
 
                 let file_fd = if let Some(offset) = self.get_var(file) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(file).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
@@ -1621,6 +1715,8 @@ impl CodeGenerator {
 
                 let file_fd = if let Some(offset) = self.get_var(file) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(file).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
@@ -1635,6 +1731,8 @@ impl CodeGenerator {
                 // Get file fd
                 let file_fd = if let Some(offset) = self.get_var(file) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(file).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "1".to_string()  // STDOUT as fallback
                 };
@@ -1654,6 +1752,14 @@ impl CodeGenerator {
                         if let Some(offset) = self.get_var(name) {
                             let var_type = self.variable_types.get(name).cloned();
                             self.emit_indent(&format!("mov rsi, [rbp-{}]", offset));
+                            if matches!(var_type, Some(VarType::Buffer)) {
+                                self.emit_indent("FILE_WRITE_BUF rdi, rsi");
+                            } else {
+                                self.emit_indent("FILE_WRITE_STR rdi, rsi");
+                            }
+                        } else if let Some(label) = self.global_var_label(name).cloned() {
+                            let var_type = self.variable_types.get(name).cloned();
+                            self.emit_indent(&format!("mov rsi, [rel {}]", label));
                             if matches!(var_type, Some(VarType::Buffer)) {
                                 self.emit_indent("FILE_WRITE_BUF rdi, rsi");
                             } else {
@@ -2111,6 +2217,9 @@ impl CodeGenerator {
                                 // Regular variable lookup
                                 self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                                 var_type = self.variable_types.get(name).cloned();
+                            } else if let Some(label) = self.global_var_label(name).cloned() {
+                                self.emit_indent(&format!("mov rdi, [rel {}]", label));
+                                var_type = self.variable_types.get(name).cloned();
                             } else if self.emit_global_constant_format_fallback(name, format.as_ref()) {
                                 continue;
                             } else {
@@ -2149,8 +2258,8 @@ impl CodeGenerator {
             
             Expr::StringLit(s) => {
                 // Check if this string literal is actually a variable reference
-                if let Some(offset) = self.get_var(s) {
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                if self.emit_load_named_var_into_rax(s) {
+                    self.emit_indent("mov rdi, rax");
                     let var_type = self.variable_types.get(s).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
@@ -2191,8 +2300,8 @@ impl CodeGenerator {
             }
             
             Expr::Identifier(name) => {
-                if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                if self.emit_load_named_var_into_rax(name) {
+                    self.emit_indent("mov rdi, rax");
                     let var_type = self.variable_types.get(name).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
@@ -2290,8 +2399,7 @@ impl CodeGenerator {
             
             Expr::StringLit(s) => {
                 // Check if this string literal is actually a variable reference
-                if let Some(offset) = self.get_var(s) {
-                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                if self.emit_load_named_var_into_rax(s) {
                 } else {
                     let label = self.add_string(s);
                     self.emit_indent(&format!("lea rax, [{}]", label));
@@ -2299,8 +2407,7 @@ impl CodeGenerator {
             }
             
             Expr::Identifier(name) => {
-                if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                if self.emit_load_named_var_into_rax(name) {
                 }
             }
             
