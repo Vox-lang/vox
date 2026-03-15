@@ -1,20 +1,20 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.9".
+A text called "Program Version" is "0.1.10".
 
 (Parse the flags now)
 A flag called "wants help" is "--help" or "-h", it is a boolean.
 A flag called "wants version" is "--version" or "-v", it is a boolean.
 A flag called "we are numbering lines" is "--number" or "-n", it is a boolean.
 
+A text called "Program" is arguments's name.
+
 To "show version".
-  A text called "Program" is arguments's name.
   Print "{Program} (vox) {Program Version} by Josjuar Lister".
   Exit 0.
 
 If "wants help" then,
-  A text called "Program" is arguments's name,
-  Print "{Program} - concatenate files and print on the standard output",
+  Print "{Program} - concatenate files and print to standard output",
   Print "Usage: {Program} [OPTION]... [FILE]...",
   Print "With no FILE, or when FILE is -, read standard input.",
   Print "\nOptions:",

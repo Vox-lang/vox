@@ -27,3 +27,15 @@ Print "Padded hour: ".
 Print "{that hour:02}".
 Print "Padded minute: ".
 Print "{that minute:02}".
+
+("as a number" casting from string and buffer)
+Print "String to number: ".
+Print "123" as a number.
+
+a buffer called "line" is "".
+the buffer line is "456".
+Print "Buffer to number: ".
+Print the line as a number.
+
+Print "Negative string: ".
+Print "-17" as a number.

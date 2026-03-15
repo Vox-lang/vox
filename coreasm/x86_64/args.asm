@@ -140,50 +140,7 @@ _get_parsed_arg:
     xor rax, rax
     ret
 
-; Parse signed integer from string
-; Args: rdi = string pointer
-; Returns: rax = parsed integer (0 on empty/invalid prefix)
-global _parse_i64
-_parse_i64:
-    push rbx
-    push rcx
-    push rdx
-
-    xor rax, rax            ; accumulator
-    xor rcx, rcx            ; sign flag (0=+,1=-)
-    mov rbx, rdi
-
-    mov dl, [rbx]
-    cmp dl, '-'
-    jne .parse_loop
-    mov rcx, 1
-    inc rbx
-
-.parse_loop:
-    mov dl, [rbx]
-    test dl, dl
-    jz .parse_done
-    cmp dl, '0'
-    jl .parse_done
-    cmp dl, '9'
-    jg .parse_done
-    imul rax, rax, 10
-    sub dl, '0'
-    movzx rdx, dl
-    add rax, rdx
-    inc rbx
-    jmp .parse_loop
-
-.parse_done:
-    test rcx, rcx
-    jz .parse_ret
-    neg rax
-
-.parse_ret:
-    pop rdx
-    pop rcx
-    pop rbx
-    ret
+; _parse_i64 is defined in int.asm (available when uses_ints is set)
 
 ; ============================================================================
 ; ENVIRONMENT VARIABLES

@@ -1,0 +1,5 @@
+a number called "x" is 42.
+a number called "y" is 0.
+a number called "z" is x divide y.
+Print the z.
+Print "ok".

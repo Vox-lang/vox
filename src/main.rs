@@ -3,6 +3,8 @@ mod parser;
 mod analyzer;
 mod codegen;
 mod errors;
+#[cfg(test)]
+mod compile_fail_tests;
 
 use std::collections::HashSet;
 use std::env;
