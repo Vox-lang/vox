@@ -1,0 +1,3 @@
+a list called nums is [1, 2, 3].
+Set element 999999 of nums to 42.
+Print "ok".

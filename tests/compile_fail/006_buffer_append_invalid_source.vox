@@ -1,0 +1,3 @@
+a buffer called "dst" is 16 bytes in size.
+a number called "n" is 42.
+append n to dst.

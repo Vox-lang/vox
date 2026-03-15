@@ -14,3 +14,9 @@ Padded hour:
 09
 Padded minute: 
 05
+String to number: 
+123
+Buffer to number: 
+456
+Negative string: 
+-17

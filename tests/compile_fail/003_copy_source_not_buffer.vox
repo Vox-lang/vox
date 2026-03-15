@@ -1,0 +1,3 @@
+a number called "n" is 1.
+a buffer called "dst" is 16 bytes in size.
+copy n to dst.

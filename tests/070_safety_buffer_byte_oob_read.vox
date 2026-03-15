@@ -1,0 +1,3 @@
+a buffer called "buf" is 4 bytes in size.
+Append "hi" to buf.
+Print byte 100 of buf.

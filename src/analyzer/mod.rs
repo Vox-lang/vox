@@ -566,6 +566,7 @@ pub struct Analyzer {
     flag_variables: HashSet<String>,
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
+    file_variables: HashSet<String>,
 }
 
 #[derive(Clone, Default)]
@@ -593,6 +594,7 @@ impl Analyzer {
             flag_variables: HashSet::new(),
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
+            file_variables: HashSet::new(),
         }
     }
 
@@ -624,9 +626,12 @@ impl Analyzer {
                     self.buffer_variables.insert(name.clone());
                 }
                 Statement::Allocate { name, .. }
-                | Statement::TimerDecl { name }
-                | Statement::FileOpen { name, .. } => {
+                | Statement::TimerDecl { name } => {
                     self.global_variables.insert(name.clone());
+                }
+                Statement::FileOpen { name, .. } => {
+                    self.global_variables.insert(name.clone());
+                    self.file_variables.insert(name.clone());
                 }
                 Statement::GetTime { into } => {
                     self.global_variables.insert(into.clone());
@@ -1455,12 +1460,30 @@ impl Analyzer {
                 self.track_identifier(buffer);
                 self.analyze_expr(index);
                 self.analyze_expr(value);
+
+                if !self.is_variable_available(buffer) {
+                    self.push_error(format!("Unknown buffer: {}", buffer), Some(buffer));
+                } else if !self.is_buffer_variable(buffer) {
+                    self.push_error(
+                        format!("Byte set target must be a buffer: {}", buffer),
+                        Some(buffer),
+                    );
+                }
             }
             
             Statement::ElementSet { list, index, value } => {
                 self.track_identifier(list);
                 self.analyze_expr(index);
                 self.analyze_expr(value);
+
+                if !self.is_variable_available(list) {
+                    self.push_error(format!("Unknown list: {}", list), Some(list));
+                } else if !self.is_list_variable(list) {
+                    self.push_error(
+                        format!("Element set target must be a list: {}", list),
+                        Some(list),
+                    );
+                }
             }
             
             Statement::ListAppend { list, value } => {
@@ -1549,6 +1572,7 @@ impl Analyzer {
             
             Statement::FileOpen { name, path, .. } => {
                 self.variables.insert(name.clone());
+                self.file_variables.insert(name.clone());
                 self.analyze_expr(path);
                 self.validate_file_open_path(path);
                 self.deps.uses_io = true;
@@ -1685,6 +1709,65 @@ impl Analyzer {
                 self.analyze_expr(value);
             }
             
+            Expr::PropertyAccess { object, property } => {
+                // _current_time is a synthetic object for "current time's X" - not a user variable
+                if object == "_current_time" {
+                    return;
+                }
+                self.track_identifier(object);
+                if !self.is_variable_available(object) {
+                    self.push_error(format!("Unknown variable: {}", object), Some(object));
+                } else {
+                    let is_buf = self.is_buffer_variable(object);
+                    let is_list = self.is_list_variable(object);
+                    let is_file = self.file_variables.contains(object.as_str());
+                    match property {
+                        ObjectProperty::Size | ObjectProperty::Empty | ObjectProperty::Full => {
+                            if !is_buf && !is_list && !is_file {
+                                self.push_error(
+                                    format!("Property '{}' requires a buffer, list, or file variable: {}", 
+                                        match property {
+                                            ObjectProperty::Size => "size",
+                                            ObjectProperty::Empty => "empty",
+                                            ObjectProperty::Full => "full",
+                                            _ => "unknown",
+                                        }, object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Capacity => {
+                            if !is_buf && !is_list {
+                                self.push_error(
+                                    format!("Property 'capacity' requires a buffer or list variable: {}", object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::First | ObjectProperty::Last => {
+                            if !is_list {
+                                self.push_error(
+                                    format!("Property '{}' requires a list variable: {}", 
+                                        if matches!(property, ObjectProperty::First) { "first" } else { "last" }, object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Descriptor | ObjectProperty::Modified |
+                        ObjectProperty::Accessed | ObjectProperty::Permissions |
+                        ObjectProperty::Readable | ObjectProperty::Writable => {
+                            if !is_file {
+                                self.push_error(
+                                    format!("File property access requires a file variable: {}", object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
                 if !self.functions.contains(name) {
@@ -1702,6 +1785,52 @@ impl Analyzer {
             Expr::ListAccess { list, index } => {
                 self.analyze_expr(list);
                 self.analyze_expr(index);
+
+                if let Expr::Identifier(name) = list.as_ref() {
+                    self.track_identifier(name);
+                    if !self.is_variable_available(name) {
+                        self.push_error(format!("Unknown list: {}", name), Some(name));
+                    } else if !self.is_list_variable(name) {
+                        self.push_error(
+                            format!("List access target must be a list: {}", name),
+                            Some(name),
+                        );
+                    }
+                }
+            }
+
+            Expr::ByteAccess { buffer, index } => {
+                self.analyze_expr(buffer);
+                self.analyze_expr(index);
+
+                if let Expr::Identifier(name) = buffer.as_ref() {
+                    self.track_identifier(name);
+                    if !self.is_variable_available(name) {
+                        self.push_error(format!("Unknown buffer: {}", name), Some(name));
+                    } else if !self.is_buffer_variable(name) {
+                        self.push_error(
+                            format!("Byte access target must be a buffer: {}", name),
+                            Some(name),
+                        );
+                    }
+                }
+            }
+
+            Expr::ElementAccess { list, index } => {
+                self.analyze_expr(list);
+                self.analyze_expr(index);
+
+                if let Expr::Identifier(name) = list.as_ref() {
+                    self.track_identifier(name);
+                    if !self.is_variable_available(name) {
+                        self.push_error(format!("Unknown list: {}", name), Some(name));
+                    } else if !self.is_list_variable(name) {
+                        self.push_error(
+                            format!("Element access target must be a list: {}", name),
+                            Some(name),
+                        );
+                    }
+                }
             }
             
             Expr::ListLit { elements } => {

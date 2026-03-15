@@ -1,0 +1,4 @@
+a buffer called "buf" is 4 bytes in size.
+Append "hi" to buf.
+Set byte 100 of buf to 65.
+Print "ok".

@@ -292,6 +292,17 @@ impl CodeGenerator {
             _ => false,
         }
     }
+
+    fn quoted_name_var_type(&self, name: &str) -> Option<VarType> {
+        self.variable_types
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                self.global_var_label(name)
+                    .map(|_| self.variable_types.get(name).cloned().unwrap_or(VarType::Unknown))
+            })
+            .filter(|t| *t != VarType::Unknown)
+    }
     
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
         self.shared_lib_mode = enabled;
@@ -475,6 +486,7 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     self.emit_indent("call _get_raw_arg");
                     if matches!(schema.value_type, FlagValueType::Number) {
+                        self.uses_ints = true;
                         self.emit_indent("mov rdi, rax");
                         self.emit_indent("call _parse_i64");
                     }
@@ -550,6 +562,7 @@ impl CodeGenerator {
     fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
             Expr::FloatLit(_) => true,
+            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Float),
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
@@ -577,6 +590,7 @@ impl CodeGenerator {
     fn has_float_operands(&self, expr: &Expr) -> bool {
         match expr {
             Expr::FloatLit(_) => true,
+            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Float),
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
@@ -905,6 +919,19 @@ impl CodeGenerator {
             
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
+                    if self.variable_types.get(name) != Some(&VarType::Buffer) {
+                        if let Some(vt) = self.infer_expr_type(value) {
+                            match vt {
+                                VarType::Float => {
+                                    self.variable_types.insert(name.clone(), VarType::Float);
+                                }
+                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List => {
+                                    self.variable_types.insert(name.clone(), vt);
+                                }
+                                VarType::Buffer | VarType::Unknown => {}
+                            }
+                        }
+                    }
                     if self.variable_types.get(name) == Some(&VarType::Buffer) {
                         if !self.emit_copy_expr_into_buffer_slot(offset, value, true) {
                             self.generate_expr(value);
@@ -1116,6 +1143,11 @@ impl CodeGenerator {
                 if let Some(v) = value {
                     self.generate_expr(v); // should leave return value in RAX
                 }
+                if self.in_function_codegen {
+                    self.emit_indent("push rax  ; save return value");
+                    self.emit_indent("call _dec_call_depth");
+                    self.emit_indent("pop rax  ; restore return value");
+                }
                 self.emit_indent("FUNC_EPILOGUE");
             }
             
@@ -1204,6 +1236,7 @@ impl CodeGenerator {
 
                 // If no explicit return, add a default epilogue
                 if !has_return {
+                    self.emit_indent("call _dec_call_depth");
                     self.emit_indent("FUNC_EPILOGUE");
                 }
 
@@ -1220,6 +1253,15 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", func_label));
                 self.emit_indent(&format!("FUNC_PROLOGUE {}", frame_size));
+                // Recursion depth guard - save param regs, check depth, restore
+                let num_params = params.len().min(6);
+                for i in 0..num_params {
+                    self.emit_indent(&format!("push {}  ; save param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                }
+                self.emit_indent("call _check_call_depth");
+                for i in (0..num_params).rev() {
+                    self.emit_indent(&format!("pop {}  ; restore param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                }
 
                 // Store parameters after frame is allocated
                 let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
@@ -1411,46 +1453,102 @@ impl CodeGenerator {
             }
             
             Statement::ByteSet { buffer, index, value } => {
-                self.emit_indent("; Set byte N of buffer to value");
-                // Get buffer pointer into rdi for _buffer_data call
+                let ok_label = self.new_label("bset_ok");
+                let error_label = self.new_label("bset_err");
+                let done_label = self.new_label("bset_done");
+                let noupd_label = self.new_label("bset_noupd");
+
+                self.emit_indent("; Set byte N of buffer to value (with bounds check)");
+                // Get buffer pointer
                 if let Some(offset) = self.get_var(buffer) {
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; buffer ptr", offset));
+                    self.emit_indent(&format!("mov rbx, [rbp-{}]  ; buffer ptr", offset));
                 }
-                // Get the data pointer (skip buffer header)
-                self.emit_indent("call _buffer_data");
-                self.emit_indent("push rax  ; save data pointer");
-                // Get index and convert to 0-indexed
+                self.emit_indent("push rbx  ; save buffer pointer");
+                // Get index
                 self.generate_expr(index);
-                self.emit_indent("dec rax  ; 1-indexed to 0-indexed");
-                self.emit_indent("push rax  ; save index");
+                self.emit_indent("mov rcx, rax  ; index in rcx (1-indexed)");
+                self.emit_indent("pop rbx  ; buffer pointer in rbx");
+
+                // Bounds check: index must be >= 1 and <= capacity
+                self.emit_indent("cmp rcx, 1");
+                self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
+                self.emit_indent("mov rdx, [rbx]  ; get buffer capacity (offset 0)");
+                self.emit_indent("cmp rcx, rdx");
+                self.emit_indent(&format!("jle {}  ; index <= capacity is OK", ok_label));
+
+                // Error path: out of bounds
+                self.emit(&format!("{}:", error_label));
+                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent(&format!("jmp {}", done_label));
+
+                // Success path: safe write
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("push rbx  ; save buffer pointer");
+                self.emit_indent("push rcx  ; save 1-indexed position");
                 // Get value
                 self.generate_expr(value);
                 self.emit_indent("mov rdx, rax  ; value in rdx");
-                self.emit_indent("pop rcx  ; index in rcx");
-                self.emit_indent("pop rbx  ; data pointer in rbx");
-                // Write byte
+                self.emit_indent("pop rcx  ; 1-indexed position in rcx");
+                self.emit_indent("pop rbx  ; buffer pointer in rbx");
+                // Update length = max(length, index) so reads see the written bytes
+                self.emit_indent("cmp rcx, [rbx + 8]  ; compare index with current length");
+                self.emit_indent(&format!("jle {}  ; skip if length already >= index", noupd_label));
+                self.emit_indent("mov [rbx + 8], rcx  ; extend length to include this byte");
+                self.emit(&format!("{}:", noupd_label));
+                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
+                self.emit_indent("add rbx, 24  ; skip to buffer data area");
                 self.emit_indent("mov [rbx + rcx], dl  ; write byte");
+
+                self.emit(&format!("{}:", done_label));
             }
             
             Statement::ElementSet { list, index, value } => {
-                self.emit_indent("; Set element N of list to value");
+                let ok_label = self.new_label("eset_ok");
+                let error_label = self.new_label("eset_err");
+                let done_label = self.new_label("eset_done");
+
+                self.emit_indent("; Set element N of list to value (with bounds check)");
                 // Get list pointer
                 if let Some(offset) = self.get_var(list) {
                     self.emit_indent(&format!("mov rbx, [rbp-{}]  ; list ptr", offset));
                 }
-                // Get index and convert to 0-indexed
+                self.emit_indent("push rbx  ; save list pointer");
+                // Get index (1-indexed)
                 self.generate_expr(index);
-                self.emit_indent("dec rax  ; 1-indexed to 0-indexed");
-                self.emit_indent("mov rcx, rax  ; index in rcx");
+                self.emit_indent("mov rcx, rax  ; index in rcx (1-indexed)");
+                self.emit_indent("pop rbx  ; list pointer in rbx");
+
+                // Bounds check: index must be >= 1 and <= length
+                self.emit_indent("cmp rcx, 1");
+                self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
+                self.emit_indent("mov rdx, [rbx + 8]  ; get list length (offset 8)");
+                self.emit_indent("cmp rcx, rdx");
+                self.emit_indent(&format!("jle {}  ; index <= length is OK", ok_label));
+
+                // Error path: out of bounds
+                self.emit(&format!("{}:", error_label));
+                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent(&format!("jmp {}", done_label));
+
+                // Success path: safe write
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
+                self.emit_indent("push rbx  ; save list pointer");
+                self.emit_indent("push rcx  ; save index");
+                // Get value
+                self.generate_expr(value);
+                self.emit_indent("mov r8, rax  ; value in r8");
+                self.emit_indent("pop rcx  ; index in rcx");
+                self.emit_indent("pop rbx  ; list pointer in rbx");
                 // Get element size (at offset 16 in list structure)
                 self.emit_indent("mov rdx, [rbx + 16]  ; element size");
                 // Calculate offset
                 self.emit_indent("imul rcx, rdx  ; index * element_size");
                 self.emit_indent("add rcx, 24  ; data starts at offset 24");
-                // Get value
-                self.generate_expr(value);
                 // Write element
-                self.emit_indent("mov [rbx + rcx], rax  ; write element");
+                self.emit_indent("mov [rbx + rcx], r8  ; write element");
+
+                self.emit(&format!("{}:", done_label));
             }
             
             Statement::ListAppend { list, value } => {
@@ -3315,18 +3413,55 @@ impl CodeGenerator {
                             // Ensure XMM0 has the correct value before converting.
                             self.emit_indent("RAX_TO_XMM0");
                             self.emit_indent("cvttsd2si rax, xmm0");
+                        } else {
+                            match self.infer_expr_type(value) {
+                                Some(VarType::Buffer) => {
+                                    self.uses_ints = true;
+                                    self.uses_buffers = true;
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _buffer_data");
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _parse_i64");
+                                }
+                                Some(VarType::String) => {
+                                    self.uses_ints = true;
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _parse_i64");
+                                }
+                                _ => {
+                                    // Other types stay as-is (already integer)
+                                }
+                            }
                         }
-                        // Other types stay as-is (already integer)
                     }
                     Type::Float => {
-                        // Integer to float
-                        if !self.is_float_expr(value) {
-                            self.emit_indent("; Cast integer to float");
-                            self.emit_indent("cvtsi2sd xmm0, rax");
-                            // Keep the invariant that expressions leave their value in RAX.
-                            // For floats, RAX holds the IEEE-754 bits.
-                            self.emit_indent("XMM0_TO_RAX");
-                            self.uses_floats = true;
+                        if self.is_float_expr(value) {
+                            // Already float bits in rax
+                        } else {
+                            match self.infer_expr_type(value) {
+                                Some(VarType::Buffer) => {
+                                    self.uses_floats = true;
+                                    self.uses_buffers = true;
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _buffer_data");
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _parse_f64");
+                                }
+                                Some(VarType::String) => {
+                                    self.uses_floats = true;
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _parse_f64");
+                                }
+                                _ => {
+                                    // Integer to float
+                                    self.emit_indent("; Cast integer to float");
+                                    self.emit_indent("cvtsi2sd xmm0, rax");
+                                    // Keep the invariant that expressions leave their value in RAX.
+                                    // For floats, RAX holds the IEEE-754 bits.
+                                    self.emit_indent("XMM0_TO_RAX");
+                                    self.uses_floats = true;
+                                }
+                            }
                         }
                     }
                     Type::Boolean => {
@@ -3361,21 +3496,43 @@ impl CodeGenerator {
             }
             
             // Byte access: byte N of buffer (1-indexed)
+            // Buffer structure: [capacity:8][length:8][data at offset 24]
+            // MEMORY SAFETY: Always bounds-check before access
             Expr::ByteAccess { buffer, index } => {
-                self.emit_indent("; Byte access");
+                let ok_label = self.new_label("byte_ok");
+                let error_label = self.new_label("byte_err");
+                let done_label = self.new_label("byte_done");
+
+                self.emit_indent("; Byte access (1-indexed) with bounds check");
                 // Get buffer pointer
                 self.generate_expr(buffer);
-                self.emit_indent("push rax");
+                self.emit_indent("push rax  ; save buffer pointer");
                 // Get index
                 self.generate_expr(index);
-                self.emit_indent("mov rcx, rax");  // index in rcx
-                self.emit_indent("pop rbx");       // buffer ptr in rbx
-                // Get data pointer (skip buffer header - BUF_DATA = 24)
+                self.emit_indent("mov rcx, rax  ; index in rcx");
+                self.emit_indent("pop rbx  ; buffer pointer in rbx");
+
+                // Bounds check: index must be >= 1 and <= length
+                self.emit_indent("cmp rcx, 1");
+                self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
+                self.emit_indent("mov rdx, [rbx + 8]  ; get buffer length (offset 8)");
+                self.emit_indent("cmp rcx, rdx");
+                self.emit_indent(&format!("jle {}  ; index <= length is OK", ok_label));
+
+                // Error path: out of bounds
+                self.emit(&format!("{}:", error_label));
+                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("xor rax, rax  ; return 0 on error");
+                self.emit_indent(&format!("jmp {}", done_label));
+
+                // Success path: safe access
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent("add rbx, 24  ; skip to buffer data area");
-                // Convert 1-indexed to 0-indexed and read byte
-                self.emit_indent("dec rcx");
                 self.emit_indent("xor rax, rax");
                 self.emit_indent("mov al, [rbx + rcx]");
+
+                self.emit(&format!("{}:", done_label));
             }
             
             // Element access: element N of list (1-indexed)
@@ -3558,7 +3715,7 @@ impl CodeGenerator {
         match expr {
             Expr::IntegerLit(_) => Some(VarType::Integer),
             Expr::FloatLit(_) => Some(VarType::Float),
-            Expr::StringLit(_) => Some(VarType::String),
+            Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
             Expr::ArgumentCount => Some(VarType::Integer),
             Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst
@@ -3605,6 +3762,14 @@ impl CodeGenerator {
             }
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
             Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
+            Expr::Cast { target_type, .. } => match target_type {
+                Type::Integer => Some(VarType::Integer),
+                Type::Float => Some(VarType::Float),
+                Type::String => Some(VarType::String),
+                Type::Boolean => Some(VarType::Integer),
+                Type::Buffer => Some(VarType::Buffer),
+                _ => Some(VarType::Integer),
+            },
             _ => Some(VarType::Integer), // Default to integer for complex expressions
         }
     }
