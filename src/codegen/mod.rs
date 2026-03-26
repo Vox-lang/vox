@@ -820,6 +820,11 @@ impl CodeGenerator {
                     else if self.is_float_expr(val) {
                         self.variable_types.insert(name.clone(), VarType::Float);
                     }
+                    // ArgumentAll/ArgumentRaw produce lists of strings
+                    else if matches!(val, Expr::ArgumentAll | Expr::ArgumentRaw) {
+                        self.variable_types.insert(name.clone(), VarType::List);
+                        self.list_element_types.insert(name.clone(), VarType::String);
+                    }
                     // Argument/environment expressions return string pointers
                     else if matches!(val, 
                         Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst | 
@@ -981,7 +986,9 @@ impl CodeGenerator {
                             self.generate_statement(s);
                         }
                         self.emit_indent(&format!("jmp {}", end_label));
-                        self.emit(&format!("{}:", next_label));
+                        if next_label != end_label {
+                            self.emit(&format!("{}:", next_label));
+                        }
                     }
                 }
                 
@@ -3227,14 +3234,99 @@ impl CodeGenerator {
             }
             
             Expr::ArgumentAll => {
-                // This is handled specially in ForEach codegen
-                // If used elsewhere, we can't return a list directly
-                self.emit_indent("; ArgumentAll - handled by ForEach");
+                self.uses_lists = true;
+                let min_ok = self.new_label("argall_min_ok");
+                let loop_label = self.new_label("argall_loop");
+                let done_label = self.new_label("argall_done");
+
+                self.emit_indent("; Build list from parsed positional arguments");
+                self.emit_indent("call _get_parsed_argc");
+                self.emit_indent("mov r12, rax  ; r12 = count");
+
+                // capacity = max(count, 8)
+                self.emit_indent("mov r13, rax  ; r13 = capacity");
+                self.emit_indent("cmp r13, 8");
+                self.emit_indent(&format!("jge {}", min_ok));
+                self.emit_indent("mov r13, 8");
+                self.emit(&format!("{}:", min_ok));
+
+                // Allocate: size = capacity*8 + 24 (header)
+                self.emit_indent("mov rax, r13");
+                self.emit_indent("shl rax, 3");
+                self.emit_indent("add rax, 24");
+                self.emit_indent("mov rsi, rax  ; size");
+                self.emit_indent("xor rdi, rdi  ; addr = NULL");
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("xor r9, r9  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
+                self.emit_indent("mov r14, rax  ; r14 = list ptr");
+
+                // Initialize header
+                self.emit_indent("mov [r14], r13  ; capacity");
+                self.emit_indent("mov [r14 + 8], r12  ; length");
+                self.emit_indent("mov qword [r14 + 16], 8  ; element size");
+
+                // Fill data from parsed args
+                self.emit_indent("xor r15, r15  ; r15 = index");
+                self.emit(&format!("{}:", loop_label));
+                self.emit_indent("cmp r15, r12");
+                self.emit_indent(&format!("jge {}", done_label));
+                self.emit_indent("mov rdi, r15");
+                self.emit_indent("call _get_parsed_arg");
+                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent("inc r15");
+                self.emit_indent(&format!("jmp {}", loop_label));
+                self.emit(&format!("{}:", done_label));
+                self.emit_indent("mov rax, r14  ; return list pointer");
             }
 
             Expr::ArgumentRaw => {
-                // Same temporary behavior as ArgumentAll for now.
-                self.emit_indent("; ArgumentRaw - handled by ForEach/list runtime in future iteration");
+                self.uses_lists = true;
+                let min_ok = self.new_label("argraw_min_ok");
+                let loop_label = self.new_label("argraw_loop");
+                let done_label = self.new_label("argraw_done");
+
+                self.emit_indent("; Build list from raw arguments");
+                self.emit_indent("call _get_raw_argc");
+                self.emit_indent("mov r12, rax  ; r12 = count");
+
+                self.emit_indent("mov r13, rax  ; r13 = capacity");
+                self.emit_indent("cmp r13, 8");
+                self.emit_indent(&format!("jge {}", min_ok));
+                self.emit_indent("mov r13, 8");
+                self.emit(&format!("{}:", min_ok));
+
+                self.emit_indent("mov rax, r13");
+                self.emit_indent("shl rax, 3");
+                self.emit_indent("add rax, 24");
+                self.emit_indent("mov rsi, rax  ; size");
+                self.emit_indent("xor rdi, rdi  ; addr = NULL");
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("xor r9, r9  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
+                self.emit_indent("mov r14, rax  ; r14 = list ptr");
+
+                self.emit_indent("mov [r14], r13  ; capacity");
+                self.emit_indent("mov [r14 + 8], r12  ; length");
+                self.emit_indent("mov qword [r14 + 16], 8  ; element size");
+
+                self.emit_indent("xor r15, r15  ; r15 = index");
+                self.emit(&format!("{}:", loop_label));
+                self.emit_indent("cmp r15, r12");
+                self.emit_indent(&format!("jge {}", done_label));
+                self.emit_indent("mov rdi, r15");
+                self.emit_indent("call _get_raw_arg");
+                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent("inc r15");
+                self.emit_indent(&format!("jmp {}", loop_label));
+                self.emit(&format!("{}:", done_label));
+                self.emit_indent("mov rax, r14  ; return list pointer");
             }
 
             Expr::ArgumentHas { value } => {
@@ -3721,6 +3813,11 @@ impl CodeGenerator {
             Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst
             | Expr::ArgumentSecond | Expr::ArgumentLast => Some(VarType::String),
             Expr::ArgumentEmpty | Expr::ArgumentHas { .. } => Some(VarType::Integer),
+            Expr::EnvironmentVariable { .. } | Expr::EnvironmentVariableAt { .. }
+            | Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast => Some(VarType::String),
+            Expr::EnvironmentVariableCount | Expr::EnvironmentVariableExists { .. }
+            | Expr::EnvironmentVariableEmpty => Some(VarType::Integer),
+            Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type
