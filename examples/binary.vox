@@ -7,13 +7,13 @@ Print "=== Hexadecimal Literals ===".
 a number called "red" is 0xFF.
 a number called "green" is 0x80.
 a number called "blue" is 0x40.
-Print "Red component: {red} (0x{red:02X})".
-Print "Green component: {green} (0x{green:02X})".
-Print "Blue component: {blue} (0x{blue:02X})".
+Print "Red component: {red} ({red:02X})".
+Print "Green component: {green} ({green:02X})".
+Print "Blue component: {blue} ({blue:02X})".
 
 (Combine into RGB value)
 a number called "rgb" is red multiply 65536 add green multiply 256 add blue.
-Print "Combined RGB: 0x{rgb:06X}".
+Print "Combined RGB: {rgb:06X}".
 
 Print "".
 Print "=== Binary Literals ===".
@@ -38,7 +38,7 @@ Set byte 5 of data to 0x6F.
 
 (Read individual bytes)
 a number called "first_byte" is byte 1 of data.
-Print "First byte: 0x{first_byte:02X}".
+Print "First byte: {first_byte:02X}".
 
 (Print buffer as string - shows "Hello")
 Print "Buffer contents: ".
@@ -114,7 +114,7 @@ a number called "b1" is byte 2 of data.
 a number called "b2" is byte 3 of data.
 a number called "b3" is byte 4 of data.
 a number called "value32" is b0 add b1 multiply 256 add b2 multiply 65536 add b3 multiply 16777216.
-Print "32-bit value at offset 0: 0x{value32:08X}".
+Print "32-bit value at offset 0: {value32:08X}".
 
 (Write a new 32-bit value - little endian)
 a number called "newval" is 0x12345678.
@@ -136,7 +136,6 @@ Print "Buffer contents: ".
 Print buf.
 set byte 1 of buf to 'A'. (Add security restraints, CANNOT access out of bounds, should be impossible)
 (If the user tries to access out of bounds, throw an error to be caught by 'on error')
-set byte 2 of "Hello World" to 'B'. (You can set a byte in a string if you want. Throw error if the index is past the end of the string)
 Print "After setting byte 1 to 'A':".
 Print buf. (should be Aata, not 0 indexed)
 

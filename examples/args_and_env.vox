@@ -39,10 +39,10 @@
     ------------------------------
     Command: ./program -n file.txt
     )
-    a flag called "numbering" is "-n" or "--number", it is a boolean.
+    (a flag called "numbering" is "-n" or "--number", it is a boolean.
 
     If the numbering then,
-        Print "Numbering is enabled.".
+        Print "Numbering is enabled.".)
     (
     Result: numbering = true, arguments's all = ["file.txt"]
     
@@ -50,9 +50,9 @@
     ------------------------------------
     Command: ./program --iterations 10 input.txt output.txt
     )
-    a flag called "iterations" is "-i" or "--iterations", it is a number and is required.
+    (a flag called "iterations" is "-i" or "--iterations", it is a number and is required.
     
-    Print "Running {iterations} iterations".
+    Print "Running {iterations} iterations".)
     (
     Result: iterations = 10, arguments's all = ["input.txt", "output.txt"]
     Error case: ./program input.txt  (missing required --iterations, program exits with error)
@@ -61,11 +61,11 @@
     -----------------------------------
     Command: ./program process data.csv
     )
-    a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
+    (a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
     a flag called "threads" is "-t" or "--threads", it is a number with default 4.
     
     Print "Output file: {output}".
-    Print "Using threads: {threads}".
+    Print "Using threads: {threads}".)
     (
     Result: output = "out.txt", threads = 4, arguments's all = ["process", "data.csv"]
     
@@ -73,7 +73,7 @@
     -------------------------------------------------
     Command: ./program -v --config settings.json -t 8 build src/ dist/
     )
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
+    (a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
     a flag called "config" is "-c" or "--config", it is a text.
     a flag called "threads" is "-t" or "--threads", it is a number with default 4.
     
@@ -86,7 +86,7 @@
     a list called "positional" is arguments's all.
     Print "Command: {positional's first}".
     Print "Source: {positional's at 2}".
-    Print "Destination: {positional's at 3}".
+    Print "Destination: {positional's at 3}".)
     (
     Result: verbose = true, config = "settings.json", threads = 8
             arguments's all = ["build", "src/", "dist/"]
@@ -95,8 +95,8 @@
     ---------------------------------
     Command: ./program -nv file.txt
     )
-    a flag called "numbering" is "-n" or "--number", it is a boolean.
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+    (a flag called "numbering" is "-n" or "--number", it is a boolean.
+    a flag called "verbose" is "-v" or "--verbose", it is a boolean.)
     (
     Result: numbering = true, verbose = true, arguments's all = ["file.txt"]
     
@@ -104,7 +104,7 @@
     -----------------------------------------------------
     Command: ./program -o first.txt -o second.txt data.csv
     )
-    a flag called "output" is "-o" or "--output", it is a text.
+    (a flag called "output" is "-o" or "--output", it is a text.)
     (
     Result: output = "second.txt", arguments's all = ["data.csv"]
     
@@ -112,8 +112,8 @@
     -----------------------------------------
     Command: ./program -v -- -n --help file.txt
     )
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean.
-    a flag called "numbering" is "-n" or "--number", it is a boolean.
+    (a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+    a flag called "numbering" is "-n" or "--number", it is a boolean.)
     (
     Result: verbose = true, numbering = false
             arguments's all = ["-n", "--help", "file.txt"]
@@ -127,6 +127,7 @@
     a flag called "jobs" is "-j" or "--jobs", it is a number with default 1.
     a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
     a flag called "debug" is "-g" or "--debug", it is a boolean with default false.
+    Parse flags.
     
     a list called "source_files" is arguments's all.
     
@@ -139,8 +140,8 @@
         Print "Output: {the output}",
         Print "Parallel jobs: {the jobs}".
     
-    For each file in the source_files,
-        Print "Compiling: {file}".
+    For each source_file in the source_files,
+        Print "Compiling: {source_file}".
     (
     Result: optimize = true, output = "output.bin", jobs = 16
             verbose = false, debug = false

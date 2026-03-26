@@ -1990,6 +1990,12 @@ impl Parser {
         self.advance(); // consume 'exit'
         self.skip_noise();
         
+        // Allow optional 'with' keyword: "Exit with 1."
+        if matches!(self.current(), Token::With) {
+            self.advance();
+            self.skip_noise();
+        }
+        
         // Parse exit code (default to 0 if not provided)
         let code = if matches!(self.current(), Token::Period | Token::EOF | Token::Newline) {
             Expr::IntegerLit(0)

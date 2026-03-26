@@ -22,6 +22,7 @@ $(RELEASE_BIN): $(shell find src -name '*.rs' 2>/dev/null) Cargo.toml
 	TARGET_ARCH=$(TARGET_ARCH) cargo build --release --manifest-path "Cargo.toml"
 
 install:
+	strip $(RELEASE_BIN)
 	install -d "$(BINDIR)"
 	install -m 0755 "$(RELEASE_BIN)" "$(BINDIR)/$(BIN)"
 	install -d "$(DATADIR)"
