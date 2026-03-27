@@ -43,21 +43,32 @@
       }
     },
     "strings": {
-      "name": "string.quoted.double.vox",
-      "begin": "\"",
-      "end": "\"",
       "patterns": [
         {
-          "match": "(?<!\\{)(\\{)(?!\\{)([^}]*?)(?<!\\})(\\})(?!\\})",
-          "captures": {
-            "1": { "name": "punctuation.section.interpolation.begin.vox" },
-            "2": { "name": "variable.other.interpolation.vox" },
-            "3": { "name": "punctuation.section.interpolation.end.vox" }
-          }
+          "name": "string.quoted.double.vox",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "match": "(?<!\\{)(\\{)(?!\\{)([^}]*?)(?<!\\})(\\})(?!\\})",
+              "captures": {
+                "1": { "name": "punctuation.section.interpolation.begin.vox" },
+                "2": { "name": "variable.other.interpolation.vox" },
+                "3": { "name": "punctuation.section.interpolation.end.vox" }
+              }
+            },
+            {
+              "name": "constant.character.escape.vox",
+              "match": "\\\\."
+            }
+          ]
         },
         {
-          "name": "constant.character.escape.vox",
-          "match": "\\\\."
+          "name": "variable.other.readwrite.vox",
+          "match": "'[^']+'",
+          "captures": {
+            "0": { "name": "variable.other.readwrite.vox" }
+          }
         }
       ]
     },
