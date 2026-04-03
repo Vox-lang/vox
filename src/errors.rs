@@ -112,9 +112,10 @@ impl fmt::Display for CompileError {
             write!(f, "  {:width$} {}|\n", "", BLUE, width = line_num_width)?;
             
             // Source line
+            let separator = format!("{}|{}", BLUE, RESET);
             write!(f, "  {}{}{} {} {}{}\n", 
                 BLUE, loc.line, RESET, 
-                format!("{}|{}", BLUE, RESET),
+                separator,
                 loc.line_content.trim_end(),
                 RESET)?;
             
@@ -170,8 +171,8 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     
     let mut dp = vec![vec![0usize; n + 1]; m + 1];
     
-    for i in 0..=m { dp[i][0] = i; }
-    for j in 0..=n { dp[0][j] = j; }
+    (0..=m).for_each(|i| dp[i][0] = i);
+    (0..=n).for_each(|j| dp[0][j] = j);
     
     for i in 1..=m {
         for j in 1..=n {
