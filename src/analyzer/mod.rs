@@ -1055,9 +1055,7 @@ impl Analyzer {
             } => {
                 self.validate_function_condition_variable_refs(operand);
             }
-            Expr::BinaryOp { left, op, right }
-                if matches!(op, BinaryOperator::And | BinaryOperator::Or) =>
-            {
+            Expr::BinaryOp { left, right, .. } => {
                 self.validate_function_condition_variable_refs(left);
                 self.validate_function_condition_variable_refs(right);
             }
@@ -1121,18 +1119,18 @@ impl Analyzer {
     }
 
     fn treating_types_compatible(&self, left: &Type, right: &Type) -> bool {
-        match (left, right) {
+        matches!(
+            (left, right),
             (Type::Integer, Type::Integer)
-            | (Type::Float, Type::Float)
-            | (Type::String, Type::String)
-            | (Type::Boolean, Type::Boolean)
-            | (Type::Buffer, Type::Buffer)
-            | (Type::File, Type::File)
-            | (Type::Time, Type::Time)
-            | (Type::Timer, Type::Timer) => true,
-            (Type::List(_), Type::List(_)) => true,
-            _ => false,
-        }
+                | (Type::Float, Type::Float)
+                | (Type::String, Type::String)
+                | (Type::Boolean, Type::Boolean)
+                | (Type::Buffer, Type::Buffer)
+                | (Type::File, Type::File)
+                | (Type::Time, Type::Time)
+                | (Type::Timer, Type::Timer)
+                | (Type::List(_), Type::List(_))
+        )
     }
 
     fn type_name(&self, ty: &Type) -> &'static str {
@@ -1189,7 +1187,7 @@ impl Analyzer {
         const OPEN_PATH_GUIDANCE: &str = "Open path must be either a text path like \"/path/to/file\" or a file descriptor number (0 = stdin, 1 = stdout, 2 = stderr).";
 
         if let Some(fd) = self.expr_integer_literal_value(path) {
-            if fd < 0 || fd > FD_MAX {
+            if !(0..=FD_MAX).contains(&fd) {
                 self.push_error(
                     format!(
                         "File descriptor out of range after 'at': {}. Valid range is 0..{} (0 = stdin).",
