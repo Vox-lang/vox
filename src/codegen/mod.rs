@@ -2830,6 +2830,14 @@ impl CodeGenerator {
                 self.emit_indent("mov r9, 0  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("list_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("push rax  ; save list pointer");
                 
                 // Store capacity
@@ -3253,6 +3261,14 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("arglist_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 // Initialize header
@@ -3276,6 +3292,12 @@ impl CodeGenerator {
 
             Expr::ArgumentRaw => {
                 self.uses_lists = true;
+                // Preserve callee-saved registers used in this expression.
+                self.emit_indent("push r12");
+                self.emit_indent("push r13");
+                self.emit_indent("push r14");
+                self.emit_indent("push r15");
+
                 let min_ok = self.new_label("argraw_min_ok");
                 let loop_label = self.new_label("argraw_loop");
                 let done_label = self.new_label("argraw_done");
@@ -3301,6 +3323,14 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("argraw_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 self.emit_indent("mov [r14], r13  ; capacity");
@@ -3318,6 +3348,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
                 self.emit_indent("mov rax, r14  ; return list pointer");
+                // Restore callee-saved registers.
+                self.emit_indent("pop r15");
+                self.emit_indent("pop r14");
+                self.emit_indent("pop r13");
+                self.emit_indent("pop r12");
             }
 
             Expr::ArgumentHas { value } => {
