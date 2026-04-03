@@ -486,7 +486,6 @@ impl CodeGenerator {
         self.emit_indent(&format!("jmp {}", continue_label));
         self.emit(&format!("{}:", not_stop_label));
 
-        let mut next_check_label = append_pos_label.clone();
         for (schema, seen_off, flag_off) in &seen_entries {
             let no_match_label = self.new_label("flag_no_match");
             let matched_label = self.new_label("flag_matched");
@@ -533,7 +532,6 @@ impl CodeGenerator {
             }
 
             self.emit(&format!("{}:", no_match_label));
-            next_check_label = no_match_label;
         }
 
         // Fall through from last no-match to positional append
@@ -564,7 +562,6 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
         }
-        let _ = next_check_label;
     }
 
     fn emit_global_constant_format_fallback(&mut self, name: &str, format: Option<&String>) -> bool {
@@ -1062,7 +1059,7 @@ impl CodeGenerator {
                 if let Expr::Range { start, end, inclusive } = range {
                     self.generate_expr(start);
                     let var_offset = self.alloc_var(variable);
-                    self.variables.insert("_iter".to_string(), var_offset);
+                    self.variables.insert(variable.clone(), var_offset);
                     self.emit_indent(&format!("mov [rbp-{}], rax", var_offset));
                     
                     self.generate_expr(end);
@@ -2039,7 +2036,7 @@ impl CodeGenerator {
                 self.variable_types.insert(name.clone(), VarType::Integer); // Track as integer for now
                 self.emit_indent(&format!("; Timer declaration: {}", name));
                 self.emit_indent("sub rsp, 56");  // TIMER_SIZE
-                self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48)); // Point to timer area
+                self.emit_indent(&format!("lea rax, [rbp - {}]", offset)); // Point to timer area
                 self.emit_indent("TIMER_INIT rax");
             }
             
@@ -2047,7 +2044,7 @@ impl CodeGenerator {
                 self.uses_time = true;
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("; Start timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset));
                     self.emit_indent("TIMER_START rax");
                 }
             }
@@ -2056,7 +2053,7 @@ impl CodeGenerator {
                 self.uses_time = true;
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("; Stop timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset));
                     self.emit_indent("TIMER_STOP rax");
                 }
             }
