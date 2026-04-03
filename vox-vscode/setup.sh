@@ -196,7 +196,7 @@ install_extension() {
         echo -e "${CYAN}To test the compiler:${NC}"
         echo "  cd $(dirname "$SCRIPT_DIR")"
         echo "  cargo build --release"
-        echo "  ./target/release/vox examples/hello.vox --run"
+        echo "  ./target/release/vox examples/cat.vox --run"
         echo ""
     fi
 }
