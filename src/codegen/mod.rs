@@ -3276,6 +3276,12 @@ impl CodeGenerator {
 
             Expr::ArgumentRaw => {
                 self.uses_lists = true;
+                // Preserve callee-saved registers used in this expression.
+                self.emit_indent("push r12");
+                self.emit_indent("push r13");
+                self.emit_indent("push r14");
+                self.emit_indent("push r15");
+
                 let min_ok = self.new_label("argraw_min_ok");
                 let loop_label = self.new_label("argraw_loop");
                 let done_label = self.new_label("argraw_done");
@@ -3318,6 +3324,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
                 self.emit_indent("mov rax, r14  ; return list pointer");
+                // Restore callee-saved registers.
+                self.emit_indent("pop r15");
+                self.emit_indent("pop r14");
+                self.emit_indent("pop r13");
+                self.emit_indent("pop r12");
             }
 
             Expr::ArgumentHas { value } => {
