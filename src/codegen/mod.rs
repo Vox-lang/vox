@@ -1202,7 +1202,7 @@ impl CodeGenerator {
 
                 // Fresh function-local state
                 self.output = String::new();
-                self.variables = std::collections::HashMap::new(); // or whatever your type is
+                self.variables = std::collections::HashMap::new();
                 self.stack_offset = 0;
                 self.loop_stack = Vec::new();
                 self.in_function_codegen = true;
