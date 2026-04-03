@@ -2830,6 +2830,14 @@ impl CodeGenerator {
                 self.emit_indent("mov r9, 0  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent("jne .L_list_mmap_ok_0");
+                // On failure, exit(1)
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit_indent(".L_list_mmap_ok_0:");
                 self.emit_indent("push rax  ; save list pointer");
                 
                 // Store capacity
