@@ -3835,15 +3835,9 @@ impl CodeGenerator {
             Expr::BinaryOp { left, op, right } => match op {
                 BinaryOperator::Add | BinaryOperator::Subtract | 
                 BinaryOperator::Multiply | BinaryOperator::Divide |
-                BinaryOperator::Modulo => {
-                    if self.is_float_expr(left) || self.is_float_expr(right) {
-                        Some(VarType::Float)
-                    } else {
-                        Some(VarType::Integer)
-                    }
-                }
+                BinaryOperator::Modulo if self.is_float_expr(left) || self.is_float_expr(right) => Some(VarType::Float),
                 _ => Some(VarType::Integer),
-            }
+            },
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
             Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
             Expr::Cast { target_type, .. } => match target_type {
