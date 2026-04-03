@@ -324,7 +324,7 @@ impl CodeGenerator {
         let stack_arg_bytes = stack_arg_count * 8;
 
         // Align stack before call (SysV: 16B-aligned at call instruction).
-        let needs_pad = (stack_arg_count % 2) != 0;
+        let needs_pad = !stack_arg_count.is_multiple_of(2);
         if needs_pad {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
