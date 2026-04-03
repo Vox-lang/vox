@@ -1027,7 +1027,7 @@ impl CodeGenerator {
                 if let Expr::Range { start, end, inclusive } = range {
                     self.generate_expr(start);
                     let var_offset = self.alloc_var(variable);
-                    self.variables.insert("_iter".to_string(), var_offset);
+                    self.variables.insert(variable.to_string(), var_offset);
                     self.emit_indent(&format!("mov [rbp-{}], rax", var_offset));
                     
                     self.generate_expr(end);
