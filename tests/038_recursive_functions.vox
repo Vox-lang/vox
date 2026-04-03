@@ -3,7 +3,7 @@
 (Recursive factorial)
 To "factorial" with a number called "n".
     If n is less than or equal to 1 then, return a number, 1.
-    Otherwise Return a number, n multiply "factorial" of n subtract 1.
+    Otherwise Return a number, n multiply {"factorial" of {n subtract 1}}.
 
 (Recursive Fibonacci)
 To "fibonacci" with a number called "n".
