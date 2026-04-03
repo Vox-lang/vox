@@ -564,7 +564,6 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
         }
-        let _ = next_check_label;
     }
 
     fn emit_global_constant_format_fallback(&mut self, name: &str, format: Option<&String>) -> bool {
