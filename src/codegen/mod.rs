@@ -2039,7 +2039,7 @@ impl CodeGenerator {
                 self.variable_types.insert(name.clone(), VarType::Integer); // Track as integer for now
                 self.emit_indent(&format!("; Timer declaration: {}", name));
                 self.emit_indent("sub rsp, 56");  // TIMER_SIZE
-                self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48)); // Point to timer area
+                self.emit_indent(&format!("lea rax, [rbp - {}]", offset)); // Point to timer area
                 self.emit_indent("TIMER_INIT rax");
             }
             
@@ -2047,7 +2047,7 @@ impl CodeGenerator {
                 self.uses_time = true;
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("; Start timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset));
                     self.emit_indent("TIMER_START rax");
                 }
             }
@@ -2056,7 +2056,7 @@ impl CodeGenerator {
                 self.uses_time = true;
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("; Stop timer: {}", name));
-                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                    self.emit_indent(&format!("lea rax, [rbp - {}]", offset));
                     self.emit_indent("TIMER_STOP rax");
                 }
             }
