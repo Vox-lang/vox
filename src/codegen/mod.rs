@@ -486,7 +486,6 @@ impl CodeGenerator {
         self.emit_indent(&format!("jmp {}", continue_label));
         self.emit(&format!("{}:", not_stop_label));
 
-        let mut next_check_label = append_pos_label.clone();
         for (schema, seen_off, flag_off) in &seen_entries {
             let no_match_label = self.new_label("flag_no_match");
             let matched_label = self.new_label("flag_matched");
@@ -533,7 +532,6 @@ impl CodeGenerator {
             }
 
             self.emit(&format!("{}:", no_match_label));
-            next_check_label = no_match_label;
         }
 
         // Fall through from last no-match to positional append
