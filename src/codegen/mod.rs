@@ -304,6 +304,41 @@ impl CodeGenerator {
             .filter(|t| *t != VarType::Unknown)
     }
     
+    fn emit_function_call(&mut self, name: &str, args: &[Expr]) {
+        let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+
+        // Evaluate/push all args right-to-left (so arg0 ends up deepest)
+        for arg in args.iter().rev() {
+            self.generate_expr(arg);
+            self.emit_indent("push rax");
+        }
+
+        // Pop first 6 args into registers (arg0 -> rdi, arg1 -> rsi, ...)
+        let reg_count = args.len().min(param_regs.len());
+        for reg in param_regs.iter().take(reg_count) {
+            self.emit_indent(&format!("pop {}", reg));
+        }
+
+        // Remaining args (7th+) stay on the stack.
+        let stack_arg_count = args.len().saturating_sub(param_regs.len());
+        let stack_arg_bytes = stack_arg_count * 8;
+
+        // Align stack before call (SysV: 16B-aligned at call instruction).
+        let needs_pad = !stack_arg_count.is_multiple_of(2);
+        if needs_pad {
+            self.emit_indent("sub rsp, 8  ; align stack before call");
+        }
+
+        let func_label = name.replace(' ', "_");
+        self.emit_indent(&format!("call {}", func_label));
+
+        // Clean up stack args + pad (caller cleanup in SysV)
+        let cleanup = stack_arg_bytes + if needs_pad { 8 } else { 0 };
+        if cleanup > 0 {
+            self.emit_indent(&format!("add rsp, {}", cleanup));
+        }
+    }
+
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
         self.shared_lib_mode = enabled;
     }
@@ -1161,25 +1196,7 @@ impl CodeGenerator {
             Statement::FunctionCall { name, args } => {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
-                
-                for (i, arg) in args.iter().enumerate() {
-                    self.generate_expr(arg);
-                    let reg = match i {
-                        0 => "rdi",
-                        1 => "rsi",
-                        2 => "rdx",
-                        3 => "rcx",
-                        4 => "r8",
-                        5 => "r9",
-                        _ => {
-                            self.emit_indent("push rax");
-                            continue;
-                        }
-                    };
-                    self.emit_indent(&format!("mov {}, rax", reg));
-                }
-                let func_label = name.replace(' ', "_");
-                self.emit_indent(&format!("call {}", func_label));
+                self.emit_function_call(name, args);
             }
                         
             Statement::FunctionDef { name, params, body, .. } => {
@@ -1202,7 +1219,7 @@ impl CodeGenerator {
 
                 // Fresh function-local state
                 self.output = String::new();
-                self.variables = std::collections::HashMap::new(); // or whatever your type is
+                self.variables = std::collections::HashMap::new();
                 self.stack_offset = 0;
                 self.loop_stack = Vec::new();
                 self.in_function_codegen = true;
@@ -2761,52 +2778,7 @@ impl CodeGenerator {
             Expr::Range { .. } => {}
 
             Expr::FunctionCall { name, args } => {
-                let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-
-                // 1) Evaluate/push all args right-to-left (so arg0 ends up deepest)
-                for arg in args.iter().rev() {
-                    self.generate_expr(arg);
-                    self.emit_indent("push rax");
-                }
-
-                // 2) Pop first 6 args into registers (arg0 -> rdi, arg1 -> rsi, ...)
-                // After the pushes above, the stack top is arg0, so popping in increasing i works.
-                let reg_count = args.len().min(param_regs.len());
-                for reg in param_regs.iter().take(reg_count) {
-                    self.emit_indent(&format!("pop {}", reg));
-                }
-
-                // 3) At this point, any remaining args (7th+) are still on the stack.
-                // Count how many are left there:
-                let stack_arg_count = args.len().saturating_sub(param_regs.len());
-                let stack_arg_bytes = stack_arg_count * 8;
-
-                // 4) Align stack before call.
-                // In SysV, stack must be 16B-aligned *at the call instruction*.
-                // We can do this by conditionally reserving 8 bytes if needed.
-                // Since we don't know caller alignment here, we maintain an invariant:
-                // - Our function prologue keeps alignment.
-                // - Our pushes/pops here are the only changes.
-                // If stack_arg_count is odd, we currently have an odd *8-byte* subtraction remaining
-                // (because those stack args are still sitting on the stack), which flips alignment.
-                let needs_pad = (stack_arg_count % 2) != 0;
-                if needs_pad {
-                    self.emit_indent("sub rsp, 8  ; align stack before call");
-                }
-
-                // 5) Call
-                let func_label = name.replace(' ', "_");
-                self.emit_indent(&format!("call {}", func_label));
-
-                // 6) Clean up stack args + pad (caller cleanup in SysV)
-                let mut cleanup = stack_arg_bytes as i32;
-                if needs_pad {
-                    cleanup += 8;
-                }
-                if cleanup > 0 {
-                    self.emit_indent(&format!("add rsp, {}", cleanup));
-                }
-
+                self.emit_function_call(name, args);
                 // Return value already in rax
             }
 
