@@ -162,28 +162,45 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     let b_lower = b.to_lowercase();
     let a_chars: Vec<char> = a_lower.chars().collect();
     let b_chars: Vec<char> = b_lower.chars().collect();
-    
+
     let m = a_chars.len();
     let n = b_chars.len();
-    
-    if m == 0 { return n; }
-    if n == 0 { return m; }
-    
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    
-    (0..=m).for_each(|i| dp[i][0] = i);
-    (0..=n).for_each(|j| dp[0][j] = j);
-    
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if a_chars[i-1] == b_chars[j-1] { 0 } else { 1 };
-            dp[i][j] = (dp[i-1][j] + 1)
-                .min(dp[i][j-1] + 1)
-                .min(dp[i-1][j-1] + cost);
-        }
+
+    if m == 0 {
+        return n;
     }
-    
-    dp[m][n]
+    if n == 0 {
+        return m;
+    }
+
+    // Ensure we use the shorter string for the DP row length to achieve O(min(m, n)) space.
+    let (long, short) = if m >= n {
+        (&a_chars, &b_chars)
+    } else {
+        (&b_chars, &a_chars)
+    };
+    let long_len = long.len();
+    let short_len = short.len();
+
+    // prev_row[j] holds the distance between the first i-1 chars of `long`
+    // and the first j chars of `short`.
+    let mut prev_row: Vec<usize> = (0..=short_len).collect();
+    let mut curr_row: Vec<usize> = vec![0; short_len + 1];
+
+    for i in 1..=long_len {
+        curr_row[0] = i;
+        let long_ch = long[i - 1];
+        for j in 1..=short_len {
+            let cost = if long_ch == short[j - 1] { 0 } else { 1 };
+            let deletion = prev_row[j] + 1;
+            let insertion = curr_row[j - 1] + 1;
+            let substitution = prev_row[j - 1] + cost;
+            curr_row[j] = deletion.min(insertion).min(substitution);
+        }
+        std::mem::swap(&mut prev_row, &mut curr_row);
+    }
+
+    prev_row[short_len]
 }
 
 pub fn find_similar_keyword(word: &str, keywords: &[&str]) -> Option<String> {
