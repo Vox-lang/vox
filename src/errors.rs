@@ -109,7 +109,7 @@ impl fmt::Display for CompileError {
             let line_num_width = loc.line.to_string().len();
             
             // Empty line before source
-            write!(f, "  {:width$} {}{}\n", "", BLUE, "|", width = line_num_width)?;
+            write!(f, "  {:width$} {}|\n", "", BLUE, width = line_num_width)?;
             
             // Source line
             write!(f, "  {}{}{} {} {}{}\n", 
@@ -121,19 +121,19 @@ impl fmt::Display for CompileError {
             // Pointer line
             let pointer_offset = if loc.column > 0 { loc.column - 1 } else { 0 };
             let spaces = " ".repeat(pointer_offset);
-            write!(f, "  {:width$} {}{} {}{}^--- here{}\n", 
-                "", BLUE, "|", spaces, RED, RESET, width = line_num_width)?;
+            write!(f, "  {:width$} {}| {}{}^--- here{}\n", 
+                "", BLUE, spaces, RED, RESET, width = line_num_width)?;
             
             // Draw connector to hint if we have a hint_location
             if let (Some(ref hint), Some((hint_col, hint_len))) = (&self.hint, self.hint_location) {
                 let hint_offset = if hint_col > 0 { hint_col - 1 } else { 0 };
                 
                 // Draw vertical connector line
-                write!(f, "  {:width$} {}{} ", "", BLUE, "|", width = line_num_width)?;
+                write!(f, "  {:width$} {} ", "", BLUE, width = line_num_width)?;
                 write!(f, "{}{}|{}\n", " ".repeat(hint_offset), BLUE, RESET)?;
                 
                 // Draw the underline pointing to the typo word
-                write!(f, "  {:width$} {}{} ", "", BLUE, "|", width = line_num_width)?;
+                write!(f, "  {:width$} {} ", "", BLUE, width = line_num_width)?;
                 let underline = "─".repeat(hint_len);
                 write!(f, "{}{}┴{}─── {}hint{}: {}\n", 
                     " ".repeat(hint_offset), BLUE, underline, CYAN, RESET, hint)?;
@@ -197,7 +197,7 @@ pub fn find_similar_keyword(word: &str, keywords: &[&str]) -> Option<String> {
     
     for &keyword in keywords {
         // Skip if lengths are too different (avoid "source" -> "is" nonsense)
-        let len_diff = (word.len() as isize - keyword.len() as isize).abs() as usize;
+        let len_diff = word.len().abs_diff(keyword.len());
         if len_diff > 2 {
             continue;
         }

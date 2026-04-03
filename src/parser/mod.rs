@@ -4,6 +4,11 @@ use crate::lexer::{Token, TokenInfo, Lexer};
 use crate::errors::{CompileError, SourceLocation, SourceFile, find_similar_keyword, ENGLISH_KEYWORDS};
 use ast::*;
 
+// Type aliases for complex nested types
+type TreatingClause = (Expr, Expr);
+type LoopExpansion = (String, Expr, Option<TreatingClause>);
+type PathInfo = Result<Expr, LoopExpansion>;
+
 pub struct Parser {
     tokens: Vec<TokenInfo>,
     pos: usize,
@@ -15,7 +20,7 @@ mod buffer_copy_statement_tests {
     use super::*;
     use crate::lexer::Lexer;
 
-    fn parse_input(input: &str) -> Result<Program, CompileError> {
+    fn parse_input(input: &str) -> Result<Program, Box<CompileError>> {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);
@@ -162,7 +167,7 @@ mod file_line_read_and_seek_tests {
     use super::*;
     use crate::lexer::Lexer;
 
-    fn parse_input(input: &str) -> Result<Program, CompileError> {
+    fn parse_input(input: &str) -> Result<Program, Box<CompileError>> {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);
@@ -628,27 +633,27 @@ impl Parser {
         }
     }
     
-    fn make_error(&self, message: &str) -> CompileError {
+    fn make_error(&self, message: &str) -> Box<CompileError> {
         let mut err = CompileError::new(message);
         if let Some(loc) = self.current_location() {
             err = err.with_location(loc);
         }
-        err
+        Box::new(err)
     }
     
-    fn make_error_with_suggestion(&self, message: &str, got: &str) -> CompileError {
-        let mut err = self.make_error(message);
+    fn make_error_with_suggestion(&self, message: &str, got: &str) -> Box<CompileError> {
+        let mut err = *self.make_error(message);
         if let Some(suggestion) = find_similar_keyword(got, ENGLISH_KEYWORDS) {
             err = err.with_suggestion(&suggestion);
         }
-        err
+        Box::new(err)
     }
     
-    fn err(&self, message: &str) -> CompileError {
+    fn err(&self, message: &str) -> Box<CompileError> {
         self.make_error(message)
     }
     
-    fn err_expected(&self, expected: &str, got: &Token) -> CompileError {
+    fn err_expected(&self, expected: &str, got: &Token) -> Box<CompileError> {
         let got_str = format!("{:?}", got);
         let msg = format!("Expected {}, got {:?}", expected, got);
         self.make_error_with_suggestion(&msg, &got_str)
@@ -660,7 +665,7 @@ impl Parser {
         buffer_name: &str,
         reason: &str,
         example: &str,
-    ) -> CompileError {
+    ) -> Box<CompileError> {
         self.err(&format!(
             "Invalid buffer size for \"{}\": {}\n  \
              Hint: {}\n  \
@@ -672,7 +677,7 @@ impl Parser {
     }
 
     /// Creates an error for expected token mismatches
-    pub fn error_expected_token(&self, expected: &str, actual: &Token) -> CompileError {
+    pub fn error_expected_token(&self, expected: &str, actual: &Token) -> Box<CompileError> {
         self.err(&format!(
             "Expected '{}' but found '{:?}'\n  \
              Check your syntax and ensure all keywords are spelled correctly.",
@@ -692,7 +697,7 @@ impl Parser {
     
     /// Check if a token is a reserved keyword and return an error if so.
     /// This catches ALL language keywords, not just a hardcoded subset.
-    fn check_not_keyword(&self, token: &Token) -> Result<(), CompileError> {
+    fn check_not_keyword(&self, token: &Token) -> Result<(), Box<CompileError>> {
         if let Some(keyword) = token.as_keyword() {
             Err(self.make_error(&format!(
                 "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
@@ -758,7 +763,7 @@ impl Parser {
         }
     }
     
-    pub fn parse(&mut self) -> Result<Program, CompileError> {
+    pub fn parse(&mut self) -> Result<Program, Box<CompileError>> {
         let mut statements = Vec::new();
         
         while *self.current() != Token::EOF {
@@ -787,7 +792,7 @@ impl Parser {
         Ok(Program::new(statements))
     }
     
-    fn parse_statement(&mut self) -> Result<Statement, CompileError> {
+    fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
         
         match self.current().clone() {
@@ -838,7 +843,7 @@ impl Parser {
         }
     }
 
-    fn parse_parse_flags(&mut self) -> Result<Statement, CompileError> {
+    fn parse_parse_flags(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume parse
         self.skip_noise();
 
@@ -857,7 +862,7 @@ impl Parser {
         }
     }
     
-    fn parse_print(&mut self) -> Result<Statement, CompileError> {
+    fn parse_print(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -960,7 +965,7 @@ impl Parser {
         Ok(Statement::Print { value, without_newline })
     }
     
-    fn parse_conditional_print(&mut self, default_value: Expr) -> Result<Statement, CompileError> {
+    fn parse_conditional_print(&mut self, default_value: Expr) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1028,7 +1033,7 @@ impl Parser {
         Ok(result)
     }
     
-    fn parse_var_decl(&mut self) -> Result<Statement, CompileError> {
+    fn parse_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Set/Create
         self.skip_noise();
         
@@ -1206,7 +1211,7 @@ impl Parser {
         })
     }
 
-    fn parse_flag_schema_decl(&mut self) -> Result<Statement, CompileError> {
+    fn parse_flag_schema_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.expect(&Token::Flag);
         self.skip_noise();
 
@@ -1328,7 +1333,7 @@ impl Parser {
         })
     }
     
-    fn parse_typed_var_decl(&mut self) -> Result<Statement, CompileError> {
+    fn parse_typed_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'a' or 'an'
         self.skip_noise();
 
@@ -1567,7 +1572,7 @@ impl Parser {
         })
     }
     
-    fn parse_the_statement(&mut self) -> Result<Statement, CompileError> {
+    fn parse_the_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'the'
         self.skip_noise();
         
@@ -1613,7 +1618,7 @@ impl Parser {
         Err(self.err(&format!("Expected 'is' after 'the {}'", name)))
     }
     
-    fn parse_if(&mut self) -> Result<Statement, CompileError> {
+    fn parse_if(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1674,7 +1679,7 @@ impl Parser {
         })
     }
     
-    fn parse_while(&mut self) -> Result<Statement, CompileError> {
+    fn parse_while(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1729,7 +1734,7 @@ impl Parser {
         matches!(self.current(), Token::Return)
     }
     
-    fn parse_for(&mut self) -> Result<Statement, CompileError> {
+    fn parse_for(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1915,7 +1920,7 @@ impl Parser {
         }
     }
     
-    fn parse_repeat(&mut self) -> Result<Statement, CompileError> {
+    fn parse_repeat(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1952,7 +1957,7 @@ impl Parser {
         Ok(Statement::Repeat { count, body })
     }
     
-    fn parse_return(&mut self) -> Result<Statement, CompileError> {
+    fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -1986,7 +1991,7 @@ impl Parser {
         }
     }
     
-    fn parse_exit(&mut self) -> Result<Statement, CompileError> {
+    fn parse_exit(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'exit'
         self.skip_noise();
         
@@ -2006,7 +2011,7 @@ impl Parser {
         Ok(Statement::Exit { code })
     }
     
-    fn parse_allocate(&mut self) -> Result<Statement, CompileError> {
+    fn parse_allocate(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -2026,7 +2031,7 @@ impl Parser {
         Ok(Statement::Allocate { name, size })
     }
     
-    fn parse_free(&mut self) -> Result<Statement, CompileError> {
+    fn parse_free(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -2038,7 +2043,7 @@ impl Parser {
         Ok(Statement::Free { name })
     }
     
-    fn parse_increment(&mut self) -> Result<Statement, CompileError> {
+    fn parse_increment(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -2057,7 +2062,7 @@ impl Parser {
         Ok(Statement::Increment { name })
     }
     
-    fn parse_decrement(&mut self) -> Result<Statement, CompileError> {
+    fn parse_decrement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
         
@@ -2078,7 +2083,7 @@ impl Parser {
     
     // File I/O parsing functions
     
-    fn parse_file_open(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_open(&mut self) -> Result<Statement, Box<CompileError>> {
         // "open a file" followed by any combination of:
         //   - "for reading/writing/appending" (mode)
         //   - "called <name>" (handle name)  
@@ -2100,7 +2105,7 @@ impl Parser {
         // Parse the three optional clauses in any order
         let mut mode: Option<FileMode> = None;
         let mut name: Option<String> = None;
-        let mut path_info: Option<Result<Expr, (String, Expr, Option<(Expr, Expr)>)>> = None; // Ok=simple path, Err=loop expansion
+        let mut path_info: Option<PathInfo> = None;
         
         loop {
             match self.current() {
@@ -2214,7 +2219,7 @@ impl Parser {
     
     /// Try to parse optional "treating X as Y" clause.
     /// Returns Some((match_value, replacement)) if found, None otherwise.
-    fn try_parse_treating(&mut self) -> Result<Option<(Expr, Expr)>, CompileError> {
+    fn try_parse_treating(&mut self) -> Result<Option<TreatingClause>, Box<CompileError>> {
         if *self.current() != Token::Treating {
             return Ok(None);
         }
@@ -2379,7 +2384,7 @@ impl Parser {
     /// Try to parse "each <variable> from <collection> [treating X as Y]" pattern.
     /// Returns Some((variable, collection, optional_treating)) if found.
     /// This is the universal loop expansion syntax that works with any action.
-    fn try_parse_each_from(&mut self) -> Result<Option<(String, Expr, Option<(Expr, Expr)>)>, CompileError> {
+    fn try_parse_each_from(&mut self) -> Result<Option<LoopExpansion>, Box<CompileError>> {
         if *self.current() != Token::Each {
             return Ok(None);
         }
@@ -2446,7 +2451,7 @@ impl Parser {
     /// Wrap a statement in a ForEach loop with the given variable and collection.
     /// Parses any additional comma-separated statements as part of the loop body.
     /// Supports "but if" conditional branching for print statements.
-    fn wrap_in_loop_expansion(&mut self, variable: String, collection: Expr, base_stmt: Statement) -> Result<Statement, CompileError> {
+    fn wrap_in_loop_expansion(&mut self, variable: String, collection: Expr, base_stmt: Statement) -> Result<Statement, Box<CompileError>> {
         let mut body = vec![base_stmt];
         
         // Check for comma to parse additional body statements or "but if" conditionals
@@ -2526,7 +2531,7 @@ impl Parser {
         }
     }
     
-    fn parse_file_read(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_read(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Read from <source> into <buffer>"
         // "Read line from <source> into <buffer>"
         self.advance(); // consume 'read'
@@ -2602,7 +2607,7 @@ impl Parser {
         }
     }
 
-    fn parse_file_seek(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_seek(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Seek <file> to line <expr>"
         // "Seek <file> to byte <expr>"
         self.advance(); // consume 'seek'
@@ -2671,7 +2676,7 @@ impl Parser {
         }
     }
     
-    fn parse_file_write(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_write(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Write <value> to <file>" or "Write a newline to <file>"
         self.advance(); // consume 'write'
         self.skip_noise();
@@ -2776,7 +2781,7 @@ impl Parser {
         Ok(Statement::FileWrite { file, value })
     }
     
-    fn parse_file_close(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_close(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Close the <file>" or "Close <file>"
         self.advance(); // consume 'close'
         self.skip_noise();
@@ -2799,7 +2804,7 @@ impl Parser {
         Ok(Statement::FileClose { file })
     }
     
-    fn parse_file_delete(&mut self) -> Result<Statement, CompileError> {
+    fn parse_file_delete(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Delete the file <path>"
         self.advance(); // consume 'delete'
         self.skip_noise();
@@ -2820,7 +2825,7 @@ impl Parser {
         Ok(Statement::FileDelete { path })
     }
     
-    fn parse_on_error(&mut self) -> Result<Statement, CompileError> {
+    fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {
         // "On error <action>, <action>, <action>." - consumes full sentence
         self.advance(); // consume 'on'
         self.skip_noise();
@@ -2849,7 +2854,7 @@ impl Parser {
         Ok(Statement::OnError { actions })
     }
     
-    fn parse_auto_error(&mut self) -> Result<Statement, CompileError> {
+    fn parse_auto_error(&mut self) -> Result<Statement, Box<CompileError>> {
         // Feature deferred - auto error catching not yet implemented
         Err(self.err(
             "'auto error catching' is not yet implemented.\n  \
@@ -2857,7 +2862,7 @@ impl Parser {
         ))
     }
     
-    fn parse_enable(&mut self) -> Result<Statement, CompileError> {
+    fn parse_enable(&mut self) -> Result<Statement, Box<CompileError>> {
         // Feature deferred - enable error catching not yet implemented
         Err(self.err(
             "'enable error catching' is not yet implemented.\n  \
@@ -2865,7 +2870,7 @@ impl Parser {
         ))
     }
     
-    fn parse_disable(&mut self) -> Result<Statement, CompileError> {
+    fn parse_disable(&mut self) -> Result<Statement, Box<CompileError>> {
         // Feature deferred - disable error catching not yet implemented
         Err(self.err(
             "'disable error catching' is not yet implemented.\n  \
@@ -2873,7 +2878,7 @@ impl Parser {
         ))
     }
     
-    fn parse_resize(&mut self) -> Result<Statement, CompileError> {
+    fn parse_resize(&mut self) -> Result<Statement, Box<CompileError>> {
         // "resize buffer to N bytes" or "resize buffer to N"
         self.advance(); // consume 'resize'
         self.skip_noise();
@@ -2908,7 +2913,7 @@ impl Parser {
         Ok(Statement::BufferResize { name, new_size })
     }
     
-    fn parse_append(&mut self) -> Result<Statement, CompileError> {
+    fn parse_append(&mut self) -> Result<Statement, Box<CompileError>> {
         // "append <expr> to <list>" or "append each <var> from <collection> to <list>"
         self.advance(); // consume 'append'
         self.skip_noise();
@@ -3025,7 +3030,7 @@ impl Parser {
         Ok(Statement::ListAppend { list, value })
     }
 
-    fn parse_copy(&mut self) -> Result<Statement, CompileError> {
+    fn parse_copy(&mut self) -> Result<Statement, Box<CompileError>> {
         // "copy <source> to <buffer>"
         self.advance(); // consume 'copy'
         self.skip_noise();
@@ -3124,7 +3129,7 @@ impl Parser {
         Ok(Statement::BufferCopy { source, destination })
     }
 
-    fn parse_clear(&mut self) -> Result<Statement, CompileError> {
+    fn parse_clear(&mut self) -> Result<Statement, Box<CompileError>> {
         // "clear <buffer>"
         self.advance(); // consume 'clear'
         self.skip_noise();
@@ -3159,7 +3164,7 @@ impl Parser {
         Ok(Statement::BufferClear { name })
     }
     
-    fn parse_library_decl(&mut self) -> Result<Statement, CompileError> {
+    fn parse_library_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         // Library "name" version "1.0".
         self.advance(); // consume 'library'
         self.skip_noise();
@@ -3188,7 +3193,7 @@ impl Parser {
         Ok(Statement::LibraryDecl { name, version })
     }
     
-    fn parse_see(&mut self) -> Result<Statement, CompileError> {
+    fn parse_see(&mut self) -> Result<Statement, Box<CompileError>> {
         // Supported syntaxes:
         // see "./path/to/file.en".
         // see "math" version "1.0" from "./path.so".
@@ -3290,7 +3295,7 @@ impl Parser {
         Ok(Statement::See { path, lib_name, lib_version })
     }
     
-    fn parse_identifier_statement(&mut self) -> Result<Statement, CompileError> {
+    fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         let name = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             _ => return Err(self.err("Expected identifier")),
@@ -3311,7 +3316,7 @@ impl Parser {
         })
     }
     
-    fn parse_function_def(&mut self) -> Result<Statement, CompileError> {
+    fn parse_function_def(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'To'
         self.skip_noise();
         
@@ -3467,7 +3472,7 @@ impl Parser {
         })
     }
     
-    fn parse_function_call_statement(&mut self) -> Result<Statement, CompileError> {
+    fn parse_function_call_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         let name = match self.current().clone() {
             Token::StringLiteral(n) => { self.advance(); n }
             _ => return Err(self.err("Expected function name")),
@@ -3518,7 +3523,7 @@ impl Parser {
         Ok(Statement::FunctionCall { name, args })
     }
     
-    fn parse_block(&mut self) -> Result<Vec<Statement>, CompileError> {
+    fn parse_block(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
         
         let stmt = self.parse_statement()?;
@@ -3571,7 +3576,7 @@ impl Parser {
     /// - on error <action>, <action>, <action>.
     /// - while <cond>, <action>, <action>.
     /// - for each X, <action>, <action>.
-    fn parse_sentence_body(&mut self) -> Result<Vec<Statement>, CompileError> {
+    fn parse_sentence_body(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
         
         loop {
@@ -3602,11 +3607,11 @@ impl Parser {
         Ok(statements)
     }
     
-    fn parse_condition(&mut self) -> Result<Expr, CompileError> {
+    fn parse_condition(&mut self) -> Result<Expr, Box<CompileError>> {
         self.parse_or_expr()
     }
     
-    fn parse_or_expr(&mut self) -> Result<Expr, CompileError> {
+    fn parse_or_expr(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_and_expr()?;
         
         while *self.current() == Token::Or {
@@ -3623,7 +3628,7 @@ impl Parser {
         Ok(left)
     }
     
-    fn parse_and_expr(&mut self) -> Result<Expr, CompileError> {
+    fn parse_and_expr(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_comparison()?;
         
         while *self.current() == Token::And {
@@ -3654,7 +3659,7 @@ impl Parser {
         false
     }
     
-    fn parse_comparison(&mut self) -> Result<Expr, CompileError> {
+    fn parse_comparison(&mut self) -> Result<Expr, Box<CompileError>> {
         let left = self.parse_expression()?;
         self.skip_noise();
         
@@ -3846,7 +3851,7 @@ impl Parser {
         Ok(left)
     }
     
-    fn parse_expression(&mut self) -> Result<Expr, CompileError> {
+    fn parse_expression(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut expr = self.parse_additive()?;
         
         // Check for type casting with 'as' keyword
@@ -3879,7 +3884,7 @@ impl Parser {
         Ok(expr)
     }
     
-    fn parse_additive(&mut self) -> Result<Expr, CompileError> {
+    fn parse_additive(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_multiplicative()?;
         
         loop {
@@ -3907,7 +3912,7 @@ impl Parser {
         Ok(left)
     }
     
-    fn parse_multiplicative(&mut self) -> Result<Expr, CompileError> {
+    fn parse_multiplicative(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_bitwise()?;
         
         loop {
@@ -3936,7 +3941,7 @@ impl Parser {
         Ok(left)
     }
     
-    fn parse_bitwise(&mut self) -> Result<Expr, CompileError> {
+    fn parse_bitwise(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_primary()?;
         
         loop {
@@ -4068,7 +4073,7 @@ impl Parser {
         }
     }
     
-    fn parse_primary(&mut self) -> Result<Expr, CompileError> {
+    fn parse_primary(&mut self) -> Result<Expr, Box<CompileError>> {
         self.skip_noise();
         
         match self.current().clone() {
@@ -4863,7 +4868,7 @@ impl Parser {
     // Time and Timer parsing
     // ========================================================================
     
-    fn parse_wait(&mut self) -> Result<Statement, CompileError> {
+    fn parse_wait(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Wait/Sleep
         self.skip_noise();
         
@@ -4891,7 +4896,7 @@ impl Parser {
         Ok(Statement::Wait { duration, unit })
     }
     
-    fn parse_timer_start(&mut self) -> Result<Statement, CompileError> {
+    fn parse_timer_start(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Start/Begin
         self.skip_noise();
         
@@ -4909,7 +4914,7 @@ impl Parser {
         Ok(Statement::TimerStart { name })
     }
     
-    fn parse_timer_stop(&mut self) -> Result<Statement, CompileError> {
+    fn parse_timer_stop(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Stop/Finish
         self.skip_noise();
         
@@ -4927,7 +4932,7 @@ impl Parser {
         Ok(Statement::TimerStop { name })
     }
     
-    fn parse_get(&mut self) -> Result<Statement, CompileError> {
+    fn parse_get(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Get
         self.skip_noise();
         
@@ -4968,7 +4973,7 @@ mod buffer_declaration_tests {
     use super::*;
     use crate::lexer::Lexer;
 
-    fn parse_input(input: &str) -> Result<Program, CompileError> {
+    fn parse_input(input: &str) -> Result<Program, Box<CompileError>> {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);

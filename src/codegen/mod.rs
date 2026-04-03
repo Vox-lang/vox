@@ -1178,7 +1178,7 @@ impl CodeGenerator {
                     };
                     self.emit_indent(&format!("mov {}, rax", reg));
                 }
-                let func_label = name.replace(' ', "_").replace('-', "_");
+                let func_label = name.replace(' ', "_");
                 self.emit_indent(&format!("call {}", func_label));
             }
                         
@@ -1186,7 +1186,7 @@ impl CodeGenerator {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
-                let func_label = name.replace(' ', "_").replace('-', "_");
+                let func_label = name.replace(' ', "_");
 
                 // Track exported functions for shared library mode
                 if self.shared_lib_mode {
@@ -1576,14 +1576,7 @@ impl CodeGenerator {
                 // Track element type from appended value if not already set
                 if !self.list_element_types.contains_key(list) {
                     let elem_type = match value {
-                        Expr::StringLit(s) => {
-                            // If this string literal is a buffer variable, the list gets strings
-                            if self.variable_types.get(s) == Some(&VarType::Buffer) {
-                                VarType::String
-                            } else {
-                                VarType::String
-                            }
-                        }
+                        Expr::StringLit(_) => VarType::String,
                         Expr::IntegerLit(_) => VarType::Integer,
                         Expr::FloatLit(_) => VarType::Float,
                         Expr::BoolLit(_) => VarType::Boolean,
@@ -1606,8 +1599,8 @@ impl CodeGenerator {
                 if let Some(offset) = self.get_var(list) {
                     // Check if the value is a buffer variable
                     let is_buffer_value = match value {
-                        Expr::StringLit(s) | Expr::Identifier(s) => {
-                            self.variable_types.get(s) == Some(&VarType::Buffer)
+                        Expr::StringLit(name) | Expr::Identifier(name) => {
+                            self.variable_types.get(name).map(|t| t == &VarType::Buffer).unwrap_or(false)
                         }
                         _ => false,
                     };
@@ -2096,7 +2089,7 @@ impl CodeGenerator {
                 // Check for precision format first (starts with '.')
                 if fmt_str.starts_with('.') {
                     // Float precision format like .2, .4, etc.
-                    if let Ok(precision) = fmt_str[1..].parse::<i32>() {
+                    if let Some(precision) = fmt_str.strip_prefix('.').and_then(|s| s.parse::<i32>().ok()) {
                         spec.precision = Some(precision);
                     }
                     return spec;
@@ -2334,8 +2327,6 @@ impl CodeGenerator {
                                 self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                                 continue;
                             }
-                            
-                            let var_type = var_type;
                             
                             // Parse format spec and emit formatted value
                             let fmt_spec = self.parse_format_spec(format.as_deref());
@@ -2781,8 +2772,8 @@ impl CodeGenerator {
                 // 2) Pop first 6 args into registers (arg0 -> rdi, arg1 -> rsi, ...)
                 // After the pushes above, the stack top is arg0, so popping in increasing i works.
                 let reg_count = args.len().min(param_regs.len());
-                for i in 0..reg_count {
-                    self.emit_indent(&format!("pop {}", param_regs[i]));
+                for reg in param_regs.iter().take(reg_count) {
+                    self.emit_indent(&format!("pop {}", reg));
                 }
 
                 // 3) At this point, any remaining args (7th+) are still on the stack.
@@ -2804,7 +2795,7 @@ impl CodeGenerator {
                 }
 
                 // 5) Call
-                let func_label = name.replace(' ', "_").replace('-', "_");
+                let func_label = name.replace(' ', "_");
                 self.emit_indent(&format!("call {}", func_label));
 
                 // 6) Clean up stack args + pad (caller cleanup in SysV)
@@ -2831,7 +2822,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
                 
                 // Allocate memory using mmap (heap allocation)
-                self.emit_indent(&format!("mov rdi, 0  ; addr = NULL"));
+                self.emit_indent("mov rdi, 0  ; addr = NULL");
                 self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
                 self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
                 self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
@@ -3088,31 +3079,31 @@ impl CodeGenerator {
                         // Timer properties
                         ObjectProperty::Duration => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("; Timer duration"));
+                            self.emit_indent("; Timer duration");
                             self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
                             self.emit_indent("TIMER_DURATION_SECONDS rax");
                         }
                         ObjectProperty::Elapsed => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("; Timer elapsed"));
+                            self.emit_indent("; Timer elapsed");
                             self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
                             self.emit_indent("TIMER_ELAPSED_SECONDS rax");
                         }
                         ObjectProperty::StartTime => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("; Timer start time"));
+                            self.emit_indent("; Timer start time");
                             self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
                             self.emit_indent("TIMER_START_TIME rax");
                         }
                         ObjectProperty::EndTime => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("; Timer end time"));
+                            self.emit_indent("; Timer end time");
                             self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
                             self.emit_indent("TIMER_END_TIME rax");
                         }
                         ObjectProperty::Running => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("; Timer running status"));
+                            self.emit_indent("; Timer running status");
                             self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
                             self.emit_indent("mov rax, [rax + TIMER_RUNNING]");
                         }
@@ -3841,21 +3832,17 @@ impl CodeGenerator {
                     Some(VarType::Integer)
                 }
             }
-            Expr::BinaryOp { left, op, right } => {
-                // For binary operations, infer based on operator and operand types
-                match op {
-                    BinaryOperator::Add | BinaryOperator::Subtract | 
-                    BinaryOperator::Multiply | BinaryOperator::Divide |
-                    BinaryOperator::Modulo => {
-                        // If either operand is float, result is float
-                        if self.is_float_expr(left) || self.is_float_expr(right) {
-                            Some(VarType::Float)
-                        } else {
-                            Some(VarType::Integer)
-                        }
+            Expr::BinaryOp { left, op, right } => match op {
+                BinaryOperator::Add | BinaryOperator::Subtract | 
+                BinaryOperator::Multiply | BinaryOperator::Divide |
+                BinaryOperator::Modulo => {
+                    if self.is_float_expr(left) || self.is_float_expr(right) {
+                        Some(VarType::Float)
+                    } else {
+                        Some(VarType::Integer)
                     }
-                    _ => Some(VarType::Integer), // Comparisons and logical ops result in integers
                 }
+                _ => Some(VarType::Integer),
             }
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
             Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
