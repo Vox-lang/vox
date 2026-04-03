@@ -2831,13 +2831,13 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
                 // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("list_mmap_ok");
                 self.emit_indent("cmp rax, -1");
-                self.emit_indent("jne .L_list_mmap_ok_0");
-                // On failure, exit(1)
+                self.emit_indent(&format!("jne {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
-                self.emit_indent(".L_list_mmap_ok_0:");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("push rax  ; save list pointer");
                 
                 // Store capacity
@@ -3261,6 +3261,14 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("arglist_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 // Initialize header
@@ -3315,6 +3323,14 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
+                // Check for mmap failure (MAP_FAILED == -1)
+                let mmap_ok = self.new_label("argraw_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1          ; exit code 1");
+                self.emit_indent("mov rax, 60         ; sys_exit");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
                 self.emit_indent("mov [r14], r13  ; capacity");
