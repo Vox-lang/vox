@@ -1,3 +1,4 @@
 Create a directory called "/tmp/vox_test_mkdir".
+Delete the directory "/tmp/vox_test_mkdir".
 On error print "mkdir failed", exit 1.
 Print "mkdir succeeded".
