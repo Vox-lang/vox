@@ -1985,7 +1985,59 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Statement::Mkdir { path } => {
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("MKDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("MKDIR rax");
+                    }
+                }
+            }
+
+            Statement::Chdir { path } => {
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("CHDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("CHDIR rax");
+                    }
+                }
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                // Generate target expression first
+                match target {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rdi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(target);
+                        self.emit_indent("mov rdi, rax");
+                    }
+                }
+                // Generate linkpath expression
+                match linkpath {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rsi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(linkpath);
+                        self.emit_indent("mov rsi, rax");
+                    }
+                }
+                self.emit_indent("SYMLINK");
+            }
+
             Statement::OnError { actions } => {
                 // Check if last operation had an error
                 let skip_label = self.new_label("skip_error");
@@ -2774,7 +2826,12 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.generate_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+            }
+
             Expr::Range { .. } => {}
 
             Expr::FunctionCall { name, args } => {
@@ -3718,7 +3775,14 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.generate_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", false_label));
+            }
+
             Expr::BinaryOp { left, op, right } => {
                 match op {
                     BinaryOperator::And => {

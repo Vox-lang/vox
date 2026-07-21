@@ -141,16 +141,21 @@ pub enum Expr {
         buffer: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Element access: element N of list
     ElementAccess {
         list: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Format string: "Hello {name}, you are {age} years old"
     FormatString {
         parts: Vec<FormatPart>,
+    },
+
+    // File availability check: path is available
+    FileAvailable {
+        path: Box<Expr>,
     },
 }
 
@@ -461,6 +466,20 @@ pub enum Statement {
     
     GetTime {
         into: String,
+    },
+
+    // Filesystem operations
+    Mkdir {
+        path: Expr,
+    },
+
+    Chdir {
+        path: Expr,
+    },
+
+    Symlink {
+        target: Expr,
+        linkpath: Expr,
     },
 }
 

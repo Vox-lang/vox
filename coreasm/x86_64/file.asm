@@ -10,6 +10,9 @@
 %define SYS_MUNMAP  11
 %define SYS_ACCESS  21
 %define SYS_UNLINK  87
+%define SYS_MKDIR   83
+%define SYS_CHDIR   80
+%define SYS_SYMLINK 88
 
 ; Open flags
 %define O_RDONLY    0
