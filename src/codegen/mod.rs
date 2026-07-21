@@ -1987,6 +1987,7 @@ impl CodeGenerator {
             }
 
             Statement::Mkdir { path } => {
+                self.uses_files = true;
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
@@ -2000,6 +2001,7 @@ impl CodeGenerator {
             }
 
             Statement::Chdir { path } => {
+                self.uses_files = true;
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
@@ -2013,6 +2015,7 @@ impl CodeGenerator {
             }
 
             Statement::Symlink { target, linkpath } => {
+                self.uses_files = true;
                 // Generate target expression first
                 match target {
                     Expr::StringLit(s) => {
@@ -2036,6 +2039,41 @@ impl CodeGenerator {
                     }
                 }
                 self.emit_indent("SYMLINK");
+            }
+
+            Statement::Mknod { path, is_char_device, major, minor } => {
+                self.uses_files = true;
+
+                // Path -> rdi
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("mov rdi, rax  ; path pointer");
+                    }
+                }
+                self.emit_indent("push rdi  ; save path pointer");
+
+                // Mode = S_IFCHR|S_IFBLK + 0666 permissions -> rsi
+                // S_IFCHR = 0o020000 = 8192, S_IFBLK = 0o060000 = 24576, 0666 = 438
+                let mode = if *is_char_device { 8192 + 438 } else { 24576 + 438 };
+
+                // dev = (major << 8) | minor -> rdx
+                self.generate_expr(major);
+                self.emit_indent("push rax  ; save major");
+                self.generate_expr(minor);
+                self.emit_indent("mov rcx, rax  ; minor");
+                self.emit_indent("pop rax  ; major");
+                self.emit_indent("shl rax, 8");
+                self.emit_indent("or rax, rcx");
+                self.emit_indent("mov rdx, rax  ; dev = (major << 8) | minor");
+
+                self.emit_indent(&format!("mov rsi, {}  ; mode", mode));
+                self.emit_indent("pop rdi  ; restore path pointer");
+                self.emit_indent("MKNOD");
             }
 
             Statement::OnError { actions } => {
@@ -2828,6 +2866,7 @@ impl CodeGenerator {
             }
 
             Expr::FileAvailable { path } => {
+                self.uses_files = true;
                 self.generate_expr(path);
                 self.emit_indent("FILE_AVAILABLE");
             }
@@ -3777,6 +3816,7 @@ impl CodeGenerator {
             }
 
             Expr::FileAvailable { path } => {
+                self.uses_files = true;
                 self.generate_expr(path);
                 self.emit_indent("FILE_AVAILABLE");
                 self.emit_indent("test rax, rax");

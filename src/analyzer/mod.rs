@@ -1632,6 +1632,29 @@ impl Analyzer {
                 self.analyze_expr(path);
                 self.deps.uses_io = true;
             }
+
+            Statement::Mkdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Chdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                self.analyze_expr(target);
+                self.analyze_expr(linkpath);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mknod { path, major, minor, .. } => {
+                self.analyze_expr(path);
+                self.analyze_expr(major);
+                self.analyze_expr(minor);
+                self.deps.uses_io = true;
+            }
             
             Statement::OnError { actions } => {
                 for action in actions {

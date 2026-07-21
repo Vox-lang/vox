@@ -810,7 +810,7 @@ impl Parser {
                     self.skip_noise();
                 }
 
-                // Check for "directory" or "symbolic"
+                // Check for "directory" or "symbolic" or "device"
                 if let Token::Identifier(ref id) = self.current() {
                     if id.eq_ignore_ascii_case("directory") {
                         self.pos = saved; // reset to parse with mkdir
@@ -818,6 +818,9 @@ impl Parser {
                     } else if id.eq_ignore_ascii_case("symbolic") {
                         self.pos = saved; // reset to parse with symlink
                         return self.parse_symlink();
+                    } else if id.eq_ignore_ascii_case("device") {
+                        self.pos = saved; // reset to parse with mknod
+                        return self.parse_mknod();
                     }
                 }
 
@@ -2970,8 +2973,15 @@ impl Parser {
         self.advance();
         self.skip_noise();
 
-        // Get target
-        let target = self.parse_primary()?;
+        // Get target as a simple path (string literal or identifier).
+        // NOTE: we deliberately don't call parse_primary() here - it treats
+        // "string" followed by 'to' as a function-call expression, which
+        // would swallow our 'to' keyword and the linkpath.
+        let target = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'from'")),
+        };
         self.skip_noise();
 
         // Expect "to"
@@ -2982,9 +2992,132 @@ impl Parser {
         self.skip_noise();
 
         // Get linkpath
-        let linkpath = self.parse_primary()?;
+        let linkpath = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'to'")),
+        };
 
         Ok(Statement::Symlink { target, linkpath })
+    }
+
+    fn parse_mknod(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Create a device node called <path> with type <"c"|"b"> major <n> minor <n>"
+        self.advance(); // consume 'create'
+        self.skip_noise();
+
+        // Skip optional "a"
+        if *self.current() == Token::A {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "device"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("device") {
+                return Err(self.err(&format!(
+                    "Expected 'device' after 'create a', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'device' after 'create a'"));
+        }
+        self.skip_noise();
+
+        // Expect "node"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("node") {
+                return Err(self.err(&format!(
+                    "Expected 'node' after 'device', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'node' after 'device'"));
+        }
+        self.skip_noise();
+
+        // Expect "called"
+        if !matches!(self.current(), Token::Called) {
+            return Err(self.err("Expected 'called' after 'device node'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get path
+        let path = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'called'")),
+        };
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with' after device node path"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "type"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("type") {
+                return Err(self.err(&format!("Expected 'type' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'type' after 'with'"));
+        }
+        self.skip_noise();
+
+        // Get device type: "c" or "b"
+        let is_char_device = match self.current().clone() {
+            Token::StringLiteral(s) => {
+                self.advance();
+                match s.as_str() {
+                    "c" => true,
+                    "b" => false,
+                    _ => return Err(self.err(&format!(
+                        "Invalid device type '{}' - expected \"c\" (character) or \"b\" (block)",
+                        s
+                    ))),
+                }
+            }
+            _ => return Err(self.err("Expected device type \"c\" or \"b\" after 'type'")),
+        };
+        self.skip_noise();
+
+        // Expect "major"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("major") {
+                return Err(self.err(&format!("Expected 'major' after device type, got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'major' after device type"));
+        }
+        self.skip_noise();
+
+        let major = self.parse_primary()?;
+        self.skip_noise();
+
+        // Expect "minor"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("minor") {
+                return Err(self.err(&format!("Expected 'minor' after major number, got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'minor' after major number"));
+        }
+        self.skip_noise();
+
+        let minor = self.parse_primary()?;
+
+        Ok(Statement::Mknod { path, is_char_device, major, minor })
     }
 
     fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {

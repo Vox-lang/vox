@@ -13,6 +13,7 @@
 %define SYS_MKDIR   83
 %define SYS_CHDIR   80
 %define SYS_SYMLINK 88
+%define SYS_MKNOD   133
 
 ; Open flags
 %define O_RDONLY    0
@@ -330,6 +331,146 @@
     mov rsi, F_OK                   ; mode = existence check
     syscall
     
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MKDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_MKDIR
+    mov rdi, %1                     ; pathname
+    mov rsi, 493                    ; mode 0755 (rwxr-xr-x)
+    syscall
+
+    test rax, rax
+    jns %%mkdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mkdir_done
+%%mkdir_ok:
+    mov qword [rel _last_error], 0
+%%mkdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Change current working directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro CHDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_CHDIR
+    mov rdi, %1                     ; pathname
+    syscall
+
+    test rax, rax
+    jns %%chdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%chdir_done
+%%chdir_ok:
+    mov qword [rel _last_error], 0
+%%chdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a symbolic link
+; Args: rdi = target path, rsi = linkpath (both pre-loaded by codegen)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro SYMLINK 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_SYMLINK
+    syscall
+
+    test rax, rax
+    jns %%symlink_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%symlink_done
+%%symlink_ok:
+    mov qword [rel _last_error], 0
+%%symlink_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a device node (character or block special file)
+; Args: rdi = path, rsi = mode (S_IFCHR/S_IFBLK | perms), rdx = dev (major<<8 | minor)
+; (all pre-loaded by codegen)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MKNOD 0
+    push rbx
+    push rcx
+
+    mov rax, SYS_MKNOD
+    syscall
+
+    test rax, rax
+    jns %%mknod_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mknod_done
+%%mknod_ok:
+    mov qword [rel _last_error], 0
+%%mknod_done:
+
+    pop rcx
+    pop rbx
+%endmacro
+
+; Check file/path availability (boolean semantics for Vox's "is available")
+; Input: rax = path pointer
+; Returns: rax = 1 if the path exists/is available, 0 otherwise. Does not touch _last_error.
+%macro FILE_AVAILABLE 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rdi, rax                    ; path pointer
+    mov rax, SYS_ACCESS
+    mov rsi, F_OK
+    syscall
+
+    test rax, rax
+    setz al                         ; 1 if access() returned 0 (available)
+    movzx rax, al
+
     pop rdi
     pop rsi
     pop rdx

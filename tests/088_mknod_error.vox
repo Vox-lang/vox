@@ -1,0 +1,3 @@
+Create a device node called "/tmp/vox_test_mknod_error" with type "c" major 1 minor 3.
+Create a device node called "/tmp/vox_test_mknod_error" with type "c" major 1 minor 3.
+On error print "mknod error detected as expected".

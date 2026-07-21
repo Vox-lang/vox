@@ -481,6 +481,14 @@ pub enum Statement {
         target: Expr,
         linkpath: Expr,
     },
+
+    // Create device node: mknod(path, mode, dev)
+    Mknod {
+        path: Expr,
+        is_char_device: bool,  // true for 'c' (character), false for 'b' (block)
+        major: Expr,
+        minor: Expr,
+    },
 }
 
 #[derive(Debug, Clone)]

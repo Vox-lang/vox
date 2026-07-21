@@ -24,3 +24,7 @@ target
 release.sh
 *.7z
 *.asm
+
+-e 
+# Compiled vox output binaries at repo root (from running the compiler on examples)
+/cat
