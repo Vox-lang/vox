@@ -1,0 +1,2 @@
+Create symbolic link from "/nonexistent_target_12345" to "/tmp/vox_test_bad_link".
+On error print "symlink error detected as expected".

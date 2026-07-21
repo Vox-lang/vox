@@ -1,0 +1,4 @@
+Create a directory called "/tmp/vox_test_symlink".
+Create symbolic link from "/tmp/vox_test_symlink" to "/tmp/vox_test_link".
+On error print "symlink failed", exit 1.
+Print "symlink succeeded".
