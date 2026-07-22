@@ -15,6 +15,7 @@
 %define SYS_CHDIR   80
 %define SYS_SYMLINK 88
 %define SYS_MKNOD   133
+%define SYS_MOUNT   165
 
 ; Open flags
 %define O_RDONLY    0
@@ -479,6 +480,32 @@
     mov qword [rel _last_error], 0
 %%mknod_done:
 
+    pop rcx
+    pop rbx
+%endmacro
+
+; Mount a filesystem
+; Args (pre-loaded by codegen): rdi = source, rsi = target, rdx = fstype
+; (or NULL), r10 = mountflags, r8 = data/options (or NULL)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MOUNT 0
+    push rbx
+    push rcx
+    push r9
+
+    mov rax, SYS_MOUNT
+    syscall
+
+    test rax, rax
+    jns %%mount_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mount_done
+%%mount_ok:
+    mov qword [rel _last_error], 0
+%%mount_done:
+
+    pop r9
     pop rcx
     pop rbx
 %endmacro

@@ -2915,8 +2915,81 @@ impl Parser {
     }
 
     fn parse_mount(&mut self) -> Result<Statement, Box<CompileError>> {
-        // TODO: full mount(2) grammar - source/target/fstype/options - coming next
-        Err(self.err("Mount statement not yet implemented"))
+        // "Mount <source> at <target> with type <fstype> [with options <options>]"
+        self.advance(); // consume 'mount'
+        self.skip_noise();
+
+        let source = self.parse_path_like_expr("after 'mount'")?;
+        self.skip_noise();
+
+        // Expect "at" (lexes as Token::On - 'at'/'on' are synonyms)
+        if !matches!(self.current(), Token::On) {
+            return Err(self.err(&format!("Expected 'at' after mount source, got {:?}", self.current())));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let target = self.parse_path_like_expr("after 'at'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with type' after mount target"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "type"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("type") {
+                return Err(self.err(&format!("Expected 'type' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'type' after 'with'"));
+        }
+        self.skip_noise();
+
+        let fstype = self.parse_path_like_expr("after 'type'")?;
+        self.skip_noise();
+
+        // Optional "with options <options>"
+        let mut options = None;
+        if matches!(self.current(), Token::With) {
+            self.advance();
+            self.skip_noise();
+
+            if let Token::Identifier(ref id) = self.current() {
+                if !id.eq_ignore_ascii_case("options") {
+                    return Err(self.err(&format!("Expected 'options' after 'with', got '{}'", id)));
+                }
+                self.advance();
+            } else {
+                return Err(self.err("Expected 'options' after 'with'"));
+            }
+            self.skip_noise();
+
+            options = Some(self.parse_path_like_expr("after 'options'")?);
+        }
+
+        Ok(Statement::Mount { source, target, fstype, options })
+    }
+
+    // Shared helper: parse a simple path-like expression - a string literal,
+    // a bare identifier, or "the <identifier>". Deliberately does NOT go
+    // through parse_primary(), which has function-call lookahead rules
+    // (e.g. "string" followed by 'to') that can swallow trailing keywords
+    // like 'at'/'to'/'with' that these filesystem statements rely on.
+    fn parse_path_like_expr(&mut self, context: &str) -> Result<Expr, Box<CompileError>> {
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+        match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Ok(Expr::StringLit(s)) }
+            Token::Identifier(n) => { self.advance(); Ok(Expr::Identifier(n)) }
+            _ => Err(self.err(&format!("Expected a path (string or variable) {}", context))),
+        }
     }
 
     // Filesystem operations parsing

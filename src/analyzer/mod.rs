@@ -1648,7 +1648,13 @@ impl Analyzer {
                 self.deps.uses_io = true;
             }
 
-            Statement::Mount { .. } => {
+            Statement::Mount { source, target, fstype, options } => {
+                self.analyze_expr(source);
+                self.analyze_expr(target);
+                self.analyze_expr(fstype);
+                if let Some(o) = options {
+                    self.analyze_expr(o);
+                }
                 self.deps.uses_io = true;
             }
 

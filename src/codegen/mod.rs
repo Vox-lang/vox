@@ -2028,8 +2028,104 @@ impl CodeGenerator {
                 }
             }
 
-            Statement::Mount { .. } => {
-                unreachable!("Mount codegen not yet implemented")
+            Statement::Mount { source, target, fstype, options } => {
+                self.uses_files = true;
+
+                // Detect the "move"/"bind" pseudo-mount pattern used for
+                // relocating already-mounted filesystems to a new root
+                // (fstype "none" + options "move"/"bind"): for these, the
+                // real mount(2) syscall wants a NULL filesystemtype and
+                // NULL data, with the operation encoded entirely in flags.
+                let is_none_fstype = matches!(fstype, Expr::StringLit(s) if s == "none");
+                let move_flag = matches!(options, Some(Expr::StringLit(s)) if s == "move");
+                let bind_flag = matches!(options, Some(Expr::StringLit(s)) if s == "bind");
+                let flags: i64 = if is_none_fstype && move_flag {
+                    8192 // MS_MOVE
+                } else if is_none_fstype && bind_flag {
+                    4096 // MS_BIND
+                } else {
+                    0
+                };
+                let suppress_fstype_and_data = is_none_fstype && (move_flag || bind_flag);
+
+                self.emit_indent("push r12");
+                self.emit_indent("push r13");
+                self.emit_indent("push r14");
+                self.emit_indent("push r15");
+
+                // source -> r12
+                match source {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea r12, [{}]  ; source", label));
+                    }
+                    _ => {
+                        self.generate_expr(source);
+                        self.emit_indent("mov r12, rax  ; source");
+                    }
+                }
+
+                // target -> r13
+                match target {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea r13, [{}]  ; target", label));
+                    }
+                    _ => {
+                        self.generate_expr(target);
+                        self.emit_indent("mov r13, rax  ; target");
+                    }
+                }
+
+                // fstype -> r14 (NULL for move/bind pseudo-mounts)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor r14, r14  ; fstype = NULL (move/bind)");
+                } else {
+                    match fstype {
+                        Expr::StringLit(s) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("lea r14, [{}]  ; fstype", label));
+                        }
+                        _ => {
+                            self.generate_expr(fstype);
+                            self.emit_indent("mov r14, rax  ; fstype");
+                        }
+                    }
+                }
+
+                // options/data -> r15 (NULL for move/bind pseudo-mounts, or if omitted)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor r15, r15  ; data = NULL (move/bind)");
+                } else {
+                    match options {
+                        None => self.emit_indent("xor r15, r15  ; data = NULL (no options given)"),
+                        Some(Expr::StringLit(s)) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("lea r15, [{}]  ; data (options)", label));
+                        }
+                        Some(other_expr) => {
+                            self.generate_expr(other_expr);
+                            self.emit_indent("mov r15, rax  ; data (options)");
+                        }
+                    }
+                }
+
+                // Now load the actual syscall argument registers.
+                // NOTE: raw `syscall` uses r10 for arg4, NOT rcx (rcx/r11
+                // get clobbered by the syscall instruction itself) -
+                // matches the convention already established by the
+                // existing MMAP macro in this file.
+                self.emit_indent("mov rdi, r12");
+                self.emit_indent("mov rsi, r13");
+                self.emit_indent("mov rdx, r14");
+                self.emit_indent(&format!("mov r10, {}  ; mount flags", flags));
+                self.emit_indent("mov r8, r15");
+                self.emit_indent("MOUNT");
+
+                self.emit_indent("pop r15");
+                self.emit_indent("pop r14");
+                self.emit_indent("pop r13");
+                self.emit_indent("pop r12");
             }
 
             Statement::Symlink { target, linkpath } => {
