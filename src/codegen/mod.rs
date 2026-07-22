@@ -1986,6 +1986,20 @@ impl CodeGenerator {
                 }
             }
 
+            Statement::Rmdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("RMDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("RMDIR rax");
+                    }
+                }
+            }
+
             Statement::Mkdir { path } => {
                 self.uses_files = true;
                 match path {
@@ -2012,6 +2026,10 @@ impl CodeGenerator {
                         self.emit_indent("CHDIR rax");
                     }
                 }
+            }
+
+            Statement::Mount { .. } => {
+                unreachable!("Mount codegen not yet implemented")
             }
 
             Statement::Symlink { target, linkpath } => {

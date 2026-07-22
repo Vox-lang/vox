@@ -11,6 +11,7 @@
 %define SYS_ACCESS  21
 %define SYS_UNLINK  87
 %define SYS_MKDIR   83
+%define SYS_RMDIR   84
 %define SYS_CHDIR   80
 %define SYS_SYMLINK 88
 %define SYS_MKNOD   133
@@ -361,6 +362,36 @@
 %%mkdir_ok:
     mov qword [rel _last_error], 0
 %%mkdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Remove a directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro RMDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_RMDIR
+    mov rdi, %1                     ; pathname
+    syscall
+
+    test rax, rax
+    jns %%rmdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%rmdir_done
+%%rmdir_ok:
+    mov qword [rel _last_error], 0
+%%rmdir_done:
 
     pop rdi
     pop rsi

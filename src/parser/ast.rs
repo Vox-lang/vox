@@ -421,6 +421,10 @@ pub enum Statement {
     FileDelete {
         path: Expr,
     },
+
+    Rmdir {
+        path: Expr,
+    },
     
     // Error handling - actions are comma-separated within the sentence
     OnError {
@@ -488,6 +492,13 @@ pub enum Statement {
         node_type: DeviceNodeType,
         major: Expr,
         minor: Expr,
+    },
+
+    Mount {
+        source: Expr,
+        target: Expr,
+        fstype: Expr,
+        options: Option<Expr>,
     },
 }
 

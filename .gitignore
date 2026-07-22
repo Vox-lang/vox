@@ -28,3 +28,4 @@ release.sh
 -e 
 # Compiled vox output binaries at repo root (from running the compiler on examples)
 /cat
+/rmdir_check

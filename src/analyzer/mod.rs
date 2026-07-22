@@ -1633,6 +1633,11 @@ impl Analyzer {
                 self.deps.uses_io = true;
             }
 
+            Statement::Rmdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
             Statement::Mkdir { path } => {
                 self.analyze_expr(path);
                 self.deps.uses_io = true;
@@ -1640,6 +1645,10 @@ impl Analyzer {
 
             Statement::Chdir { path } => {
                 self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mount { .. } => {
                 self.deps.uses_io = true;
             }
 

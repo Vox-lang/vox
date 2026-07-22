@@ -3,6 +3,10 @@
 (NOT auto-run in CI - there's deliberately no .expected file, so test.sh skips it.)
 (Run manually with: sudo ./target/release/vox tests/manual_mknod_device.vox --run)
 
+Delete the file "/tmp/vox_test_mknod_device".
+
 Create a device node called "/tmp/vox_test_mknod_device" with type "c" major 1 minor 3.
 On error print "mknod failed - are you root?", exit 1.
 Print "mknod succeeded".
+
+Delete the file "/tmp/vox_test_mknod_device".

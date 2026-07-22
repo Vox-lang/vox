@@ -848,7 +848,27 @@ impl Parser {
             Token::Read => self.parse_file_read(),
             Token::Write => self.parse_file_write(),
             Token::Close => self.parse_file_close(),
-            Token::Delete => self.parse_file_delete(),
+            Token::Delete => {
+                // Disambiguate: "Delete/Remove the file <path>" vs "Delete/Remove the directory <path>"
+                let saved = self.pos;
+                self.advance(); // consume 'delete'/'remove'
+                self.skip_noise();
+
+                if *self.current() == Token::The {
+                    self.advance();
+                    self.skip_noise();
+                }
+
+                if let Token::Identifier(ref id) = self.current() {
+                    if id.eq_ignore_ascii_case("directory") {
+                        self.pos = saved;
+                        return self.parse_rmdir();
+                    }
+                }
+
+                self.pos = saved;
+                self.parse_file_delete()
+            }
             Token::Seek => self.parse_file_seek(),
             Token::On => self.parse_on_error(),
             Token::Auto => self.parse_auto_error(),
@@ -867,6 +887,7 @@ impl Parser {
             Token::Get => self.parse_get(),
             Token::Identifier(ref s) if s == "start" => self.parse_timer_start(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
             Token::Identifier(_) => self.parse_identifier_statement(),
             Token::StringLiteral(_) => self.parse_function_call_statement(),
             _ => Err(self.err_expected("a statement", self.current())),
@@ -2853,6 +2874,49 @@ impl Parser {
         let path = self.parse_primary()?;
 
         Ok(Statement::FileDelete { path })
+    }
+
+    fn parse_rmdir(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Delete/Remove the directory <path>"
+        self.advance(); // consume 'delete'/'remove'
+        self.skip_noise();
+
+        // Skip optional "the"
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "directory"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("directory") {
+                return Err(self.err(&format!("Expected 'directory' after 'the', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'directory' after 'the'"));
+        }
+        self.skip_noise();
+
+        // Skip optional "called"
+        if matches!(self.current(), Token::Called) {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Get path
+        let path = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'directory'")),
+        };
+
+        Ok(Statement::Rmdir { path })
+    }
+
+    fn parse_mount(&mut self) -> Result<Statement, Box<CompileError>> {
+        // TODO: full mount(2) grammar - source/target/fstype/options - coming next
+        Err(self.err("Mount statement not yet implemented"))
     }
 
     // Filesystem operations parsing
