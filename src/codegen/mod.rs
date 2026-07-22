@@ -2041,7 +2041,7 @@ impl CodeGenerator {
                 self.emit_indent("SYMLINK");
             }
 
-            Statement::Mknod { path, is_char_device, major, minor } => {
+            Statement::Mknod { path, node_type, major, minor } => {
                 self.uses_files = true;
 
                 // Path -> rdi
@@ -2057,9 +2057,14 @@ impl CodeGenerator {
                 }
                 self.emit_indent("push rdi  ; save path pointer");
 
-                // Mode = S_IFCHR|S_IFBLK + 0666 permissions -> rsi
-                // S_IFCHR = 0o020000 = 8192, S_IFBLK = 0o060000 = 24576, 0666 = 438
-                let mode = if *is_char_device { 8192 + 438 } else { 24576 + 438 };
+                // Mode = S_IFCHR|S_IFBLK|S_IFIFO + 0666 permissions -> rsi
+                // S_IFCHR = 0o020000 = 8192, S_IFBLK = 0o060000 = 24576,
+                // S_IFIFO = 0o010000 = 4096, 0666 = 438
+                let mode = match node_type {
+                    DeviceNodeType::Character => 8192 + 438,
+                    DeviceNodeType::Block => 24576 + 438,
+                    DeviceNodeType::Fifo => 4096 + 438,
+                };
 
                 // dev = (major << 8) | minor -> rdx
                 self.generate_expr(major);

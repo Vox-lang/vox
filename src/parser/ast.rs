@@ -485,10 +485,17 @@ pub enum Statement {
     // Create device node: mknod(path, mode, dev)
     Mknod {
         path: Expr,
-        is_char_device: bool,  // true for 'c' (character), false for 'b' (block)
+        node_type: DeviceNodeType,
         major: Expr,
         minor: Expr,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceNodeType {
+    Character, // 'c' - requires CAP_MKNOD/root on real hardware
+    Block,     // 'b' - requires CAP_MKNOD/root on real hardware
+    Fifo,      // 'p' - named pipe, no special privilege required
 }
 
 #[derive(Debug, Clone)]

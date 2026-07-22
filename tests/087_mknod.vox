@@ -1,3 +1,3 @@
-Create a device node called "/tmp/vox_test_mknod_null" with type "c" major 1 minor 3.
+Create a device node called "/tmp/vox_test_mknod_fifo" with type "p" major 0 minor 0.
 On error print "mknod failed", exit 1.
 Print "mknod succeeded".

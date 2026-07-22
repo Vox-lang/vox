@@ -1,0 +1,8 @@
+(This test creates a REAL character device node, matching /dev/null's major/minor.)
+(mknod for character/block devices requires root or CAP_MKNOD, so this is)
+(NOT auto-run in CI - there's deliberately no .expected file, so test.sh skips it.)
+(Run manually with: sudo ./target/release/vox tests/manual_mknod_device.vox --run)
+
+Create a device node called "/tmp/vox_test_mknod_device" with type "c" major 1 minor 3.
+On error print "mknod failed - are you root?", exit 1.
+Print "mknod succeeded".

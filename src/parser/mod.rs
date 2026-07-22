@@ -3074,19 +3074,20 @@ impl Parser {
         self.skip_noise();
 
         // Get device type: "c" or "b"
-        let is_char_device = match self.current().clone() {
+        let node_type = match self.current().clone() {
             Token::StringLiteral(s) => {
                 self.advance();
                 match s.as_str() {
-                    "c" => true,
-                    "b" => false,
+                    "c" => DeviceNodeType::Character,
+                    "b" => DeviceNodeType::Block,
+                    "p" => DeviceNodeType::Fifo,
                     _ => return Err(self.err(&format!(
-                        "Invalid device type '{}' - expected \"c\" (character) or \"b\" (block)",
+                        "Invalid device type '{}' - expected \"c\" (character), \"b\" (block), or \"p\" (FIFO)",
                         s
                     ))),
                 }
             }
-            _ => return Err(self.err("Expected device type \"c\" or \"b\" after 'type'")),
+            _ => return Err(self.err("Expected device type \"c\", \"b\", or \"p\" after 'type'")),
         };
         self.skip_noise();
 
@@ -3117,7 +3118,7 @@ impl Parser {
 
         let minor = self.parse_primary()?;
 
-        Ok(Statement::Mknod { path, is_char_device, major, minor })
+        Ok(Statement::Mknod { path, node_type, major, minor })
     }
 
     fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {
