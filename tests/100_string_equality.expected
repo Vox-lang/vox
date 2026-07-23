@@ -1,0 +1,4 @@
+text var equals literal: MATCH
+text var not-equal literal: correctly differs
+buffer equals literal: MATCH
+NULL-safe: absent argument correctly not-equal

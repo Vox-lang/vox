@@ -27,6 +27,11 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    // Set when codegen itself emits a call to _str_eq (string/buffer
+    // equality comparisons). Distinct from program.uses_strings, which the
+    // analyzer computes from string literals/format strings and may miss
+    // a pure variable-vs-variable comparison with no literal operand.
+    uses_strings: bool,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -100,6 +105,7 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            uses_strings: false,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -722,7 +728,7 @@ impl CodeGenerator {
             if program.uses_heap {
                 result.push_str(&format!("%include \"coreasm/{}/heap.asm\"\n", self.target_arch));
             }
-            if program.uses_strings {
+            if program.uses_strings || self.uses_strings {
                 result.push_str(&format!("%include \"coreasm/{}/string.asm\"\n", self.target_arch));
             }
             if program.uses_args {
@@ -2650,16 +2656,32 @@ impl CodeGenerator {
                                 self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                                 continue;
                             }
-                            
+
+                            // Buffer variables hold their struct pointer
+                            // (capacity/length/flags header first) - adjust
+                            // to the data area, same as _buffer_data. Without
+                            // this, printing prints starting at the header:
+                            // if capacity's low byte happens to be 0 (true
+                            // for any capacity that's a multiple of 256,
+                            // e.g. the 1024/4096 defaults), PRINT_CSTR hits
+                            // that as an immediate NUL and prints nothing.
+                            if var_type == Some(VarType::Buffer) {
+                                self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                            }
+
                             // Parse format spec and emit formatted value
                             let fmt_spec = self.parse_format_spec(format.as_deref());
                             self.emit_formatted_value(var_type, fmt_spec);
                         }
                         FormatPart::Expression { expr, format } => {
-                            // Generate code for the expression, result will be in rax
-                            self.generate_expr(expr);
+                            // Generate code for the expression, result will be in rax.
+                            // generate_cstr_expr applies the buffer data-area
+                            // adjustment (+24) when the expression is a
+                            // buffer - see the matching comment on the
+                            // Variable arm above for why that's needed.
+                            self.generate_cstr_expr(expr);
                             self.emit_indent("mov rdi, rax");
-                            
+
                             // Determine the type of the expression for formatting
                             let expr_type = self.infer_expr_type(expr);
                             
@@ -2830,6 +2852,17 @@ impl CodeGenerator {
         }
     }
 
+    /// True when comparing this expression with `==`/`!=` needs byte-content
+    /// comparison (_str_eq) rather than a raw pointer `cmp`. Text variables,
+    /// string literals, and buffers all qualify - two equal-content strings
+    /// are essentially never the same address (add_string mints a fresh
+    /// label per literal occurrence with no deduplication), so pointer
+    /// comparison silently fails for the overwhelmingly common case of
+    /// `some_variable is "literal"`.
+    fn is_stringy_expr(&self, expr: &Expr) -> bool {
+        matches!(self.infer_expr_type(expr), Some(VarType::String) | Some(VarType::Buffer))
+    }
+
     fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -2968,6 +3001,21 @@ impl CodeGenerator {
                                      BinaryOperator::And | BinaryOperator::Or) {
                         self.emit_indent("XMM0_TO_RAX");
                     }
+                } else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && (self.is_stringy_expr(left) || self.is_stringy_expr(right))
+                {
+                    // Content comparison via _str_eq, not a raw pointer cmp -
+                    // see the matching case in generate_condition() for why.
+                    self.uses_strings = true;
+                    self.generate_cstr_expr(right);
+                    self.emit_indent("push rax  ; park right operand");
+                    self.generate_cstr_expr(left);
+                    self.emit_indent("mov rdi, rax  ; left operand");
+                    self.emit_indent("pop rsi  ; right operand");
+                    self.emit_indent("call _str_eq");
+                    if matches!(op, BinaryOperator::NotEqual) {
+                        self.emit_indent("xor rax, 1  ; _str_eq gives 1=equal; NotEqual wants the opposite");
+                    }
                 } else {
                     // Integer operations
                     self.uses_ints = true;
@@ -2975,7 +3023,7 @@ impl CodeGenerator {
                     self.emit_indent("push rax");
                     self.generate_expr(left);
                     self.emit_indent("pop rbx");
-                    
+
                     match op {
                         BinaryOperator::Add => {
                             self.emit_indent("INT_ADD");
@@ -4086,11 +4134,31 @@ impl CodeGenerator {
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
                     }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
+                    {
+                        // Content comparison, not pointer comparison: two
+                        // equal-content strings are essentially never at the
+                        // same address (string literals get a fresh label
+                        // per occurrence), so `cmp` here would silently
+                        // compare addresses and almost always report "not
+                        // equal" even when the text matches exactly.
+                        self.uses_strings = true;
+                        self.generate_cstr_expr(right);
+                        self.emit_indent("push rax  ; park right operand");
+                        self.generate_cstr_expr(left);
+                        self.emit_indent("mov rdi, rax  ; left operand");
+                        self.emit_indent("pop rsi  ; right operand");
+                        self.emit_indent("call _str_eq");
+                        self.emit_indent("test rax, rax");
+                        let jmp = if matches!(op, BinaryOperator::Equal) { "jz" } else { "jnz" };
+                        self.emit_indent(&format!("{} {}  ; _str_eq: 1 = equal", jmp, false_label));
+                    }
                     BinaryOperator::Equal | BinaryOperator::NotEqual |
                     BinaryOperator::Greater | BinaryOperator::Less |
                     BinaryOperator::GreaterEqual | BinaryOperator::LessEqual => {
                         let is_float = self.is_float_expr(left) || self.is_float_expr(right);
-                        
+
                         if is_float {
                             // Float comparison using SSE2
                             self.generate_expr(right);
@@ -4100,7 +4168,7 @@ impl CodeGenerator {
                             self.emit_indent("pop rax");
                             self.emit_indent("movq xmm1, rax");       // right in xmm1
                             self.emit_indent("ucomisd xmm0, xmm1");
-                            
+
                             let jmp = match op {
                                 BinaryOperator::Equal => "jne",
                                 BinaryOperator::NotEqual => "je",
