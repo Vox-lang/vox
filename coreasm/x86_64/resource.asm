@@ -611,9 +611,9 @@ _alloc_buffer:
     xor r9, r9              ; offset = 0
     syscall
     
-    ; Check for error
-    cmp rax, -1
-    je .failed
+    ; Check for error (raw mmap returns -errno in [-4095,-1])
+    cmp rax, -4096
+    ja .failed
     
     ; Initialize buffer header (dynamic buffer)
     mov qword [rax + BUF_CAPACITY], INITIAL_BUF_CAP
@@ -674,9 +674,9 @@ _alloc_buffer_sized:
     xor r9, r9              ; offset = 0
     syscall
     
-    ; Check for error
-    cmp rax, -1
-    je .sized_failed
+    ; Check for error (raw mmap returns -errno in [-4095,-1])
+    cmp rax, -4096
+    ja .sized_failed
     
     ; Initialize buffer header (fixed size buffer)
     mov [rax + BUF_CAPACITY], r12
@@ -1614,14 +1614,7 @@ _realloc_buffer:
     
     lea rsi, [r12 + BUF_DATA]   ; source: old buffer data
     lea rdi, [rbx + BUF_DATA]   ; dest: new buffer data
-    ; Copy rcx bytes
-.copy_loop:
-    mov al, [rsi]
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec rcx
-    jnz .copy_loop
+    rep movsb                   ; copy rcx bytes
     
 .skip_copy:
     ; Set new buffer length to copied amount

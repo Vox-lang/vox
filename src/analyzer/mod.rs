@@ -1658,6 +1658,15 @@ impl Analyzer {
                 self.deps.uses_io = true;
             }
 
+            Statement::Unmount { target, .. } => {
+                self.analyze_expr(target);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Shutdown | Statement::Reboot | Statement::Halt => {
+                self.deps.uses_io = true;
+            }
+
             Statement::PivotRoot { new_root, put_old } => {
                 self.analyze_expr(new_root);
                 self.analyze_expr(put_old);

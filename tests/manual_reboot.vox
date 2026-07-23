@@ -1,0 +1,16 @@
+(reboot(2) requires CAP_SYS_BOOT/root AND actually reboots the machine,)
+(so this is NOT auto-run in CI - deliberately no .expected file.)
+(
+ SAFETY: the real power-off only fires when you pass the argument
+ CONFIRM. Without it, the test exercises the error path only (as a
+ normal user reboot(2) returns EPERM, which On error catches), so it
+ is safe to run by accident:
+
+   ./target/release/vox tests/manual_reboot.vox --run          # safe, no reboot
+   sudo ./target/release/vox tests/manual_reboot.vox --run     # safe, EPERM path
+   sudo ./manual_reboot CONFIRM                                # ACTUALLY powers off
+)
+
+If arguments's first is "CONFIRM" then, print "CONFIRM given - powering off now via reboot(2)...", shutdown, print "Shutdown returned - not privileged (need root).". Otherwise, print "No CONFIRM argument - exercising error path only.", shutdown, print "reached: machine was not powered off.".
+
+On error print "Shutdown set the error flag as expected (EPERM without root).".

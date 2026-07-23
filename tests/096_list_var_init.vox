@@ -1,0 +1,18 @@
+(Regression test: lists declared from another variable or with no
+ initializer. Previously `a list called "b" is the a.` left "b" untyped,
+ so "b's length" was misrouted to the file-size fallback and the build
+ failed with an undefined _file_size symbol; a bare list declaration
+ left a null pointer that the first append dereferenced.)
+
+a list called "origin" is [10, 20, 30].
+a list called "mirror" is the origin.
+
+Print "origin len: {origin's length}".
+Print "mirror len: {mirror's length}".
+Print element 2 of mirror.
+
+a list called "bare".
+append 7 to bare.
+append 8 to bare.
+Print "bare len: {bare's length}".
+Print bare's last.

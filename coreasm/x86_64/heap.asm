@@ -30,8 +30,8 @@ section .text
     mov r9, 0
     syscall
     
-    cmp rax, -1
-    je %%alloc_failed
+    cmp rax, -4096          ; raw mmap returns -errno in [-4095,-1]
+    ja %%alloc_failed
     
     push rax
     mov rcx, [alloc_count]

@@ -1,0 +1,20 @@
+(Regression test: list data must survive multiple reallocations intact.
+ Growing to 10000 elements crosses the doubling boundary many times
+ (8 -> 16 -> 32 -> ... -> 16384); the sum verifies every element was
+ copied correctly on every realloc.)
+
+a list called "items" is [].
+a number called "i" is 1.
+While i is less than or equal to 10000, append i to items, increment i.
+
+a number called "total" is 0.
+a number called "j" is 1.
+While j is less than or equal to items's length,
+  a number called "item" is element j of items,
+  the total is the total add item,
+  increment j.
+
+Print "length: {items's length}".
+Print "sum: {total}".
+Print "first: {items's first}".
+Print "last: {items's last}".

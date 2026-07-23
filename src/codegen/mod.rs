@@ -830,6 +830,7 @@ impl CodeGenerator {
                         Type::Float => VarType::Float,
                         Type::Boolean => VarType::Boolean,
                         Type::Buffer => VarType::Buffer,
+                        Type::List(_) => VarType::List,
                         _ => VarType::Unknown,
                     };
                     self.variable_types.insert(name.clone(), vt);
@@ -861,13 +862,33 @@ impl CodeGenerator {
                         self.list_element_types.insert(name.clone(), VarType::String);
                     }
                     // Argument/environment expressions return string pointers
-                    else if matches!(val, 
-                        Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst | 
+                    else if matches!(val,
+                        Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst |
                         Expr::ArgumentSecond | Expr::ArgumentLast |
                         Expr::EnvironmentVariable { .. } | Expr::EnvironmentVariableAt { .. } |
                         Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
                     ) {
                         self.variable_types.insert(name.clone(), VarType::String);
+                    }
+                    // Initializing from another variable: inherit its type
+                    // (and element type, for lists) unless the declaration
+                    // already pinned one. Without this, `a list called "b"
+                    // is the a.` left "b" untyped and property access
+                    // misrouted to the file fallback (_file_size).
+                    else if var_type.is_none() || matches!(var_type, Some(Type::List(_))) {
+                        let src_name = match val {
+                            Expr::Identifier(src) => Some(src),
+                            Expr::StringLit(src) if self.variables.contains_key(src) => Some(src),
+                            _ => None,
+                        };
+                        if let Some(src) = src_name {
+                            if let Some(vt) = self.variable_types.get(src).cloned() {
+                                self.variable_types.insert(name.clone(), vt);
+                            }
+                            if let Some(et) = self.list_element_types.get(src).cloned() {
+                                self.list_element_types.insert(name.clone(), et);
+                            }
+                        }
                     }
                     
                     // Special handling for buffer initialization/assignment with text/format/buffer source
@@ -909,6 +930,12 @@ impl CodeGenerator {
                                 self.emit_indent("call _alloc_buffer");
                                 self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                                 self.uses_buffers = true;
+                            }
+                            Type::List(_) => {
+                                // Allocate an empty list; a null pointer here
+                                // would make the first append dereference 0.
+                                self.generate_expr(&Expr::ListLit { elements: vec![] });
+                                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                             }
                             _ => {
                                 // Initialize to 0/null
@@ -1713,7 +1740,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("lea rdi, [{}]", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("mov rdi, rax  ; path pointer");
                     }
                 }
@@ -1980,7 +2007,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("FILE_DELETE {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("FILE_DELETE rax");
                     }
                 }
@@ -1994,7 +2021,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("RMDIR {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("RMDIR rax");
                     }
                 }
@@ -2008,7 +2035,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("MKDIR {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("MKDIR rax");
                     }
                 }
@@ -2022,7 +2049,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("CHDIR {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("CHDIR rax");
                     }
                 }
@@ -2048,121 +2075,110 @@ impl CodeGenerator {
                 };
                 let suppress_fstype_and_data = is_none_fstype && (move_flag || bind_flag);
 
-                self.emit_indent("push r12");
-                self.emit_indent("push r13");
-                self.emit_indent("push r14");
-                self.emit_indent("push r15");
+                // Park each evaluated argument on the stack so later
+                // expressions (function calls, format strings) cannot
+                // clobber earlier results, then pop into the syscall
+                // registers in reverse order.
+                self.generate_cstr_expr(source);
+                self.emit_indent("push rax  ; park source");
 
-                // source -> r12
-                match source {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("lea r12, [{}]  ; source", label));
-                    }
-                    _ => {
-                        self.generate_expr(source);
-                        self.emit_indent("mov r12, rax  ; source");
-                    }
-                }
+                self.generate_cstr_expr(target);
+                self.emit_indent("push rax  ; park target");
 
-                // target -> r13
-                match target {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("lea r13, [{}]  ; target", label));
-                    }
-                    _ => {
-                        self.generate_expr(target);
-                        self.emit_indent("mov r13, rax  ; target");
-                    }
-                }
-
-                // fstype -> r14 (NULL for move/bind pseudo-mounts)
+                // fstype (NULL for move/bind pseudo-mounts)
                 if suppress_fstype_and_data {
-                    self.emit_indent("xor r14, r14  ; fstype = NULL (move/bind)");
+                    self.emit_indent("xor rax, rax  ; fstype = NULL (move/bind)");
                 } else {
-                    match fstype {
-                        Expr::StringLit(s) => {
-                            let label = self.add_string(s);
-                            self.emit_indent(&format!("lea r14, [{}]  ; fstype", label));
-                        }
-                        _ => {
-                            self.generate_expr(fstype);
-                            self.emit_indent("mov r14, rax  ; fstype");
-                        }
-                    }
+                    self.generate_cstr_expr(fstype);
                 }
+                self.emit_indent("push rax  ; park fstype");
 
-                // options/data -> r15 (NULL for move/bind pseudo-mounts, or if omitted)
+                // options/data (NULL for move/bind pseudo-mounts, or if omitted)
                 if suppress_fstype_and_data {
-                    self.emit_indent("xor r15, r15  ; data = NULL (move/bind)");
+                    self.emit_indent("xor rax, rax  ; data = NULL (move/bind)");
                 } else {
                     match options {
-                        None => self.emit_indent("xor r15, r15  ; data = NULL (no options given)"),
-                        Some(Expr::StringLit(s)) => {
-                            let label = self.add_string(s);
-                            self.emit_indent(&format!("lea r15, [{}]  ; data (options)", label));
-                        }
-                        Some(other_expr) => {
-                            self.generate_expr(other_expr);
-                            self.emit_indent("mov r15, rax  ; data (options)");
-                        }
+                        None => self.emit_indent("xor rax, rax  ; data = NULL (no options given)"),
+                        Some(expr) => self.generate_cstr_expr(expr),
                     }
                 }
+                self.emit_indent("push rax  ; park data (options)");
 
-                // Now load the actual syscall argument registers.
                 // NOTE: raw `syscall` uses r10 for arg4, NOT rcx (rcx/r11
                 // get clobbered by the syscall instruction itself) -
                 // matches the convention already established by the
                 // existing MMAP macro in this file.
-                self.emit_indent("mov rdi, r12");
-                self.emit_indent("mov rsi, r13");
-                self.emit_indent("mov rdx, r14");
+                self.emit_indent("pop r8   ; data (options)");
+                self.emit_indent("pop rdx  ; fstype");
+                self.emit_indent("pop rsi  ; target");
+                self.emit_indent("pop rdi  ; source");
                 self.emit_indent(&format!("mov r10, {}  ; mount flags", flags));
-                self.emit_indent("mov r8, r15");
                 self.emit_indent("MOUNT");
+            }
 
-                self.emit_indent("pop r15");
-                self.emit_indent("pop r14");
-                self.emit_indent("pop r13");
-                self.emit_indent("pop r12");
+            Statement::Shutdown => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x4321FEDC  ; LINUX_REBOOT_CMD_POWER_OFF");
+            }
+
+            Statement::Reboot => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x01234567  ; LINUX_REBOOT_CMD_RESTART");
+            }
+
+            Statement::Halt => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0xCDEF0123  ; LINUX_REBOOT_CMD_HALT");
+            }
+
+            Statement::Unmount { target, lazy } => {
+                self.uses_files = true;
+                self.generate_cstr_expr(target);
+                self.emit_indent("mov rdi, rax  ; mount target");
+                let flags = if *lazy { 2 } else { 0 }; // MNT_DETACH = 2
+                self.emit_indent(&format!(
+                    "mov rsi, {}  ; flags{}",
+                    flags,
+                    if *lazy { " (MNT_DETACH)" } else { "" }
+                ));
+                self.emit_indent("UMOUNT");
             }
 
             Statement::PivotRoot { new_root, put_old } => {
                 self.uses_files = true;
-                // Generate new_root expression first
-                match new_root {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("mov rdi, {}", label));
-                    }
-                    _ => {
-                        self.generate_expr(new_root);
-                        self.emit_indent("mov rdi, rax");
-                    }
-                }
-                // Generate put_old expression
-                match put_old {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("mov rsi, {}", label));
-                    }
-                    _ => {
-                        self.generate_expr(put_old);
-                        self.emit_indent("mov rsi, rax");
-                    }
-                }
+                self.emit_syscall_args(&[(new_root, "rdi"), (put_old, "rsi")]);
                 self.emit_indent("PIVOT_ROOT");
             }
 
             Statement::Execute { path, args } => {
                 self.uses_files = true;
 
+                // A list variable (or any non-literal list expression):
+                // argv is built at runtime by _list_to_argv, which sizes the
+                // allocation and bounds the copy from a single read of the
+                // list's length - the array cannot be overrun.
                 let elements: &[Expr] = match args {
                     Expr::ListLit { elements } => elements,
-                    _ => unreachable!(
-                        "Execute's args must be a ListLit - enforced in parse_execute()"
-                    ),
+                    other => {
+                        self.uses_lists = true;
+                        self.generate_expr(other);
+                        self.emit_indent("push rax  ; park list pointer");
+                        match path {
+                            Expr::StringLit(s) => {
+                                let label = self.add_string(s);
+                                self.emit_indent(&format!("lea rax, [{}]", label));
+                            }
+                            _ => self.generate_cstr_expr(path),
+                        }
+                        self.emit_indent("mov rsi, rax  ; path (becomes argv[0])");
+                        self.emit_indent("pop rdi  ; list pointer");
+                        self.emit_indent("call _list_to_argv");
+                        self.emit_indent("mov rsi, rax  ; argv array pointer");
+                        self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                        self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                        self.emit_indent("EXECVE");
+                        return;
+                    }
                 };
 
                 let slot_count = elements.len() + 2; // path + args + NULL terminator
@@ -2181,8 +2197,8 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
                 let mmap_ok = self.new_label("execve_argv_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1");
                 self.emit_indent("mov rax, 60");
                 self.emit_indent("syscall");
@@ -2196,13 +2212,12 @@ impl CodeGenerator {
                         self.emit_indent(&format!("mov rbx, {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("mov rbx, rax");
                     }
                 }
-                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent("mov rax, [rsp]  ; peek argv array pointer");
                 self.emit_indent("mov [rax], rbx  ; argv[0] = path");
-                self.emit_indent("push rax");
 
                 // Slots 1..n: the rest of the arguments
                 for (i, elem) in elements.iter().enumerate() {
@@ -2212,23 +2227,20 @@ impl CodeGenerator {
                             self.emit_indent(&format!("mov rbx, {}", label));
                         }
                         _ => {
-                            self.generate_expr(elem);
+                            self.generate_cstr_expr(elem);
                             self.emit_indent("mov rbx, rax");
                         }
                     }
-                    self.emit_indent("pop rax  ; argv array pointer");
+                    self.emit_indent("mov rax, [rsp]  ; peek argv array pointer");
                     self.emit_indent(&format!("mov [rax+{}], rbx  ; argv[{}]", (i + 1) * 8, i + 1));
-                    self.emit_indent("push rax");
                 }
 
                 // Final slot: NULL terminator
                 self.emit_indent("pop rax  ; argv array pointer");
                 self.emit_indent(&format!("mov qword [rax+{}], 0  ; argv NULL terminator", (elements.len() + 1) * 8));
-                self.emit_indent("push rax");
 
-                // path -> rdi (argv[0], re-evaluated/reloaded, not re-generated)
-                self.emit_indent("pop rdi  ; argv array pointer -> becomes rsi shortly");
-                self.emit_indent("mov rsi, rdi  ; argv array pointer");
+                // path -> rdi (argv[0], reloaded from the array, not re-generated)
+                self.emit_indent("mov rsi, rax  ; argv array pointer");
                 self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
                 self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
                 self.emit_indent("EXECVE");
@@ -2236,28 +2248,7 @@ impl CodeGenerator {
 
             Statement::Symlink { target, linkpath } => {
                 self.uses_files = true;
-                // Generate target expression first
-                match target {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("mov rdi, {}", label));
-                    }
-                    _ => {
-                        self.generate_expr(target);
-                        self.emit_indent("mov rdi, rax");
-                    }
-                }
-                // Generate linkpath expression
-                match linkpath {
-                    Expr::StringLit(s) => {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("mov rsi, {}", label));
-                    }
-                    _ => {
-                        self.generate_expr(linkpath);
-                        self.emit_indent("mov rsi, rax");
-                    }
-                }
+                self.emit_syscall_args(&[(target, "rdi"), (linkpath, "rsi")]);
                 self.emit_indent("SYMLINK");
             }
 
@@ -2271,7 +2262,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("lea rdi, [{}]", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("mov rdi, rax  ; path pointer");
                     }
                 }
@@ -2806,6 +2797,39 @@ impl CodeGenerator {
         }
     }
     
+    /// Evaluate a sequence of syscall argument expressions safely.
+    ///
+    /// Each expression's result (in rax) is parked on the stack before the
+    /// next expression is generated, then everything is popped into the
+    /// target registers in reverse order. Loading argument registers
+    /// directly between generate_expr calls is unsound: a later expression
+    /// containing a function call, format string, or buffer operation can
+    /// clobber any register already loaded (user functions only preserve
+    /// rbp, and syscalls clobber rcx/r11).
+    fn emit_syscall_args(&mut self, args: &[(&Expr, &'static str)]) {
+        for (expr, _) in args {
+            self.generate_cstr_expr(expr);
+            self.emit_indent("push rax  ; park syscall arg");
+        }
+        for (_, reg) in args.iter().rev() {
+            self.emit_indent(&format!("pop {}", reg));
+        }
+    }
+
+    /// Evaluate an expression that will be handed to the kernel as a
+    /// C-string (path, mount option, execve argument). Buffer variables
+    /// evaluate to their struct pointer (capacity/length/flags header
+    /// first), so adjust to the data area - the runtime maintains a
+    /// trailing NUL at data[length], making buffer contents directly
+    /// usable as a C string. Text variables and string literals already
+    /// point at NUL-terminated bytes.
+    fn generate_cstr_expr(&mut self, expr: &Expr) {
+        self.generate_expr(expr);
+        if self.infer_expr_type(expr) == Some(VarType::Buffer) {
+            self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes, data is NUL-terminated)");
+        }
+    }
+
     fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -3092,7 +3116,7 @@ impl CodeGenerator {
 
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
-                self.generate_expr(path);
+                self.generate_cstr_expr(path);
                 self.emit_indent("FILE_AVAILABLE");
             }
 
@@ -3123,10 +3147,10 @@ impl CodeGenerator {
                 self.emit_indent("mov r9, 0  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("list_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -3554,10 +3578,10 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("arglist_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -3616,10 +3640,10 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("argraw_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -4042,7 +4066,7 @@ impl CodeGenerator {
 
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
-                self.generate_expr(path);
+                self.generate_cstr_expr(path);
                 self.emit_indent("FILE_AVAILABLE");
                 self.emit_indent("test rax, rax");
                 self.emit_indent(&format!("jz {}", false_label));

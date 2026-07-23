@@ -9,7 +9,7 @@ section .text
 %macro PRINT_STR 2
     mov rax, 1
     mov rdi, 1
-    lea rsi, [%1]
+    lea rsi, [rel %1]
     mov rdx, %2
     syscall
 %endmacro
@@ -100,7 +100,7 @@ _print_int_impl:
     mov r8, 1
     
 .positive:
-    lea rdi, [int_buffer + 20]
+    lea rdi, [rel int_buffer + 20]
     mov byte [rdi], 0
     
     test rax, rax

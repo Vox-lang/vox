@@ -113,8 +113,8 @@ _strdup:
     mov r9, 0               ; offset = 0
     syscall
     
-    cmp rax, -1
-    je .strdup_fail
+    cmp rax, -4096          ; raw mmap returns -errno in [-4095,-1]
+    ja .strdup_fail
     
     mov rbx, rax            ; save dest pointer
     

@@ -16,7 +16,14 @@
 %define SYS_SYMLINK 88
 %define SYS_MKNOD   133
 %define SYS_MOUNT   165
+%define SYS_UMOUNT2 166
 %define SYS_PIVOT_ROOT 155
+%define SYS_SYNC    162
+%define SYS_REBOOT  169
+
+; reboot(2) magic values (see linux/reboot.h)
+%define LINUX_REBOOT_MAGIC1 0xFEE1DEAD
+%define LINUX_REBOOT_MAGIC2 672274793
 %define SYS_EXECVE  59
 
 ; Open flags
@@ -330,8 +337,8 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_ACCESS
-    mov rdi, %1                     ; pathname
     mov rsi, F_OK                   ; mode = existence check
     syscall
     
@@ -352,8 +359,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_MKDIR
-    mov rdi, %1                     ; pathname
     mov rsi, 493                    ; mode 0755 (rwxr-xr-x)
     syscall
 
@@ -383,8 +390,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_RMDIR
-    mov rdi, %1                     ; pathname
     syscall
 
     test rax, rax
@@ -413,8 +420,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_CHDIR
-    mov rdi, %1                     ; pathname
     syscall
 
     test rax, rax
@@ -512,6 +519,55 @@
     pop rbx
 %endmacro
 
+; Unmount a filesystem
+; Args (pre-loaded by codegen): rdi = target path, rsi = flags
+; (0 = normal, 2 = MNT_DETACH / lazy)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro UMOUNT 0
+    push rbx
+    push rcx
+    push rdx
+
+    mov rax, SYS_UMOUNT2
+    syscall
+
+    test rax, rax
+    jns %%umount_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%umount_done
+%%umount_ok:
+    mov qword [rel _last_error], 0
+%%umount_done:
+
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Reboot / power off / halt the machine via reboot(2).
+; Arg: %1 = LINUX_REBOOT_CMD_* command constant.
+; Flushes filesystem buffers with sync(2) first so nothing in the page
+; cache is lost. Requires CAP_SYS_BOOT (root). On success POWER_OFF/
+; RESTART/HALT do not return; if the call fails (e.g. not privileged) it
+; returns -errno, which is recorded in _last_error so `On error` works.
+%macro REBOOT_CMD 1
+    ; sync() - no error path, returns void
+    mov rax, SYS_SYNC
+    syscall
+
+    mov rax, SYS_REBOOT
+    mov rdi, LINUX_REBOOT_MAGIC1
+    mov rsi, LINUX_REBOOT_MAGIC2
+    mov rdx, %1
+    xor r10, r10                    ; arg = NULL
+    syscall
+
+    ; Only reached on failure
+    neg rax
+    mov [rel _last_error], rax
+%endmacro
+
 ; Switch the root filesystem (used during initramfs -> real root handoff)
 ; Args (pre-loaded by codegen): rdi = new_root, rsi = put_old
 ; Returns: 0 in rax on success, negative on error. Sets _last_error.
@@ -591,8 +647,8 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_UNLINK
-    mov rdi, %1                     ; pathname
     syscall
     
     pop rdi

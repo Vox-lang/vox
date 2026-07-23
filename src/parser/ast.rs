@@ -501,6 +501,21 @@ pub enum Statement {
         options: Option<Expr>,
     },
 
+    Unmount {
+        target: Expr,
+        /// true = MNT_DETACH (lazy unmount, succeeds even while busy)
+        lazy: bool,
+    },
+
+    /// reboot(2) with LINUX_REBOOT_CMD_POWER_OFF (syncs filesystems first)
+    Shutdown,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_RESTART (syncs filesystems first)
+    Reboot,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_HALT (syncs filesystems first)
+    Halt,
+
     PivotRoot {
         new_root: Expr,
         put_old: Expr,

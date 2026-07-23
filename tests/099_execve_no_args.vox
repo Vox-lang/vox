@@ -1,0 +1,7 @@
+(Regression test: Execute with NO arguments clause. The kernel still
+ needs argv = [path, NULL] (argc 1), which the compiler synthesizes.
+ /bin/echo with no args prints a single blank line.)
+
+Print "before exec".
+Execute "/bin/echo".
+On error print "execve failed", exit 1.
