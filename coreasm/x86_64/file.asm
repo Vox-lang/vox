@@ -16,6 +16,8 @@
 %define SYS_SYMLINK 88
 %define SYS_MKNOD   133
 %define SYS_MOUNT   165
+%define SYS_PIVOT_ROOT 155
+%define SYS_EXECVE  59
 
 ; Open flags
 %define O_RDONLY    0
@@ -508,6 +510,49 @@
     pop r9
     pop rcx
     pop rbx
+%endmacro
+
+; Switch the root filesystem (used during initramfs -> real root handoff)
+; Args (pre-loaded by codegen): rdi = new_root, rsi = put_old
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro PIVOT_ROOT 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_PIVOT_ROOT
+    syscall
+
+    test rax, rax
+    jns %%pivot_root_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%pivot_root_done
+%%pivot_root_ok:
+    mov qword [rel _last_error], 0
+%%pivot_root_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Replace the current process image
+; Args (pre-loaded by codegen): rdi = path, rsi = argv, rdx = envp
+; execve() only ever returns on failure (the process image is replaced on
+; success, so there is no "success" path to preserve registers for).
+; Returns: negative errno in rax (only reachable on error). Sets _last_error.
+%macro EXECVE 0
+    mov rax, SYS_EXECVE
+    syscall
+
+    ; Only reachable if execve failed
+    neg rax
+    mov [rel _last_error], rax
 %endmacro
 
 ; Check file/path availability (boolean semantics for Vox's "is available")

@@ -1,0 +1,2 @@
+Pivot root to "/tmp/vox_nonexistent_pivot_target" with old root "/tmp/vox_nonexistent_pivot_target/oldroot".
+On error print "pivot_root error detected as expected".

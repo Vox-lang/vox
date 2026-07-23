@@ -500,6 +500,18 @@ pub enum Statement {
         fstype: Expr,
         options: Option<Expr>,
     },
+
+    PivotRoot {
+        new_root: Expr,
+        put_old: Expr,
+    },
+
+    // execve(path, argv, envp) - argv is built as [path, args..., NULL]
+    // envp is always the process's own inherited environment (_envp)
+    Execute {
+        path: Expr,
+        args: Expr, // expected to be an Expr::ListLit
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

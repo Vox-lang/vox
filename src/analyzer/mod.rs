@@ -1658,6 +1658,22 @@ impl Analyzer {
                 self.deps.uses_io = true;
             }
 
+            Statement::PivotRoot { new_root, put_old } => {
+                self.analyze_expr(new_root);
+                self.analyze_expr(put_old);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Execute { path, args } => {
+                self.analyze_expr(path);
+                self.analyze_expr(args);
+                self.deps.uses_io = true;
+                // execve needs the process's real envp to properly inherit
+                // the environment (NULL would give the child an empty one) -
+                // this forces SAVE_ARGS to run and _envp to be captured.
+                self.deps.uses_args = true;
+            }
+
             Statement::Symlink { target, linkpath } => {
                 self.analyze_expr(target);
                 self.analyze_expr(linkpath);

@@ -2128,6 +2128,112 @@ impl CodeGenerator {
                 self.emit_indent("pop r12");
             }
 
+            Statement::PivotRoot { new_root, put_old } => {
+                self.uses_files = true;
+                // Generate new_root expression first
+                match new_root {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rdi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(new_root);
+                        self.emit_indent("mov rdi, rax");
+                    }
+                }
+                // Generate put_old expression
+                match put_old {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rsi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(put_old);
+                        self.emit_indent("mov rsi, rax");
+                    }
+                }
+                self.emit_indent("PIVOT_ROOT");
+            }
+
+            Statement::Execute { path, args } => {
+                self.uses_files = true;
+
+                let elements: &[Expr] = match args {
+                    Expr::ListLit { elements } => elements,
+                    _ => unreachable!(
+                        "Execute's args must be a ListLit - enforced in parse_execute()"
+                    ),
+                };
+
+                let slot_count = elements.len() + 2; // path + args + NULL terminator
+                let total_size = slot_count * 8;
+
+                // Allocate the argv array via mmap (same pattern as list
+                // literals elsewhere in this file), but WITHOUT the normal
+                // Vox-list header - execve needs a plain C-style array.
+                self.emit_indent("; Build argv array for execve");
+                self.emit_indent("mov rdi, 0  ; addr = NULL");
+                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("mov r9, 0  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
+                let mmap_ok = self.new_label("execve_argv_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1");
+                self.emit_indent("mov rax, 60");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
+                self.emit_indent("push rax  ; save argv array pointer");
+
+                // Slot 0: path (also argv[0] by convention)
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rbx, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("mov rbx, rax");
+                    }
+                }
+                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent("mov [rax], rbx  ; argv[0] = path");
+                self.emit_indent("push rax");
+
+                // Slots 1..n: the rest of the arguments
+                for (i, elem) in elements.iter().enumerate() {
+                    match elem {
+                        Expr::StringLit(s) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("mov rbx, {}", label));
+                        }
+                        _ => {
+                            self.generate_expr(elem);
+                            self.emit_indent("mov rbx, rax");
+                        }
+                    }
+                    self.emit_indent("pop rax  ; argv array pointer");
+                    self.emit_indent(&format!("mov [rax+{}], rbx  ; argv[{}]", (i + 1) * 8, i + 1));
+                    self.emit_indent("push rax");
+                }
+
+                // Final slot: NULL terminator
+                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent(&format!("mov qword [rax+{}], 0  ; argv NULL terminator", (elements.len() + 1) * 8));
+                self.emit_indent("push rax");
+
+                // path -> rdi (argv[0], re-evaluated/reloaded, not re-generated)
+                self.emit_indent("pop rdi  ; argv array pointer -> becomes rsi shortly");
+                self.emit_indent("mov rsi, rdi  ; argv array pointer");
+                self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                self.emit_indent("EXECVE");
+            }
+
             Statement::Symlink { target, linkpath } => {
                 self.uses_files = true;
                 // Generate target expression first

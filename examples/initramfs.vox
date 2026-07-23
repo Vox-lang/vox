@@ -52,10 +52,10 @@ Create symbolic link from "/proc/self/fd/2" to "/dev/stderr".
 
 (Wait for root device)
 Print "Waiting for root device...".
-a text called "root device" is "/dev/sda1".
+a text called "root_device" is "/dev/sda1".
 
 (Check if root device exists)
-While the root device is not available,
+While the root_device is not available,
     Sleep for 100 milliseconds.
     Print "." without newline.
 
@@ -63,7 +63,7 @@ Print "".
 
 (Mount the real root filesystem)
 Print "Mounting root filesystem...".
-Mount the root device at "/newroot" with type "ext4".
+Mount the root_device at "/newroot" with type "ext4".
 On error print "Failed to mount root filesystem", exit 1.
 
 (Move virtual filesystems to new root)

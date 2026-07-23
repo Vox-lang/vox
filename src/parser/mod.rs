@@ -888,6 +888,8 @@ impl Parser {
             Token::Identifier(ref s) if s == "start" => self.parse_timer_start(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
             Token::Identifier(_) => self.parse_identifier_statement(),
             Token::StringLiteral(_) => self.parse_function_call_statement(),
             _ => Err(self.err_expected("a statement", self.current())),
@@ -2973,6 +2975,108 @@ impl Parser {
         }
 
         Ok(Statement::Mount { source, target, fstype, options })
+    }
+
+    fn parse_pivot_root(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Pivot root to <new_root> with old root <put_old>"
+        self.advance(); // consume 'pivot'
+        self.skip_noise();
+
+        // Expect "root"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("root") {
+                return Err(self.err(&format!("Expected 'root' after 'pivot', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'root' after 'pivot'"));
+        }
+        self.skip_noise();
+
+        // Expect "to"
+        if !matches!(self.current(), Token::To) {
+            return Err(self.err("Expected 'to' after 'pivot root'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let new_root = self.parse_path_like_expr("after 'pivot root to'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with old root' after pivot root target"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "old"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("old") {
+                return Err(self.err(&format!("Expected 'old' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'old' after 'with'"));
+        }
+        self.skip_noise();
+
+        // Expect "root"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("root") {
+                return Err(self.err(&format!("Expected 'root' after 'old', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'root' after 'old'"));
+        }
+        self.skip_noise();
+
+        let put_old = self.parse_path_like_expr("after 'with old root'")?;
+
+        Ok(Statement::PivotRoot { new_root, put_old })
+    }
+
+    fn parse_execute(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Execute <path> with arguments [<list>]"
+        self.advance(); // consume 'execute'
+        self.skip_noise();
+
+        let path = self.parse_path_like_expr("after 'execute'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with arguments' after execute path"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "arguments" (already a dedicated keyword: Token::Arguments)
+        if !matches!(self.current(), Token::Arguments) {
+            return Err(self.err("Expected 'arguments' after 'with'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Parse the argument list - normally a bracketed list literal.
+        // parse_primary() handles '[' natively with no ambiguity concerns
+        // (unlike the string-literal case elsewhere in this file).
+        let args = self.parse_primary()?;
+
+        // execve's argv needs a compile-time-known element count to build
+        // the raw NULL-terminated pointer array, so only literal lists are
+        // supported for now (individual elements can still be dynamic
+        // expressions/variables - just not the list's length).
+        if !matches!(args, Expr::ListLit { .. }) {
+            return Err(self.err(
+                "Execute's 'with arguments [...]' currently requires a literal list \
+                 (e.g. 'with arguments [\"a\", \"b\"]' or 'with arguments []') - \
+                 a variable holding a dynamically-sized list is not yet supported"
+            ));
+        }
+
+        Ok(Statement::Execute { path, args })
     }
 
     // Shared helper: parse a simple path-like expression - a string literal,
