@@ -330,8 +330,8 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_ACCESS
-    mov rdi, %1                     ; pathname
     mov rsi, F_OK                   ; mode = existence check
     syscall
     
@@ -352,8 +352,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_MKDIR
-    mov rdi, %1                     ; pathname
     mov rsi, 493                    ; mode 0755 (rwxr-xr-x)
     syscall
 
@@ -383,8 +383,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_RMDIR
-    mov rdi, %1                     ; pathname
     syscall
 
     test rax, rax
@@ -413,8 +413,8 @@
     push rsi
     push rdi
 
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_CHDIR
-    mov rdi, %1                     ; pathname
     syscall
 
     test rax, rax
@@ -591,8 +591,8 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_UNLINK
-    mov rdi, %1                     ; pathname
     syscall
     
     pop rdi
