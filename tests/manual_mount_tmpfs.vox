@@ -1,0 +1,14 @@
+(mount(2) requires CAP_SYS_ADMIN/root, so this is NOT auto-run in CI -)
+(deliberately no .expected file, so test.sh skips it.)
+(Run manually with: sudo ./target/release/vox tests/manual_mount_tmpfs.vox --run)
+
+Remove the directory called "/tmp/vox_test_mount_tmpfs".
+Create a directory called "/tmp/vox_test_mount_tmpfs".
+On error print "mkdir failed", exit 1.
+
+Mount "tmpfs" at "/tmp/vox_test_mount_tmpfs" with type "tmpfs".
+On error print "tmpfs mount failed - are you root?", exit 1.
+Print "tmpfs mount succeeded".
+
+(NOTE: Vox has no umount statement yet, so this deliberately leaves the)
+(mount active. Clean up manually: sudo umount /tmp/vox_test_mount_tmpfs)

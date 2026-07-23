@@ -1985,7 +1985,322 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Statement::Rmdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("RMDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("RMDIR rax");
+                    }
+                }
+            }
+
+            Statement::Mkdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("MKDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("MKDIR rax");
+                    }
+                }
+            }
+
+            Statement::Chdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("CHDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("CHDIR rax");
+                    }
+                }
+            }
+
+            Statement::Mount { source, target, fstype, options } => {
+                self.uses_files = true;
+
+                // Detect the "move"/"bind" pseudo-mount pattern used for
+                // relocating already-mounted filesystems to a new root
+                // (fstype "none" + options "move"/"bind"): for these, the
+                // real mount(2) syscall wants a NULL filesystemtype and
+                // NULL data, with the operation encoded entirely in flags.
+                let is_none_fstype = matches!(fstype, Expr::StringLit(s) if s == "none");
+                let move_flag = matches!(options, Some(Expr::StringLit(s)) if s == "move");
+                let bind_flag = matches!(options, Some(Expr::StringLit(s)) if s == "bind");
+                let flags: i64 = if is_none_fstype && move_flag {
+                    8192 // MS_MOVE
+                } else if is_none_fstype && bind_flag {
+                    4096 // MS_BIND
+                } else {
+                    0
+                };
+                let suppress_fstype_and_data = is_none_fstype && (move_flag || bind_flag);
+
+                self.emit_indent("push r12");
+                self.emit_indent("push r13");
+                self.emit_indent("push r14");
+                self.emit_indent("push r15");
+
+                // source -> r12
+                match source {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea r12, [{}]  ; source", label));
+                    }
+                    _ => {
+                        self.generate_expr(source);
+                        self.emit_indent("mov r12, rax  ; source");
+                    }
+                }
+
+                // target -> r13
+                match target {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea r13, [{}]  ; target", label));
+                    }
+                    _ => {
+                        self.generate_expr(target);
+                        self.emit_indent("mov r13, rax  ; target");
+                    }
+                }
+
+                // fstype -> r14 (NULL for move/bind pseudo-mounts)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor r14, r14  ; fstype = NULL (move/bind)");
+                } else {
+                    match fstype {
+                        Expr::StringLit(s) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("lea r14, [{}]  ; fstype", label));
+                        }
+                        _ => {
+                            self.generate_expr(fstype);
+                            self.emit_indent("mov r14, rax  ; fstype");
+                        }
+                    }
+                }
+
+                // options/data -> r15 (NULL for move/bind pseudo-mounts, or if omitted)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor r15, r15  ; data = NULL (move/bind)");
+                } else {
+                    match options {
+                        None => self.emit_indent("xor r15, r15  ; data = NULL (no options given)"),
+                        Some(Expr::StringLit(s)) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("lea r15, [{}]  ; data (options)", label));
+                        }
+                        Some(other_expr) => {
+                            self.generate_expr(other_expr);
+                            self.emit_indent("mov r15, rax  ; data (options)");
+                        }
+                    }
+                }
+
+                // Now load the actual syscall argument registers.
+                // NOTE: raw `syscall` uses r10 for arg4, NOT rcx (rcx/r11
+                // get clobbered by the syscall instruction itself) -
+                // matches the convention already established by the
+                // existing MMAP macro in this file.
+                self.emit_indent("mov rdi, r12");
+                self.emit_indent("mov rsi, r13");
+                self.emit_indent("mov rdx, r14");
+                self.emit_indent(&format!("mov r10, {}  ; mount flags", flags));
+                self.emit_indent("mov r8, r15");
+                self.emit_indent("MOUNT");
+
+                self.emit_indent("pop r15");
+                self.emit_indent("pop r14");
+                self.emit_indent("pop r13");
+                self.emit_indent("pop r12");
+            }
+
+            Statement::PivotRoot { new_root, put_old } => {
+                self.uses_files = true;
+                // Generate new_root expression first
+                match new_root {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rdi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(new_root);
+                        self.emit_indent("mov rdi, rax");
+                    }
+                }
+                // Generate put_old expression
+                match put_old {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rsi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(put_old);
+                        self.emit_indent("mov rsi, rax");
+                    }
+                }
+                self.emit_indent("PIVOT_ROOT");
+            }
+
+            Statement::Execute { path, args } => {
+                self.uses_files = true;
+
+                let elements: &[Expr] = match args {
+                    Expr::ListLit { elements } => elements,
+                    _ => unreachable!(
+                        "Execute's args must be a ListLit - enforced in parse_execute()"
+                    ),
+                };
+
+                let slot_count = elements.len() + 2; // path + args + NULL terminator
+                let total_size = slot_count * 8;
+
+                // Allocate the argv array via mmap (same pattern as list
+                // literals elsewhere in this file), but WITHOUT the normal
+                // Vox-list header - execve needs a plain C-style array.
+                self.emit_indent("; Build argv array for execve");
+                self.emit_indent("mov rdi, 0  ; addr = NULL");
+                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("mov r9, 0  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
+                let mmap_ok = self.new_label("execve_argv_mmap_ok");
+                self.emit_indent("cmp rax, -1");
+                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("mov rdi, 1");
+                self.emit_indent("mov rax, 60");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
+                self.emit_indent("push rax  ; save argv array pointer");
+
+                // Slot 0: path (also argv[0] by convention)
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rbx, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("mov rbx, rax");
+                    }
+                }
+                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent("mov [rax], rbx  ; argv[0] = path");
+                self.emit_indent("push rax");
+
+                // Slots 1..n: the rest of the arguments
+                for (i, elem) in elements.iter().enumerate() {
+                    match elem {
+                        Expr::StringLit(s) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("mov rbx, {}", label));
+                        }
+                        _ => {
+                            self.generate_expr(elem);
+                            self.emit_indent("mov rbx, rax");
+                        }
+                    }
+                    self.emit_indent("pop rax  ; argv array pointer");
+                    self.emit_indent(&format!("mov [rax+{}], rbx  ; argv[{}]", (i + 1) * 8, i + 1));
+                    self.emit_indent("push rax");
+                }
+
+                // Final slot: NULL terminator
+                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent(&format!("mov qword [rax+{}], 0  ; argv NULL terminator", (elements.len() + 1) * 8));
+                self.emit_indent("push rax");
+
+                // path -> rdi (argv[0], re-evaluated/reloaded, not re-generated)
+                self.emit_indent("pop rdi  ; argv array pointer -> becomes rsi shortly");
+                self.emit_indent("mov rsi, rdi  ; argv array pointer");
+                self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                self.emit_indent("EXECVE");
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                self.uses_files = true;
+                // Generate target expression first
+                match target {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rdi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(target);
+                        self.emit_indent("mov rdi, rax");
+                    }
+                }
+                // Generate linkpath expression
+                match linkpath {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rsi, {}", label));
+                    }
+                    _ => {
+                        self.generate_expr(linkpath);
+                        self.emit_indent("mov rsi, rax");
+                    }
+                }
+                self.emit_indent("SYMLINK");
+            }
+
+            Statement::Mknod { path, node_type, major, minor } => {
+                self.uses_files = true;
+
+                // Path -> rdi
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                    }
+                    _ => {
+                        self.generate_expr(path);
+                        self.emit_indent("mov rdi, rax  ; path pointer");
+                    }
+                }
+                self.emit_indent("push rdi  ; save path pointer");
+
+                // Mode = S_IFCHR|S_IFBLK|S_IFIFO + 0666 permissions -> rsi
+                // S_IFCHR = 0o020000 = 8192, S_IFBLK = 0o060000 = 24576,
+                // S_IFIFO = 0o010000 = 4096, 0666 = 438
+                let mode = match node_type {
+                    DeviceNodeType::Character => 8192 + 438,
+                    DeviceNodeType::Block => 24576 + 438,
+                    DeviceNodeType::Fifo => 4096 + 438,
+                };
+
+                // dev = (major << 8) | minor -> rdx
+                self.generate_expr(major);
+                self.emit_indent("push rax  ; save major");
+                self.generate_expr(minor);
+                self.emit_indent("mov rcx, rax  ; minor");
+                self.emit_indent("pop rax  ; major");
+                self.emit_indent("shl rax, 8");
+                self.emit_indent("or rax, rcx");
+                self.emit_indent("mov rdx, rax  ; dev = (major << 8) | minor");
+
+                self.emit_indent(&format!("mov rsi, {}  ; mode", mode));
+                self.emit_indent("pop rdi  ; restore path pointer");
+                self.emit_indent("MKNOD");
+            }
+
             Statement::OnError { actions } => {
                 // Check if last operation had an error
                 let skip_label = self.new_label("skip_error");
@@ -2774,7 +3089,13 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.uses_files = true;
+                self.generate_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+            }
+
             Expr::Range { .. } => {}
 
             Expr::FunctionCall { name, args } => {
@@ -3718,7 +4039,15 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.uses_files = true;
+                self.generate_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", false_label));
+            }
+
             Expr::BinaryOp { left, op, right } => {
                 match op {
                     BinaryOperator::And => {

@@ -1,0 +1,7 @@
+Delete the file "/tmp/vox_test_mknod_fifo".
+
+Create a device node called "/tmp/vox_test_mknod_fifo" with type "p" major 0 minor 0.
+On error print "mknod failed", exit 1.
+Print "mknod succeeded".
+
+Delete the file "/tmp/vox_test_mknod_fifo".

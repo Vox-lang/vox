@@ -1,0 +1,2 @@
+Execute "/tmp/vox_nonexistent_binary_xyz" with arguments [].
+On error print "execve error detected as expected".

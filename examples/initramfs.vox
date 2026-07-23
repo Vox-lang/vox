@@ -1,0 +1,91 @@
+(Initramfs Setup Example)
+(Demonstrates proposed mount and related syscalls for initramfs operations)
+
+A text called "Program Version" is "0.1.0".
+
+(Setup script for early userspace initialization)
+Print "Initramfs setup starting...".
+
+(Create essential directories)
+Create a directory called "/proc".
+Create a directory called "/sys".
+Create a directory called "/dev".
+Create a directory called "/dev/pts".
+Create a directory called "/dev/shm".
+Create a directory called "/run".
+Create a directory called "/tmp".
+Create a directory called "/newroot".
+
+(Mount virtual filesystems)
+Mount "proc" at "/proc" with type "proc".
+On error print "Failed to mount /proc", exit 1.
+
+Mount "sysfs" at "/sys" with type "sysfs".
+On error print "Failed to mount /sys", exit 1.
+
+Mount "devtmpfs" at "/dev" with type "devtmpfs".
+On error print "Failed to mount /dev", exit 1.
+
+Mount "devpts" at "/dev/pts" with type "devpts" with options "gid=5,mode=620".
+On error print "Failed to mount /dev/pts", exit 1.
+
+Mount "tmpfs" at "/dev/shm" with type "tmpfs".
+On error print "Failed to mount /dev/shm", exit 1.
+
+Mount "tmpfs" at "/run" with type "tmpfs".
+On error print "Failed to mount /run", exit 1.
+
+Mount "tmpfs" at "/tmp" with type "tmpfs".
+On error print "Failed to mount /tmp", exit 1.
+
+(Create device nodes if needed)
+Create a device node called "/dev/null" with type "c" major 1 minor 3.
+Create a device node called "/dev/zero" with type "c" major 1 minor 5.
+Create a device node called "/dev/random" with type "c" major 1 minor 8.
+Create a device node called "/dev/urandom" with type "c" major 1 minor 9.
+
+(Set up symlinks for compatibility)
+Create symbolic link from "/proc/self/fd" to "/dev/fd".
+Create symbolic link from "/proc/self/fd/0" to "/dev/stdin".
+Create symbolic link from "/proc/self/fd/1" to "/dev/stdout".
+Create symbolic link from "/proc/self/fd/2" to "/dev/stderr".
+
+(Wait for root device)
+Print "Waiting for root device...".
+a text called "root_device" is "/dev/sda1".
+
+(Check if root device exists)
+While the root_device is not available,
+    Sleep for 100 milliseconds.
+    Print "." without newline.
+
+Print "".
+
+(Mount the real root filesystem)
+Print "Mounting root filesystem...".
+Mount the root_device at "/newroot" with type "ext4".
+On error print "Failed to mount root filesystem", exit 1.
+
+(Move virtual filesystems to new root)
+Mount "/proc" at "/newroot/proc" with type "none" with options "move".
+Mount "/sys" at "/newroot/sys" with type "none" with options "move".
+Mount "/dev" at "/newroot/dev" with type "none" with options "move".
+Mount "/run" at "/newroot/run" with type "none" with options "move".
+
+(Switch to new root using pivot_root)
+Print "Switching to new root...".
+Pivot root to "/newroot" with old root "/newroot/oldroot".
+On error print "Failed to pivot_root", exit 1.
+
+(Change to new root directory)
+Change directory to "/".
+On error print "Failed to chdir to new root", exit 1.
+
+(Execute init)
+Print "Executing init...".
+Execute "/sbin/init" with arguments [].
+On error print "Failed to execute init", exit 1.
+
+(Should never reach here)
+Print "Initramfs setup complete. Exiting.".
+Exit 0.

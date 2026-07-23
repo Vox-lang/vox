@@ -1,0 +1,25 @@
+(pivot_root(2) requires CAP_SYS_ADMIN/root AND that new_root be a real mount)
+(point, so this is NOT auto-run in CI - deliberately no .expected file.)
+(Run manually with:)
+(  unshare --mount --propagation private -- \)
+(    sudo ./target/release/vox tests/manual_pivot_root.vox --run)
+(The unshare wraps this in a private mount namespace so it can't affect)
+(your real system - pivot_root there is fully sandboxed and safe to try.)
+
+Remove the directory called "/tmp/vox_test_pivot_newroot/oldroot".
+Remove the directory called "/tmp/vox_test_pivot_newroot".
+Create a directory called "/tmp/vox_test_pivot_newroot".
+Create a directory called "/tmp/vox_test_pivot_newroot/oldroot".
+
+(pivot_root requires new_root to be an actual mount point - a self)
+(bind-mount is the standard trick to make an ordinary directory qualify.)
+Mount "/tmp/vox_test_pivot_newroot" at "/tmp/vox_test_pivot_newroot" with type "none" with options "bind".
+On error print "self bind-mount failed", exit 1.
+
+Pivot root to "/tmp/vox_test_pivot_newroot" with old root "/tmp/vox_test_pivot_newroot/oldroot".
+On error print "pivot_root failed - are you root, and did the bind-mount work?", exit 1.
+Print "pivot_root succeeded".
+
+Change directory to "/".
+On error print "chdir to new root failed", exit 1.
+Print "chdir succeeded - process root and cwd both switched".

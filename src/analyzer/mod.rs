@@ -1632,6 +1632,60 @@ impl Analyzer {
                 self.analyze_expr(path);
                 self.deps.uses_io = true;
             }
+
+            Statement::Rmdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mkdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Chdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mount { source, target, fstype, options } => {
+                self.analyze_expr(source);
+                self.analyze_expr(target);
+                self.analyze_expr(fstype);
+                if let Some(o) = options {
+                    self.analyze_expr(o);
+                }
+                self.deps.uses_io = true;
+            }
+
+            Statement::PivotRoot { new_root, put_old } => {
+                self.analyze_expr(new_root);
+                self.analyze_expr(put_old);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Execute { path, args } => {
+                self.analyze_expr(path);
+                self.analyze_expr(args);
+                self.deps.uses_io = true;
+                // execve needs the process's real envp to properly inherit
+                // the environment (NULL would give the child an empty one) -
+                // this forces SAVE_ARGS to run and _envp to be captured.
+                self.deps.uses_args = true;
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                self.analyze_expr(target);
+                self.analyze_expr(linkpath);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mknod { path, major, minor, .. } => {
+                self.analyze_expr(path);
+                self.analyze_expr(major);
+                self.analyze_expr(minor);
+                self.deps.uses_io = true;
+            }
             
             Statement::OnError { actions } => {
                 for action in actions {

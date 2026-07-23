@@ -1,0 +1,2 @@
+Create symbolic link from "/tmp" to "/tmp/vox_nonexistent_dir_12345/bad_link".
+On error print "symlink error detected as expected".

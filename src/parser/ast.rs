@@ -141,16 +141,21 @@ pub enum Expr {
         buffer: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Element access: element N of list
     ElementAccess {
         list: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Format string: "Hello {name}, you are {age} years old"
     FormatString {
         parts: Vec<FormatPart>,
+    },
+
+    // File availability check: path is available
+    FileAvailable {
+        path: Box<Expr>,
     },
 }
 
@@ -416,6 +421,10 @@ pub enum Statement {
     FileDelete {
         path: Expr,
     },
+
+    Rmdir {
+        path: Expr,
+    },
     
     // Error handling - actions are comma-separated within the sentence
     OnError {
@@ -462,6 +471,54 @@ pub enum Statement {
     GetTime {
         into: String,
     },
+
+    // Filesystem operations
+    Mkdir {
+        path: Expr,
+    },
+
+    Chdir {
+        path: Expr,
+    },
+
+    Symlink {
+        target: Expr,
+        linkpath: Expr,
+    },
+
+    // Create device node: mknod(path, mode, dev)
+    Mknod {
+        path: Expr,
+        node_type: DeviceNodeType,
+        major: Expr,
+        minor: Expr,
+    },
+
+    Mount {
+        source: Expr,
+        target: Expr,
+        fstype: Expr,
+        options: Option<Expr>,
+    },
+
+    PivotRoot {
+        new_root: Expr,
+        put_old: Expr,
+    },
+
+    // execve(path, argv, envp) - argv is built as [path, args..., NULL]
+    // envp is always the process's own inherited environment (_envp)
+    Execute {
+        path: Expr,
+        args: Expr, // expected to be an Expr::ListLit
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceNodeType {
+    Character, // 'c' - requires CAP_MKNOD/root on real hardware
+    Block,     // 'b' - requires CAP_MKNOD/root on real hardware
+    Fifo,      // 'p' - named pipe, no special privilege required
 }
 
 #[derive(Debug, Clone)]

@@ -794,10 +794,39 @@ impl Parser {
     
     fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
-        
+
         match self.current().clone() {
             Token::Print => self.parse_print(),
-            Token::Set | Token::Create => self.parse_var_decl(),
+            Token::Set => self.parse_var_decl(),
+            Token::Create => {
+                // Disambiguate: "Create a directory" vs "Create symbolic link" vs variable creation
+                let saved = self.pos;
+                self.advance(); // consume 'create'
+                self.skip_noise();
+
+                // Skip optional "a"
+                if *self.current() == Token::A {
+                    self.advance();
+                    self.skip_noise();
+                }
+
+                // Check for "directory" or "symbolic" or "device"
+                if let Token::Identifier(ref id) = self.current() {
+                    if id.eq_ignore_ascii_case("directory") {
+                        self.pos = saved; // reset to parse with mkdir
+                        return self.parse_mkdir();
+                    } else if id.eq_ignore_ascii_case("symbolic") {
+                        self.pos = saved; // reset to parse with symlink
+                        return self.parse_symlink();
+                    } else if id.eq_ignore_ascii_case("device") {
+                        self.pos = saved; // reset to parse with mknod
+                        return self.parse_mknod();
+                    }
+                }
+
+                self.pos = saved; // reset to parse as var decl
+                self.parse_var_decl()
+            }
             Token::A | Token::An => self.parse_typed_var_decl(),
             Token::Parse => self.parse_parse_flags(),
             Token::The => self.parse_the_statement(),
@@ -819,7 +848,27 @@ impl Parser {
             Token::Read => self.parse_file_read(),
             Token::Write => self.parse_file_write(),
             Token::Close => self.parse_file_close(),
-            Token::Delete => self.parse_file_delete(),
+            Token::Delete => {
+                // Disambiguate: "Delete/Remove the file <path>" vs "Delete/Remove the directory <path>"
+                let saved = self.pos;
+                self.advance(); // consume 'delete'/'remove'
+                self.skip_noise();
+
+                if *self.current() == Token::The {
+                    self.advance();
+                    self.skip_noise();
+                }
+
+                if let Token::Identifier(ref id) = self.current() {
+                    if id.eq_ignore_ascii_case("directory") {
+                        self.pos = saved;
+                        return self.parse_rmdir();
+                    }
+                }
+
+                self.pos = saved;
+                self.parse_file_delete()
+            }
             Token::Seek => self.parse_file_seek(),
             Token::On => self.parse_on_error(),
             Token::Auto => self.parse_auto_error(),
@@ -837,6 +886,10 @@ impl Parser {
             Token::Stop | Token::Finish => self.parse_timer_stop(),
             Token::Get => self.parse_get(),
             Token::Identifier(ref s) if s == "start" => self.parse_timer_start(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
             Token::Identifier(_) => self.parse_identifier_statement(),
             Token::StringLiteral(_) => self.parse_function_call_statement(),
             _ => Err(self.err_expected("a statement", self.current())),
@@ -2808,23 +2861,507 @@ impl Parser {
         // "Delete the file <path>"
         self.advance(); // consume 'delete'
         self.skip_noise();
-        
+
         // Skip optional "the"
         if *self.current() == Token::The {
             self.advance();
             self.skip_noise();
         }
-        
+
         // Expect "file"
         self.expect(&Token::File);
         self.skip_noise();
-        
+
         // Get path
         let path = self.parse_primary()?;
-        
+
         Ok(Statement::FileDelete { path })
     }
-    
+
+    fn parse_rmdir(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Delete/Remove the directory <path>"
+        self.advance(); // consume 'delete'/'remove'
+        self.skip_noise();
+
+        // Skip optional "the"
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "directory"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("directory") {
+                return Err(self.err(&format!("Expected 'directory' after 'the', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'directory' after 'the'"));
+        }
+        self.skip_noise();
+
+        // Skip optional "called"
+        if matches!(self.current(), Token::Called) {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Get path
+        let path = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'directory'")),
+        };
+
+        Ok(Statement::Rmdir { path })
+    }
+
+    fn parse_mount(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Mount <source> at <target> with type <fstype> [with options <options>]"
+        self.advance(); // consume 'mount'
+        self.skip_noise();
+
+        let source = self.parse_path_like_expr("after 'mount'")?;
+        self.skip_noise();
+
+        // Expect "at" (lexes as Token::On - 'at'/'on' are synonyms)
+        if !matches!(self.current(), Token::On) {
+            return Err(self.err(&format!("Expected 'at' after mount source, got {:?}", self.current())));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let target = self.parse_path_like_expr("after 'at'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with type' after mount target"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "type"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("type") {
+                return Err(self.err(&format!("Expected 'type' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'type' after 'with'"));
+        }
+        self.skip_noise();
+
+        let fstype = self.parse_path_like_expr("after 'type'")?;
+        self.skip_noise();
+
+        // Optional "with options <options>"
+        let mut options = None;
+        if matches!(self.current(), Token::With) {
+            self.advance();
+            self.skip_noise();
+
+            if let Token::Identifier(ref id) = self.current() {
+                if !id.eq_ignore_ascii_case("options") {
+                    return Err(self.err(&format!("Expected 'options' after 'with', got '{}'", id)));
+                }
+                self.advance();
+            } else {
+                return Err(self.err("Expected 'options' after 'with'"));
+            }
+            self.skip_noise();
+
+            options = Some(self.parse_path_like_expr("after 'options'")?);
+        }
+
+        Ok(Statement::Mount { source, target, fstype, options })
+    }
+
+    fn parse_pivot_root(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Pivot root to <new_root> with old root <put_old>"
+        self.advance(); // consume 'pivot'
+        self.skip_noise();
+
+        // Expect "root"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("root") {
+                return Err(self.err(&format!("Expected 'root' after 'pivot', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'root' after 'pivot'"));
+        }
+        self.skip_noise();
+
+        // Expect "to"
+        if !matches!(self.current(), Token::To) {
+            return Err(self.err("Expected 'to' after 'pivot root'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        let new_root = self.parse_path_like_expr("after 'pivot root to'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with old root' after pivot root target"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "old"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("old") {
+                return Err(self.err(&format!("Expected 'old' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'old' after 'with'"));
+        }
+        self.skip_noise();
+
+        // Expect "root"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("root") {
+                return Err(self.err(&format!("Expected 'root' after 'old', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'root' after 'old'"));
+        }
+        self.skip_noise();
+
+        let put_old = self.parse_path_like_expr("after 'with old root'")?;
+
+        Ok(Statement::PivotRoot { new_root, put_old })
+    }
+
+    fn parse_execute(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Execute <path> with arguments [<list>]"
+        self.advance(); // consume 'execute'
+        self.skip_noise();
+
+        let path = self.parse_path_like_expr("after 'execute'")?;
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with arguments' after execute path"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "arguments" (already a dedicated keyword: Token::Arguments)
+        if !matches!(self.current(), Token::Arguments) {
+            return Err(self.err("Expected 'arguments' after 'with'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Parse the argument list - normally a bracketed list literal.
+        // parse_primary() handles '[' natively with no ambiguity concerns
+        // (unlike the string-literal case elsewhere in this file).
+        let args = self.parse_primary()?;
+
+        // execve's argv needs a compile-time-known element count to build
+        // the raw NULL-terminated pointer array, so only literal lists are
+        // supported for now (individual elements can still be dynamic
+        // expressions/variables - just not the list's length).
+        if !matches!(args, Expr::ListLit { .. }) {
+            return Err(self.err(
+                "Execute's 'with arguments [...]' currently requires a literal list \
+                 (e.g. 'with arguments [\"a\", \"b\"]' or 'with arguments []') - \
+                 a variable holding a dynamically-sized list is not yet supported"
+            ));
+        }
+
+        Ok(Statement::Execute { path, args })
+    }
+
+    // Shared helper: parse a simple path-like expression - a string literal,
+    // a bare identifier, or "the <identifier>". Deliberately does NOT go
+    // through parse_primary(), which has function-call lookahead rules
+    // (e.g. "string" followed by 'to') that can swallow trailing keywords
+    // like 'at'/'to'/'with' that these filesystem statements rely on.
+    fn parse_path_like_expr(&mut self, context: &str) -> Result<Expr, Box<CompileError>> {
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+        match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Ok(Expr::StringLit(s)) }
+            Token::Identifier(n) => { self.advance(); Ok(Expr::Identifier(n)) }
+            _ => Err(self.err(&format!("Expected a path (string or variable) {}", context))),
+        }
+    }
+
+    // Filesystem operations parsing
+
+    fn parse_mkdir(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Create a directory called <path>"
+        self.advance(); // consume 'create'
+        self.skip_noise();
+
+        // Skip optional "a"
+        if *self.current() == Token::A {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "directory"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("directory") {
+                return Err(self.err(&format!(
+                    "Expected 'directory' after 'create a', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'directory' after 'create a'"));
+        }
+        self.skip_noise();
+
+        // Expect "called"
+        if !matches!(self.current(), Token::Called) {
+            return Err(self.err("Expected 'called' after directory"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get path
+        let path = self.parse_primary()?;
+
+        Ok(Statement::Mkdir { path })
+    }
+
+    fn parse_chdir(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Change directory to <path>"
+        self.advance(); // consume 'change'
+        self.skip_noise();
+
+        // Expect "directory"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("directory") {
+                return Err(self.err(&format!(
+                    "Expected 'directory' after 'change', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'directory' after 'change'"));
+        }
+        self.skip_noise();
+
+        // Expect "to"
+        if !matches!(self.current(), Token::To) {
+            return Err(self.err("Expected 'to' after directory"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get path
+        let path = self.parse_primary()?;
+
+        Ok(Statement::Chdir { path })
+    }
+
+    fn parse_symlink(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Create symbolic link from <target> to <linkpath>"
+        self.advance(); // consume 'create'
+        self.skip_noise();
+
+        // Skip optional "a"
+        if *self.current() == Token::A {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "symbolic"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("symbolic") {
+                return Err(self.err(&format!(
+                    "Expected 'symbolic' after 'create a', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'symbolic' after 'create a'"));
+        }
+        self.skip_noise();
+
+        // Expect "link"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("link") {
+                return Err(self.err(&format!(
+                    "Expected 'link' after 'symbolic', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'link' after 'symbolic'"));
+        }
+        self.skip_noise();
+
+        // Expect "from"
+        if !matches!(self.current(), Token::From) {
+            return Err(self.err("Expected 'from' after link"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get target as a simple path (string literal or identifier).
+        // NOTE: we deliberately don't call parse_primary() here - it treats
+        // "string" followed by 'to' as a function-call expression, which
+        // would swallow our 'to' keyword and the linkpath.
+        let target = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'from'")),
+        };
+        self.skip_noise();
+
+        // Expect "to"
+        if !matches!(self.current(), Token::To) {
+            return Err(self.err("Expected 'to' after target path"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get linkpath
+        let linkpath = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'to'")),
+        };
+
+        Ok(Statement::Symlink { target, linkpath })
+    }
+
+    fn parse_mknod(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Create a device node called <path> with type <"c"|"b"> major <n> minor <n>"
+        self.advance(); // consume 'create'
+        self.skip_noise();
+
+        // Skip optional "a"
+        if *self.current() == Token::A {
+            self.advance();
+            self.skip_noise();
+        }
+
+        // Expect "device"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("device") {
+                return Err(self.err(&format!(
+                    "Expected 'device' after 'create a', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'device' after 'create a'"));
+        }
+        self.skip_noise();
+
+        // Expect "node"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("node") {
+                return Err(self.err(&format!(
+                    "Expected 'node' after 'device', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'node' after 'device'"));
+        }
+        self.skip_noise();
+
+        // Expect "called"
+        if !matches!(self.current(), Token::Called) {
+            return Err(self.err("Expected 'called' after 'device node'"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Get path
+        let path = match self.current().clone() {
+            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
+            _ => return Err(self.err("Expected a path (string or variable) after 'called'")),
+        };
+        self.skip_noise();
+
+        // Expect "with"
+        if !matches!(self.current(), Token::With) {
+            return Err(self.err("Expected 'with' after device node path"));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Expect "type"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("type") {
+                return Err(self.err(&format!("Expected 'type' after 'with', got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'type' after 'with'"));
+        }
+        self.skip_noise();
+
+        // Get device type: "c" or "b"
+        let node_type = match self.current().clone() {
+            Token::StringLiteral(s) => {
+                self.advance();
+                match s.as_str() {
+                    "c" => DeviceNodeType::Character,
+                    "b" => DeviceNodeType::Block,
+                    "p" => DeviceNodeType::Fifo,
+                    _ => return Err(self.err(&format!(
+                        "Invalid device type '{}' - expected \"c\" (character), \"b\" (block), or \"p\" (FIFO)",
+                        s
+                    ))),
+                }
+            }
+            _ => return Err(self.err("Expected device type \"c\", \"b\", or \"p\" after 'type'")),
+        };
+        self.skip_noise();
+
+        // Expect "major"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("major") {
+                return Err(self.err(&format!("Expected 'major' after device type, got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'major' after device type"));
+        }
+        self.skip_noise();
+
+        let major = self.parse_primary()?;
+        self.skip_noise();
+
+        // Expect "minor"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("minor") {
+                return Err(self.err(&format!("Expected 'minor' after major number, got '{}'", id)));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'minor' after major number"));
+        }
+        self.skip_noise();
+
+        let minor = self.parse_primary()?;
+
+        Ok(Statement::Mknod { path, node_type, major, minor })
+    }
+
     fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {
         // "On error <action>, <action>, <action>." - consumes full sentence
         self.advance(); // consume 'on'
@@ -3754,6 +4291,21 @@ impl Parser {
                 Token::Negative => Some(Property::Negative),
                 Token::Zero => Some(Property::Zero),
                 Token::Empty => Some(Property::Empty),
+                Token::Identifier(ref id) if id.eq_ignore_ascii_case("available") => {
+                    // Handle "path is available" as a file availability check
+                    self.advance();
+                    let check = Expr::FileAvailable {
+                        path: Box::new(left),
+                    };
+                    return if negated {
+                        Ok(Expr::UnaryOp {
+                            op: UnaryOperator::Not,
+                            operand: Box::new(check),
+                        })
+                    } else {
+                        Ok(check)
+                    };
+                }
                 _ => None,
             };
             

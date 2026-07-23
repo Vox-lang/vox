@@ -1,0 +1,2 @@
+Change directory to "/tmp/vox_nonexistent_dir_12345".
+On error print "chdir error detected as expected".
