@@ -888,6 +888,7 @@ impl Parser {
             Token::Identifier(ref s) if s == "start" => self.parse_timer_start(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("unmount") || s.eq_ignore_ascii_case("umount") => self.parse_unmount(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
             Token::Identifier(_) => self.parse_identifier_statement(),
@@ -2975,6 +2976,33 @@ impl Parser {
         }
 
         Ok(Statement::Mount { source, target, fstype, options })
+    }
+
+    fn parse_unmount(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Unmount <target> [lazily]"
+        self.advance(); // consume 'unmount'/'umount'
+        self.skip_noise();
+
+        // Skip optional "the"
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+
+        let target = self.parse_path_like_expr("after 'unmount'")?;
+        self.skip_noise();
+
+        // Optional "lazily" - MNT_DETACH, succeeds even while the mount is busy
+        let mut lazy = false;
+        if let Token::Identifier(ref id) = self.current() {
+            if id.eq_ignore_ascii_case("lazily") {
+                lazy = true;
+                self.advance();
+                self.skip_noise();
+            }
+        }
+
+        Ok(Statement::Unmount { target, lazy })
     }
 
     fn parse_pivot_root(&mut self) -> Result<Statement, Box<CompileError>> {

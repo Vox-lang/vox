@@ -2116,6 +2116,19 @@ impl CodeGenerator {
                 self.emit_indent("MOUNT");
             }
 
+            Statement::Unmount { target, lazy } => {
+                self.uses_files = true;
+                self.generate_cstr_expr(target);
+                self.emit_indent("mov rdi, rax  ; mount target");
+                let flags = if *lazy { 2 } else { 0 }; // MNT_DETACH = 2
+                self.emit_indent(&format!(
+                    "mov rsi, {}  ; flags{}",
+                    flags,
+                    if *lazy { " (MNT_DETACH)" } else { "" }
+                ));
+                self.emit_indent("UMOUNT");
+            }
+
             Statement::PivotRoot { new_root, put_old } => {
                 self.uses_files = true;
                 self.emit_syscall_args(&[(new_root, "rdi"), (put_old, "rsi")]);

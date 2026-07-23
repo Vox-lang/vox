@@ -501,6 +501,12 @@ pub enum Statement {
         options: Option<Expr>,
     },
 
+    Unmount {
+        target: Expr,
+        /// true = MNT_DETACH (lazy unmount, succeeds even while busy)
+        lazy: bool,
+    },
+
     PivotRoot {
         new_root: Expr,
         put_old: Expr,

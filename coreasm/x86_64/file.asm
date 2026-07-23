@@ -16,6 +16,7 @@
 %define SYS_SYMLINK 88
 %define SYS_MKNOD   133
 %define SYS_MOUNT   165
+%define SYS_UMOUNT2 166
 %define SYS_PIVOT_ROOT 155
 %define SYS_EXECVE  59
 
@@ -508,6 +509,32 @@
 %%mount_done:
 
     pop r9
+    pop rcx
+    pop rbx
+%endmacro
+
+; Unmount a filesystem
+; Args (pre-loaded by codegen): rdi = target path, rsi = flags
+; (0 = normal, 2 = MNT_DETACH / lazy)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro UMOUNT 0
+    push rbx
+    push rcx
+    push rdx
+
+    mov rax, SYS_UMOUNT2
+    syscall
+
+    test rax, rax
+    jns %%umount_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%umount_done
+%%umount_ok:
+    mov qword [rel _last_error], 0
+%%umount_done:
+
+    pop rdx
     pop rcx
     pop rbx
 %endmacro

@@ -10,5 +10,10 @@ Mount "tmpfs" at "/tmp/vox_test_mount_tmpfs" with type "tmpfs".
 On error print "tmpfs mount failed - are you root?", exit 1.
 Print "tmpfs mount succeeded".
 
-(NOTE: Vox has no umount statement yet, so this deliberately leaves the)
-(mount active. Clean up manually: sudo umount /tmp/vox_test_mount_tmpfs)
+Unmount "/tmp/vox_test_mount_tmpfs".
+On error print "unmount failed", exit 1.
+Print "unmount succeeded".
+
+Remove the directory called "/tmp/vox_test_mount_tmpfs".
+On error print "rmdir failed", exit 1.
+Print "cleanup complete".
