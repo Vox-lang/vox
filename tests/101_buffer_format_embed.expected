@@ -1,0 +1,3 @@
+embedded: hello
+embedded sized buffer: sized buffer content
+both: hello / sized buffer content

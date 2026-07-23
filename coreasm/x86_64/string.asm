@@ -145,9 +145,20 @@ _strdup:
 ; String equality function (callable)
 ; Args: rdi = string1, rsi = string2
 ; Returns: rax = 1 if equal, 0 if not
+; NULL-safe: a NULL pointer represents a legitimately absent value (e.g.
+; `arguments's first` when no user argument was given returns NULL, not an
+; empty string) and must compare as not-equal to any real string rather
+; than being dereferenced. Identical pointers (including both NULL) are
+; trivially equal without touching memory.
 global _str_eq
 _str_eq:
     push rbx
+    cmp rdi, rsi
+    je .equal
+    test rdi, rdi
+    jz .not_equal
+    test rsi, rsi
+    jz .not_equal
 .loop:
     mov al, [rdi]
     mov bl, [rsi]
