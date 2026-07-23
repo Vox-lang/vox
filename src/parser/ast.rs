@@ -507,6 +507,15 @@ pub enum Statement {
         lazy: bool,
     },
 
+    /// reboot(2) with LINUX_REBOOT_CMD_POWER_OFF (syncs filesystems first)
+    Shutdown,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_RESTART (syncs filesystems first)
+    Reboot,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_HALT (syncs filesystems first)
+    Halt,
+
     PivotRoot {
         new_root: Expr,
         put_old: Expr,

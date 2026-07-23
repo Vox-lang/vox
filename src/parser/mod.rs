@@ -889,6 +889,18 @@ impl Parser {
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("unmount") || s.eq_ignore_ascii_case("umount") => self.parse_unmount(),
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("shutdown") || s.eq_ignore_ascii_case("poweroff") => {
+                self.advance();
+                Ok(Statement::Shutdown)
+            }
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("reboot") || s.eq_ignore_ascii_case("restart") => {
+                self.advance();
+                Ok(Statement::Reboot)
+            }
+            Token::Identifier(ref s) if s.eq_ignore_ascii_case("halt") => {
+                self.advance();
+                Ok(Statement::Halt)
+            }
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
             Token::Identifier(_) => self.parse_identifier_statement(),
@@ -3073,9 +3085,14 @@ impl Parser {
         let path = self.parse_path_like_expr("after 'execute'")?;
         self.skip_noise();
 
-        // Expect "with"
+        // "with arguments <list>" is optional: a bare `Execute "/bin/sh".`
+        // gets argv = [path, NULL] (argc = 1), which is what the kernel
+        // expects for an argumentless program.
         if !matches!(self.current(), Token::With) {
-            return Err(self.err("Expected 'with arguments' after execute path"));
+            return Ok(Statement::Execute {
+                path,
+                args: Expr::ListLit { elements: vec![] },
+            });
         }
         self.advance();
         self.skip_noise();
@@ -3087,22 +3104,16 @@ impl Parser {
         self.advance();
         self.skip_noise();
 
-        // Parse the argument list - normally a bracketed list literal.
-        // parse_primary() handles '[' natively with no ambiguity concerns
-        // (unlike the string-literal case elsewhere in this file).
-        let args = self.parse_primary()?;
-
-        // execve's argv needs a compile-time-known element count to build
-        // the raw NULL-terminated pointer array, so only literal lists are
-        // supported for now (individual elements can still be dynamic
-        // expressions/variables - just not the list's length).
-        if !matches!(args, Expr::ListLit { .. }) {
-            return Err(self.err(
-                "Execute's 'with arguments [...]' currently requires a literal list \
-                 (e.g. 'with arguments [\"a\", \"b\"]' or 'with arguments []') - \
-                 a variable holding a dynamically-sized list is not yet supported"
-            ));
-        }
+        // The arguments are either a bracketed list literal (argv is built
+        // at compile time) or a list variable (argv is built at runtime by
+        // _list_to_argv from the list's length - see codegen).
+        let args = if matches!(self.current(), Token::OpenBracket) {
+            // parse_primary() handles '[' natively with no ambiguity
+            // concerns (unlike the string-literal case elsewhere here).
+            self.parse_primary()?
+        } else {
+            self.parse_path_like_expr("after 'arguments'")?
+        };
 
         Ok(Statement::Execute { path, args })
     }

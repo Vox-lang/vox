@@ -18,6 +18,12 @@
 %define SYS_MOUNT   165
 %define SYS_UMOUNT2 166
 %define SYS_PIVOT_ROOT 155
+%define SYS_SYNC    162
+%define SYS_REBOOT  169
+
+; reboot(2) magic values (see linux/reboot.h)
+%define LINUX_REBOOT_MAGIC1 0xFEE1DEAD
+%define LINUX_REBOOT_MAGIC2 672274793
 %define SYS_EXECVE  59
 
 ; Open flags
@@ -537,6 +543,29 @@
     pop rdx
     pop rcx
     pop rbx
+%endmacro
+
+; Reboot / power off / halt the machine via reboot(2).
+; Arg: %1 = LINUX_REBOOT_CMD_* command constant.
+; Flushes filesystem buffers with sync(2) first so nothing in the page
+; cache is lost. Requires CAP_SYS_BOOT (root). On success POWER_OFF/
+; RESTART/HALT do not return; if the call fails (e.g. not privileged) it
+; returns -errno, which is recorded in _last_error so `On error` works.
+%macro REBOOT_CMD 1
+    ; sync() - no error path, returns void
+    mov rax, SYS_SYNC
+    syscall
+
+    mov rax, SYS_REBOOT
+    mov rdi, LINUX_REBOOT_MAGIC1
+    mov rsi, LINUX_REBOOT_MAGIC2
+    mov rdx, %1
+    xor r10, r10                    ; arg = NULL
+    syscall
+
+    ; Only reached on failure
+    neg rax
+    mov [rel _last_error], rax
 %endmacro
 
 ; Switch the root filesystem (used during initramfs -> real root handoff)

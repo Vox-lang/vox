@@ -2116,6 +2116,21 @@ impl CodeGenerator {
                 self.emit_indent("MOUNT");
             }
 
+            Statement::Shutdown => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x4321FEDC  ; LINUX_REBOOT_CMD_POWER_OFF");
+            }
+
+            Statement::Reboot => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x01234567  ; LINUX_REBOOT_CMD_RESTART");
+            }
+
+            Statement::Halt => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0xCDEF0123  ; LINUX_REBOOT_CMD_HALT");
+            }
+
             Statement::Unmount { target, lazy } => {
                 self.uses_files = true;
                 self.generate_cstr_expr(target);
@@ -2138,11 +2153,32 @@ impl CodeGenerator {
             Statement::Execute { path, args } => {
                 self.uses_files = true;
 
+                // A list variable (or any non-literal list expression):
+                // argv is built at runtime by _list_to_argv, which sizes the
+                // allocation and bounds the copy from a single read of the
+                // list's length - the array cannot be overrun.
                 let elements: &[Expr] = match args {
                     Expr::ListLit { elements } => elements,
-                    _ => unreachable!(
-                        "Execute's args must be a ListLit - enforced in parse_execute()"
-                    ),
+                    other => {
+                        self.uses_lists = true;
+                        self.generate_expr(other);
+                        self.emit_indent("push rax  ; park list pointer");
+                        match path {
+                            Expr::StringLit(s) => {
+                                let label = self.add_string(s);
+                                self.emit_indent(&format!("lea rax, [{}]", label));
+                            }
+                            _ => self.generate_cstr_expr(path),
+                        }
+                        self.emit_indent("mov rsi, rax  ; path (becomes argv[0])");
+                        self.emit_indent("pop rdi  ; list pointer");
+                        self.emit_indent("call _list_to_argv");
+                        self.emit_indent("mov rsi, rax  ; argv array pointer");
+                        self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                        self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                        self.emit_indent("EXECVE");
+                        return;
+                    }
                 };
 
                 let slot_count = elements.len() + 2; // path + args + NULL terminator
