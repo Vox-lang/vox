@@ -371,8 +371,7 @@ _list_append:
     
     ; Allocate new memory using mmap
     push rbx
-    push rax                                ; save size
-    
+
     mov rdi, 0                              ; addr = NULL
     mov rsi, rax                            ; size
     mov rdx, 3                              ; PROT_READ | PROT_WRITE
@@ -381,47 +380,38 @@ _list_append:
     mov r9, 0                               ; offset = 0
     mov rax, 9                              ; sys_mmap
     syscall
-    
-    pop rcx                                 ; restore size (unused)
+
     pop rbx                                 ; restore old list ptr
-    
-    ; rax = new list pointer
+
+    ; Raw sys_mmap returns -errno in [-4095, -1] on failure (not MAP_FAILED)
+    cmp rax, -4096
+    jbe .mmap_ok
+    mov rdi, 1                              ; allocation failure: exit(1)
+    mov rax, 60                             ; sys_exit
+    syscall
+.mmap_ok:
     mov rdi, rax                            ; rdi = new list
-    
+
     ; Copy header
     mov qword [rdi + LIST_CAPACITY_OFFSET], r13     ; new capacity
     mov rcx, [rbx + LIST_LENGTH_OFFSET]
     mov qword [rdi + LIST_LENGTH_OFFSET], rcx       ; same length
     mov qword [rdi + LIST_ELEMSIZE_OFFSET], r14     ; same elem size
-    
-    ; Copy existing data
-    push rdi
-    push rsi
-    
-    lea rsi, [rbx + LIST_DATA_OFFSET]       ; source
-    lea rdi, [rdi + LIST_DATA_OFFSET]       ; dest (note: rdi was saved)
-    pop rdi                                  ; restore new list base
-    push rdi
+
+    ; Copy existing data (rdi = new list base, rbx = old list base)
+    ; NOTE: the old block is intentionally NOT munmap'd. Lists passed as
+    ; function parameters keep the caller's pointer to the old block when a
+    ; realloc happens inside the callee; freeing it here would turn that
+    ; stale read into a use-after-free. The leak is bounded (geometric, at
+    ; most ~1x the final list size) and reclaimed at process exit.
+    push rdi                                ; save new list base
     lea rdi, [rdi + LIST_DATA_OFFSET]       ; dest = new list data
     lea rsi, [rbx + LIST_DATA_OFFSET]       ; source = old list data
-    
     mov rcx, [rbx + LIST_LENGTH_OFFSET]
     imul rcx, r14                           ; bytes to copy
-    
-    ; Copy byte by byte
-    test rcx, rcx
-    jz .copy_done
-.copy_loop:
-    mov al, [rsi]
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec rcx
-    jnz .copy_loop
-    
-.copy_done:
+    rep movsb                               ; no-op when rcx = 0
     pop rdi                                 ; rdi = new list pointer
-    
+
     ; Now append the new element
     mov rcx, [rdi + LIST_LENGTH_OFFSET]
     mov rax, r14                            ; element size
