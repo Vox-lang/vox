@@ -123,6 +123,10 @@ pub enum Expr {
     
     // Time expressions
     CurrentTime,                // current time value
+    Fork,                       // fork() - 0 in child, child pid in parent, negative on error
+    ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
+        pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+    },
     
     // Type casting
     Cast {

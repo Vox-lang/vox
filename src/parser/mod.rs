@@ -5000,6 +5000,55 @@ impl Parser {
                 Err(self.err("Expected 's after 'environment'"))
             }
             
+            Token::Identifier(ref id) if id.eq_ignore_ascii_case("fork") => {
+                self.advance();
+                self.skip_noise();
+                // Optional trailing "the process" for readability
+                if *self.current() == Token::The {
+                    self.advance();
+                    self.skip_noise();
+                    if let Token::Identifier(ref w2) = self.current() {
+                        if w2.eq_ignore_ascii_case("process") {
+                            self.advance();
+                        }
+                    }
+                }
+                Ok(Expr::Fork)
+            }
+
+            Token::Identifier(ref id) if id.eq_ignore_ascii_case("reap") => {
+                self.advance();
+                self.skip_noise();
+
+                // "reap any child process" -> pid = None (wait for any child)
+                if let Token::Identifier(ref w) = self.current() {
+                    if w.eq_ignore_ascii_case("any") {
+                        self.advance();
+                        self.skip_noise();
+                        // Optional trailing "child process"/"child"/"process"
+                        while let Token::Identifier(ref w2) = self.current() {
+                            if w2.eq_ignore_ascii_case("child") || w2.eq_ignore_ascii_case("process") {
+                                self.advance();
+                                self.skip_noise();
+                            } else {
+                                break;
+                            }
+                        }
+                        return Ok(Expr::ReapChild { pid: None });
+                    }
+                }
+
+                // "reap process <pid>" / "reap child <pid>" -> pid = Some(expr)
+                if let Token::Identifier(ref w) = self.current() {
+                    if w.eq_ignore_ascii_case("process") || w.eq_ignore_ascii_case("child") {
+                        self.advance();
+                        self.skip_noise();
+                    }
+                }
+                let pid = self.parse_primary()?;
+                Ok(Expr::ReapChild { pid: Some(Box::new(pid)) })
+            }
+
             Token::Identifier(name) => {
                 self.advance();
                 self.skip_noise();
