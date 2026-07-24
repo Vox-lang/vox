@@ -3883,6 +3883,27 @@ impl CodeGenerator {
                 self.emit_indent("; Get current time");
                 self.emit_indent("TIME_GET");
             }
+
+            Expr::Fork => {
+                self.uses_files = true;
+                self.emit_indent("; fork() - 0 in child, child pid in parent, negative on error");
+                self.emit_indent("FORK");
+            }
+
+            Expr::ReapChild { pid } => {
+                self.uses_files = true;
+                match pid {
+                    None => {
+                        self.emit_indent("mov rdi, -1  ; wait for any child");
+                    }
+                    Some(pid_expr) => {
+                        self.generate_expr(pid_expr);
+                        self.emit_indent("mov rdi, rax  ; wait for this specific pid");
+                    }
+                }
+                self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
+                self.emit_indent("REAP_CHILD");
+            }
             
             // Type casting
             Expr::Cast { value, target_type } => {

@@ -20,6 +20,8 @@
 %define SYS_PIVOT_ROOT 155
 %define SYS_SYNC    162
 %define SYS_REBOOT  169
+%define SYS_FORK    57
+%define SYS_WAIT4   61
 
 ; reboot(2) magic values (see linux/reboot.h)
 %define LINUX_REBOOT_MAGIC1 0xFEE1DEAD
@@ -609,6 +611,50 @@
     ; Only reachable if execve failed
     neg rax
     mov [rel _last_error], rax
+%endmacro
+
+; Create a new process (fork(2))
+; Returns: rax = 0 in the child, the child's pid in the parent, negative
+; on error. This IS the expression's result (used directly in comparisons
+; like "if pid is less than 0"), so unlike the error-only macros above we
+; preserve the original value in rax while still setting _last_error.
+%macro FORK 0
+    mov rax, SYS_FORK
+    syscall
+
+    cmp rax, 0
+    jl %%fork_error
+    mov qword [rel _last_error], 0
+    jmp %%fork_done
+%%fork_error:
+    push rax
+    neg rax
+    mov [rel _last_error], rax
+    pop rax
+%%fork_done:
+%endmacro
+
+; Reap a child process (wait4(2)), discarding the exit-status details.
+; Input: rdi = pid to wait for (-1 = any child), pre-loaded by codegen.
+; Returns: rax = the reaped child's pid, or negative on error - this IS
+; the expression's result, preserved the same way as FORK above.
+%macro REAP_CHILD 0
+    xor rsi, rsi      ; status pointer = NULL (status details not decoded)
+    xor rdx, rdx      ; options = 0
+    xor r10, r10      ; rusage = NULL
+    mov rax, SYS_WAIT4
+    syscall
+
+    cmp rax, 0
+    jl %%reap_error
+    mov qword [rel _last_error], 0
+    jmp %%reap_done
+%%reap_error:
+    push rax
+    neg rax
+    mov [rel _last_error], rax
+    pop rax
+%%reap_done:
 %endmacro
 
 ; Check file/path availability (boolean semantics for Vox's "is available")

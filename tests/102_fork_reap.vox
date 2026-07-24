@@ -1,0 +1,7 @@
+Set pid to fork the process.
+If pid is 0 then,
+    Exit 0.
+If pid is greater than 0 then,
+    Set reaped to reap any child process,
+    If reaped is pid then,
+        Print "reaped pid matches forked child pid".
