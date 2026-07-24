@@ -1,0 +1,23 @@
+(Regression test: arguments's all must be iterable WITHOUT any flag
+ schema declared. The filtered view is only populated by the flag-parse
+ routine, which is skipped entirely when a program declares no flags -
+ previously that left _parsed_argc at 0 forever, so every each-from
+ loop and For-each over arguments's all silently ran zero times. The
+ runtime now falls back to the raw argv[1..] view until flag parsing
+ marks the filtered view valid.)
+
+Print "count: {arguments's count}".
+
+(statement form)
+For each item in arguments's all,
+    Print "for: {item}".
+
+(loop expansion form)
+Print each item from arguments's all.
+
+(function call expansion form - the shape of a coreutils rmdir/cat)
+To "shout" of a text called "path".
+  Print "fn: {path}".
+
+"shout" of each item from arguments's all.
+Print "end".
