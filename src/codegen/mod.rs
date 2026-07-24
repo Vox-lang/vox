@@ -3939,7 +3939,7 @@ impl CodeGenerator {
             }
             
             // Type casting
-            Expr::Cast { value, target_type } => {
+            Expr::Cast { value, target_type, radix } => {
                 self.generate_expr(value);
                 match target_type {
                     Type::Integer => {
@@ -3958,12 +3958,22 @@ impl CodeGenerator {
                                     self.emit_indent("mov rdi, rax");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_i64");
+                                    if *radix == 10 {
+                                        self.emit_indent("call _parse_i64");
+                                    } else {
+                                        self.emit_indent(&format!("mov rsi, {}", radix));
+                                        self.emit_indent("call _parse_int_radix");
+                                    }
                                 }
                                 Some(VarType::String) => {
                                     self.uses_ints = true;
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_i64");
+                                    if *radix == 10 {
+                                        self.emit_indent("call _parse_i64");
+                                    } else {
+                                        self.emit_indent(&format!("mov rsi, {}", radix));
+                                        self.emit_indent("call _parse_int_radix");
+                                    }
                                 }
                                 _ => {
                                     // Other types stay as-is (already integer)

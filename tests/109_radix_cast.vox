@@ -1,0 +1,31 @@
+A text called "hexstr" is "3fa2c1e4".
+Set n1 to hexstr as a hex number.
+Print n1.
+
+A text called "octstr" is "17".
+Set n2 to octstr as an octal number.
+Print n2.
+
+A text called "binstr" is "1010".
+Set n3 to binstr as a binary number.
+Print n3.
+
+A text called "decstr" is "42".
+Set n4 to decstr as a number.
+Print n4.
+
+A text called "b16str" is "ff".
+Set n5 to b16str as a base16 number.
+Print n5.
+
+A text called "b2str" is "101".
+Set n6 to b2str as a base 2 number.
+Print n6.
+
+A text called "neg" is "-1a".
+Set n7 to neg as a hex number.
+Print n7.
+
+A text called "upper" is "FF".
+Set n8 to upper as a hex number.
+Print n8.

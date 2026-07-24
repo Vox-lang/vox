@@ -4457,6 +4457,59 @@ impl Parser {
                 self.skip_noise();
             }
             
+            // Optional radix word before 'number': hex/binary/octal, or 'base N'
+            let mut radix: u32 = 10;
+            if let Token::Identifier(ref id) = self.current() {
+                if id.eq_ignore_ascii_case("hex") || id.eq_ignore_ascii_case("hexadecimal") {
+                    radix = 16;
+                    self.advance();
+                    self.skip_noise();
+                } else if id.eq_ignore_ascii_case("octal") {
+                    radix = 8;
+                    self.advance();
+                    self.skip_noise();
+                } else if id.eq_ignore_ascii_case("binary") {
+                    radix = 2;
+                    self.advance();
+                    self.skip_noise();
+                } else if id.eq_ignore_ascii_case("base") {
+                    self.advance();
+                    self.skip_noise();
+                    // Accept "base16"/"base 16" (fused word or separate number)
+                    match self.current().clone() {
+                        Token::IntegerLiteral(n) => {
+                            radix = n as u32;
+                            self.advance();
+                            self.skip_noise();
+                        }
+                        Token::Identifier(ref fused) => {
+                            // e.g. "base16", "base8", "base2" as one token
+                            if let Ok(n) = fused.parse::<u32>() {
+                                radix = n;
+                                self.advance();
+                                self.skip_noise();
+                            } else {
+                                return Err(self.err(&format!(
+                                    "Expected a number after 'base', got '{}'", fused
+                                )));
+                            }
+                        }
+                        _ => return Err(self.err("Expected a number after 'base' (e.g. 'base 16')")),
+                    }
+                    if !(2..=16).contains(&radix) {
+                        return Err(self.err("Only base 2 through base 16 are supported"));
+                    }
+                } else if id.len() > 4 && id[..4].eq_ignore_ascii_case("base") && id[4..].chars().all(|c| c.is_ascii_digit()) {
+                    // Fused form as ONE token: "base16", "base8", "base2"
+                    radix = id[4..].parse().unwrap_or(10);
+                    if !(2..=16).contains(&radix) {
+                        return Err(self.err("Only base 2 through base 16 are supported"));
+                    }
+                    self.advance();
+                    self.skip_noise();
+                }
+            }
+
             // Parse target type
             let target_type = match self.current() {
                 Token::Number | Token::Int => { self.advance(); Type::Integer }
@@ -4469,6 +4522,7 @@ impl Parser {
             expr = Expr::Cast {
                 value: Box::new(expr),
                 target_type,
+                radix,
             };
         }
         
