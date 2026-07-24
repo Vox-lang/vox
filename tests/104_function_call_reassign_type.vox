@@ -1,0 +1,22 @@
+(Regression test: reassigning an EXISTING variable from a function call
+ must preserve the variable's real type. infer_expr_type() had no case
+ for Expr::FunctionCall and fell through to a generic "default to
+ Integer" fallback; Assignment codegen trusted that inferred type and
+ overwrote the variable's correct type with Integer. A FRESH `a text
+ called "x" is "func" of y.` declaration used a different code path and
+ was unaffected, which is what made this easy to miss - only
+ REASSIGNMENT of an already-declared variable was broken.)
+
+To "classify" of a number called "n".
+  If n is 1 then,
+      Return a text, "one".
+  If n is 2 then,
+      Return a text, "two".
+  Return a text, "other".
+
+a text called "label" is "start".
+Print "before: {label}".
+the label is "classify" of 1.
+Print "after reassign (1): {label}".
+the label is "classify" of 2.
+Print "after reassign (2): {label}".

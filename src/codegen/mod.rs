@@ -32,6 +32,11 @@ pub struct CodeGenerator {
     // analyzer computes from string literals/format strings and may miss
     // a pure variable-vs-variable comparison with no literal operand.
     uses_strings: bool,
+    // Declared return type of each user function, keyed by function name.
+    // Populated by collect_function_signatures() before codegen so
+    // infer_expr_type() can report a FunctionCall's real type instead of
+    // silently defaulting to Integer (see collect_function_signatures).
+    function_return_types: std::collections::HashMap<String, VarType>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -106,6 +111,7 @@ impl CodeGenerator {
             uses_funcs: false,
             uses_lists: false,
             uses_strings: false,
+            function_return_types: std::collections::HashMap::new(),
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -409,6 +415,32 @@ impl CodeGenerator {
         }
     }
 
+    // Record each function's declared return type so infer_expr_type() can
+    // resolve Expr::FunctionCall correctly instead of falling through to
+    // its generic "Integer for anything unrecognized" default. Without
+    // this, reassigning an EXISTING variable from a function call (`the x
+    // is "some func" of y.`) silently corrupted the variable's tracked
+    // type to Integer - a fresh `a text called "x" is ...` declaration
+    // happened to read the correct type from a different code path and
+    // was unaffected, which is what made this easy to miss.
+    fn collect_function_signatures(&mut self, program: &Program) {
+        self.function_return_types.clear();
+        for stmt in &program.statements {
+            if let Statement::FunctionDef { name, return_type, .. } = stmt {
+                let vt = match return_type {
+                    Type::Integer => VarType::Integer,
+                    Type::Float => VarType::Float,
+                    Type::String => VarType::String,
+                    Type::Boolean => VarType::Boolean,
+                    Type::Buffer => VarType::Buffer,
+                    Type::List(_) => VarType::List,
+                    _ => VarType::Unknown,
+                };
+                self.function_return_types.insert(name.clone(), vt);
+            }
+        }
+    }
+
     fn collect_flag_schemas(&mut self, program: &Program) {
         self.flag_schemas.clear();
         for stmt in &program.statements {
@@ -661,6 +693,7 @@ impl CodeGenerator {
     pub fn generate(&mut self, program: &Program) -> String {
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
+        self.collect_function_signatures(program);
 
         self.global_var_labels.clear();
         self.global_var_counter = 0;
@@ -4259,6 +4292,7 @@ impl CodeGenerator {
             | Expr::EnvironmentVariableEmpty => Some(VarType::Integer),
             Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
+            Expr::FunctionCall { name, .. } => self.function_return_types.get(name).cloned(),
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type
                 match property {
