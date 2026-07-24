@@ -4496,14 +4496,14 @@ impl Parser {
                         }
                         _ => return Err(self.err("Expected a number after 'base' (e.g. 'base 16')")),
                     }
-                    if !(2..=16).contains(&radix) {
-                        return Err(self.err("Only base 2 through base 16 are supported"));
+                    if !(2..=36).contains(&radix) {
+                        return Err(self.err("Only base 2 through base 36 are supported"));
                     }
                 } else if id.len() > 4 && id[..4].eq_ignore_ascii_case("base") && id[4..].chars().all(|c| c.is_ascii_digit()) {
                     // Fused form as ONE token: "base16", "base8", "base2"
                     radix = id[4..].parse().unwrap_or(10);
-                    if !(2..=16).contains(&radix) {
-                        return Err(self.err("Only base 2 through base 16 are supported"));
+                    if !(2..=36).contains(&radix) {
+                        return Err(self.err("Only base 2 through base 36 are supported"));
                     }
                     self.advance();
                     self.skip_noise();

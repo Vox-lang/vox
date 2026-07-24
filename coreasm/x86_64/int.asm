@@ -141,11 +141,11 @@ _parse_i64:
     pop rbx
     ret
 
-; Parse a signed integer from a string in an arbitrary base (2-16).
-; Supports both cases of hex digits (a-f / A-F). Backs "as a hex/octal/
-; binary/base N number" casts - _parse_i64 above remains the dedicated
-; base-10 path and is untouched.
-; Args: rdi = string pointer, rsi = base (2-16)
+; Parse a signed integer from a string in an arbitrary base (2-36).
+; Supports both cases of alphabetic digits (a-z / A-Z, values 10-35).
+; Backs "as a hex/octal/binary/base N number" casts - _parse_i64 above
+; remains the dedicated base-10 path and is untouched.
+; Args: rdi = string pointer, rsi = base (2-36)
 ; Returns: rax = parsed integer (0 on empty/invalid prefix)
 global _parse_int_radix
 _parse_int_radix:
@@ -181,10 +181,10 @@ _parse_int_radix:
 
 .pir_alpha:
     mov cl, dl
-    or cl, 0x20              ; fold to lowercase (a-f / A-F -> a-f)
+    or cl, 0x20              ; fold to lowercase (a-z / A-Z -> a-z)
     cmp cl, 'a'
     jl .pir_done
-    cmp cl, 'f'
+    cmp cl, 'z'
     jg .pir_done
     movzx rcx, cl
     sub rcx, 'a'
