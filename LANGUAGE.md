@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.16**
+**Version 0.1.17**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -992,6 +992,31 @@ Print "Sum: {x add y}".
 Print "Product: {x multiply y}".
 Print "Arguments: {arguments's count}".
 ```
+
+#### Format Strings as Values (v0.1.17)
+
+Format strings are expressions, not just print arguments. Used as a
+value, a format string materializes into a fresh NUL-terminated string,
+so it works as a text initializer or assignment and survives being
+carried through lists (e.g. into an `Execute` argument list):
+
+```
+a buffer called "word" is 64 bytes in size.
+copy "hello" to word.
+
+a text called "tok" is "{word}".        (text from buffer contents)
+a text called "path" is "/bin/{tok}".   (text from another text)
+
+a list called "cmdargs" is [].
+append tok to cmdargs.
+Execute "/bin/echo" with arguments cmdargs.
+```
+
+Each evaluation allocates a new string; the source buffer can be
+cleared and reused without affecting texts already created from it.
+
+(Before v0.1.17, a format string outside `Print` compiled to a NULL
+pointer: it printed as empty and corrupted `execve` argv arrays.)
 
 #### Escape Sequences
 
