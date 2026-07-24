@@ -1,0 +1,20 @@
+(Regression test: a buffer declared with an initializer INSIDE a
+ function body must be usable as a buffer. The analyzer's type pre-pass
+ only walks top-level statements and never descends into function
+ bodies, and the in-body VarDecl arm registered nothing - so
+ `a buffer called "x" is "...".` inside a function was never recorded
+ as a buffer, and property or byte access on it was rejected with
+ "requires a buffer, list, or file variable". The sized form
+ `a buffer called "x" is N bytes in size.` parses as a different
+ statement (BufferDecl) whose arm already registered, which is why only
+ the initializer form failed.)
+
+To "measure" of a text called "word".
+  a buffer called "padded" is " {word}\n".
+  a number called "first byte" is byte 1 of padded.
+  Print "padded size: {padded's size}".
+  Print "first byte: {first byte} (expect 32 = space)".
+  Return a number, padded's size.
+
+a number called "n" is "measure" of "sda2".
+Print "returned: {n}".

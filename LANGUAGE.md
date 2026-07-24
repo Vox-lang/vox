@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.15**
+**Version 0.1.16**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -331,6 +331,36 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 - Variables declared at top level are global and can be used inside functions.
 - Variables declared inside a function are local to that function and are not available at top level.
 - Referencing an unknown variable inside a function is a compile-time error.
+
+### Parameter and Local Types (v0.1.16)
+
+Parameters may use any variable type, including `buffer`, `list`, and
+`file` - and a typed parameter supports the same properties and
+operations as a top-level variable of that type:
+
+```
+To "contains token" of a buffer called "hay" and a text called "devname".
+  a buffer called "needle" is " {devname}\n".
+  a number called "H" is hay's size.
+  a number called "b" is byte 1 of hay.
+  ...
+```
+
+Key points:
+
+- Buffer parameters support `'s size`/`'s empty`/`'s full` and byte
+  access; list parameters support `'s length`/element access; file
+  parameters support file properties.
+- Buffers declared **inside** a function body work with every
+  initializer form, including format strings (`is " {devname}\n"`).
+- A function call's declared return type is tracked through
+  assignment: reassigning an existing variable from a call
+  (`the label is "classify" of n.`) preserves the correct type.
+
+(All three of the above were fixed in v0.1.16 - in earlier versions,
+buffer-typed parameters and function-local buffer declarations with
+initializers were rejected by the analyzer, and reassignment from a
+function call silently corrupted the variable's tracked type.)
 
 ### Function Calls
 

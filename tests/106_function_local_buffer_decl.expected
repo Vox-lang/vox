@@ -1,0 +1,3 @@
+padded size: 6
+first byte: 32 (expect 32 = space)
+returned: 6
