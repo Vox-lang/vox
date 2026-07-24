@@ -1,6 +1,6 @@
 [package]
 name = "vox"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "A systems level compiler for Vox (sentence based code)"
 

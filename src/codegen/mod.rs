@@ -4115,11 +4115,22 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", done_label));
             }
             
-            // Format string - result is left in rax as a pointer (not used here, handled in generate_print)
-            Expr::FormatString { .. } => {
-                // Format strings are handled specially in generate_print
-                // For expression context, just return 0
-                self.emit_indent("xor rax, rax");
+            // Format string in expression context (e.g. a text initializer
+            // or a function argument): materialize it into a fresh dynamic
+            // buffer and yield a pointer to the data area - a NUL-terminated
+            // C string usable anywhere a text is. Previously this returned 0,
+            // so `a text called "t" is "{buf}"` silently produced a NULL
+            // text that printed as empty and crashed execve argv arrays.
+            Expr::FormatString { parts } => {
+                self.uses_buffers = true;
+                self.stack_offset += 8;
+                let tmp = self.stack_offset;
+                self.emit_indent("mov rdi, 1024  ; default buffer size");
+                self.emit_indent("call _alloc_buffer");
+                self.emit_indent(&format!("mov [rbp-{}], rax", tmp));
+                self.emit_format_parts_into_buffer_slot(tmp, parts, false);
+                self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
+                self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes)");
             }
         }
     }

@@ -1,0 +1,76 @@
+(vsh - a minimal interactive shell)
+(Reads a command line, splits it into whitespace-separated tokens,
+ forks, and executes the command with its arguments. Commands are
+ tried as given, then under /bin and /usr/bin. Type "exit" to quit.
+
+ Tokens are collected byte-by-byte into a scratch buffer, then turned
+ into an argv-ready text with a format-string initializer - "{word}"
+ materializes the buffer's bytes as a fresh NUL-terminated string, so
+ every token owns its own memory and the scratch buffer can be reused.)
+
+A text called "Program Version" is "0.1.0".
+
+Open a file at 0 for reading called stdin.
+
+Create a buffer called line.
+a buffer called "word" is 256 bytes in size.
+
+While true,
+    print "vsh $ " without newline,
+    clear line,
+    read line from stdin into line,
+    if line is empty then, exit 0.
+    (A trailing separator guarantees the last token is flushed even if
+     the line arrived without a newline)
+    append " " to line,
+
+    a list called "argv" is [],
+    a text called "cmd" is "",
+    a text called "tok" is "",
+    a number called "have_cmd" is 0,
+    a number called "n" is line's size,
+    a number called "i" is 1,
+    a number called "b" is 0,
+    a number called "sep" is 0,
+    a number called "flush" is 0,
+    clear word,
+
+    (Scan the line. Non-separator bytes accumulate into word; hitting a
+     separator with a non-empty word finishes one token. The first token
+     is the command, the rest become its arguments.)
+    While i is less than or equal to n,
+        set b to byte i of line,
+        set sep to 0,
+        if b is 32 then, set sep to 1.
+        if b is 10 then, set sep to 1.
+        if b is 9 then, set sep to 1.
+        if sep is 0 then, set byte {word's size add 1} of word to b.
+        set flush to 0,
+        if sep is 1 and word's size is greater than 0 then, set flush to 1.
+        if flush is 1 then, a text called "tok" is "{word}".
+        (Order matters: append while have_cmd is already 1, THEN claim
+         the first token as the command - reversing these would also
+         append the command itself to its argument list)
+        if flush is 1 and have_cmd is 1 then, append tok to argv.
+        if flush is 1 and have_cmd is 0 then, set cmd to tok, set have_cmd to 1.
+        if flush is 1 then, clear word.
+        increment i.
+
+    a number called "pid" is 0,
+    if cmd is "exit" then, exit 0.
+    if have_cmd is 1 then, set pid to fork the process.
+
+    (Child: execve only returns on failure, so falling through to the
+     next Execute IS the search order: as given, /bin, /usr/bin)
+    if pid is 0 and have_cmd is 1 then,
+        Execute cmd with arguments argv,
+        a text called "binpath" is "/bin/{cmd}",
+        Execute binpath with arguments argv,
+        a text called "usrpath" is "/usr/bin/{cmd}",
+        Execute usrpath with arguments argv,
+        print "vsh: {cmd}: command not found",
+        exit 127.
+
+    (Parent: wait for the child so the prompt returns in order)
+    if pid is greater than 0 then, set reaped to reap process pid.
+    set flush to 0.
