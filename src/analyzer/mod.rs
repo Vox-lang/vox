@@ -1257,6 +1257,22 @@ impl Analyzer {
             
             Statement::VarDecl { name, var_type, value } => {
                 self.declare_variable_in_current_scope(name);
+                // Register the declared type in the type-specific sets,
+                // mirroring the top-level pre-pass. That pre-pass only
+                // walks program.statements and never descends into
+                // function bodies, so without this a `a buffer called "x"
+                // is "..."` INSIDE a function was never recorded as a
+                // buffer and property/byte access on it was rejected.
+                // (`a buffer called "x" is N bytes in size.` parses as
+                // BufferDecl - a different statement whose arm already
+                // registers - which is why only the initializer form
+                // failed.)
+                if let Some(Type::Buffer) = var_type {
+                    self.buffer_variables.insert(name.clone());
+                }
+                if let Some(Type::List(_)) = var_type {
+                    self.list_variables.insert(name.clone());
+                }
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
                     self.analyze_expr(v);
@@ -1424,9 +1440,23 @@ impl Analyzer {
                 self.in_function_scope = true;
                 self.block_depth = 0;
 
-                // Add function parameters to function scope.
-                for (param_name, _) in params {
+                // Add function parameters to function scope. Buffer/list/file
+                // typed parameters must also be recorded in their
+                // type-specific sets, exactly like a VarDecl/BufferDecl at
+                // top level would - otherwise `param's size`/`empty`/`full`
+                // (and other buffer/list/file-only properties) incorrectly
+                // report "requires a buffer, list, or file variable" for
+                // the parameter itself. This previously only appeared to
+                // work when a same-named top-level variable of the correct
+                // type happened to already exist elsewhere in the program.
+                for (param_name, param_type) in params {
                     self.variables.insert(param_name.clone());
+                    match param_type {
+                        Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
+                        Type::List(_) => { self.list_variables.insert(param_name.clone()); }
+                        Type::File => { self.file_variables.insert(param_name.clone()); }
+                        _ => {}
+                    }
                 }
                 for s in body {
                     self.analyze_statement(s);

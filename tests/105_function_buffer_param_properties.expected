@@ -1,0 +1,3 @@
+func one: size 5
+func two: size 5
+sizes: 5 5

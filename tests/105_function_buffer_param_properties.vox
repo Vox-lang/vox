@@ -1,0 +1,23 @@
+(Regression test: a buffer-typed function PARAMETER must support
+ 'size'/'empty'/'full' the same as any top-level buffer variable. The
+ analyzer registered function parameters into the generic "known
+ variable" set but never into the type-specific buffer_variables/
+ list_variables/file_variables sets, so a parameter's own type was
+ invisible to the "is this a buffer?" check - this previously appeared
+ to work only when a same-named top-level variable of the correct type
+ happened to already exist elsewhere in the program (which masked the
+ bug rather than avoiding it). Two functions sharing a parameter name
+ makes sure the fix isn't accidentally scoped to a single function.)
+
+To "describe" of a buffer called "hay".
+  Print "func one: size {hay's size}".
+  Return a number, hay's size.
+
+To "describe again" of a buffer called "hay".
+  Print "func two: size {hay's size}".
+  Return a number, hay's size.
+
+a buffer called "data" is "hello".
+a number called "s1" is "describe" of data.
+a number called "s2" is "describe again" of data.
+Print "sizes: {s1} {s2}".
