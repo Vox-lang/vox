@@ -19,6 +19,10 @@ section .bss
     _envp: resq 1           ; pointer to envp array
     _parsed_argc: resq 1    ; filtered positional arg count (user args only)
     _parsed_args: resq 4096 ; filtered positional pointers
+    _parsed_valid: resq 1   ; nonzero once flag parsing has populated the
+                            ; filtered view; while zero, the parsed accessors
+                            ; fall back to the raw argv[1..] view so programs
+                            ; without flag schemas still see arguments's all
 
 section .text
 
@@ -99,10 +103,12 @@ _get_raw_arg:
     xor rax, rax
     ret
 
-; Reset parsed positional args storage
+; Reset parsed positional args storage (called by the flag-parse routine,
+; which then repopulates the filtered view - so this also marks it valid)
 global _reset_parsed_args
 _reset_parsed_args:
     mov qword [rel _parsed_argc], 0
+    mov qword [rel _parsed_valid], 1
     ret
 
 ; Append positional argument pointer to parsed list
@@ -120,17 +126,24 @@ _append_parsed_arg:
     ret
 
 ; Get parsed positional args count
+; Falls back to the raw view when no flag parsing has run - otherwise
+; arguments's all would be permanently empty in schema-less programs
 ; Returns: count in rax
 global _get_parsed_argc
 _get_parsed_argc:
+    cmp qword [rel _parsed_valid], 0
+    je _get_raw_argc
     mov rax, [rel _parsed_argc]
     ret
 
 ; Get parsed positional arg by 0-based index
+; Falls back to the raw view when no flag parsing has run (see above)
 ; Args: index in rdi
 ; Returns: pointer in rax or 0 if out of bounds
 global _get_parsed_arg
 _get_parsed_arg:
+    cmp qword [rel _parsed_valid], 0
+    je _get_raw_arg
     cmp rdi, [rel _parsed_argc]
     jge .parsed_oob
     lea rdx, [rel _parsed_args]
