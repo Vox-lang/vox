@@ -3955,15 +3955,30 @@ impl CodeGenerator {
                                 Some(VarType::Buffer) => {
                                     self.uses_ints = true;
                                     self.uses_buffers = true;
-                                    self.emit_indent("mov rdi, rax");
+                                    // Buffer content isn't reliably NUL-terminated at its
+                                    // logical end (_buffer_clear only zeroes the first byte,
+                                    // not the whole allocation), so a NUL-scanning parse could
+                                    // read stale bytes left over from a longer previous value.
+                                    // Use the buffer's own tracked length as a hard bound instead.
+                                    self.emit_indent("push rbx");
+                                    self.emit_indent("push r12");
+                                    self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                                    self.emit_indent("mov rdi, rbx");
+                                    self.emit_indent("call _buffer_length");
+                                    self.emit_indent("mov r12, rax  ; save length");
+                                    self.emit_indent("mov rdi, rbx");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
                                     if *radix == 10 {
-                                        self.emit_indent("call _parse_i64");
+                                        self.emit_indent("mov rsi, r12  ; max length");
+                                        self.emit_indent("call _parse_i64_bounded");
                                     } else {
                                         self.emit_indent(&format!("mov rsi, {}", radix));
-                                        self.emit_indent("call _parse_int_radix");
+                                        self.emit_indent("mov rdx, r12  ; max length");
+                                        self.emit_indent("call _parse_int_radix_bounded");
                                     }
+                                    self.emit_indent("pop r12");
+                                    self.emit_indent("pop rbx");
                                 }
                                 Some(VarType::String) => {
                                     self.uses_ints = true;
