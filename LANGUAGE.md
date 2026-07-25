@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.18**
+**Version 0.1.19**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -519,6 +519,48 @@ Convert values between types using the `as` or `in` keywords.
 | boolean | text | `true as text` | `"true"` |
 | text | boolean | `"true" as a boolean` | `true` |
 
+**Radix (Base) Conversions:**
+
+Text-to-number casting isn't limited to base 10. A radix word can be
+inserted right before `number` to parse in a different base:
+
+| Syntax | Base | Example | Result |
+|--------|------|---------|--------|
+| `as a number` | 10 (default) | `"42" as a number` | `42` |
+| `as a hex number` / `as a hexadecimal number` | 16 | `"ff" as a hex number` | `255` |
+| `as an octal number` | 8 | `"17" as an octal number` | `15` |
+| `as a binary number` | 2 | `"1010" as a binary number` | `10` |
+| `as a base N number` (spaced) | any 2-36 | `"z9a" as a base 36 number` | `45694` |
+| `as a baseN number` (fused) | any 2-36 | `"6543" as a base7 number` | `2334` |
+
+Any base from 2 through 36 is supported, not just the aliased ones
+(hex/octal/binary) - digits above 9 use letters `a`-`z` (case-
+insensitive), so base 36 is the practical maximum for a single-
+character-per-digit representation.
+
+```
+(Hex string to number)
+a text called "hexstr" is "3fa2c1e4".
+a number called "n" is hexstr as a hex number.
+
+(Arbitrary base, fused or spaced form - both work)
+a text called "s" is "6543".
+a number called "n2" is s as a base7 number.
+a number called "n3" is s as a base 7 number.
+
+(Negative numbers and uppercase hex digits both work)
+a text called "neg" is "-1a".
+a number called "n4" is neg as a hex number.   (-26)
+a text called "upper" is "FF".
+a number called "n5" is upper as a hex number. (255)
+```
+
+Like the base-10 case, parsing **stops at the first character invalid
+for that base** rather than raising an error - `"12g5" as a hex number`
+gives `18` (stops at `g`), and a string that's invalid from its very
+first character (e.g. `"abc" as a base5 number`, since `a`'s value of
+10 is too big for base 5) gives `0`.
+
 **Examples:**
 
 ```
@@ -572,6 +614,9 @@ Print the hour padded.  (prints "09")
 - Float to number **truncates** (does not round)
 - To round: add 0.5 before casting (`3.7 add 0.5 as a number` → `4`)
 - Text to number fails if text is not a valid number (sets error flag)
+- Text to number in a non-default base (`as a hex/octal/binary/base N
+  number`) stops parsing at the first character invalid for that base,
+  rather than failing outright - it does not set the error flag
 - Zero is `false`, any non-zero number is `true`
 - `in` keyword is preferred for unit/time conversions
 

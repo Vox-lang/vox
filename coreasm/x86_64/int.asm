@@ -140,3 +140,76 @@ _parse_i64:
     pop rcx
     pop rbx
     ret
+
+; Parse a signed integer from a string in an arbitrary base (2-36).
+; Supports both cases of alphabetic digits (a-z / A-Z, values 10-35).
+; Backs "as a hex/octal/binary/base N number" casts - _parse_i64 above
+; remains the dedicated base-10 path and is untouched.
+; Args: rdi = string pointer, rsi = base (2-36)
+; Returns: rax = parsed integer (0 on empty/invalid prefix)
+global _parse_int_radix
+_parse_int_radix:
+    push rbx
+    push rcx
+    push rdx
+    push r8
+    push r9
+
+    mov r8, rsi              ; base
+    xor rax, rax             ; accumulator
+    xor r9, r9               ; sign flag (0=+, 1=-)
+    mov rbx, rdi
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .pir_loop
+    mov r9, 1
+    inc rbx
+
+.pir_loop:
+    mov dl, [rbx]
+    test dl, dl
+    jz .pir_done
+
+    cmp dl, '0'
+    jl .pir_done
+    cmp dl, '9'
+    jg .pir_alpha
+    movzx rcx, dl
+    sub rcx, '0'
+    jmp .pir_check
+
+.pir_alpha:
+    mov cl, dl
+    or cl, 0x20              ; fold to lowercase (a-z / A-Z -> a-z)
+    cmp cl, 'a'
+    jl .pir_done
+    cmp cl, 'z'
+    jg .pir_done
+    movzx rcx, cl
+    sub rcx, 'a'
+    add rcx, 10
+
+.pir_check:
+    cmp rcx, r8              ; digit value must be < base, else stop
+    jge .pir_done
+
+    mov rdx, r8
+    imul rax, rdx
+    add rax, rcx
+
+    inc rbx
+    jmp .pir_loop
+
+.pir_done:
+    test r9, r9
+    jz .pir_ret
+    neg rax
+
+.pir_ret:
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
