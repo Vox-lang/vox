@@ -1,0 +1,41 @@
+(Regression test covering two bugs found appending a buffer to a list:
+1. The uses_strings flag was never set for this code path, so
+   string.asm (where _strdup lives) never got included - a hard
+   NASM assembly failure ("symbol _strdup not defined") for any
+   program appending a buffer to a list.
+2. Once that was fixed, _strdup's NUL-scan hit the same stale-byte
+   leak as buffer-to-number casting: _buffer_clear only zeroes the
+   first byte, not the whole allocation.)
+
+a list called items is [].
+
+(Normal buffer append, unrelated to either bug)
+a buffer called "buf1" is "hello".
+Append buf1 to items.
+Print element 1 of items.
+
+(Fixed-size buffer filled to exactly its capacity)
+a buffer called "buf2" is 4 bytes in size.
+Set byte 1 of buf2 to 'w'.
+Set byte 2 of buf2 to 'o'.
+Set byte 3 of buf2 to 'r'.
+Set byte 4 of buf2 to 'd'.
+Append buf2 to items.
+Print element 2 of items.
+
+(Clear + shorter rewrite - the exact scenario that leaked stale bytes)
+Create a buffer called buf3.
+Set byte 1 of buf3 to 'f'.
+Set byte 2 of buf3 to 'f'.
+Set byte 3 of buf3 to 'f'.
+Set byte 4 of buf3 to 'f'.
+Set byte 5 of buf3 to 'f'.
+Set byte 6 of buf3 to 'f'.
+Append buf3 to items.
+Print element 3 of items.
+
+clear buf3.
+Set byte 1 of buf3 to 'a'.
+Set byte 2 of buf3 to 'b'.
+Append buf3 to items.
+Print element 4 of items.

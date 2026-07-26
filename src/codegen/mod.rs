@@ -1692,11 +1692,25 @@ impl CodeGenerator {
                     self.generate_expr(value);
                     
                     if is_buffer_value {
-                        // For buffer values, extract string data and duplicate it
-                        self.emit_indent("mov rdi, rax  ; buffer struct pointer");
+                        // For buffer values, extract string data and duplicate it.
+                        // Bounded by the buffer's own tracked length rather than
+                        // scanning for NUL - see _strdup_bounded's comment for why
+                        // (buffer content isn't reliably NUL-terminated at its
+                        // logical end after a clear+shorter-rewrite).
+                        self.uses_strings = true;
+                        self.emit_indent("push rbx");
+                        self.emit_indent("push r12");
+                        self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                        self.emit_indent("mov rdi, rbx");
+                        self.emit_indent("call _buffer_length");
+                        self.emit_indent("mov r12, rax  ; save length");
+                        self.emit_indent("mov rdi, rbx");
                         self.emit_indent("call _buffer_data  ; get data pointer");
                         self.emit_indent("mov rdi, rax  ; source string");
-                        self.emit_indent("call _strdup  ; duplicate string");
+                        self.emit_indent("mov rsi, r12  ; max length");
+                        self.emit_indent("call _strdup_bounded  ; duplicate string");
+                        self.emit_indent("pop r12");
+                        self.emit_indent("pop rbx");
                     }
                     
                     self.emit_indent("push rax  ; save value to append");
