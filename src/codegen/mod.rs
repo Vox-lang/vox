@@ -2537,7 +2537,15 @@ impl CodeGenerator {
                     self.emit_indent("PRINT_FLOAT");
                     self.uses_floats = true;
                 }
-                Some(VarType::String) | Some(VarType::Buffer) => {
+                Some(VarType::Buffer) => {
+                    // rdi must be the struct pointer (not data area) here.
+                    // The fixed call sites guarantee this; it's documented on
+                    // each one. Kept separate from VarType::String to make the
+                    // contract explicit and catch any future callers that get
+                    // it wrong (PRINT_BUF on a data pointer would print garbage).
+                    self.emit_indent("PRINT_BUF rdi");
+                }
+                Some(VarType::String) => {
                     self.emit_indent("PRINT_CSTR rdi");
                 }
                 _ => {
@@ -2704,37 +2712,50 @@ impl CodeGenerator {
                                 continue;
                             }
 
-                            // Buffer variables hold their struct pointer
-                            // (capacity/length/flags header first) - adjust
-                            // to the data area, same as _buffer_data. Without
-                            // this, printing prints starting at the header:
-                            // if capacity's low byte happens to be 0 (true
-                            // for any capacity that's a multiple of 256,
-                            // e.g. the 1024/4096 defaults), PRINT_CSTR hits
-                            // that as an immediate NUL and prints nothing.
+                            // Parse format spec and emit formatted value.
+                            // Buffer: use PRINT_BUF with the struct pointer (length-bounded,
+                            // avoids the NUL-scan stale-byte bug). For all other types, rdi
+                            // already holds the correct value/pointer.
                             if var_type == Some(VarType::Buffer) {
-                                self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
+                                    self.emit_indent("PRINT_BUF rdi");
+                                } else {
+                                    // Format spec: value is formatted as a number, so point
+                                    // rdi at the data area so the formatter reads the string.
+                                    self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                                    self.emit_formatted_value(var_type, fmt_spec);
+                                }
+                            } else {
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                self.emit_formatted_value(var_type, fmt_spec);
                             }
-
-                            // Parse format spec and emit formatted value
-                            let fmt_spec = self.parse_format_spec(format.as_deref());
-                            self.emit_formatted_value(var_type, fmt_spec);
                         }
                         FormatPart::Expression { expr, format } => {
-                            // Generate code for the expression, result will be in rax.
-                            // generate_cstr_expr applies the buffer data-area
-                            // adjustment (+24) when the expression is a
-                            // buffer - see the matching comment on the
-                            // Variable arm above for why that's needed.
-                            self.generate_cstr_expr(expr);
-                            self.emit_indent("mov rdi, rax");
-
-                            // Determine the type of the expression for formatting
                             let expr_type = self.infer_expr_type(expr);
-                            
-                            // Parse format spec and emit formatted value
                             let fmt_spec = self.parse_format_spec(format.as_deref());
-                            self.emit_formatted_value(expr_type, fmt_spec);
+
+                            if expr_type == Some(VarType::Buffer) {
+                                // For buffer expressions: generate the struct pointer,
+                                // not the data-area pointer - PRINT_BUF reads its own
+                                // length from the struct, so it needs the base pointer.
+                                self.generate_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
+                                    self.emit_indent("PRINT_BUF rdi");
+                                } else {
+                                    // Format spec present: adjust to data area for
+                                    // the NUL-scanned formatter.
+                                    self.emit_indent("add rdi, 24  ; buffer data area");
+                                    self.emit_formatted_value(expr_type, fmt_spec);
+                                }
+                            } else {
+                                // Non-buffer: generate_cstr_expr adds +24 for buffer
+                                // (irrelevant here), then falls through to normal path.
+                                self.generate_cstr_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                self.emit_formatted_value(expr_type, fmt_spec);
+                            }
                         }
                     }
                 }
@@ -2751,9 +2772,7 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(s).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
-                            self.emit_indent("call _buffer_data");
-                            self.emit_indent("mov rdi, rax");
-                            self.emit_indent("PRINT_CSTR rdi");
+                            self.emit_indent("PRINT_BUF rdi");
                         }
                         Some(VarType::String) => {
                             self.emit_indent("PRINT_CSTR rdi");
@@ -2793,10 +2812,9 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(name).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
-                            // Dynamic buffer - get data pointer (skip header)
-                            self.emit_indent("call _buffer_data");
-                            self.emit_indent("mov rdi, rax");
-                            self.emit_indent("PRINT_CSTR rdi");
+                            // Dynamic buffer - PRINT_BUF reads length/data directly
+                            // from the struct, no NUL-scan needed
+                            self.emit_indent("PRINT_BUF rdi");
                         }
                         Some(VarType::String) => {
                             // Raw string pointer (from lists, etc.)

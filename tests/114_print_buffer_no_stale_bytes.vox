@@ -1,0 +1,52 @@
+(Regression test: Print on a buffer that had been cleared and rewritten
+with fewer bytes was leaking stale data through the old NUL-scanning
+path. Three separate code paths each had this bug - all three are
+covered here.)
+
+Create a buffer called buf.
+Set byte 1 of buf to 'f'.
+Set byte 2 of buf to 'f'.
+Set byte 3 of buf to 'f'.
+Set byte 4 of buf to 'f'.
+Set byte 5 of buf to 'f'.
+Set byte 6 of buf to 'f'.
+
+(Path 1: direct Print of a buffer variable)
+Print buf.
+clear buf.
+Set byte 1 of buf to 'a'.
+Set byte 2 of buf to 'b'.
+Print buf.
+
+(Re-fill for format string tests)
+clear buf.
+Set byte 1 of buf to 'f'.
+Set byte 2 of buf to 'f'.
+Set byte 3 of buf to 'f'.
+Set byte 4 of buf to 'f'.
+Set byte 5 of buf to 'f'.
+Set byte 6 of buf to 'f'.
+
+(Path 2: format-string variable interpolation)
+Print "fmt-var: {buf}".
+clear buf.
+Set byte 1 of buf to 'c'.
+Set byte 2 of buf to 'd'.
+Print "fmt-var: {buf}".
+
+(Re-fill for expression path test)
+clear buf.
+Set byte 1 of buf to 'f'.
+Set byte 2 of buf to 'f'.
+Set byte 3 of buf to 'f'.
+Set byte 4 of buf to 'f'.
+Set byte 5 of buf to 'f'.
+Set byte 6 of buf to 'f'.
+
+(Path 3: format-string expression)
+a number called n is 1.
+Print "fmt-expr: {buf}".
+clear buf.
+Set byte 1 of buf to 'e'.
+Set byte 2 of buf to 'f'.
+Print "fmt-expr: {buf}".
