@@ -2658,19 +2658,19 @@ impl CodeGenerator {
                                 self.uses_time = true;
                                 var_type = Some(VarType::Integer);
                             } else if name == "arguments's count" || name == "argument's count" {
-                                self.emit_indent("ARGS_COUNT");
+                                self.generate_expr(&Expr::ArgumentCount);
                                 self.emit_indent("mov rdi, rax");
                                 var_type = Some(VarType::Integer);
                             } else if name == "arguments's name" || name == "argument's name" {
-                                self.emit_indent("ARGS_NAME");
+                                self.generate_expr(&Expr::ArgumentName);
                                 self.emit_indent("mov rdi, rax");
                                 var_type = Some(VarType::String);
                             } else if name == "arguments's first" || name == "argument's first" {
-                                self.emit_indent("ARGS_FIRST");
+                                self.generate_expr(&Expr::ArgumentFirst);
                                 self.emit_indent("mov rdi, rax");
                                 var_type = Some(VarType::String);
                             } else if name == "arguments's last" || name == "argument's last" {
-                                self.emit_indent("ARGS_LAST");
+                                self.generate_expr(&Expr::ArgumentLast);
                                 self.emit_indent("mov rdi, rax");
                                 var_type = Some(VarType::String);
                             } else if let Some(offset) = self.get_var(name) {
@@ -4004,10 +4004,23 @@ impl CodeGenerator {
                                 Some(VarType::Buffer) => {
                                     self.uses_floats = true;
                                     self.uses_buffers = true;
-                                    self.emit_indent("mov rdi, rax");
+                                    // Buffer content isn't reliably NUL-terminated at its
+                                    // logical end (see the int.asm bounded parsers for the
+                                    // full explanation) - use the buffer's own tracked
+                                    // length as a hard bound instead of scanning for NUL.
+                                    self.emit_indent("push rbx");
+                                    self.emit_indent("push r12");
+                                    self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                                    self.emit_indent("mov rdi, rbx");
+                                    self.emit_indent("call _buffer_length");
+                                    self.emit_indent("mov r12, rax  ; save length");
+                                    self.emit_indent("mov rdi, rbx");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_f64");
+                                    self.emit_indent("mov rsi, r12  ; max length");
+                                    self.emit_indent("call _parse_f64_bounded");
+                                    self.emit_indent("pop r12");
+                                    self.emit_indent("pop rbx");
                                 }
                                 Some(VarType::String) => {
                                     self.uses_floats = true;

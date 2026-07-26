@@ -313,3 +313,213 @@ _float_negate:
     
     leave
     ret
+
+; Parse a double-precision float from a NUL-terminated string.
+; Handles an optional leading '-', an integer part, and an optional
+; '.' followed by a fractional part. Degrades gracefully to 0.0 on an
+; empty or entirely-invalid string, matching the "stop at first invalid
+; character" convention used by _parse_i64/_parse_int_radix elsewhere
+; in this codebase.
+; Args: rdi = string pointer
+; Returns: rax = the parsed value's raw 64-bit bit pattern (per this
+; codebase's float convention - see RAX_TO_XMM0/XMM0_TO_RAX above)
+global _parse_f64
+_parse_f64:
+    push rbx
+    push rcx
+    push rdx
+    push r8              ; sign flag
+    push r9               ; fractional digit count
+
+    xor r8, r8
+    xor r9, r9
+    mov rbx, rdi
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .pf64_sign_done
+    mov r8, 1
+    inc rbx
+.pf64_sign_done:
+    xor rax, rax
+
+.pf64_int_loop:
+    mov dl, [rbx]
+    cmp dl, '0'
+    jl .pf64_int_done
+    cmp dl, '9'
+    jg .pf64_int_done
+    imul rax, rax, 10
+    movzx rdx, dl
+    sub rdx, '0'
+    add rax, rdx
+    inc rbx
+    jmp .pf64_int_loop
+
+.pf64_int_done:
+    cvtsi2sd xmm0, rax
+
+    mov dl, [rbx]
+    cmp dl, '.'
+    jne .pf64_sign
+    inc rbx
+
+    xor rax, rax
+.pf64_frac_loop:
+    mov dl, [rbx]
+    cmp dl, '0'
+    jl .pf64_frac_done
+    cmp dl, '9'
+    jg .pf64_frac_done
+    imul rax, rax, 10
+    movzx rdx, dl
+    sub rdx, '0'
+    add rax, rdx
+    inc r9
+    inc rbx
+    jmp .pf64_frac_loop
+
+.pf64_frac_done:
+    test r9, r9
+    jz .pf64_sign
+    cvtsi2sd xmm1, rax
+    mov rcx, r9
+.pf64_pow10_loop:
+    test rcx, rcx
+    jz .pf64_pow10_done
+    mov rax, 10
+    cvtsi2sd xmm2, rax
+    divsd xmm1, xmm2
+    dec rcx
+    jmp .pf64_pow10_loop
+.pf64_pow10_done:
+    addsd xmm0, xmm1
+
+.pf64_sign:
+    test r8, r8
+    jz .pf64_done
+    xorpd xmm1, xmm1
+    subsd xmm1, xmm0
+    movsd xmm0, xmm1
+
+.pf64_done:
+    movq rax, xmm0
+
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Same as _parse_f64, but bounded by an explicit max length rather than
+; scanning for a NUL terminator. Buffer content isn't reliably
+; NUL-terminated at its logical end (_buffer_clear only zeroes the
+; first byte, not the whole allocation - see the int.asm bounded
+; parsers for the full explanation), so buffer-typed float casts must
+; use this instead of _parse_f64 directly.
+; Args: rdi = string pointer, rsi = max length in bytes
+; Returns: rax = the parsed value's raw 64-bit bit pattern
+global _parse_f64_bounded
+_parse_f64_bounded:
+    push rbx
+    push rcx
+    push rdx
+    push r8               ; sign flag
+    push r9                ; fractional digit count
+    push r10               ; remaining length
+
+    xor r8, r8
+    xor r9, r9
+    xor rax, rax
+    mov rbx, rdi
+    mov r10, rsi
+
+    test r10, r10
+    jz .pf64b_int_done       ; zero length -> 0.0 immediately
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .pf64b_int_loop
+    mov r8, 1
+    inc rbx
+    dec r10
+
+.pf64b_int_loop:
+    test r10, r10
+    jz .pf64b_int_done
+    mov dl, [rbx]
+    cmp dl, '0'
+    jl .pf64b_int_done
+    cmp dl, '9'
+    jg .pf64b_int_done
+    imul rax, rax, 10
+    movzx rdx, dl
+    sub rdx, '0'
+    add rax, rdx
+    inc rbx
+    dec r10
+    jmp .pf64b_int_loop
+
+.pf64b_int_done:
+    cvtsi2sd xmm0, rax
+
+    test r10, r10
+    jz .pf64b_sign
+    mov dl, [rbx]
+    cmp dl, '.'
+    jne .pf64b_sign
+    inc rbx
+    dec r10
+
+    xor rax, rax
+.pf64b_frac_loop:
+    test r10, r10
+    jz .pf64b_frac_done
+    mov dl, [rbx]
+    cmp dl, '0'
+    jl .pf64b_frac_done
+    cmp dl, '9'
+    jg .pf64b_frac_done
+    imul rax, rax, 10
+    movzx rdx, dl
+    sub rdx, '0'
+    add rax, rdx
+    inc r9
+    inc rbx
+    dec r10
+    jmp .pf64b_frac_loop
+
+.pf64b_frac_done:
+    test r9, r9
+    jz .pf64b_sign
+    cvtsi2sd xmm1, rax
+    mov rcx, r9
+.pf64b_pow10_loop:
+    test rcx, rcx
+    jz .pf64b_pow10_done
+    mov rax, 10
+    cvtsi2sd xmm2, rax
+    divsd xmm1, xmm2
+    dec rcx
+    jmp .pf64b_pow10_loop
+.pf64b_pow10_done:
+    addsd xmm0, xmm1
+
+.pf64b_sign:
+    test r8, r8
+    jz .pf64b_done
+    xorpd xmm1, xmm1
+    subsd xmm1, xmm0
+    movsd xmm0, xmm1
+
+.pf64b_done:
+    movq rax, xmm0
+
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
