@@ -1,0 +1,25 @@
+(Regression test: PRINT_HEX_LOWER_PADDED, PRINT_HEX_UPPER_PADDED,
+PRINT_BINARY_PADDED, and PRINT_OCTAL_PADDED did not exist at all before
+this fix - format strings like "{n:6x}" (width, no leading zero) would
+fail at NASM assembly time with an undefined-symbol error for any base
+other than decimal.)
+
+A number called "n" is 255.
+A number called "b" is 10.
+A number called "o" is 15.
+
+(Space-padded - the previously-missing macros)
+Print "{n:6x}".
+Print "{n:6X}".
+Print "{b:8b}".
+Print "{o:6o}".
+
+(Width smaller than the digits - no padding needed)
+Print "{n:2x}".
+
+(Zero-padded siblings - confirm the refactor didn't change their
+existing, already-working behavior)
+Print "{n:06x}".
+Print "{n:06X}".
+Print "{b:08b}".
+Print "{o:06o}".

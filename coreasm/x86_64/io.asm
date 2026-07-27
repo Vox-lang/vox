@@ -23,6 +23,35 @@ section .text
 %endmacro
 
 ; Print null-terminated string (C-string) - pointer in register
+; Print a buffer's content directly to stdout, using its own tracked
+; length rather than scanning for a NUL terminator. Buffer content
+; isn't reliably NUL-terminated at its logical end (_buffer_clear only
+; zeroes the first byte, not the whole allocation), so a NUL-scanning
+; print could read straight through stale bytes left over from a
+; previous longer value. Mirrors FILE_WRITE_BUF in file.asm, which
+; already does this correctly for file descriptors other than stdout.
+; Args: buffer struct pointer
+%macro PRINT_BUF 1
+    push rax
+    push rdi
+    push rsi
+    push rdx
+
+    mov rsi, %1                     ; buffer struct pointer (read %1 BEFORE
+                                     ; touching rdi below - the caller may
+                                     ; pass rdi itself as %1)
+    mov rdx, [rsi + 8]              ; length from struct offset 8
+    add rsi, 24                     ; data starts at offset 24
+    mov rax, 1                      ; sys_write
+    mov rdi, 1                      ; fd = stdout
+    syscall
+
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rax
+%endmacro
+
 %macro PRINT_CSTR 1
     push rbx
     push rcx

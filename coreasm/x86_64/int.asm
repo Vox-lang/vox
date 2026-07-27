@@ -213,3 +213,147 @@ _parse_int_radix:
     pop rcx
     pop rbx
     ret
+
+; Parse a signed base-10 integer from a LENGTH-BOUNDED byte range,
+; rather than scanning for a NUL terminator. Needed for buffer content:
+; _buffer_clear only zeroes the buffer's first byte (a cheap "empty"
+; marker), not the whole allocation - so a buffer that held a longer
+; value before being cleared and rewritten with something shorter can
+; have stale non-NUL bytes sitting right after its new logical content.
+; A NUL-scanning parse would read straight through those stale bytes.
+; Args: rdi = pointer, rsi = max length in bytes (e.g. buffer's own
+; tracked length via _buffer_length)
+; Returns: rax = parsed integer (0 on empty/invalid prefix)
+global _parse_i64_bounded
+_parse_i64_bounded:
+    push rbx
+    push rcx
+    push rdx
+    push r8
+
+    xor rax, rax             ; accumulator
+    xor rcx, rcx             ; sign flag (0=+, 1=-)
+    mov rbx, rdi
+    mov r8, rsi              ; remaining length
+
+    test r8, r8
+    jz .pi64b_ret
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .pi64b_loop
+    mov rcx, 1
+    inc rbx
+    dec r8
+
+.pi64b_loop:
+    test r8, r8
+    jz .pi64b_done
+    mov dl, [rbx]
+    test dl, dl
+    jz .pi64b_done
+    cmp dl, '0'
+    jl .pi64b_done
+    cmp dl, '9'
+    jg .pi64b_done
+    imul rax, rax, 10
+    sub dl, '0'
+    movzx rdx, dl
+    add rax, rdx
+    inc rbx
+    dec r8
+    jmp .pi64b_loop
+
+.pi64b_done:
+    test rcx, rcx
+    jz .pi64b_ret
+    neg rax
+
+.pi64b_ret:
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Parse an integer from a LENGTH-BOUNDED byte range, in an arbitrary
+; base (2-36), rather than scanning for a NUL terminator. Same
+; buffer-reuse safety rationale as _parse_i64_bounded above.
+; Args: rdi = pointer, rsi = base (2-36), rdx = max length in bytes
+; Returns: rax = parsed integer (0 on empty/invalid prefix)
+global _parse_int_radix_bounded
+_parse_int_radix_bounded:
+    push rbx
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+
+    mov r8, rsi              ; base
+    mov r10, rdx             ; remaining length
+    xor rax, rax
+    xor r9, r9               ; sign flag
+    mov rbx, rdi
+
+    test r10, r10
+    jz .pirb_ret
+
+    mov dl, [rbx]
+    cmp dl, '-'
+    jne .pirb_loop
+    mov r9, 1
+    inc rbx
+    dec r10
+
+.pirb_loop:
+    test r10, r10
+    jz .pirb_done
+    mov dl, [rbx]
+    test dl, dl
+    jz .pirb_done
+
+    cmp dl, '0'
+    jl .pirb_done
+    cmp dl, '9'
+    jg .pirb_alpha
+    movzx rcx, dl
+    sub rcx, '0'
+    jmp .pirb_check
+
+.pirb_alpha:
+    mov cl, dl
+    or cl, 0x20
+    cmp cl, 'a'
+    jl .pirb_done
+    cmp cl, 'z'
+    jg .pirb_done
+    movzx rcx, cl
+    sub rcx, 'a'
+    add rcx, 10
+
+.pirb_check:
+    cmp rcx, r8
+    jge .pirb_done
+
+    mov rdx, r8
+    imul rax, rdx
+    add rax, rcx
+
+    inc rbx
+    dec r10
+    jmp .pirb_loop
+
+.pirb_done:
+    test r9, r9
+    jz .pirb_ret
+    neg rax
+
+.pirb_ret:
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
