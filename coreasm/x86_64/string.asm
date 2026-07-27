@@ -254,3 +254,65 @@ _strdup_bounded:
     pop r12
     pop rbx
     ret
+
+; Compare two byte sequences of known lengths for equality. Used for
+; buffer-vs-buffer and buffer-vs-string comparison where one or both
+; sides may have stale bytes beyond the logical content.
+; Args: rdi = ptr1, rsi = ptr2, rdx = len1, rcx = len2
+; Returns: rax = 1 if equal, 0 if not equal
+; (Two sequences are equal iff they have the same length AND identical bytes.)
+global _mem_eq
+_mem_eq:
+    push rbx
+    push r8
+    push r9
+
+    ; Unequal lengths -> immediately not equal
+    cmp rdx, rcx
+    jne .mem_not_equal
+
+    ; Zero length -> equal (both empty)
+    test rdx, rdx
+    jz .mem_equal
+
+    xor r8, r8              ; byte index
+
+.mem_loop:
+    cmp r8, rdx
+    jge .mem_equal
+    mov al, [rdi + r8]
+    mov bl, [rsi + r8]
+    cmp al, bl
+    jne .mem_not_equal
+    inc r8
+    jmp .mem_loop
+
+.mem_equal:
+    mov rax, 1
+    pop r9
+    pop r8
+    pop rbx
+    ret
+
+.mem_not_equal:
+    xor rax, rax
+    pop r9
+    pop r8
+    pop rbx
+    ret
+
+; Get the length of a NUL-terminated string (strlen equivalent).
+; Args: rdi = string pointer
+; Returns: rax = length (not including the NUL terminator)
+global _str_len
+_str_len:
+    push rcx
+    xor rax, rax
+.strlen_loop:
+    cmp byte [rdi + rax], 0
+    je .strlen_done
+    inc rax
+    jmp .strlen_loop
+.strlen_done:
+    pop rcx
+    ret

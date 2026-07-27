@@ -658,6 +658,92 @@ impl CodeGenerator {
             _ => false,
         }
     }
+
+    fn is_buffer_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Buffer),
+            Expr::Identifier(name) => {
+                self.variable_types.get(name) == Some(&VarType::Buffer)
+            }
+            _ => false,
+        }
+    }
+
+    /// Emit code for an equality comparison between two stringy (String or
+    /// Buffer) expressions. Routes to _mem_eq when either side is a buffer
+    /// (length-bounded, avoids NUL-scanning stale bytes after clear+rewrite)
+    /// and falls back to _str_eq for pure string/string comparisons.
+    /// Result in rax: 1 = equal, 0 = not equal.
+    fn emit_stringy_equality(&mut self, left: &Expr, right: &Expr) {
+        self.uses_strings = true;
+        let left_is_buf = self.is_buffer_expr(left);
+        let right_is_buf = self.is_buffer_expr(right);
+
+        if left_is_buf || right_is_buf {
+            // At least one side is a buffer - use _mem_eq(ptr1, ptr2, len1, len2).
+            // Evaluate both sides, keeping data ptrs and lengths on the stack.
+
+            // --- RIGHT side ---
+            if right_is_buf {
+                self.generate_expr(right);           // rax = struct ptr
+                self.emit_indent("push rax           ; R: struct ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _buffer_length");
+                self.emit_indent("push rax           ; R: len");
+                self.emit_indent("mov rdi, [rsp+8]   ; reload struct ptr");
+                self.emit_indent("call _buffer_data");
+                self.emit_indent("push rax           ; R: data ptr");
+                // stack (top): R_data | R_len | R_struct
+            } else {
+                self.generate_cstr_expr(right);      // rax = NUL-term str ptr
+                self.emit_indent("push rax           ; R: str ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _str_len");
+                self.emit_indent("push rax           ; R: len");
+                // stack (top): R_len | R_str_ptr  (use R_str_ptr as data ptr later)
+            }
+
+            // --- LEFT side ---
+            if left_is_buf {
+                self.generate_expr(left);            // rax = struct ptr
+                self.emit_indent("push rax           ; L: struct ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _buffer_length");
+                self.emit_indent("mov rdx, rax       ; len1 = L len");
+                self.emit_indent("mov rdi, [rsp]     ; reload L struct ptr");
+                self.emit_indent("call _buffer_data");
+                self.emit_indent("mov rdi, rax       ; ptr1 = L data");
+                self.emit_indent("pop rax            ; drop L struct ptr");
+            } else {
+                self.generate_cstr_expr(left);       // rax = NUL-term str ptr
+                self.emit_indent("mov rdi, rax       ; ptr1 = L str");
+                self.emit_indent("push rdi");
+                self.emit_indent("call _str_len");
+                self.emit_indent("mov rdx, rax       ; len1 = L len");
+                self.emit_indent("pop rdi            ; restore ptr1");
+            }
+
+            // --- Restore RIGHT from stack into rsi (ptr2) and rcx (len2) ---
+            if right_is_buf {
+                self.emit_indent("pop rsi            ; ptr2 = R data");
+                self.emit_indent("pop rcx            ; len2 = R len");
+                self.emit_indent("pop rax            ; drop R struct ptr");
+            } else {
+                self.emit_indent("pop rcx            ; len2 = R len");
+                self.emit_indent("pop rsi            ; ptr2 = R str");
+            }
+
+            self.emit_indent("call _mem_eq");
+        } else {
+            // Pure string/string - both NUL-terminated, _str_eq is correct
+            self.generate_cstr_expr(right);
+            self.emit_indent("push rax  ; park right operand");
+            self.generate_cstr_expr(left);
+            self.emit_indent("mov rdi, rax  ; left operand");
+            self.emit_indent("pop rsi  ; right operand");
+            self.emit_indent("call _str_eq");
+        }
+    }
     
     // Check if operands involve floats (for choosing comparison instructions)
     fn has_float_operands(&self, expr: &Expr) -> bool {
@@ -1979,14 +2065,30 @@ impl CodeGenerator {
                             
                             // Generate buffer value
                             self.generate_expr(inner_val);
-                            self.emit_indent("push rax  ; save buffer ptr");
+                            self.emit_indent("push rax  ; save buffer struct ptr");
                             
-                            // Compare buffer data with match value
-                            self.emit_indent("add rax, 24  ; buffer data offset");
+                            // Get the buffer's tracked length and data pointer.
+                            // Use _mem_eq rather than _str_eq to avoid the stale-byte
+                            // bug: the buffer's data area may not be NUL-terminated at
+                            // its logical end after a clear+shorter-rewrite.
                             self.emit_indent("mov rdi, rax");
+                            self.emit_indent("call _buffer_length");
+                            self.emit_indent("mov rdx, rax  ; len1 = buf length");
+                            self.emit_indent("mov rdi, [rsp]  ; reload buf struct ptr");
+                            self.emit_indent("call _buffer_data");
+                            self.emit_indent("mov rdi, rax  ; ptr1 = buf data");
                             self.generate_expr(match_value);
-                            self.emit_indent("mov rsi, rax");
-                            self.emit_indent("call _str_eq");
+                            self.emit_indent("mov rsi, rax  ; ptr2 = match string");
+                            self.emit_indent("push rdi      ; save ptr1 across str_len call");
+                            self.emit_indent("push rsi      ; save ptr2");
+                            self.emit_indent("push rdx      ; save len1");
+                            self.emit_indent("mov rdi, rsi");
+                            self.emit_indent("call _str_len");
+                            self.emit_indent("mov rcx, rax  ; len2 = match string len");
+                            self.emit_indent("pop rdx       ; restore len1");
+                            self.emit_indent("pop rsi       ; restore ptr2");
+                            self.emit_indent("pop rdi       ; restore ptr1");
+                            self.emit_indent("call _mem_eq");
                             self.emit_indent("test rax, rax");
                             self.emit_indent(&format!("jz {}", skip_label));
                             
@@ -3069,17 +3171,10 @@ impl CodeGenerator {
                 } else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (self.is_stringy_expr(left) || self.is_stringy_expr(right))
                 {
-                    // Content comparison via _str_eq, not a raw pointer cmp -
-                    // see the matching case in generate_condition() for why.
-                    self.uses_strings = true;
-                    self.generate_cstr_expr(right);
-                    self.emit_indent("push rax  ; park right operand");
-                    self.generate_cstr_expr(left);
-                    self.emit_indent("mov rdi, rax  ; left operand");
-                    self.emit_indent("pop rsi  ; right operand");
-                    self.emit_indent("call _str_eq");
+                    // Content comparison via _str_eq/_mem_eq - see emit_stringy_equality.
+                    self.emit_stringy_equality(left, right);
                     if matches!(op, BinaryOperator::NotEqual) {
-                        self.emit_indent("xor rax, 1  ; _str_eq gives 1=equal; NotEqual wants the opposite");
+                        self.emit_indent("xor rax, 1  ; 1=equal -> 0=notequal");
                     }
                 } else {
                     // Integer operations
@@ -3851,20 +3946,35 @@ impl CodeGenerator {
                 if is_buffer || matches!(treating_type, Some(VarType::String)) {
                     // Evaluate the value
                     self.generate_expr(value);
-                    self.emit_indent("push rax  ; save original value");
+                    self.emit_indent("push rax  ; save original value (struct ptr if buffer)");
 
-                    // If buffer, get pointer to data (offset 24) for comparison
                     if is_buffer {
-                        self.emit_indent("add rax, 24  ; buffer data offset");
+                        // Get length and data pointer from struct - avoid NUL-scanning
+                        // stale bytes (same fix applied to all other buffer comparisons)
+                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent("call _buffer_length");
+                        self.emit_indent("mov rdx, rax  ; len1");
+                        self.emit_indent("mov rdi, [rsp]");
+                        self.emit_indent("call _buffer_data");
+                        self.emit_indent("mov rdi, rax  ; ptr1 = data");
+                        self.generate_expr(match_value);
+                        self.emit_indent("mov rsi, rax  ; ptr2 = match");
+                        self.emit_indent("push rdi");
+                        self.emit_indent("push rsi");
+                        self.emit_indent("push rdx");
+                        self.emit_indent("mov rdi, rsi");
+                        self.emit_indent("call _str_len");
+                        self.emit_indent("mov rcx, rax  ; len2");
+                        self.emit_indent("pop rdx");
+                        self.emit_indent("pop rsi");
+                        self.emit_indent("pop rdi");
+                        self.emit_indent("call _mem_eq");
+                    } else {
+                        self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
+                        self.generate_expr(match_value);
+                        self.emit_indent("mov rsi, rax  ; match value in rsi");
+                        self.emit_indent("call _str_eq");
                     }
-                    self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
-
-                    // Evaluate match_value
-                    self.generate_expr(match_value);
-                    self.emit_indent("mov rsi, rax  ; match value in rsi");
-
-                    // Compare strings
-                    self.emit_indent("call _str_eq");
                     self.emit_indent("test rax, rax");
                     self.emit_indent(&format!("jz {}", skip_label));
 
@@ -4272,22 +4382,12 @@ impl CodeGenerator {
                     BinaryOperator::Equal | BinaryOperator::NotEqual
                         if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
                     {
-                        // Content comparison, not pointer comparison: two
-                        // equal-content strings are essentially never at the
-                        // same address (string literals get a fresh label
-                        // per occurrence), so `cmp` here would silently
-                        // compare addresses and almost always report "not
-                        // equal" even when the text matches exactly.
-                        self.uses_strings = true;
-                        self.generate_cstr_expr(right);
-                        self.emit_indent("push rax  ; park right operand");
-                        self.generate_cstr_expr(left);
-                        self.emit_indent("mov rdi, rax  ; left operand");
-                        self.emit_indent("pop rsi  ; right operand");
-                        self.emit_indent("call _str_eq");
+                        // Content comparison - see emit_stringy_equality for why
+                        // _mem_eq is used when either side is a buffer.
+                        self.emit_stringy_equality(left, right);
                         self.emit_indent("test rax, rax");
                         let jmp = if matches!(op, BinaryOperator::Equal) { "jz" } else { "jnz" };
-                        self.emit_indent(&format!("{} {}  ; _str_eq: 1 = equal", jmp, false_label));
+                        self.emit_indent(&format!("{} {}  ; 1=equal", jmp, false_label));
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual |
                     BinaryOperator::Greater | BinaryOperator::Less |
