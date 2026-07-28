@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.19**
+**Version 0.1.21**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -1025,7 +1025,7 @@ Print "Hello, {name}! You are {age} years old.".
 | `{var:x}` | Hexadecimal (lowercase) | `{255:x}` | `0xff` |
 | `{var:X}` | Hexadecimal (uppercase) | `{255:X}` | `0xFF` |
 | `{var:b}` | Binary | `{5:b}` | `101` |
-| `{var:o}` | Octal | `{8:o}` | `10` |
+| `{var:o}` | Octal | `{8:o}` | `0o10` |
 | `{var:04x}` | Padded hex | `{255:04x}` | `0x00ff` |
 
 #### Expressions in Format Strings
@@ -1062,6 +1062,34 @@ cleared and reused without affecting texts already created from it.
 
 (Before v0.1.17, a format string outside `Print` compiled to a NULL
 pointer: it printed as empty and corrupted `execve` argv arrays.)
+
+#### Format Strings Everywhere (v0.1.21)
+
+Every statement that takes a string value accepts a format string:
+`write`, buffer `set`/`copy`/`append`, filesystem paths (`Create a
+directory called "{base}/{name}"`), `treating` clauses, and function
+arguments. All sinks share one name resolver, so special names like
+`{arguments's first}` and `{current time's hour}`, format specifiers,
+and the `0x`/`0o` hex/octal prefixes render identically whether the
+result is printed, written to a file, or built into a buffer.
+
+#### Declarations in Branches (v0.1.21)
+
+A variable (or file handle) declared in EVERY branch of an
+`if`/`otherwise` chain definitely exists afterwards: it can be used
+after the branch and from inside functions, exactly like a top-level
+declaration. A name declared in only SOME branches remains scoped to
+its condition, and cross-condition use is still a compile error.
+
+```
+if "output file" is empty then,
+  Open a file for writing called "output" at 1.
+Otherwise,
+  Open a file for writing called "output" at "output file".
+
+(output exists on every path - usable here and in functions)
+write "hello\n" to output.
+```
 
 #### Escape Sequences
 
