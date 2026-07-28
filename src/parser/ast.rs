@@ -561,3 +561,64 @@ impl Program {
         }
     }
 }
+
+/// What kind of definitely-declared name this is, so consumers can route
+/// it into their type-specific tracking (buffer/list/file sets).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DefiniteDeclKind {
+    Plain,
+    Buffer,
+    List,
+    File,
+}
+
+/// Names that are DEFINITELY declared by the time this statement sequence
+/// finishes, regardless of which control-flow path ran: unconditional
+/// declarations, plus - for if/otherwise chains that have an else branch -
+/// the intersection of what every branch declares. A name declared in only
+/// some branches is not definite (the analyzer's guard tracking owns those),
+/// and loop bodies never count (they may run zero times). Function bodies
+/// are their own scope and are never entered.
+///
+/// Shared by the analyzer (function-visible globals) and codegen (bss
+/// mirror labels) so the two can never disagree about which main-line
+/// declarations behave as globals.
+pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<String, DefiniteDeclKind> {
+    let mut out = std::collections::HashMap::new();
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDecl { name, var_type, .. } => {
+                let kind = match var_type {
+                    Some(Type::Buffer) => DefiniteDeclKind::Buffer,
+                    Some(Type::List(_)) => DefiniteDeclKind::List,
+                    _ => DefiniteDeclKind::Plain,
+                };
+                out.insert(name.clone(), kind);
+            }
+            Statement::BufferDecl { name, .. } => {
+                out.insert(name.clone(), DefiniteDeclKind::Buffer);
+            }
+            Statement::Allocate { name, .. } | Statement::TimerDecl { name } => {
+                out.insert(name.clone(), DefiniteDeclKind::Plain);
+            }
+            Statement::FileOpen { name, .. } => {
+                out.insert(name.clone(), DefiniteDeclKind::File);
+            }
+            Statement::GetTime { into } => {
+                out.insert(into.clone(), DefiniteDeclKind::Plain);
+            }
+            Statement::If { then_block, else_if_blocks, else_block: Some(else_block), .. } => {
+                let mut definite = collect_definite_decls(then_block);
+                for (_, block) in else_if_blocks {
+                    let branch = collect_definite_decls(block);
+                    definite.retain(|name, kind| branch.get(name) == Some(kind));
+                }
+                let branch = collect_definite_decls(else_block);
+                definite.retain(|name, kind| branch.get(name) == Some(kind));
+                out.extend(definite);
+            }
+            _ => {}
+        }
+    }
+    out
+}

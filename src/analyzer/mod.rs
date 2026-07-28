@@ -607,34 +607,26 @@ impl Analyzer {
         // First pass: collect function definitions, global declarations, and flag schemas.
         let mut explicit_parse_seen = false;
 
+        // Definite declarations - including names declared in EVERY branch
+        // of an if/otherwise chain - behave as globals: they exist on all
+        // control-flow paths, so functions may reference them and code
+        // after the branch may use them. Names declared in only SOME
+        // branches stay out of this set; the guard tracking below owns
+        // those and reports cross-guard usage.
+        for (name, kind) in collect_definite_decls(&program.statements) {
+            self.global_variables.insert(name.clone());
+            match kind {
+                DefiniteDeclKind::Buffer => { self.buffer_variables.insert(name); }
+                DefiniteDeclKind::List => { self.list_variables.insert(name); }
+                DefiniteDeclKind::File => { self.file_variables.insert(name); }
+                DefiniteDeclKind::Plain => {}
+            }
+        }
+
         for stmt in &program.statements {
             match stmt {
                 Statement::FunctionDef { name, .. } => {
                     self.functions.insert(name.clone());
-                }
-                Statement::VarDecl { name, var_type, .. } => {
-                    self.global_variables.insert(name.clone());
-                    if let Some(Type::Buffer) = var_type {
-                        self.buffer_variables.insert(name.clone());
-                    }
-                    if let Some(Type::List(_)) = var_type {
-                        self.list_variables.insert(name.clone());
-                    }
-                }
-                Statement::BufferDecl { name, .. } => {
-                    self.global_variables.insert(name.clone());
-                    self.buffer_variables.insert(name.clone());
-                }
-                Statement::Allocate { name, .. }
-                | Statement::TimerDecl { name } => {
-                    self.global_variables.insert(name.clone());
-                }
-                Statement::FileOpen { name, .. } => {
-                    self.global_variables.insert(name.clone());
-                    self.file_variables.insert(name.clone());
-                }
-                Statement::GetTime { into } => {
-                    self.global_variables.insert(into.clone());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
