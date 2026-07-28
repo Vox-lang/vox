@@ -1,0 +1,25 @@
+(Regression test: `write` must interpolate format strings. The parser
+ read write's value as a raw StringLit without the format-string check
+ that print/copy/append had - all such checks now go through one
+ string_value_expr helper - so `write "{x}" to f` shipped writing the
+ braces literally.)
+
+a text called "name" is "world".
+a number called "n" is 42.
+
+Open a file at 1 for writing called out.
+write "write: hello {name} {n}\n" to out.
+write "write hex: {n:04x}\n" to out.
+
+(write a format string to a real file, read it back)
+a text called "path" is "/tmp/vox_test_write_fmt.txt".
+Open a file at path for writing called f.
+write "file: {name}-{n}\n" to f.
+close f.
+
+Create a buffer called readback.
+Open a file at path for reading called f2.
+read from f2 into readback.
+close f2.
+Print readback without newline.
+Delete the file path.
