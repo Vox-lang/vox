@@ -83,6 +83,18 @@ struct FormatSpec {
     precision: Option<i32>,
 }
 
+/// Outcome of resolve_format_variable - how a `{name}` format part's value
+/// was resolved, so each sink (print / buffer append) can render it.
+enum FormatPartValue {
+    /// Code was emitted leaving the value (or pointer) in rax; the VarType
+    /// tells the sink how to render it (None = integer-ish fallback).
+    Loaded(Option<VarType>),
+    /// The part resolved to a compile-time string constant.
+    Literal(String),
+    /// Unknown name - sinks render the `{name}` placeholder literally.
+    Unknown,
+}
+
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -134,6 +146,27 @@ impl CodeGenerator {
 
     fn global_var_label(&self, name: &str) -> Option<&String> {
         self.global_var_labels.get(name)
+    }
+
+    /// Assign bss mirror labels to every definitely-declared main-line
+    /// name (see collect_definite_decls): an `Open ... called "output"`
+    /// present in BOTH arms of an if/otherwise still executes in _start's
+    /// frame on every path, so functions must be able to reach it via its
+    /// mirror global exactly like a top-level declaration. Uses the same
+    /// walker as the analyzer so the two can never disagree. Names are
+    /// sorted so label numbering stays deterministic across builds.
+    fn collect_global_var_labels(&mut self, stmts: &[Statement]) {
+        let definite = collect_definite_decls(stmts);
+        let mut names: Vec<&String> = definite.keys().collect();
+        names.sort();
+        for name in names {
+            self.ensure_global_var_label(name);
+        }
+        for stmt in stmts {
+            if let Statement::FlagSchemaDecl { name, .. } = stmt {
+                self.ensure_global_var_label(name);
+            }
+        }
     }
 
     fn emit_mirror_stack_var_to_global_if_needed(&mut self, name: &str, offset: i64) {
@@ -218,6 +251,78 @@ impl CodeGenerator {
         }
     }
 
+    /// Resolve a `{name}` format part: emit code leaving the runtime value
+    /// (or pointer) in rax, and classify what was found. This is THE single
+    /// name-resolution path shared by every format-string sink - Print, the
+    /// buffer set/copy/append writers, and the expression materializer that
+    /// write payloads, paths, and text initializers go through. Special
+    /// names, variable/global lookup, and the constant fallback must never
+    /// be re-implemented per sink: that duplication is exactly how the
+    /// buffer sinks shipped without `{current time's hour}` support while
+    /// Print had it.
+    fn resolve_format_variable(&mut self, name: &str) -> FormatPartValue {
+        match name {
+            "current time's hour" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_HOUR rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "current time's minute" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_MINUTE rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "current time's second" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_SECOND rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "arguments's count" | "argument's count" => {
+                self.generate_expr(&Expr::ArgumentCount);
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "arguments's name" | "argument's name" => {
+                self.generate_expr(&Expr::ArgumentName);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            "arguments's first" | "argument's first" => {
+                self.generate_expr(&Expr::ArgumentFirst);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            "arguments's last" | "argument's last" => {
+                self.generate_expr(&Expr::ArgumentLast);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            _ => {
+                if let Some(offset) = self.get_var(name) {
+                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                    FormatPartValue::Loaded(self.variable_types.get(name).cloned())
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.emit_indent(&format!("mov rax, [rel {}]", label));
+                    FormatPartValue::Loaded(self.variable_types.get(name).cloned())
+                } else if let Some(expr) = self.global_constants.get(name).cloned() {
+                    match expr {
+                        Expr::StringLit(s) => FormatPartValue::Literal(s),
+                        Expr::IntegerLit(n) => {
+                            self.emit_indent(&format!("mov rax, {}", n));
+                            FormatPartValue::Loaded(Some(VarType::Integer))
+                        }
+                        Expr::BoolLit(b) => {
+                            self.emit_indent(&format!("mov rax, {}", if b { 1 } else { 0 }));
+                            FormatPartValue::Loaded(Some(VarType::Integer))
+                        }
+                        _ => FormatPartValue::Unknown,
+                    }
+                } else {
+                    FormatPartValue::Unknown
+                }
+            }
+        }
+    }
+
     fn emit_format_parts_into_buffer_slot(&mut self, offset: i64, parts: &[FormatPart], clear_first: bool) {
         if clear_first {
             self.emit_clear_buffer_slot(offset);
@@ -227,30 +332,18 @@ impl CodeGenerator {
             match part {
                 FormatPart::Literal(s) => self.emit_append_literal_to_buffer_slot(offset, s),
                 FormatPart::Variable { name, format } => {
-                    if let Some(src_offset) = self.get_var(name) {
-                        self.emit_indent(&format!("mov rax, [rbp-{}]", src_offset));
-                        let value_type = self.variable_types.get(name).cloned();
-                        let fmt_spec = self.parse_format_spec(format.as_deref());
-                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
-                    } else if let Some(label) = self.global_var_label(name).cloned() {
-                        self.emit_indent(&format!("mov rax, [rel {}]", label));
-                        let value_type = self.variable_types.get(name).cloned();
-                        let fmt_spec = self.parse_format_spec(format.as_deref());
-                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
-                    } else if let Some(expr) = self.global_constants.get(name).cloned() {
-                        match expr {
-                            Expr::StringLit(s) => self.emit_append_literal_to_buffer_slot(offset, &s),
-                            Expr::IntegerLit(n) => {
-                                self.emit_indent(&format!("mov rax, {}", n));
-                                let fmt_spec = self.parse_format_spec(format.as_deref());
-                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
-                            }
-                            Expr::BoolLit(b) => {
-                                self.emit_indent(&format!("mov rax, {}", if b { 1 } else { 0 }));
-                                let fmt_spec = self.parse_format_spec(format.as_deref());
-                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
-                            }
-                            _ => {}
+                    match self.resolve_format_variable(name) {
+                        FormatPartValue::Loaded(value_type) => {
+                            let fmt_spec = self.parse_format_spec(format.as_deref());
+                            self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                        }
+                        FormatPartValue::Literal(s) => {
+                            self.emit_append_literal_to_buffer_slot(offset, &s);
+                        }
+                        FormatPartValue::Unknown => {
+                            // Same placeholder Print renders for unknown names
+                            let placeholder = format!("{{{}}}", name);
+                            self.emit_append_literal_to_buffer_slot(offset, &placeholder);
                         }
                     }
                 }
@@ -783,16 +876,7 @@ impl CodeGenerator {
 
         self.global_var_labels.clear();
         self.global_var_counter = 0;
-        for stmt in &program.statements {
-            match stmt {
-                Statement::VarDecl { name, .. }
-                | Statement::FlagSchemaDecl { name, .. }
-                | Statement::FileOpen { name, .. } => {
-                    self.ensure_global_var_label(name);
-                }
-                _ => {}
-            }
-        }
+        self.collect_global_var_labels(&program.statements);
 
         let explicit_parse_idx = program
             .statements
@@ -1842,7 +1926,17 @@ impl CodeGenerator {
                 let is_writable = matches!(mode, FileMode::Writing | FileMode::Appending);
                 self.file_writable.insert(name.clone(), is_writable);
 
-                let offset = self.alloc_var(name);
+                // Reuse the existing slot when the handle name is already
+                // known, exactly like VarDecl reassignment. Two Opens of the
+                // same name in an if/otherwise pair must share one slot -
+                // separate slots meant code after the branch read whichever
+                // slot the LAST-generated branch owned, which the branch
+                // actually taken at runtime never wrote.
+                let offset = if let Some(existing) = self.get_var(name) {
+                    existing
+                } else {
+                    self.alloc_var(name)
+                };
 
                 if path_is_fd {
                     let fd_ok_label = self.new_label("fd_ok");
@@ -2760,59 +2854,23 @@ impl CodeGenerator {
                             self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                         }
                         FormatPart::Variable { name, format } => {
-                            // Check for property access patterns first
-                            let var_type: Option<VarType>;
-                            
-                            if name == "current time's hour" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_HOUR rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "current time's minute" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_MINUTE rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "current time's second" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_SECOND rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "arguments's count" || name == "argument's count" {
-                                self.generate_expr(&Expr::ArgumentCount);
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::Integer);
-                            } else if name == "arguments's name" || name == "argument's name" {
-                                self.generate_expr(&Expr::ArgumentName);
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if name == "arguments's first" || name == "argument's first" {
-                                self.generate_expr(&Expr::ArgumentFirst);
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if name == "arguments's last" || name == "argument's last" {
-                                self.generate_expr(&Expr::ArgumentLast);
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if let Some(offset) = self.get_var(name) {
-                                // Regular variable lookup
-                                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
-                                var_type = self.variable_types.get(name).cloned();
-                            } else if let Some(label) = self.global_var_label(name).cloned() {
-                                self.emit_indent(&format!("mov rdi, [rel {}]", label));
-                                var_type = self.variable_types.get(name).cloned();
-                            } else if self.emit_global_constant_format_fallback(name, format.as_ref()) {
-                                continue;
-                            } else {
-                                // Unknown - print placeholder
-                                let placeholder = format!("{{{}}}", name);
-                                let label = self.add_string(&placeholder);
-                                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
-                                continue;
-                            }
+                            let var_type: Option<VarType> = match self.resolve_format_variable(name) {
+                                FormatPartValue::Loaded(t) => {
+                                    self.emit_indent("mov rdi, rax");
+                                    t
+                                }
+                                FormatPartValue::Literal(s) => {
+                                    let label = self.add_string(&s);
+                                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                                    continue;
+                                }
+                                FormatPartValue::Unknown => {
+                                    let placeholder = format!("{{{}}}", name);
+                                    let label = self.add_string(&placeholder);
+                                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                                    continue;
+                                }
+                            };
 
                             // Parse format spec and emit formatted value.
                             // Buffer: use PRINT_BUF with the struct pointer (length-bounded,

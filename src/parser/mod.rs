@@ -2294,7 +2294,7 @@ impl Parser {
         
         // Parse match value (simple scalar expressions)
         let match_value = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
@@ -2336,7 +2336,7 @@ impl Parser {
         
         // Parse replacement (simple scalar expressions)
         let replacement = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
@@ -2777,7 +2777,7 @@ impl Parser {
         
         // Parse value to write (string literal or identifier)
         let mut value = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::The => {
                 self.advance();
@@ -2798,7 +2798,7 @@ impl Parser {
             
             // Parse match value (simple: string or identifier only)
             let match_value = match self.current().clone() {
-                Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+                Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
                 Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
                 _ => return Err(self.err("Expected string or identifier after 'treating'")),
             };
@@ -2817,7 +2817,7 @@ impl Parser {
             
             // Parse replacement (simple: string or identifier only)
             let replacement = match self.current().clone() {
-                Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+                Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
                 Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
                 _ => return Err(self.err("Expected string or identifier after 'as'")),
             };
@@ -2921,7 +2921,7 @@ impl Parser {
 
         // Get path
         let path = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             _ => return Err(self.err("Expected a path (string or variable) after 'directory'")),
         };
@@ -3129,7 +3129,7 @@ impl Parser {
             self.skip_noise();
         }
         match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Ok(Expr::StringLit(s)) }
+            Token::StringLiteral(s) => { self.advance(); Ok(self.string_value_expr(s)) }
             Token::Identifier(n) => { self.advance(); Ok(Expr::Identifier(n)) }
             _ => Err(self.err(&format!("Expected a path (string or variable) {}", context))),
         }
@@ -3258,7 +3258,7 @@ impl Parser {
         // "string" followed by 'to' as a function-call expression, which
         // would swallow our 'to' keyword and the linkpath.
         let target = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             _ => return Err(self.err("Expected a path (string or variable) after 'from'")),
         };
@@ -3273,7 +3273,7 @@ impl Parser {
 
         // Get linkpath
         let linkpath = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             _ => return Err(self.err("Expected a path (string or variable) after 'to'")),
         };
@@ -3329,7 +3329,7 @@ impl Parser {
 
         // Get path
         let path = match self.current().clone() {
-            Token::StringLiteral(s) => { self.advance(); Expr::StringLit(s) }
+            Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             _ => return Err(self.err("Expected a path (string or variable) after 'called'")),
         };
@@ -3541,17 +3541,7 @@ impl Parser {
             }
             Token::StringLiteral(s) => {
                 self.advance();
-                // Check for format string
-                if s.contains('{') && !s.starts_with("{{") {
-                    let parts = self.parse_format_string(&s);
-                    if !parts.is_empty() && parts.iter().any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. })) {
-                        Expr::FormatString { parts }
-                    } else {
-                        Expr::StringLit(s)
-                    }
-                } else {
-                    Expr::StringLit(s)
-                }
+                self.string_value_expr(s)
             }
             Token::True => {
                 self.advance();
@@ -3623,20 +3613,7 @@ impl Parser {
             }
             Token::StringLiteral(s) => {
                 self.advance();
-                if s.contains('{') && !s.starts_with("{{") {
-                    let parts = self.parse_format_string(&s);
-                    if !parts.is_empty()
-                        && parts
-                            .iter()
-                            .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
-                    {
-                        Expr::FormatString { parts }
-                    } else {
-                        Expr::StringLit(s)
-                    }
-                } else {
-                    Expr::StringLit(s)
-                }
+                self.string_value_expr(s)
             }
             Token::True => {
                 self.advance();
@@ -4617,6 +4594,28 @@ impl Parser {
         Ok(left)
     }
     
+    /// Turn a string literal in VALUE position into either a FormatString
+    /// expression (when it contains {variable}/{expression} parts) or a
+    /// plain StringLit. Every parser site that reads a string literal as a
+    /// value (print/write payloads, buffer sources, paths, treating
+    /// clauses, function arguments) must go through this helper - sites
+    /// that read a string literal as a NAME (variable and file-handle
+    /// names) must not. Hand-rolling this check per statement is how
+    /// `write "{x}" to f` shipped writing the braces literally.
+    fn string_value_expr(&self, s: String) -> Expr {
+        if s.contains('{') && !s.starts_with("{{") {
+            let parts = self.parse_format_string(&s);
+            if !parts.is_empty()
+                && parts
+                    .iter()
+                    .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
+            {
+                return Expr::FormatString { parts };
+            }
+        }
+        Expr::StringLit(s)
+    }
+
     fn parse_format_string(&self, s: &str) -> Vec<FormatPart> {
         let mut parts = Vec::new();
         let mut current_literal = String::new();
@@ -4794,14 +4793,11 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
                 
-                // Check if this is a format string (contains {variable})
-                if s.contains('{') && !s.starts_with("{{") {
-                    let parts = self.parse_format_string(&s);
-                    if !parts.is_empty() && parts.iter().any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. })) {
-                        return Ok(Expr::FormatString { parts });
-                    }
+                // A format string can't be a function name - resolve it first
+                if let expr @ Expr::FormatString { .. } = self.string_value_expr(s.clone()) {
+                    return Ok(expr);
                 }
-                
+
                 // Check if this is a function call: "name" of/to/with/on args
                 if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
                     self.advance();
@@ -4925,7 +4921,7 @@ impl Parser {
                     }
                     Err(self.err("Expected 's after apostrophe for property access"))
                 } else {
-                    Ok(Expr::StringLit(s))
+                    Ok(self.string_value_expr(s))
                 }
             }
             Token::True => {
