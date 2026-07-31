@@ -1028,6 +1028,14 @@ impl CodeGenerator {
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
+            Expr::Cast { target_type, .. } => {
+                // A cast to float yields a float operand - must route through
+                // the float arithmetic path, not the integer one. Without this
+                // arm, `{s as a float} add 1` took the integer path and did
+                // INT_ADD on the float's bit pattern (garbage). Mirrors
+                // is_float_expr, which already handled this case.
+                matches!(target_type, Type::Float)
+            }
             Expr::BinaryOp { left, right, .. } => {
                 self.has_float_operands(left) || self.has_float_operands(right)
             }
@@ -1035,7 +1043,7 @@ impl CodeGenerator {
             _ => false,
         }
     }
-    
+
     fn emit(&mut self, code: &str) {
         self.output.push_str(code);
         self.output.push('\n');

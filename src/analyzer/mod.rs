@@ -568,6 +568,14 @@ pub struct Analyzer {
     list_variables: HashSet<String>,
     file_variables: HashSet<String>,
     timer_variables: HashSet<String>,
+    /// Declared/inferred scalar category (Integer/Float/String/Boolean) for
+    /// non-buffer, non-list, non-file, non-timer variables. Vox is dynamically
+    /// typed - a variable's runtime category is whatever its last assignment
+    /// stored - so this map is updated on every VarDecl and Assignment to stay
+    /// current. It lets the arithmetic type check distinguish a text variable
+    /// (must be cast with `as a number`/`as a float` before arithmetic) from a
+    /// numeric one, which the buffer/list/flag sets alone cannot do.
+    scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
     loop_depth: usize,
 }
@@ -599,6 +607,7 @@ impl Analyzer {
             list_variables: HashSet::new(),
             file_variables: HashSet::new(),
             timer_variables: HashSet::new(),
+            scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
             loop_depth: 0,
         }
@@ -1052,6 +1061,142 @@ impl Analyzer {
             && !self.timer_variables.contains(name)
     }
 
+    /// Resolve a named reference (an `Identifier` or a quoted-name `StringLit`)
+    /// to its tracked category. Buffer/list/file/timer/flag are detected from
+    /// their dedicated sets; otherwise the dynamic `scalar_types` map supplies
+    /// the current number/float/text/boolean category. Returns None for an
+    /// unknown or untracked name (treated as "allow" by the arithmetic check to
+    /// avoid false positives).
+    fn named_value_type(&self, name: &str) -> Option<Type> {
+        if self.is_buffer_variable(name) {
+            Some(Type::Buffer)
+        } else if self.is_list_variable(name) {
+            Some(Type::List(Box::new(Type::Unknown)))
+        } else if self.file_variables.contains(name) {
+            Some(Type::File)
+        } else if self.timer_variables.contains(name) {
+            Some(Type::Timer)
+        } else if self.flag_variables.contains(name) {
+            Some(Type::Boolean)
+        } else {
+            self.scalar_types.get(name).cloned()
+        }
+    }
+
+    /// Classify an expression's value category for the arithmetic type check.
+    /// Returns the type, or None when it cannot be determined statically
+    /// (function calls, property/element/byte access) - None means "allow",
+    /// biasing against false positives. A bare text literal or a text variable
+    /// resolves to `Type::String`; a cast resolves to its target type, so
+    /// `s as a number` is accepted while bare `s` (text) is rejected.
+    fn arithmetic_operand_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::IntegerLit(_)
+            | Expr::LastError
+            | Expr::ArgumentCount
+            | Expr::EnvironmentVariableCount => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::StringLit(s) => {
+                // A quoted name may reference a variable; otherwise this is a
+                // bare text literal, which is not valid in arithmetic.
+                self.named_value_type(s).or(Some(Type::String))
+            }
+            Expr::FormatString { .. } => Some(Type::String),
+            Expr::Identifier(name) => self.named_value_type(name),
+            Expr::Cast { target_type, .. } => Some(target_type.clone()),
+            Expr::DurationCast { .. } => Some(Type::Integer),
+            Expr::UnaryOp { op, operand } => match op {
+                UnaryOperator::Negate => self.arithmetic_operand_type(operand),
+                UnaryOperator::Not => Some(Type::Boolean),
+            },
+            Expr::BinaryOp { op, left, right } => match op {
+                BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+                | BinaryOperator::And
+                | BinaryOperator::Or => Some(Type::Boolean),
+                _ => {
+                    // Arithmetic result: float if either operand is float, else
+                    // integer. Nested operands are checked separately when
+                    // analyze_expr recurses into them.
+                    if matches!(self.arithmetic_operand_type(left), Some(Type::Float))
+                        || matches!(self.arithmetic_operand_type(right), Some(Type::Float))
+                    {
+                        Some(Type::Float)
+                    } else {
+                        Some(Type::Integer)
+                    }
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// A short, human-readable label for an operand, used in error messages.
+    fn operand_label(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Identifier(name) => name.clone(),
+            Expr::StringLit(s) => {
+                if self.is_variable_available(s) {
+                    s.clone()
+                } else {
+                    format!("\"{}\"", s)
+                }
+            }
+            _ => "this value".to_string(),
+        }
+    }
+
+    /// Reject text/buffer/list/file/timer operands in arithmetic. Without an
+    /// explicit cast these compile to pointer/handle arithmetic and produce
+    /// garbage at runtime; a cast (`s as a number`) routes through atoi/atof
+    /// and is accepted because `arithmetic_operand_type` resolves it to a
+    /// numeric type.
+    fn check_arithmetic_operand(&mut self, expr: &Expr) {
+        let Some(ty) = self.arithmetic_operand_type(expr) else {
+            return;
+        };
+        let label = self.operand_label(expr);
+        let msg = match ty {
+            Type::String => format!(
+                "Cannot use text {} in arithmetic; cast it first with 'as a number' or 'as a float'.",
+                label
+            ),
+            Type::Buffer => format!(
+                "Cannot use buffer {} in arithmetic; cast it with 'as a number' to read its content.",
+                label
+            ),
+            Type::List(_) => format!("Cannot use list {} in arithmetic.", label),
+            Type::File => format!("Cannot use file {} in arithmetic.", label),
+            Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            _ => return,
+        };
+        self.push_error(msg, None);
+    }
+
+    /// Arithmetic/bitwise operators require numeric operands. Comparisons and
+    /// logical and/or are excluded (they are valid across types and handled
+    /// elsewhere).
+    fn is_arithmetic_op(&self, op: &BinaryOperator) -> bool {
+        matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo
+                | BinaryOperator::BitAnd
+                | BinaryOperator::BitOr
+                | BinaryOperator::BitXor
+                | BinaryOperator::ShiftLeft
+                | BinaryOperator::ShiftRight
+        )
+    }
+
     fn expr_integer_literal_value(&self, expr: &Expr) -> Option<i64> {
         match expr {
             Expr::IntegerLit(value) => Some(*value),
@@ -1309,6 +1454,37 @@ impl Analyzer {
                 if let Some(v) = value {
                     self.analyze_expr(v);
                 }
+                // Track the scalar category (number/float/text/boolean) for
+                // the arithmetic type check. Numeric/boolean declarations are
+                // recorded from the declared type (preferring the initializer's
+                // type when it is clearly numeric). A text declaration is only
+                // pinned as text when the initializer is positively text - a
+                // function-call or property initializer of unknown type might
+                // return a number, and pinning it as text would wrongly reject
+                // later arithmetic on it.
+                if let Some(vt) = var_type {
+                    match vt {
+                        Type::Integer | Type::Float | Type::Boolean => {
+                            let t = value
+                                .as_ref()
+                                .and_then(|v| self.arithmetic_operand_type(v))
+                                .unwrap_or_else(|| vt.clone());
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        Type::String => {
+                            let is_text = value
+                                .as_ref()
+                                .map(|v| matches!(self.arithmetic_operand_type(v), Some(Type::String)))
+                                .unwrap_or(false);
+                            if is_text {
+                                self.scalar_types.insert(name.clone(), Type::String);
+                            } else {
+                                self.scalar_types.remove(name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             Statement::FlagSchemaDecl { name, value_type, default, .. } => {
@@ -1366,8 +1542,29 @@ impl Analyzer {
                 }
 
                 self.analyze_expr(value);
+
+                // Mirror Vox's dynamic typing: a reassignment relabels the
+                // variable to whatever category the value has. `s is 5` turns
+                // a text `s` into a number, so `s add 1` must then be allowed.
+                // When the value's category can't be determined (e.g. a
+                // function result), drop the entry rather than keep a stale
+                // text label that would falsely reject valid arithmetic.
+                if !self.is_buffer_variable(name)
+                    && !self.is_list_variable(name)
+                    && !self.file_variables.contains(name.as_str())
+                    && !self.timer_variables.contains(name.as_str())
+                {
+                    match self.arithmetic_operand_type(value) {
+                        Some(t) => {
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        None => {
+                            self.scalar_types.remove(name);
+                        }
+                    }
+                }
             }
-            
+
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
                 self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
@@ -1427,6 +1624,8 @@ impl Analyzer {
 
             Statement::ForRange { variable, range, body } => {
                 self.variables.insert(variable.clone());
+                // A range loop variable steps over integers.
+                self.scalar_types.insert(variable.clone(), Type::Integer);
                 self.analyze_expr(range);
                 self.loop_depth += 1;
                 for s in body {
@@ -1536,6 +1735,9 @@ impl Analyzer {
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::File => { self.file_variables.insert(param_name.clone()); }
+                        Type::Integer | Type::Float | Type::String | Type::Boolean => {
+                            self.scalar_types.insert(param_name.clone(), param_type.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -1953,14 +2155,26 @@ impl Analyzer {
     
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::BinaryOp { left, op: _, right } => {
+            Expr::BinaryOp { left, op, right } => {
                 self.analyze_expr(left);
                 self.analyze_expr(right);
-                
+                // Arithmetic operators require numeric operands. Text,
+                // buffer, list, file, and timer values compile to
+                // pointer/handle arithmetic and yield garbage without an
+                // explicit cast (`s as a number`).
+                if self.is_arithmetic_op(op) {
+                    self.check_arithmetic_operand(left);
+                    self.check_arithmetic_operand(right);
+                }
             }
-            
-            Expr::UnaryOp { operand, .. } => {
+
+            Expr::UnaryOp { op, operand } => {
                 self.analyze_expr(operand);
+                // Negation is arithmetic; `minus s` on a text/buffer/etc.
+                // value has the same garbage problem as `0 subtract s`.
+                if matches!(op, UnaryOperator::Negate) {
+                    self.check_arithmetic_operand(operand);
+                }
             }
             
             Expr::Range { start, end, .. } => {

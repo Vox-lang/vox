@@ -1,0 +1,34 @@
+(Regression test for casts in arithmetic. Three bugs are exercised.
+ 1. Cast-to-float in arithmetic used to take the integer path and operate
+    on the float's bit pattern, so {s as a float} add 1 printed 3.5 and
+    {s as a float} multiply 2 printed -0.0. Fixed by teaching the float
+    detector about Expr::Cast.
+ 2. Cast precedence used to bind looser than arithmetic, so `s as a number
+    add 1` was a parse error and `100 add s as a number` cast the whole
+    additive expr. Now a cast binds tight and applies to the expression
+    immediately to its left; brace to cast a whole expression.
+ 3. Bare text in arithmetic used to compile to pointer arithmetic and print
+    garbage; it now errors at analysis time. Casts do atoi/atof and pass.
+ Dynamic relabeling: a text var reassigned to a number may then be used in
+ arithmetic without a cast.)
+
+a text called "s" is "42".
+a text called "sf" is "3.5".
+a number called "tight1" is s as a number add 1.
+a number called "tight2" is 100 add s as a number.
+a number called "rounded" is {3.7 add 0.5} as a number.
+a number called "ic" is {s as a number} add 1.
+a float called "fc1" is {sf as a float} add 1.
+a float called "fc2" is {sf as a float} multiply 2.
+a float called "fc3" is {sf as a float} subtract 0.5.
+a text called "dyn" is "hi".
+dyn is 5.
+a number called "dynr" is dyn add 1.
+Print tight1.
+Print tight2.
+Print rounded.
+Print ic.
+Print fc1.
+Print fc2.
+Print fc3.
+Print dynr.

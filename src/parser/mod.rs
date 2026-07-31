@@ -4453,20 +4453,37 @@ impl Parser {
     }
     
     fn parse_expression(&mut self) -> Result<Expr, Box<CompileError>> {
-        let mut expr = self.parse_additive()?;
-        
-        // Check for type casting with 'as' keyword
-        self.skip_noise();
-        if *self.current() == Token::As {
+        // Type casts (`as a <type>`) are parsed by `parse_cast`, which sits
+        // below the arithmetic levels (additive/multiplicative/bitwise). This
+        // makes a cast bind TIGHTER than arithmetic, so it applies to the
+        // expression immediately to its left - matching natural English, where
+        // "X as a number" modifies X itself. To cast a whole arithmetic
+        // expression, brace it: `{a add b} as a number`. See LANGUAGE.md.
+        self.parse_additive()
+    }
+
+    /// Parse a primary expression followed by zero or more type casts.
+    /// Sits between `parse_primary` (postfix) and `parse_bitwise` (the
+    /// tightest binary level), so a cast applies to a single primary and
+    /// binds tighter than every arithmetic/bitwise operator.
+    fn parse_cast(&mut self) -> Result<Expr, Box<CompileError>> {
+        let mut expr = self.parse_primary()?;
+
+        loop {
+            // Check for type casting with 'as' keyword
+            self.skip_noise();
+            if *self.current() != Token::As {
+                break;
+            }
             self.advance();
             self.skip_noise();
-            
+
             // Optional 'a'/'an' before type
             if matches!(self.current(), Token::A | Token::An) {
                 self.advance();
                 self.skip_noise();
             }
-            
+
             // Optional radix word before 'number': hex/binary/octal, or 'base N'
             let mut radix: u32 = 10;
             if let Token::Identifier(ref id) = self.current() {
@@ -4528,14 +4545,14 @@ impl Parser {
                 Token::Float => { self.advance(); Type::Float }
                 _ => return Err(self.err("Expected type after 'as'")),
             };
-            
+
             expr = Expr::Cast {
                 value: Box::new(expr),
                 target_type,
                 radix,
             };
         }
-        
+
         Ok(expr)
     }
     
@@ -4597,8 +4614,8 @@ impl Parser {
     }
     
     fn parse_bitwise(&mut self) -> Result<Expr, Box<CompileError>> {
-        let mut left = self.parse_primary()?;
-        
+        let mut left = self.parse_cast()?;
+
         loop {
             self.skip_noise();
             let op = match self.current() {
@@ -4609,11 +4626,11 @@ impl Parser {
                 Token::BitShiftRight => Some(BinaryOperator::ShiftRight),
                 _ => None,
             };
-            
+
             if let Some(operator) = op {
                 self.advance();
                 self.skip_noise();
-                let right = self.parse_primary()?;
+                let right = self.parse_cast()?;
                 left = Expr::BinaryOp {
                     left: Box::new(left),
                     op: operator,
