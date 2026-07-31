@@ -1,0 +1,8 @@
+(Nested list printing and element access - plan 040 / COLLECTIONS_ROADMAP
+ stage 1e1. A list element may itself be a list (tag 4): the whole list
+ prints recursively with brackets, and `element N of` yields a usable
+ child list.)
+
+a list called "nested" is [1, [2, 3], "four"].
+print nested.
+print element 2 of nested.

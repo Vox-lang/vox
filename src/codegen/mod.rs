@@ -99,6 +99,7 @@ const TAG_INTEGER: u8 = 0;
 const TAG_STRING: u8 = 1;
 const TAG_FLOAT: u8 = 2;
 const TAG_BOOLEAN: u8 = 3;
+const TAG_LIST: u8 = 4;
 
 /// Three-state result of statically classifying an expression into a list
 /// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
@@ -111,16 +112,19 @@ enum TagInfo {
     Unknowable,
 }
 
-/// Map a known `VarType` to its list slot tag. Returns `None` for `Mixed`,
-/// `Unknown`, `List`, and anything without a single static tag: those need a
+/// Map a known `VarType` to its list slot tag. Returns `None` for `Mixed`
+/// and `Unknown` (and anything without a single static tag): those need a
 /// runtime tag (stage 1d) or the `TAG_INTEGER` fallback at the append site.
+/// A `List` value in a slot is provably tag 4 (stage 1e1 activated the
+/// reserved LIST tag for nested lists).
 fn vartype_to_tag(vt: VarType) -> Option<u8> {
     match vt {
         VarType::Integer => Some(TAG_INTEGER),
         VarType::Float => Some(TAG_FLOAT),
         VarType::String | VarType::Buffer => Some(TAG_STRING),
         VarType::Boolean => Some(TAG_BOOLEAN),
-        // Mixed/Unknown/List: no single static tag — runtime tag (1d) or fallback.
+        VarType::List => Some(TAG_LIST),
+        // Mixed/Unknown: no single static tag — runtime tag (1d) or fallback.
         _ => None,
     }
 }
@@ -130,7 +134,10 @@ fn vartype_to_tag(vt: VarType) -> Option<u8> {
 /// (a static proof) when the initializer's own type can't be inferred — e.g.
 /// `a buffer called "b" is 4 bytes in size.` (the size expr is opaque, but
 /// the declared type `buffer` proves the slot tag is `TAG_STRING`). Returns
-/// `None` for non-scalar types (List/File/Time/Timer/Void/Unknown).
+/// `None` for non-scalar, non-list types (File/Time/Timer/Void/Unknown). A
+/// `List` value carries tag 4 (stage 1e1) — this arm is load-bearing for the
+/// `is a list` predicate, whose codegen does
+/// `type_to_tag(type_noun).expect("type predicate noun is scalar")`.
 fn type_to_tag(t: &Type) -> Option<u8> {
     match t {
         Type::Integer => Some(TAG_INTEGER),
@@ -138,7 +145,8 @@ fn type_to_tag(t: &Type) -> Option<u8> {
         Type::String => Some(TAG_STRING),
         Type::Boolean => Some(TAG_BOOLEAN),
         Type::Buffer => Some(TAG_STRING),
-        // List/File/Time/Timer/Void/Unknown: no scalar slot tag.
+        Type::List(_) => Some(TAG_LIST),
+        // File/Time/Timer/Void/Unknown: no scalar slot tag.
         _ => None,
     }
 }
@@ -160,6 +168,7 @@ fn type_noun_name(t: &Type) -> &'static str {
         Type::Float => "decimal",
         Type::String => "text",
         Type::Boolean => "boolean",
+        Type::List(_) => "list",
         _ => "type",
     }
 }
@@ -1193,6 +1202,11 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => TagInfo::Known(TAG_INTEGER),
             Expr::FloatLit(_) => TagInfo::Known(TAG_FLOAT),
             Expr::BoolLit(_) => TagInfo::Known(TAG_BOOLEAN),
+            // A list value in a slot is tag 4 (stage 1e1). This makes a
+            // homogeneous list-of-lists `[[1,2],[3,4]]` prove a single tag
+            // (4) and stay non-mixed, while a mixed `[1, [2,3], "four"]` still
+            // widens (tags {0, 4, 1}).
+            Expr::ListLit { .. } => TagInfo::Known(TAG_LIST),
             // A type predicate yields a boolean, so appending its result to a
             // list does not widen the list (stage 1c).
             Expr::TypeCheck { .. } => TagInfo::Known(TAG_BOOLEAN),
@@ -1594,15 +1608,22 @@ impl CodeGenerator {
     }
 
     /// Emit a print of the value in rdi dispatched on the runtime tag held
-    /// in `tag_reg` (a full 64-bit register holding 0..=3).
+    /// in `tag_reg` (a full 64-bit register holding 0..=4).
     fn emit_mixed_print_dispatch(&mut self, tag_reg: &str) {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
+        let list_label = self.new_label("mixp_list");
         let done_label = self.new_label("mixp_done");
         self.emit_indent(&format!("cmp {}, {}  ; string tag?", tag_reg, TAG_STRING));
         self.emit_indent(&format!("je {}", str_label));
         self.emit_indent(&format!("cmp {}, {}  ; float tag?", tag_reg, TAG_FLOAT));
         self.emit_indent(&format!("je {}", flt_label));
+        // A list element (tag 4): rdi already holds the child list pointer, so
+        // recurse into `_list_print` (stage 1e1). The tag in `tag_reg` has
+        // already been consumed by the comparisons above, so `_list_print`
+        // clobbering r11/rax/etc. is safe.
+        self.emit_indent(&format!("cmp {}, {}  ; list tag?", tag_reg, TAG_LIST));
+        self.emit_indent(&format!("je {}", list_label));
         // Integer and boolean both print as numbers (matches homogeneous
         // boolean lists, which print 1/0 today).
         self.emit_indent("PRINT_INT rdi");
@@ -1614,16 +1635,46 @@ impl CodeGenerator {
         self.emit_indent("movq xmm0, rdi");
         self.emit_indent("PRINT_FLOAT");
         self.uses_floats = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", list_label));
+        self.emit_indent("call _list_print  ; rdi = child list pointer");
+        self.uses_lists = true;
         self.emit(&format!("{}:", done_label));
     }
 
-    /// Whether a list-valued expression refers to a list the pre-scan
-    /// proved heterogeneous (element reads must carry the runtime tag).
+    /// Whether a list-valued expression refers to a list whose elements are
+    /// runtime-tagged (element reads must carry the runtime tag). A named
+    /// mixed list is the base case; a read (element/first/last) from a mixed
+    /// list yields a runtime-tagged value, so indexing it again is again a
+    /// runtime-tagged read (chained access, stage 1e1); and a list literal is
+    /// mixed iff its elements span more than one distinct tag (or any element
+    /// is itself runtime-tagged).
     fn list_expr_is_mixed(&self, e: &Expr) -> bool {
         match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
                 self.mixed_lists.contains(name)
                     || self.list_element_types.get(name) == Some(&VarType::Mixed)
+            }
+            // Chained read: a read from a mixed list yields a runtime-tagged
+            // value, so indexing that result is again a runtime-tagged read.
+            // (PropertyAccess `first`/`last` takes a bare variable name, so
+            // it cannot chain; it is handled by the name arm above.)
+            Expr::ElementAccess { list, .. } => self.list_expr_is_mixed(list),
+            // A list literal is mixed iff its elements span >1 distinct tag,
+            // or any element is itself runtime-tagged (no static tag).
+            Expr::ListLit { elements } => {
+                let mut tags: Vec<u8> = Vec::new();
+                for el in elements {
+                    match self.emit_time_expr_tag(el) {
+                        Some(t) => {
+                            if !tags.contains(&t) {
+                                tags.push(t);
+                            }
+                        }
+                        None => return true,
+                    }
+                }
+                tags.len() > 1
             }
             _ => false,
         }
@@ -1691,6 +1742,9 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
             Expr::FloatLit(_) => Some(TAG_FLOAT),
             Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            // A list literal value in a slot is tag 4 (stage 1e1). This is the
+            // tag written to a nested-list element's slot at emit time.
+            Expr::ListLit { .. } => Some(TAG_LIST),
             // A type predicate result is a boolean (stage 1c).
             Expr::TypeCheck { .. } => Some(TAG_BOOLEAN),
             // Logical negation is always a boolean. `infer_expr_type` maps
@@ -1715,6 +1769,7 @@ impl CodeGenerator {
                     Some(VarType::Float) => Some(TAG_FLOAT),
                     Some(VarType::Boolean) => Some(TAG_BOOLEAN),
                     Some(VarType::String) | Some(VarType::Buffer) => Some(TAG_STRING),
+                    Some(VarType::List) => Some(TAG_LIST),
                     Some(VarType::Mixed) => None, // runtime tag in shadow slot
                     _ => {
                         if matches!(e, Expr::StringLit(_))
@@ -1737,8 +1792,9 @@ impl CodeGenerator {
             // Function results, binary/unary ops, casts, and property/element
             // reads: infer_expr_type resolves these from declared metadata and
             // the populated variable_types/list_element_types, so the written
-            // tag matches the actual type. Mixed/Unknown/List map to None
-            // (runtime tag or the TAG_INTEGER fallback).
+            // tag matches the actual type. Mixed/Unknown map to None (runtime
+            // tag or the TAG_INTEGER fallback); List maps to TAG_LIST via
+            // vartype_to_tag.
             _ => self.infer_expr_type(e).and_then(vartype_to_tag),
         }
     }
@@ -2011,6 +2067,11 @@ impl CodeGenerator {
                                 Expr::IntegerLit(_) => VarType::Integer,
                                 Expr::FloatLit(_) => VarType::Float,
                                 Expr::BoolLit(_) => VarType::Boolean,
+                                // A nested list literal element means this is
+                                // a list-of-lists; the element type is List
+                                // (stage 1e1), so a for-each loop var prints
+                                // via `_list_print`.
+                                Expr::ListLit { .. } => VarType::List,
                                 _ => VarType::Unknown,
                             };
                             self.list_element_types.insert(name.clone(), elem_type);
@@ -2052,6 +2113,24 @@ impl CodeGenerator {
                             if let Some(et) = self.list_element_types.get(src).cloned() {
                                 self.list_element_types.insert(name.clone(), et);
                             }
+                        }
+                        // Read-back from a parent list — `a list called
+                        // "inner" is element 2 of nested.` / `... is nested's
+                        // first.` The child list's elements are runtime-tagged
+                        // (the parent may be mixed), so a for-each over `inner`
+                        // must dispatch on each element's tag rather than
+                        // assume a single static type; the tag-4 branch then
+                        // renders nested lists. This is correct for both
+                        // homogeneous and mixed inner lists (a homogeneous
+                        // inner's uniform tags dispatch to the same printer).
+                        let reads_element = matches!(val, Expr::ElementAccess { .. })
+                            || matches!(
+                                val,
+                                Expr::PropertyAccess { property, .. }
+                                    if matches!(property, ObjectProperty::First | ObjectProperty::Last)
+                            );
+                        if matches!(var_type, Some(Type::List(_))) && reads_element {
+                            self.list_element_types.insert(name.clone(), VarType::Mixed);
                         }
                     }
                     
@@ -2700,6 +2779,10 @@ impl CodeGenerator {
                             Expr::IntegerLit(_) => VarType::Integer,
                             Expr::BoolLit(_) => VarType::Boolean,
                             Expr::FloatLit(_) => VarType::Float,
+                            // Homogeneous list-of-lists literal: each element
+                            // is a list (tag 4), so the loop var is a List and
+                            // prints via `_list_print` (stage 1e1).
+                            Expr::ListLit { .. } => VarType::List,
                             _ => VarType::Unknown,
                         }
                     } else {
@@ -4299,22 +4382,53 @@ impl CodeGenerator {
             }
             
             Expr::ElementAccess { list, .. } => {
-                // Get the list's element type for proper printing
+                // Get the list's element type for proper printing. For a
+                // named list this is the recorded element type; for a list
+                // literal it is the literal's homogeneous element type (or
+                // Mixed if the literal is heterogeneous); for any other
+                // mixed list expression (e.g. a chained `element 2 of
+                // element 2 of deep`) the elements are runtime-tagged, so
+                // `generate_expr` left the slot's tag in r11 and we dispatch
+                // on it (stage 1e1).
                 let elem_type = if let Expr::Identifier(name) = list.as_ref() {
                     self.list_element_types.get(name).cloned()
+                } else if let Expr::ListLit { elements } = list.as_ref() {
+                    if self.list_expr_is_mixed(list) {
+                        Some(VarType::Mixed)
+                    } else if let Some(first) = elements.first() {
+                        match first {
+                            Expr::IntegerLit(_) => Some(VarType::Integer),
+                            Expr::FloatLit(_) => Some(VarType::Float),
+                            Expr::StringLit(_) => Some(VarType::String),
+                            Expr::BoolLit(_) => Some(VarType::Boolean),
+                            Expr::ListLit { .. } => Some(VarType::List),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else if self.list_expr_is_mixed(list) {
+                    Some(VarType::Mixed)
                 } else {
                     None
                 };
-                
+
                 self.generate_expr(value);
                 self.emit_indent("mov rdi, rax");
-                
+
                 match elem_type {
                     Some(VarType::Mixed) => {
                         // generate_expr left the slot's type tag in r11
                         // (captured immediately - nothing can clobber it
                         // between the element load and this dispatch).
                         self.emit_mixed_print_dispatch("r11");
+                    }
+                    Some(VarType::List) => {
+                        // A homogeneous list-of-lists: rdi already holds the
+                        // child list pointer, so recurse into `_list_print`
+                        // (stage 1e1).
+                        self.emit_indent("call _list_print");
+                        self.uses_lists = true;
                     }
                     Some(VarType::String) => {
                         self.emit_indent("PRINT_CSTR rdi");
@@ -4355,6 +4469,12 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     if matches!(expr_type, Some(VarType::String)) {
                         self.emit_indent("PRINT_CSTR rdi");
+                    } else if matches!(expr_type, Some(VarType::List)) {
+                        // A bare list literal, or `first`/`last` of a
+                        // homogeneous list-of-lists: rdi holds a list pointer,
+                        // so recurse into `_list_print` (stage 1e1).
+                        self.emit_indent("call _list_print");
+                        self.uses_lists = true;
                     } else {
                         self.emit_indent("PRINT_INT rdi");
                     }
@@ -6111,6 +6231,11 @@ impl CodeGenerator {
             Expr::FloatLit(_) => Some(VarType::Float),
             Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
+            // A list literal is a list value (stage 1e1). This feeds the
+            // emit_time_expr_tag catch-all so a nested-list element's slot
+            // gets tag 4, and lets a bare `print <list-literal>` route to
+            // `_list_print`.
+            Expr::ListLit { .. } => Some(VarType::List),
             // A type predicate is boolean-valued; codegen treats booleans as
             // integers (0/1), matching BoolLit above (stage 1c).
             Expr::TypeCheck { .. } => Some(VarType::Integer),
@@ -6640,6 +6765,135 @@ mod tests {
         assert!(
             !asm.contains("xor edx, edx"),
             "the value-append must not zero the tag (the 3f latent-bug fix)"
+        );
+    }
+
+    /// A nested list literal element's slot carries tag 4 (LIST), and a read
+    /// of that element from the mixed parent dispatches on the runtime tag
+    /// with a tag-4 branch that recurses into `_list_print` (plan 040 §1/§5).
+    #[test]
+    fn nested_list_literal_tags_slot_4() {
+        let asm = compile_to_asm(
+            "a list called \"nested\" is [1, [2, 3], \"four\"].\n\
+             print element 2 of nested.\n",
+        );
+        // The nested element is index 1 -> "slot 2"; its slot tag is 4.
+        assert!(
+            asm.contains("4  ; slot 2 type tag"),
+            "a nested list literal element's slot must carry tag 4 (LIST)"
+        );
+        // Reading element 2 of a mixed list uses the runtime-tag dispatch.
+        assert!(
+            asm.contains("mixp_"),
+            "a mixed-list element read must use the mixed print dispatch"
+        );
+        assert!(
+            asm.contains("cmp r11, 4"),
+            "the mixed dispatch must branch on tag 4 (LIST)"
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "the tag-4 branch must recurse into _list_print"
+        );
+    }
+
+    /// A homogeneous list-of-lists literal `[[1,2],[3,4]]` does NOT widen to
+    /// mixed (all elements are tag 4), and a for-each loop var over it is
+    /// typed `List` and prints via `_list_print`, not `PRINT_INT` (plan 040 §3).
+    #[test]
+    fn homogeneous_list_of_lists_not_mixed() {
+        let asm = compile_to_asm(
+            "a list called \"lol\" is [[1, 2], [3, 4]].\n\
+             for each row in lol, print row.\n",
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous list-of-lists must not widen to mixed"
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "a list-typed for-each loop var must print via _list_print"
+        );
+    }
+
+    /// `is a list` compiles to a runtime `cmp r11, 4` on a mixed element,
+    /// and folds statically on a statically-typed list variable (plan 040
+    /// §1/§6). In condition context a statically-true predicate falls through
+    /// and a statically-false one jumps to the else branch with a comment
+    /// naming the folded tag, so the false case is the observable evidence.
+    #[test]
+    fn is_a_list_predicate_compiles_to_cmp_4() {
+        // Runtime path: a mixed-list element read leaves its tag in r11.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, [2, 3], \"x\"].\n\
+             if element 2 of m is a list, print \"L\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 4"),
+            "`is a list` on a mixed element must compare the runtime tag to 4"
+        );
+
+        // Static fold: a declared list variable provably carries tag 4, so
+        // `is a number` (tag 0) is statically false and jumps to the else
+        // branch with a comment naming the folded static tag.
+        let asm = compile_to_asm(
+            "a list called \"xs\" is [1, 2, 3].\n\
+             if xs is a number\n\
+               print \"yes\"\n\
+             otherwise\n\
+               print \"no\".\n",
+        );
+        assert!(
+            asm.contains("is a number statically false (static tag 4)"),
+            "a static list (tag 4) must fold `is a number` to false"
+        );
+        assert!(
+            !asm.contains("cmp r11, 4"),
+            "a static list must not emit a runtime tag compare"
+        );
+    }
+
+    /// Appending a list-typed value forwards tag 4 into the slot, not the
+    /// integer default (plan 040 §1).
+    #[test]
+    fn append_list_value_forwards_tag_4() {
+        let asm = compile_to_asm(
+            "a list called \"inner\" is [9, 8].\n\
+             a list called \"outer\" is [].\n\
+             append inner to outer.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 4  ; element type tag"),
+            "appending a list value must forward tag 4 (LIST)"
+        );
+        assert!(
+            !asm.contains("xor edx, edx"),
+            "appending a list value must not fall back to the integer tag"
+        );
+    }
+
+    /// The recursive `_list_print` runtime has a depth guard (limit 64) that
+    /// sets `_last_error` instead of overflowing the stack on a cycle, and a
+    /// tag-4 branch that recurses (plan 040 §7). This locks the runtime asm
+    /// in at the source level (independent of assembling/linking).
+    #[test]
+    fn list_print_has_depth_guard() {
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        assert!(
+            list_asm.contains("%define LIST_TAG_LIST           4"),
+            "_list_print must define the LIST tag constant"
+        );
+        assert!(
+            list_asm.contains("cmp qword [rel _list_print_depth], 64"),
+            "_list_print must cap recursion at depth 64"
+        );
+        assert!(
+            list_asm.contains("mov qword [rel _last_error], 1"),
+            "the depth-guard path must set the error flag"
+        );
+        assert!(
+            list_asm.contains("je .lp_list") && list_asm.contains("call _list_print"),
+            "_list_print must recurse on the LIST tag"
         );
     }
 }

@@ -1,0 +1,10 @@
+(Cyclic list structure is depth-bounded, not stack-overflowing - plan
+ 040 stage 1e1 acceptance 5. Self-append creates a cycle; printing it
+ recurses to the depth limit (64), prints a "..." truncation marker,
+ sets the error flag, and unwinds safely. The `on error` block observes
+ the flag.)
+
+a list called "x" is [].
+append x to x.
+print x.
+on error print "E".

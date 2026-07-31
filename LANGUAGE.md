@@ -815,6 +815,66 @@ until runtime tag propagation arrives in stage 1d; the list still widens
 and reads dispatch on tags, so the value prints correctly when it really
 is a number. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
+### Nested Lists
+
+A list element may itself be a list. A nested list prints recursively with
+brackets, and the same per-slot tag machinery tracks it — a list value in
+a slot carries the list tag (4), so a mixed list like `[1, [2, 3], "four"]`
+prints exactly as written, and a homogeneous list-of-lists like
+`[[1, 2], [3, 4]]` keeps the statically-typed fast path (it is not mixed):
+
+```
+a list called "nested" is [1, [2, 3], "four"].
+print nested.                       (prints: [1, [2, 3], "four"])
+print element 2 of nested.          (prints: [2, 3])
+
+a list called "deep" is [1, [2, [3, 4]], 5].
+print element 2 of element 2 of deep.   (prints: [3, 4])
+```
+
+`element N of`, `first`/`last`, iteration, and whole-list print all yield
+a usable child list, so an extracted child behaves as a list — its
+`length`, its own `element N of`, and a `For each` over it all work:
+
+```
+a list called "inner" is element 2 of [1, [2, 3], "four"].
+print inner's length.        (prints: 2)
+For each y in inner, print y.   (prints: 2, then 3)
+```
+
+The `is a list` predicate recognises a nested-list element (runtime tag 4)
+and folds to true on a statically-typed list variable, like the other
+predicates:
+
+```
+For each item in [1, [2, 3], "x"],
+  if item is a list, print "L", otherwise print "s".
+(prints: s, L, s)
+```
+
+Printing is recursive and **cycle-safe**: a list that contains itself
+(for example `a list called "x" is []. append x to x.`) would recurse
+forever, so printing is capped at a depth of 64. When the limit is hit
+the over-deep subtree prints as `...`, the error flag is set, and printing
+unwinds safely instead of overflowing the stack. Use `on error` to react:
+
+```
+a list called "x" is [].
+append x to x.
+print x.
+on error print "cyclic".    (prints: [[...]] then cyclic)
+```
+
+Two limitations remain for this stage. Extracting a child with `element N
+of` yields a *reference* to the child list, not a copy: if the parent is
+later grown by appending enough elements to force a reallocation, a child
+extracted before that reallocation may point at freed memory. Extract a
+child after the parent has finished growing, or copy it element-by-element.
+And the *expression* form of format interpolation — `print "{element 2 of
+nested}"` — has no runtime-tag dispatch, so a nested list does not render
+there; use the *variable* form `print "{nested}"` (or `print element 2 of
+nested.`) instead. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+
 ### Type Predicates
 
 You can ask what type a value actually holds and branch on it. The
@@ -831,7 +891,7 @@ For each item in m,
 (prints: number: 1 / text: two / decimal: 3.5 / boolean: 1)
 ```
 
-The four type nouns are `number`, `text`, `decimal`, and `boolean`. The
+The type nouns are `number`, `text`, `decimal`, `boolean`, and `list`. The
 declaration synonyms also work (`integer`→number, `string`→text,
 `float`/`real`→decimal, `bool`→boolean). Negate with `is not a`:
 
@@ -963,9 +1023,12 @@ print "list: {nums}".     (prints: list: [1, 2, 3])
 Elements are separated by `, ` and wrapped in `[` `]`. Each element
 renders exactly as it does when printed individually: text elements are
 quoted (so `["1"]` is distinguishable from `[1]`), booleans as `1`/`0`,
-floats and numbers as usual. Empty lists print `[]`. The same rendering
-appears inside `{...}` format interpolation. Nested lists are not yet
-rendered recursively; see `docs/COLLECTIONS_ROADMAP.md` for that work.
+floats and numbers as usual. Empty lists print `[]`. A nested list
+element renders recursively with the same rules (see Nested Lists above),
+so `[1, [2, 3], "four"]` prints with inner brackets intact. The same
+rendering appears inside the *variable* form of `{...}` format
+interpolation (`print "{xs}"`); the *expression* form (`print "{element 2
+of xs}"`) does not dispatch on a nested element's runtime tag.
 
 ### List Properties
 

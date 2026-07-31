@@ -58,7 +58,7 @@ Tag values (must match `LIST_TAG_*` in `coreasm/*/list.asm`):
 | 1 | string | NUL-terminated C-string pointer |
 | 2 | float | IEEE 754 double bit pattern |
 | 3 | boolean | 0 or 1 |
-| 4 | list *(reserved)* | child list pointer — future nesting |
+| 4 | list | child list pointer — nesting (stage 1e1) |
 | 5 | map *(reserved)* | future JSON objects |
 | 6 | null *(reserved)* | future JSON null |
 
@@ -67,9 +67,11 @@ regions read as "integer" and cost nothing. Because `mmap` rounds to page
 granularity, the extra bytes are effectively free. Homogeneous lists never
 read or write tags and keep the statically-typed fast path bit-for-bit.
 
-Tags 4–6 are reserved now, while the layout is young, so nested JSON
-arrays/objects later slot into the existing representation without a
-layout change.
+Tags 4–6 were reserved early, while the layout was young, so nested JSON
+arrays/objects slot into the existing representation without a layout
+change. Tag 4 (list) is now **active** as of stage 1e1: a list slot may
+hold a child list pointer, `_list_print` recurses on it, and `is a list`
+recognises it; tags 5–6 remain reserved for maps and null.
 
 ### Stages
 
@@ -99,6 +101,17 @@ layout change.
 - **1e. Nesting and JSON groundwork.** Lists inside lists (tag 4),
   recursive printing, maps (tag 5), null (tag 6), then the JSON/YAML
   parser as the capstone.
+  - **1e1. Nested lists** *(done)*. Tag 4 activated: a list element may be
+    a list; `_list_print` recurses with a depth-64 cycle guard that sets
+    the error flag instead of overflowing the stack; `element N of` /
+    `first` / `last` / iteration yield a usable child list; `is a list`
+    predicate (folds on a static list, runtime `cmp` on a mixed element);
+    homogeneous list-of-lists keeps the non-mixed fast path. See
+    `LANGUAGE.md` (Nested Lists) and [`docs/plans/040_stage_1e1_nested_lists.md`](plans/040_stage_1e1_nested_lists.md).
+  - **1e2. Maps** *(pending)*. Tag 5 for key/value collections (JSON
+    objects).
+  - **1e3. Null and the JSON/YAML parser** *(pending)*. Tag 6 for null;
+    then a JSON/YAML parser written in Vox functions as the track capstone.
 
 Sequencing: 1a → 1b → (1c ∥ 1d) → 1e.
 
@@ -136,6 +149,16 @@ Remaining after 1c, in order of closure:
   author at the predicate idiom. Full flow-sensitive dispatch-on-tag
   (guarded arithmetic that narrows the type inside the branch) remains
   future work.
+- **Nested-list limitations (documented by 1e1).** An extracted child
+  (`a list called "inner" is element 2 of nested.`) is a *reference* to
+  the child list, not a copy: if the parent is later grown past a
+  reallocation, a child extracted before it may dangle. Extract after the
+  parent finishes growing, or copy element-by-element. And the
+  *expression* form of format interpolation (`print "{element 2 of
+  nested}"`) has no runtime-tag dispatch, so a nested list does not
+  render there — use the *variable* form (`print "{nested}"`) or a plain
+  `print element 2 of nested.` Flow-sensitive narrowing after `if item is
+  a list` (using `item` as a list inside the branch) is also future work.
 
 ## Track 2 — Matrix / tensor (the ML and numerics track)
 

@@ -85,11 +85,11 @@ stage's own acceptance criteria.
 ---
 
 ## Success Criteria
-- [ ] Feature works as described in expected behavior
-- [ ] All tests pass
-- [ ] Cyclic structures fail safely rather than crashing
+- [x] Feature works as described in expected behavior
+- [x] All tests pass
+- [x] Cyclic structures fail safely rather than crashing
 - [ ] Code reviewed and approved
-- [ ] Documentation updated
+- [x] Documentation updated
 
 ---
 
@@ -111,15 +111,54 @@ stage's own acceptance criteria.
 ---
 
 ## Tasks
-- [ ] Verify/extend parsing of nested list literals
-- [ ] Codegen: emit child list, store pointer, write tag 4
-- [ ] Propagate tag 4 through element reads, `first`/`last`, iteration
-- [ ] Make `_list_print` recursive with a depth guard and error flag
-- [ ] Wire the `is a list` predicate (stage 1c) to tag 4
-- [ ] Tests: literal nesting, deep nesting, nested-after-append, element
+- [x] Verify/extend parsing of nested list literals
+- [x] Codegen: emit child list, store pointer, write tag 4
+- [x] Propagate tag 4 through element reads, `first`/`last`, iteration
+- [x] Make `_list_print` recursive with a depth guard and error flag
+- [x] Wire the `is a list` predicate (stage 1c) to tag 4
+- [x] Tests: literal nesting, deep nesting, nested-after-append, element
       extraction and re-iteration, cycle safety
-- [ ] Update `LANGUAGE.md` and `docs/COLLECTIONS_ROADMAP.md`
-- [ ] Run `./test.sh` and `cargo test --release`
+- [x] Update `LANGUAGE.md` and `docs/COLLECTIONS_ROADMAP.md`
+- [x] Run `./test.sh` and `cargo test --release`
+
+---
+
+## Scope decided during implementation
+
+- **Depth limit: 64** (per the Notes suggestion). A reentrancy-safe
+  `_list_print_depth` counter is `inc`'d on entry and `dec`'d on every
+  exit path (normal, empty-list early-out, and depth bail), so it returns
+  to 0 between top-level prints. On overflow the path sets
+  `_last_error=1`, prints a `"..."` truncation marker, and unwinds; the
+  cyclic test observes the flag with `on error`.
+- **`is a list` wiring** needed no new codegen arm: `type_to_tag(List)`
+  returns `Some(TAG_LIST)` and `type_noun_name(List)` returns `"list"`,
+  so the existing `TypeCheck` sites (expression and condition forms) fold
+  on a static list and emit `cmp r11, 4` on a mixed element. The parser
+  accepts `Token::List` in `parse_type_noun_after_article`; the analyzer
+  already recurses into the operand without validating the noun.
+- **`list_expr_is_mixed` recurses** into `ElementAccess` (and list
+  literals) so a *chained* read like `element 2 of element 2 of deep`
+  loads the runtime tag and dispatches correctly. `PropertyAccess`
+  `first`/`last` takes a bare variable name, so it cannot chain and keeps
+  the name-based check.
+- **Read-back from a mixed parent** (`a list called "inner" is element 2
+  of nested.`) marks the child's elements `Mixed` so a `For each` over
+  `inner` dispatches on each element's runtime tag — correct for both
+  homogeneous and mixed inner lists (a homogeneous inner's uniform tags
+  dispatch to the same printer). Acceptance 2's example is homogeneous
+  and also works without this, but the propagation covers the mixed-inner
+  edge case.
+- **Deferred limitations (documented in `LANGUAGE.md` and the roadmap):**
+  (1) an extracted child is a *reference*, not a copy — a child extracted
+  before the parent is grown past a reallocation may dangle (the sharp
+  edge from the Notes); (2) the *expression* form of format
+  interpolation (`print "{element 2 of nested}"`) has no runtime-tag
+  dispatch, so a nested list does not render there — the *variable* form
+  (`print "{nested}"`) works; (3) flow-sensitive narrowing after `if item
+  is a list` (using `item` as a list inside the branch) is future work.
+  Appending to a nested list *through* the parent is the Notes sharp edge
+  and is documented, not statically rejected this stage.
 
 ---
 

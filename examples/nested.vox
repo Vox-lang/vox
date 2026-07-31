@@ -1,0 +1,19 @@
+(Nested lists - a small walker that builds a nested list, prints it,
+ extracts a child, and classifies elements with `is a list`.
+ Demonstrates Collections stage 1e1: a list element may be a list.)
+
+a list called "data" is [1, [2, 3], "four", [5, [6, 7]]].
+print data.
+
+(Extract a child list and use it as a list.)
+a list called "child" is element 2 of data.
+print child.
+print child's length.
+for each y in child, print y.
+
+(Walk the top level, classifying each element.)
+for each item in data
+  if item is a list
+    print "list"
+  otherwise
+    print "scalar"

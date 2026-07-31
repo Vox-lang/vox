@@ -4335,8 +4335,11 @@ impl Parser {
             Token::Text => { self.advance(); Ok(Type::String) }
             Token::Boolean => { self.advance(); Ok(Type::Boolean) }
             Token::Float => { self.advance(); Ok(Type::Float) }
+            // `is a list` type predicate (stage 1e1): a list value carries
+            // tag 4, so this folds/compares against TAG_LIST.
+            Token::List => { self.advance(); Ok(Type::List(Box::new(Type::Unknown))) }
             _ => Err(self.err(
-                "Expected a type noun (number, text, decimal, or boolean) after 'is a'"
+                "Expected a type noun (number, text, decimal, boolean, or list) after 'is a'"
             )),
         }
     }

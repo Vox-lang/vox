@@ -39,6 +39,7 @@ section .text
 %define LIST_TAG_STRING         1
 %define LIST_TAG_FLOAT          2
 %define LIST_TAG_BOOLEAN        3
+%define LIST_TAG_LIST           4
 
 ; Compute the address of the tag byte for a 0-based index.
 ; Args: %1 = destination register, %2 = list base register, %3 = 0-based
@@ -583,6 +584,13 @@ section .data
     _lp_comma_len: equ $ - _lp_comma
     _lp_quote:     db '"'
     _lp_quote_len: equ $ - _lp_quote
+    ; Truncation marker printed when the nesting depth limit is hit (a
+    ; cyclic structure would otherwise recurse forever).
+    _lp_trunc:     db "..."
+    _lp_trunc_len: equ $ - _lp_trunc
+    ; Reentrancy-safe recursion depth counter for _list_print. inc'd on
+    ; entry, dec'd on every exit path; returns to 0 between top-level prints.
+    _list_print_depth: dq 0
 
 section .text
 _list_print:
@@ -590,6 +598,13 @@ _list_print:
     push r12
     push r13
     push r14
+
+    ; Depth guard (stage 1e1): cap recursion at 64 levels so a cyclic list
+    ; (e.g. `append x to x`) terminates instead of overflowing the stack.
+    ; On overflow, set the error flag, print a truncation marker, and return.
+    inc qword [rel _list_print_depth]
+    cmp qword [rel _list_print_depth], 64
+    jg .lp_depth
 
     mov rbx, rdi                        ; rbx = list pointer
 
@@ -622,6 +637,8 @@ _list_print:
     cmp r8, LIST_TAG_FLOAT
     je .lp_flt
 %endif
+    cmp r8, LIST_TAG_LIST
+    je .lp_list
     ; Integer, boolean (as 1/0), and any unhandled tag print as a number.
     mov rdi, [r14]
     PRINT_INT rdi
@@ -638,7 +655,16 @@ _list_print:
 .lp_flt:
     movq xmm0, [r14]                   ; PRINT_FLOAT takes the value in xmm0
     PRINT_FLOAT
+    jmp .lp_next
 %endif
+
+.lp_list:
+    ; Nested list (stage 1e1): the slot holds a child list pointer. Recurse
+    ; with rdi = child pointer. rbx/r12/r13/r14 are callee-saved and restored
+    ; by _list_print, so the caller's iteration state survives the call.
+    mov rdi, [r14]
+    call _list_print
+    jmp .lp_next
 
 .lp_next:
     inc r12
@@ -648,6 +674,19 @@ _list_print:
 .lp_close:
     PRINT_STR _lp_rbrk, _lp_rbrk_len
 
+    dec qword [rel _list_print_depth]
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+.lp_depth:
+    ; Depth limit exceeded (stage 1e1): signal the error and print a
+    ; truncation marker in place of the over-deep subtree, then unwind.
+    mov qword [rel _last_error], 1
+    PRINT_STR _lp_trunc, _lp_trunc_len
+    dec qword [rel _list_print_depth]
     pop r14
     pop r13
     pop r12
