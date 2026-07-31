@@ -1,0 +1,12 @@
+(Stage 1c — constant folding. A predicate on a statically-typed value
+ folds at compile time: `n is a number` is statically true (its print
+ runs), `n is a text` is statically false (its print is absent), and
+ negation `s is not a number` folds true via the UnaryOp(Not) path.
+ Acceptance criterion 3.)
+
+a number called "n" is 5.
+a text called "s" is "hi".
+if n is a number, print "n-is-number".
+if n is a text, print "n-is-text".
+if s is a text, print "s-is-text".
+if s is not a number, print "s-not-number".

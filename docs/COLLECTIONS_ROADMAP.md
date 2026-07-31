@@ -83,10 +83,13 @@ layout change.
   the compiler decides" below): static becomes a proof, mixed becomes the
   safe fallback. Closes the "runtime-typed append still corrupts" gap.
   Compiler work only; the runtime layout already supports it.
-- **1c. Type predicates.** `If item is a number, ...` / `is a text` /
-  `is a boolean` compile to a tag comparison. This is the author-facing
-  payoff that makes mixed lists usable rather than merely printable, and
-  it reads as a natural Vox sentence.
+- **1c. Type predicates.** *(done).* `If item is a number, ...` / `is a
+  text` / `is a decimal` / `is a boolean` compile to a tag comparison (and
+  fold to a compile-time constant when the operand is statically typed, so
+  the sentence is legal on any value). This is the author-facing payoff that
+  makes mixed lists usable rather than merely printable, and it reads as a
+  natural Vox sentence. Negation `is not a …` reuses the existing
+  `UnaryOp(Not)` path.
 - **1d. Crossing function boundaries.** A declared dynamic parameter and
   return type (working name: `value`) whose tag travels alongside the
   payload in the internal ABI. Largest sub-project in the track;
@@ -102,12 +105,16 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
-Remaining after 1b, in order of closure:
+Remaining after 1c, in order of closure:
 
 - ~~Appends whose value type is statically unknowable (e.g. function
   results) do not widen a list to mixed~~ *(closed by 1b — an unprovable
   write now widens the list to Mixed, and a declared-return function
   result is tagged with its return type at the write).*
+- ~~Mixed lists are readable but not programmable: an author cannot
+  branch on an element's type~~ *(closed by 1c — `If item is a
+  number/text/decimal/boolean` reads the per-slot tag and branches on it,
+  folding when the operand is statically typed).*
 - For a genuinely opaque value (no declared return type), the slot's own
   tag may still be a conservative `TAG_INTEGER` guess; the list widens
   and reads dispatch on tags, so the value prints correctly when it
@@ -115,9 +122,11 @@ Remaining after 1b, in order of closure:
   *(closed by 1d's runtime tag propagation)*.
 - Mixed elements passed as function arguments lose their tag; parameters
   are statically typed (closed by 1d).
-- Arithmetic/comparisons on a mixed element dispatch statically —
-  `item add 1` where `item` holds a string is still wrong (closed by 1c
-  idioms plus 1b defaults; full closure alongside 1d).
+- Arithmetic/comparisons on a mixed element still dispatch statically:
+  `item add 1` where `item` holds a string is still wrong *unless the
+  author guards it first* (`if item is a number, … item add 1 …`). 1c
+  supplies the guard idiom; automatic guarding and full dispatch-on-tag
+  closure arrive alongside 1d.
 
 ## Track 2 — Matrix / tensor (the ML and numerics track)
 

@@ -812,6 +812,48 @@ until runtime tag propagation arrives in stage 1d; the list still widens
 and reads dispatch on tags, so the value prints correctly when it really
 is a number. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
+### Type Predicates
+
+You can ask what type a value actually holds and branch on it. The
+predicate `is a <type-noun>` compares the value's runtime type tag, so it
+works on a mixed-list element whose type is only known at run time:
+
+```
+a list called "m" is [1, "two", 3.5, yes].
+For each item in m,
+  if item is a text, print "text: {item}",
+  otherwise if item is a decimal, print "decimal: {item}",
+  otherwise if item is a boolean, print "boolean: {item}",
+  otherwise print "number: {item}".
+(prints: number: 1 / text: two / decimal: 3.5 / boolean: 1)
+```
+
+The four type nouns are `number`, `text`, `decimal`, and `boolean`. The
+declaration synonyms also work (`integer`→number, `string`→text,
+`float`/`real`→decimal, `bool`→boolean). Negate with `is not a`:
+
+```
+if item is not a number, print "not a number".
+```
+
+`is a boolean` and `is a number` are distinct even though both print as
+numbers: a boolean carries tag 3, a number tag 0, and the predicate reads
+that tag. On a **statically-typed** value the predicate folds at compile
+time — `if x is a number` for a declared `a number called "x"` costs
+nothing and is always true — so the sentence is legal on any value, not
+just mixed ones.
+
+This is the guard idiom that makes mixed lists programmable: arithmetic on
+a mixed element still dispatches statically, so guard it yourself before
+operating — `if item is a number, … item add 1 …`. (Automatic guarding is
+a later decision; see the roadmap.) To *convert* a value rather than test
+it, use the cast expression `<value> as a <type>` — e.g. `item as a number`
+or `item as a float` (see Type Casting).
+
+A predicate result is itself a boolean value, so you can store one in a
+list — `append item is a number to flags` — and each stored slot carries
+the boolean tag, so a later `is a boolean` recognises it.
+
 ### Printing a List
 
 Printing a list variable directly renders its contents rather than its

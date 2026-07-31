@@ -782,6 +782,7 @@ impl Analyzer {
             Expr::UnaryOp { operand, .. } => self.expr_uses_flag(operand),
             Expr::Range { start, end, .. } => self.expr_uses_flag(start).or_else(|| self.expr_uses_flag(end)),
             Expr::PropertyCheck { value, .. } => self.expr_uses_flag(value),
+            Expr::TypeCheck { value, .. } => self.expr_uses_flag(value),
             Expr::FunctionCall { args, .. } => args.iter().find_map(|a| self.expr_uses_flag(a)),
             Expr::ListLit { elements } => elements.iter().find_map(|e| self.expr_uses_flag(e)),
             Expr::ListAccess { list, index } => self.expr_uses_flag(list).or_else(|| self.expr_uses_flag(index)),
@@ -1256,7 +1257,7 @@ impl Analyzer {
             | Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
             | Expr::EnvironmentVariableAt { .. } => Some(Type::String),
             Expr::BoolLit(_) | Expr::ArgumentEmpty | Expr::EnvironmentVariableEmpty | Expr::EnvironmentVariableExists { .. }
-            | Expr::PropertyCheck { .. } => Some(Type::Boolean),
+            | Expr::PropertyCheck { .. } | Expr::TypeCheck { .. } => Some(Type::Boolean),
             Expr::ListLit { .. } | Expr::ArgumentAll | Expr::ArgumentRaw => Some(Type::List(Box::new(Type::Unknown))),
             Expr::Identifier(name) => {
                 if self.is_buffer_variable(name) {
@@ -1393,7 +1394,8 @@ impl Analyzer {
             | Expr::BoolLit(_)
             | Expr::ListLit { .. }
             | Expr::Range { .. }
-            | Expr::PropertyCheck { .. } => {
+            | Expr::PropertyCheck { .. }
+            | Expr::TypeCheck { .. } => {
                 self.push_error(OPEN_PATH_GUIDANCE.to_string(), None);
             }
             Expr::Cast { target_type, .. } => {
@@ -2223,7 +2225,13 @@ impl Analyzer {
             Expr::PropertyCheck { value, .. } => {
                 self.analyze_expr(value);
             }
-            
+
+            // Runtime type predicate (stage 1c). The type noun was validated
+            // by the parser, so the analyzer only needs to recurse into the
+            // operand.
+            Expr::TypeCheck { value, .. } => {
+                self.analyze_expr(value);
+            }
             Expr::PropertyAccess { object, property } => {
                 // _current_time is a synthetic object for "current time's X" - not a user variable
                 if object == "_current_time" {

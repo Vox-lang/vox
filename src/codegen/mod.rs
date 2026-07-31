@@ -134,6 +134,17 @@ fn type_to_tag(t: &Type) -> Option<u8> {
     }
 }
 
+/// Author-facing name for a type-predicate noun, for asm comments.
+fn type_noun_name(t: &Type) -> &'static str {
+    match t {
+        Type::Integer => "number",
+        Type::Float => "decimal",
+        Type::String => "text",
+        Type::Boolean => "boolean",
+        _ => "type",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum IntegerBase {
     Decimal,
@@ -1132,6 +1143,9 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => TagInfo::Known(TAG_INTEGER),
             Expr::FloatLit(_) => TagInfo::Known(TAG_FLOAT),
             Expr::BoolLit(_) => TagInfo::Known(TAG_BOOLEAN),
+            // A type predicate yields a boolean, so appending its result to a
+            // list does not widen the list (stage 1c).
+            Expr::TypeCheck { .. } => TagInfo::Known(TAG_BOOLEAN),
             Expr::StringLit(s) => {
                 // A quoted name can be a variable reference in Vox; if we
                 // tracked it as a scalar, use that. Otherwise it's a string.
@@ -1154,8 +1168,17 @@ impl CodeGenerator {
                     None => TagInfo::Unknowable,
                 }
             }
-            Expr::UnaryOp { operand, .. } => {
-                self.prescan_expr_tag(operand, env, list_seen_tags)
+            Expr::UnaryOp { op, operand } => {
+                // Logical negation is always a boolean, regardless of the
+                // operand's type (`not 5` is a boolean), so tag it TAG_BOOLEAN
+                // and keep `prescan_expr_tag` consistent with
+                // `emit_time_expr_tag`. Other unary ops (e.g. arithmetic
+                // negation) keep the operand's tag.
+                if matches!(op, UnaryOperator::Not) {
+                    TagInfo::Known(TAG_BOOLEAN)
+                } else {
+                    self.prescan_expr_tag(operand, env, list_seen_tags)
+                }
             }
             Expr::BinaryOp { left, op, right } => {
                 let lt = self.prescan_expr_tag(left, env, list_seen_tags);
@@ -1583,6 +1606,14 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
             Expr::FloatLit(_) => Some(TAG_FLOAT),
             Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            // A type predicate result is a boolean (stage 1c).
+            Expr::TypeCheck { .. } => Some(TAG_BOOLEAN),
+            // Logical negation is always a boolean. `infer_expr_type` maps
+            // `Not` to `Integer` (codegen treats booleans as 0/1), which would
+            // mis-tag a negated predicate — or any `not <expr>` list element —
+            // as `TAG_INTEGER`. Tag it `TAG_BOOLEAN` explicitly so it matches
+            // `prescan_expr_tag`, which recurses to the (boolean) operand.
+            Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(TAG_BOOLEAN),
             Expr::StringLit(name) | Expr::Identifier(name)
                 if self.unprovable_scalars.contains(name) =>
             {
@@ -2716,6 +2747,12 @@ impl CodeGenerator {
                         Expr::IntegerLit(_) => VarType::Integer,
                         Expr::FloatLit(_) => VarType::Float,
                         Expr::BoolLit(_) => VarType::Boolean,
+                        // A type predicate result (and its negation) is a
+                        // boolean element, mirroring `BoolLit` so a for-each
+                        // variable over a list of predicate results is typed
+                        // Boolean and `is a boolean` recognises it (stage 1c).
+                        Expr::TypeCheck { .. } => VarType::Boolean,
+                        Expr::UnaryOp { op: UnaryOperator::Not, .. } => VarType::Boolean,
                         Expr::Identifier(name) => {
                             // Buffer variables produce string elements when appended
                             match self.variable_types.get(name) {
@@ -4413,6 +4450,45 @@ impl CodeGenerator {
                 }
             }
 
+            // Runtime type predicate (stage 1c): `item is a text` etc.
+            // Folds to a constant when the operand's tag is statically
+            // provable (via emit_time_expr_tag, which also handles the
+            // BoolLit-is-boolean case correctly); otherwise reads the
+            // slot's runtime tag (r11 for a fresh element read, the
+            // variable's shadow tag slot for a Mixed identifier) and
+            // compares it against the target noun's tag.
+            Expr::TypeCheck { value, type_noun } => {
+                let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
+                let noun = type_noun_name(type_noun);
+                match self.emit_time_expr_tag(value) {
+                    Some(t) => {
+                        self.emit_indent(&format!(
+                            "mov rax, {}  ; is a {} folded (static tag {})",
+                            u8::from(t == target), noun, t
+                        ));
+                    }
+                    None => {
+                        // Runtime: rax := value; the element read leaves the
+                        // slot's type tag in r11 (ElementAccess / First /
+                        // Last of a mixed list). A Mixed *identifier* (e.g. a
+                        // for-each variable) carries its tag in a shadow slot
+                        // instead, so load it explicitly. Nothing between the
+                        // load and the cmp can clobber r11 (no calls).
+                        self.generate_expr(value);
+                        if let Some(off) = self.mixed_element_tag_slot(value) {
+                            self.emit_indent(&format!(
+                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                off
+                            ));
+                        }
+                        self.emit_indent("xor rax, rax");
+                        self.emit_indent(&format!("cmp r11, {}  ; is a {}?", target, noun));
+                        self.emit_indent("sete al");
+                        self.emit_indent("movzx rax, al");
+                    }
+                }
+            }
+
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
                 self.generate_cstr_expr(path);
@@ -5618,6 +5694,37 @@ impl CodeGenerator {
                 }
             }
 
+            // Runtime type predicate (stage 1c) — branch form: jump to
+            // false_label when the predicate is false. Folds statically; a
+            // statically-true predicate falls through (no jump), a
+            // statically-false one jumps straight to false_label.
+            Expr::TypeCheck { value, type_noun } => {
+                let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
+                let noun = type_noun_name(type_noun);
+                match self.emit_time_expr_tag(value) {
+                    Some(t) => {
+                        if t != target {
+                            self.emit_indent(&format!(
+                                "jmp {}  ; is a {} statically false (static tag {})",
+                                false_label, noun, t
+                            ));
+                        }
+                        // t == target: statically true -> fall through to then.
+                    }
+                    None => {
+                        self.generate_expr(value);
+                        if let Some(off) = self.mixed_element_tag_slot(value) {
+                            self.emit_indent(&format!(
+                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                off
+                            ));
+                        }
+                        self.emit_indent(&format!("cmp r11, {}  ; is a {}?", target, noun));
+                        self.emit_indent(&format!("jne {}  ; not a {}", false_label, noun));
+                    }
+                }
+            }
+
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
                 self.generate_cstr_expr(path);
@@ -5728,6 +5835,9 @@ impl CodeGenerator {
             Expr::FloatLit(_) => Some(VarType::Float),
             Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
+            // A type predicate is boolean-valued; codegen treats booleans as
+            // integers (0/1), matching BoolLit above (stage 1c).
+            Expr::TypeCheck { .. } => Some(VarType::Integer),
             Expr::ArgumentCount => Some(VarType::Integer),
             Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst
             | Expr::ArgumentSecond | Expr::ArgumentLast => Some(VarType::String),
@@ -6016,5 +6126,86 @@ mod tests {
             asm.contains("mixp_"),
             "an unknowable (undeclared-return) append must widen the list to Mixed"
         );
+    }
+
+    // ---- Stage 1c: runtime type predicates (plan 020) ----
+    //
+    // Lock in the two codegen paths: a mixed operand emits a runtime tag
+    // compare against r11; a statically-typed operand folds to a constant
+    // with no runtime compare.
+
+    #[test]
+    fn type_predicate_mixed_emits_runtime_compare() {
+        // A for-each over a mixed list binds a Mixed loop variable, whose
+        // tag lives in its shadow slot. `item is a text` must load that tag
+        // and compare it against TAG_STRING (1) at runtime.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, \"x\"].\n\
+             For each item in m, if item is a text, print item.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 1"),
+            "a mixed-element type predicate must compare the runtime tag against TAG_STRING"
+        );
+        assert!(
+            asm.contains("movzx r11, byte [rbp-"),
+            "the for-each variable's tag must be loaded from its shadow slot"
+        );
+    }
+
+    #[test]
+    fn type_predicate_static_folds() {
+        // A declared `a number called "x"` is statically integer, so
+        // `x is a number` folds to true (no runtime compare) and `x is a
+        // text` folds to false (a static-false jump, no cmp r11).
+        let asm_true = compile_to_asm(
+            "a number called \"x\" is 5.\nif x is a number, print \"n\".\n",
+        );
+        assert!(
+            !asm_true.contains("cmp r11,"),
+            "a statically-true predicate must fold (no runtime tag compare)"
+        );
+
+        let asm_false = compile_to_asm(
+            "a number called \"x\" is 5.\nif x is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm_false.contains("cmp r11,"),
+            "a statically-false predicate must fold (no runtime tag compare)"
+        );
+        assert!(
+            asm_false.contains("statically false"),
+            "a statically-false predicate must emit a fold-time jump to the false label"
+        );
+    }
+
+    #[test]
+    fn type_predicate_result_appends_tagged_boolean() {
+        // Appending a predicate result (`append item is a number to flags`)
+        // must tag the slot TAG_BOOLEAN (3) — not TAG_INTEGER — so the list
+        // is a homogeneous boolean list (no mixed widening) and a later
+        // `is a boolean` recognises its elements. Covers the TypeCheck arms
+        // of prescan_expr_tag / emit_time_expr_tag and the append
+        // element-type classifier reached only via `append <value> is a ...`.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, 2, 3].\n\
+             a list called \"flags\" is [].\n\
+             For each item in m, append item is a number to flags.\n\
+             For each f in flags, if f is a boolean, print \"B\".\n",
+        );
+        // The append stores tag 3 (TAG_BOOLEAN), not 0 (TAG_INTEGER).
+        assert!(
+            asm.contains("mov edx, 3"),
+            "an appended predicate result must be tagged TAG_BOOLEAN (edx=3)"
+        );
+        // The list of predicate results stays homogeneous (no mixed widening
+        // from the predicate appends), so it must not use the mixed print
+        // dispatch.
+        assert!(
+            !asm.contains("mixp_"),
+            "a list of predicate results must not widen to mixed"
+        );
+        // `f is a boolean` on the boolean-typed for-each variable folds true
+        // (no runtime tag compare for f).
     }
 }

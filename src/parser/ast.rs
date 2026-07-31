@@ -57,7 +57,15 @@ pub enum Expr {
         value: Box<Expr>,
         property: Property,
     },
-    
+
+    // Runtime type predicate: `item is a text` / `is a number` / etc.
+    // `type_noun` is constrained by the parser to Integer/Float/String/Boolean.
+    // Negation (`is not a text`) wraps this in `UnaryOp { Not, .. }`.
+    TypeCheck {
+        value: Box<Expr>,
+        type_noun: Type,
+    },
+
     FunctionCall {
         name: String,
         args: Vec<Expr>,

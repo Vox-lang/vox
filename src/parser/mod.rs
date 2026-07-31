@@ -3534,7 +3534,7 @@ impl Parser {
         // call (`append "f" of x to items`); `to` is NOT a call trigger here,
         // unlike the general expression parser, so that `append "s" to items`
         // stays an append of the literal string "s".
-        let value = match self.current().clone() {
+        let mut value = match self.current().clone() {
             Token::IntegerLiteral(n) => {
                 self.advance();
                 Expr::IntegerLit(n)
@@ -3599,7 +3599,38 @@ impl Parser {
         };
         
         self.skip_noise();
-        
+
+        // Stage 1c: a type predicate as the append value, e.g.
+        // `append item is a number to flags` or `append item is not a text
+        // to flags`. The article `a`/`an` and the noun are keywords, and
+        // `to` (the append separator) is not one of them, so this cannot
+        // accidentally swallow the separator — `append "s" to items`
+        // (current token `to`, not `is`) skips this branch unchanged.
+        if matches!(self.current(), Token::Is | Token::Are) {
+            self.advance();
+            self.skip_noise();
+            let negated = *self.current() == Token::Not;
+            if negated {
+                self.advance();
+                self.skip_noise();
+            }
+            if !matches!(self.current(), Token::A | Token::An) {
+                return Err(self.err(
+                    "Expected 'a'/'an' and a type noun after 'is' in append value"
+                ));
+            }
+            let type_noun = self.parse_type_noun_after_article()?;
+            let check = Expr::TypeCheck {
+                value: Box::new(value),
+                type_noun,
+            };
+            value = if negated {
+                Expr::UnaryOp { op: UnaryOperator::Not, operand: Box::new(check) }
+            } else {
+                check
+            };
+        }
+
         // Expect "to"
         if *self.current() != Token::To {
             return Err(self.err("Expected 'to' after value in append statement"));
@@ -4275,6 +4306,27 @@ impl Parser {
         false
     }
     
+    /// Parse the type-noun part of `is a/an <noun>` (stage 1c). Assumes the
+    /// current token is `A` or `An`; consumes the article and the noun and
+    /// returns the corresponding `Type`. Type-noun tokens map to `Type` the
+    /// same way the Cast parser does (see `parse_postfix`, ~line 4571).
+    /// Shared by `parse_comparison` (`if item is a text`) and `parse_append`
+    /// (`append item is a number to flags`).
+    fn parse_type_noun_after_article(&mut self) -> Result<Type, Box<CompileError>> {
+        // current is A or An
+        self.advance();
+        self.skip_noise();
+        match self.current() {
+            Token::Number | Token::Int => { self.advance(); Ok(Type::Integer) }
+            Token::Text => { self.advance(); Ok(Type::String) }
+            Token::Boolean => { self.advance(); Ok(Type::Boolean) }
+            Token::Float => { self.advance(); Ok(Type::Float) }
+            _ => Err(self.err(
+                "Expected a type noun (number, text, decimal, or boolean) after 'is a'"
+            )),
+        }
+    }
+
     fn parse_comparison(&mut self) -> Result<Expr, Box<CompileError>> {
         let left = self.parse_expression()?;
         self.skip_noise();
@@ -4403,7 +4455,31 @@ impl Parser {
                     Ok(check)
                 };
             }
-            
+
+            // "is a <type-noun>" / "is an <type-noun>" — runtime type
+            // predicate (stage 1c). The article disambiguates this from a
+            // bare `is <expr>` equality; `a`/`an` are keywords, never a valid
+            // expression primary, so there is no ambiguity with equality.
+            // Negation (`is not a text`) reuses the `negated` flag above and
+            // wraps in `UnaryOp { Not, .. }`, exactly like `is not empty`.
+            // Type-noun tokens map to `Type` the same way the Cast parser
+            // does (see `parse_postfix`, ~line 4571).
+            if matches!(self.current(), Token::A | Token::An) {
+                let type_noun = self.parse_type_noun_after_article()?;
+                let check = Expr::TypeCheck {
+                    value: Box::new(left),
+                    type_noun,
+                };
+                return if negated {
+                    Ok(Expr::UnaryOp {
+                        op: UnaryOperator::Not,
+                        operand: Box::new(check),
+                    })
+                } else {
+                    Ok(check)
+                };
+            }
+
             if *self.current() == Token::Greater || *self.current() == Token::Less {
                 let is_greater = *self.current() == Token::Greater;
                 self.advance();

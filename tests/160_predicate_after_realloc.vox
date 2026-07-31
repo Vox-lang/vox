@@ -1,0 +1,19 @@
+(Stage 1c — predicates survive list reallocation. The initial list
+ capacity is 8; appending beyond it forces _list_append to realloc. Stage
+ 1a preserves the per-slot tag (in dl) across realloc, so predicates
+ classify every element correctly even after the move. Acceptance 5.)
+
+a list called "m" is [].
+append 1 to m.
+append "x" to m.
+append 2 to m.
+append "y" to m.
+append 3 to m.
+append "z" to m.
+append 4 to m.
+append "w" to m.
+append 5 to m.
+append "v" to m.
+For each item in m,
+  if item is a text, print "T",
+  otherwise print "N".
