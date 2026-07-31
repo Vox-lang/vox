@@ -336,7 +336,10 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 
 Parameters may use any variable type, including `buffer`, `list`, and
 `file` - and a typed parameter supports the same properties and
-operations as a top-level variable of that type:
+operations as a top-level variable of that type. A parameter (or return
+type) may also be `value`, the dynamic type whose runtime tag travels with
+its payload across the call; see [Dynamic Values (`value`)](#dynamic-values-value)
+below.
 
 ```
 To "contains token" of a buffer called "hay" and a text called "devname".
@@ -853,6 +856,83 @@ or `item as a float` (see Type Casting).
 A predicate result is itself a boolean value, so you can store one in a
 list — `append item is a number to flags` — and each stored slot carries
 the boolean tag, so a later `is a boolean` recognises it.
+
+### Dynamic Values (`value`)
+
+A mixed-list element keeps its tag while it stays in the list, but the
+moment you pass it to a function the tag used to be lost — parameters are
+statically typed, so a mixed element passed `as a number` was reinterpreted
+and one passed `as a text` was dereferenced as a pointer. The `value` type
+fixes this: it is a declared dynamic type that carries its runtime tag
+*alongside* its payload across the call, so a single function can accept
+"whatever this slot holds" and ask `is a ...` inside to find out which.
+
+Declare a `value` parameter with `with a value called "x"`, return one
+with `Return a value, <expr>`, and a `value` local with
+`a value called "r"`:
+
+```
+To "describe" with a value called "item".
+  If item is a number, print "number".
+  Otherwise if item is a text, print "text".
+  Otherwise print "decimal".
+
+a list called "m" is [1, "two", 3.5].
+For each item in m,
+  "describe" of item.
+(prints: number / text / decimal)
+```
+
+Inside the callee, `item` is a `value` (a tagged slot): the `is a ...`
+predicates read its tag, printing dispatches on it, and you can forward it
+or append it back into a list with the tag preserved. A function returning
+`a value` carries its tag back out, so this round-trips:
+
+```
+To "echo" with a value called "v". Return a value, v.
+
+a list called "data" is [1, "two", 3.5].
+a list called "out" is [].
+For each item in data,
+  append "echo" of item to out.
+```
+
+After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
+— the value return brought each tag back out, and the append forwarded it.
+
+**`value` is not a reserved word.** It is recognized only where a type is
+expected (a parameter type, a return type, or `a value called "x"`), so you
+can still name a variable `value` anywhere else.
+
+**A `value` is not usable in arithmetic without checking its type first.**
+Because a `value` might hold a string or a decimal, the compiler rejects
+bare arithmetic on it and points you at the predicate idiom:
+
+```
+To "bump" with a value called "v". Return a number, v add 1.
+(compile error: Cannot use a value v in arithmetic; check its type with
+ 'is a number'/'is a text' first.)
+```
+
+Guard it first — `if v is a number, … v add 1 …` — or cast it with
+`v as a number` (see Type Casting). (Full flow-sensitive dispatch — where a
+guard narrows the type *inside* the branch so `v add 1` just works — is a
+later decision; see the roadmap.)
+
+**Recursion with `value` works.** A `value` parameter threads its tag
+through every frame, so a recursive walker over mixed data classifies
+correctly at any depth. `value` parameters compose: a `value` passed
+straight to another `value` function round-trips its tag.
+
+**One limitation to know.** A *conditional* `value` return — using the
+"factorial pattern" of `If ... return a value, <expr>. Otherwise ...` inside
+a function whose `To` line has no `Return` — does not track the return
+type, so the value would print as a number. Use the single-expression
+`Return a value, <expr>.` form on the `To` line for `value` returns.
+Conditional `value` *parameters* (the factorial pattern with a void return)
+work fine. The internal ABI that carries the tag is documented in
+`docs/abi_value.md`; the roadmap context is in
+`docs/COLLECTIONS_ROADMAP.md` (stage 1d).
 
 ### Printing a List
 

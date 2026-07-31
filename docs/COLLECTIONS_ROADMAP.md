@@ -90,10 +90,12 @@ layout change.
   makes mixed lists usable rather than merely printable, and it reads as a
   natural Vox sentence. Negation `is not a …` reuses the existing
   `UnaryOp(Not)` path.
-- **1d. Crossing function boundaries.** A declared dynamic parameter and
-  return type (working name: `value`) whose tag travels alongside the
-  payload in the internal ABI. Largest sub-project in the track;
-  prerequisite for writing a JSON parser in Vox functions.
+- **1d. Crossing function boundaries.** *(done).* A declared dynamic
+  parameter and return type (name **`value`**) whose tag travels alongside
+  the payload in the internal ABI. Largest sub-project in the track;
+  prerequisite for writing a JSON parser in Vox functions. See
+  [`docs/abi_value.md`](abi_value.md) for the ABI and `LANGUAGE.md` for the
+  author-facing syntax.
 - **1e. Nesting and JSON groundwork.** Lists inside lists (tag 4),
   recursive printing, maps (tag 5), null (tag 6), then the JSON/YAML
   parser as the capstone.
@@ -115,18 +117,25 @@ Remaining after 1c, in order of closure:
   branch on an element's type~~ *(closed by 1c — `If item is a
   number/text/decimal/boolean` reads the per-slot tag and branches on it,
   folding when the operand is statically typed).*
-- For a genuinely opaque value (no declared return type), the slot's own
+- ~~For a genuinely opaque value (no declared return type), the slot's own
   tag may still be a conservative `TAG_INTEGER` guess; the list widens
   and reads dispatch on tags, so the value prints correctly when it
-  really is a number, but a non-number opaque value can still mis-render
-  *(closed by 1d's runtime tag propagation)*.
-- Mixed elements passed as function arguments lose their tag; parameters
-  are statically typed (closed by 1d).
+  really is a number, but a non-number opaque value can still mis-render~~
+  *(closed by 1d — a `value` return carries its real runtime tag out of
+  the callee, so a value-returning function's result is tagged correctly
+  when appended, not guessed).*
+- ~~Mixed elements passed as function arguments lose their tag; parameters
+  are statically typed~~ *(closed by 1d — a `value` parameter carries its
+  tag into the callee as a second argument word, so predicates inside the
+  callee classify each element correctly).*
 - Arithmetic/comparisons on a mixed element still dispatch statically:
   `item add 1` where `item` holds a string is still wrong *unless the
   author guards it first* (`if item is a number, … item add 1 …`). 1c
-  supplies the guard idiom; automatic guarding and full dispatch-on-tag
-  closure arrive alongside 1d.
+  supplies the guard idiom. **1d adds the static rejection**: bare
+  arithmetic on a `value` (unguarded) is a compile error pointing the
+  author at the predicate idiom. Full flow-sensitive dispatch-on-tag
+  (guarded arithmetic that narrows the type inside the branch) remains
+  future work.
 
 ## Track 2 — Matrix / tensor (the ML and numerics track)
 

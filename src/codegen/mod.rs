@@ -53,6 +53,15 @@ pub struct CodeGenerator {
     // infer_expr_type() can report a FunctionCall's real type instead of
     // silently defaulting to Integer (see collect_function_signatures).
     function_return_types: std::collections::HashMap<String, VarType>,
+    // Declared parameter types of each user function, in declaration order.
+    // A `value` parameter occupies TWO argument words (payload, tag) in the
+    // SysV stream; a scalar parameter occupies one. Both caller and callee
+    // derive the word layout from this same vector so they agree.
+    function_param_types: std::collections::HashMap<String, Vec<Type>>,
+    // Return type of the function currently being codegen'd (None at top
+    // level). When it is `Type::Value`, the `Return` path must leave the
+    // value's runtime tag in r11 for the caller to consume.
+    current_function_return_type: Option<Type>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -216,6 +225,8 @@ impl CodeGenerator {
             uses_lists: false,
             uses_strings: false,
             function_return_types: std::collections::HashMap::new(),
+            function_param_types: std::collections::HashMap::new(),
+            current_function_return_type: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -642,24 +653,44 @@ impl CodeGenerator {
     fn emit_function_call(&mut self, name: &str, args: &[Expr]) {
         let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 
-        // Evaluate/push all args right-to-left (so arg0 ends up deepest)
-        for arg in args.iter().rev() {
-            self.generate_expr(arg);
+        // A `value` parameter occupies TWO argument words (payload, tag) in the
+        // SysV stream; a scalar parameter occupies one. We push words
+        // right-to-left so word 0 (param 0 payload) ends on top (first pop).
+        // When the callee's signature is unknown (e.g. an extern/builtin),
+        // assume every parameter is scalar — preserving the original ABI for
+        // statically-typed calls (criterion 6).
+        let param_types = self.function_param_types.get(name).cloned().unwrap_or_default();
+        let is_value_param = |i: usize| -> bool {
+            param_types.get(i) == Some(&Type::Value)
+        };
+        // Number of argument words a given arg contributes.
+        let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
+        let total_words: usize = (0..args.len()).map(word_count).sum();
+
+        // Evaluate/push all arg words right-to-left. For a `value` param the
+        // tag word is pushed BEFORE the payload word, so the payload lands on
+        // top (lower word index) — matching how the callee reads them.
+        for i in (0..args.len()).rev() {
+            self.generate_expr(&args[i]); // rax = payload
+            if is_value_param(i) {
+                self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
+                self.emit_indent("push r11  ; value param tag word");
+            }
             self.emit_indent("push rax");
         }
 
-        // Pop first 6 args into registers (arg0 -> rdi, arg1 -> rsi, ...)
-        let reg_count = args.len().min(param_regs.len());
-        for reg in param_regs.iter().take(reg_count) {
+        // Pop the first 6 argument WORDS into registers (word 0 -> rdi, ...).
+        let reg_words = total_words.min(param_regs.len());
+        for reg in param_regs.iter().take(reg_words) {
             self.emit_indent(&format!("pop {}", reg));
         }
 
-        // Remaining args (7th+) stay on the stack.
-        let stack_arg_count = args.len().saturating_sub(param_regs.len());
-        let stack_arg_bytes = stack_arg_count * 8;
+        // Remaining words (7th+) stay on the stack.
+        let stack_words = total_words.saturating_sub(param_regs.len());
+        let stack_word_bytes = stack_words * 8;
 
         // Align stack before call (SysV: 16B-aligned at call instruction).
-        let needs_pad = !stack_arg_count.is_multiple_of(2);
+        let needs_pad = !stack_words.is_multiple_of(2);
         if needs_pad {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
@@ -667,8 +698,10 @@ impl CodeGenerator {
         let func_label = name.replace(' ', "_");
         self.emit_indent(&format!("call {}", func_label));
 
-        // Clean up stack args + pad (caller cleanup in SysV)
-        let cleanup = stack_arg_bytes + if needs_pad { 8 } else { 0 };
+        // Clean up stack words + pad (caller cleanup in SysV). The return tag
+        // for a `value`-returning function rides in r11; `add rsp` does not
+        // clobber it, so a caller that consumes the result sees r11=tag.
+        let cleanup = stack_word_bytes + if needs_pad { 8 } else { 0 };
         if cleanup > 0 {
             self.emit_indent(&format!("add rsp, {}", cleanup));
         }
@@ -748,8 +781,9 @@ impl CodeGenerator {
     // was unaffected, which is what made this easy to miss.
     fn collect_function_signatures(&mut self, program: &Program) {
         self.function_return_types.clear();
+        self.function_param_types.clear();
         for stmt in &program.statements {
-            if let Statement::FunctionDef { name, return_type, .. } = stmt {
+            if let Statement::FunctionDef { name, params, return_type, .. } = stmt {
                 let vt = match return_type {
                     Type::Integer => VarType::Integer,
                     Type::Float => VarType::Float,
@@ -757,9 +791,15 @@ impl CodeGenerator {
                     Type::Boolean => VarType::Boolean,
                     Type::Buffer => VarType::Buffer,
                     Type::List(_) => VarType::List,
+                    // A `value` return is dynamic: the runtime tag travels
+                    // back in r11 alongside the payload in rax, so the result
+                    // is a Mixed-typed value (no static tag).
+                    Type::Value => VarType::Mixed,
                     _ => VarType::Unknown,
                 };
                 self.function_return_types.insert(name.clone(), vt);
+                self.function_param_types
+                    .insert(name.clone(), params.iter().map(|(_, t)| t.clone()).collect());
             }
         }
     }
@@ -1714,6 +1754,66 @@ impl CodeGenerator {
         }
     }
 
+    /// Load the runtime type tag of `expr` into r11, the single source of
+    /// truth used by value-parameter passing, value returns, and (via the
+    /// 1c predicates) type checks. Three cases, in priority order:
+    ///
+    /// 1. **Static tag** (`emit_time_expr_tag` returns `Some`): literals,
+    ///    statically-typed variables, homogeneous-list element reads, and
+    ///    scalar-returning function calls → `mov r11, <tag>`.
+    /// 2. **Shadow tag slot** (`mixed_element_tag_slot` returns `Some`): a
+    ///    `Mixed` *identifier* — a value parameter, a for-each variable over a
+    ///    mixed list, or a declared `value` local — keeps its tag in a shadow
+    ///    stack slot → `movzx r11, byte [rbp-<off>]`.
+    /// 3. **Already in r11** (both return `None`): a freshly-read mixed-list
+    ///    element (ElementAccess/First/Last leaves the slot's tag in r11) and a
+    ///    value-returning function call (the callee leaves r11=tag; `call` and
+    ///    `FUNC_EPILOGUE`/`_dec_call_depth` do not clobber r11). No emit needed.
+    ///
+    /// Register discipline: callers consume r11 immediately — between this
+    /// load and the consumer there must be no `call`/syscall that clobbers r11.
+    /// The inbound/return paths below respect this; if a future clobbering
+    /// helper is inserted between the load and the consumer, spill r11 to a
+    /// shadow slot first.
+    fn emit_load_value_tag(&mut self, expr: &Expr) {
+        match self.emit_time_expr_tag(expr) {
+            Some(t) => self.emit_indent(&format!("mov r11, {}  ; value tag (static)", t)),
+            None => match self.mixed_element_tag_slot(expr) {
+                Some(off) => self
+                    .emit_indent(&format!("movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off)),
+                None => {
+                    // r11 already holds the tag: a fresh mixed element read or a
+                    // value-returning function call left it there. Nothing to do.
+                }
+            },
+        }
+    }
+
+    /// Whether `generate_expr(expr)` leaves the value's runtime tag in r11, so a
+    /// consumer can read the tag from r11 without an explicit load. True for:
+    /// - a value-returning function call (the callee leaves r11=tag; `call`
+    ///   and the epilogue do not clobber it), and
+    /// - a freshly-read mixed-list element (`ElementAccess`, or `First`/`Last`
+    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11.
+    /// Homogeneous reads never reach this question: `emit_time_expr_tag`
+    /// returns their static tag (`Some`), so the caller never falls through to
+    /// the no-slot path that consults this predicate.
+    fn expr_leaves_tag_in_r11(&self, e: &Expr) -> bool {
+        match e {
+            Expr::FunctionCall { name, .. } => {
+                self.function_return_types.get(name) == Some(&VarType::Mixed)
+            }
+            Expr::ElementAccess { list, .. } => self.list_expr_is_mixed(list),
+            Expr::PropertyAccess { object, property }
+                if matches!(property, ObjectProperty::First | ObjectProperty::Last) =>
+            {
+                self.mixed_lists.contains(object)
+                    || self.list_element_types.get(object) == Some(&VarType::Mixed)
+            }
+            _ => false,
+        }
+    }
+
     pub fn generate(&mut self, program: &Program) -> String {
         // Collect function signatures BEFORE the pre-scan: prescan_expr_tag
         // classifies FunctionCall results via function_return_types, so it
@@ -1891,9 +1991,17 @@ impl CodeGenerator {
                         Type::Boolean => VarType::Boolean,
                         Type::Buffer => VarType::Buffer,
                         Type::List(_) => VarType::List,
+                        // A declared `value` local is a Mixed-typed scalar
+                        // carrying its runtime tag in a shadow slot, exactly
+                        // like a value parameter / for-each variable.
+                        Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
                     self.variable_types.insert(name.clone(), vt);
+                    if matches!(t, Type::Value) && !self.mixed_tag_slots.contains_key(name) {
+                        let tag_slot = self.alloc_var(&format!("{}_mixtag", name));
+                        self.mixed_tag_slots.insert(name.clone(), tag_slot);
+                    }
                 }
                 
                 if let Some(val) = value {
@@ -1987,6 +2095,15 @@ impl CodeGenerator {
                     } else {
                         self.generate_expr(val);
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        // A declared `value` local stores its runtime tag in the
+                        // shadow slot alongside the payload.
+                        if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                            self.emit_load_value_tag(val);
+                            self.emit_indent(&format!(
+                                "mov [rbp-{}], r11b  ; value local tag",
+                                tag_slot
+                            ));
+                        }
                     }
                 } else {
                     // No initial value - initialize based on type
@@ -2054,7 +2171,14 @@ impl CodeGenerator {
             
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
-                    if self.variable_types.get(name) != Some(&VarType::Buffer) {
+                    // A `value` local (declared `a value called "r"`) keeps its
+                    // Mixed type across reassignment — overwriting it with the
+                    // assigned value's static type would drop the shadow-tag
+                    // discipline and mis-classify later reads.
+                    let is_value_local = self.mixed_tag_slots.contains_key(name);
+                    if self.variable_types.get(name) != Some(&VarType::Buffer)
+                        && !is_value_local
+                    {
                         if let Some(vt) = self.infer_expr_type(value) {
                             match vt {
                                 VarType::Float => {
@@ -2083,6 +2207,15 @@ impl CodeGenerator {
                     } else {
                         self.generate_expr(value);
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        // Reassigning a `value` local must update its shadow tag
+                        // slot too, or the runtime tag would go stale.
+                        if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                            self.emit_load_value_tag(value);
+                            self.emit_indent(&format!(
+                                "mov [rbp-{}], r11b  ; value local tag",
+                                tag_slot
+                            ));
+                        }
                     }
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
@@ -2284,7 +2417,15 @@ impl CodeGenerator {
             
             Statement::Return { value } => {
                 if let Some(v) = value {
-                    self.generate_expr(v); // should leave return value in RAX
+                    self.generate_expr(v); // leaves return payload in RAX
+                    // A `value` return carries its runtime tag in r11 for the
+                    // caller. Load it AFTER generate_expr (which leaves r11=tag
+                    // for fresh reads / value-returning calls, or nothing for a
+                    // Mixed identifier). `_dec_call_depth` and `FUNC_EPILOGUE`
+                    // (leave; ret) do not clobber r11, so no spill is needed.
+                    if self.current_function_return_type == Some(Type::Value) {
+                        self.emit_load_value_tag(v);
+                    }
                 }
                 if self.in_function_codegen {
                     self.emit_indent("push rax  ; save return value");
@@ -2300,7 +2441,7 @@ impl CodeGenerator {
                 self.emit_function_call(name, args);
             }
                         
-            Statement::FunctionDef { name, params, body, .. } => {
+            Statement::FunctionDef { name, params, body, return_type, .. } => {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
@@ -2317,6 +2458,7 @@ impl CodeGenerator {
                 let saved_stack = self.stack_offset;
                 let saved_loop_stack = std::mem::take(&mut self.loop_stack);
                 let saved_in_function_codegen = self.in_function_codegen;
+                let saved_return_type = self.current_function_return_type.clone();
 
                 // Fresh function-local state
                 self.output = String::new();
@@ -2324,16 +2466,26 @@ impl CodeGenerator {
                 self.stack_offset = 0;
                 self.loop_stack = Vec::new();
                 self.in_function_codegen = true;
+                // Remember this function's declared return type so the `Return`
+                // path knows to leave a `value` result's tag in r11.
+                self.current_function_return_type = Some(return_type.clone());
 
                 // ------------------------------------------------------------
                 // PASS 1: Allocate stack slots for params, then generate body
                 // into a temporary buffer to discover the true frame size.
                 // ------------------------------------------------------------
 
+                // A `value` parameter occupies two argument words (payload, tag).
+                // The payload lives in the param's own slot; the tag lives in a
+                // shadow `{name}_mixtag` slot, exactly like a for-each variable
+                // over a mixed list, so the 1c predicates/print/append/forward
+                // machinery all work on it unchanged.
+                let word_count = |t: &Type| if matches!(t, Type::Value) { 2 } else { 1 };
+                let total_words: usize = params.iter().map(|(_, t)| word_count(t)).sum();
+
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
                 for (param_name, param_type) in params.iter() {
-                    self.alloc_var(param_name);
                     let var_type = match param_type {
                         Type::Integer => VarType::Integer,
                         Type::Float => VarType::Float,
@@ -2341,9 +2493,17 @@ impl CodeGenerator {
                         Type::Boolean => VarType::Boolean,
                         Type::List(_) => VarType::List,
                         Type::Buffer => VarType::Buffer,
+                        // A `value` parameter is a Mixed-typed scalar carrying
+                        // its runtime tag in a shadow slot.
+                        Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
+                    self.alloc_var(param_name);
                     self.variable_types.insert(param_name.clone(), var_type);
+                    if matches!(param_type, Type::Value) {
+                        let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
+                        self.mixed_tag_slots.insert(param_name.clone(), tag_slot);
+                    }
                 }
 
                 // Generate body into a temp buffer (this will call alloc_var for locals too)
@@ -2378,31 +2538,68 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", func_label));
                 self.emit_indent(&format!("FUNC_PROLOGUE {}", frame_size));
-                // Recursion depth guard - save param regs, check depth, restore
-                let num_params = params.len().min(6);
-                for i in 0..num_params {
-                    self.emit_indent(&format!("push {}  ; save param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                // Recursion depth guard - save the first 6 argument WORDS
+                // (not 6 params: a `value` param contributes two words), check
+                // depth, restore. `_check_call_depth` touches only rax, so the
+                // saved words are intact.
+                let reg_words = total_words.min(6);
+                for i in 0..reg_words {
+                    self.emit_indent(&format!("push {}  ; save arg word", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
                 }
                 self.emit_indent("call _check_call_depth");
-                for i in (0..num_params).rev() {
-                    self.emit_indent(&format!("pop {}  ; restore param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                for i in (0..reg_words).rev() {
+                    self.emit_indent(&format!("pop {}  ; restore arg word", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
                 }
 
-                // Store parameters after frame is allocated
+                // Store parameters after frame is allocated. Walk params in
+                // order, tracking the running argument-word index: a scalar
+                // param consumes one word, a `value` param consumes two
+                // (payload at `word_index`, tag at `word_index + 1`).
                 let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-                for (i, (param_name, _)) in params.iter().enumerate() {
-                    if let Some(offset) = self.get_var(param_name) {
-                        if i < param_regs.len() {
-                            self.emit_indent(&format!("mov [rbp-{}], {}", offset, param_regs[i]));
+                // The caller inserts an 8-byte alignment pad below the stack
+                // args when their count is odd, so the first stack arg lives at
+                // [rbp + 16 + pad_offset], not [rbp + 16]. Both sides derive the
+                // pad from the same word count, so they agree.
+                let stack_words = total_words.saturating_sub(param_regs.len());
+                let pad_offset: usize = if stack_words.is_multiple_of(2) { 0 } else { 8 };
+                let mut word_index = 0usize;
+                for (param_name, param_type) in params.iter() {
+                    let payload_off = self.get_var(param_name);
+                    let tag_off = self.mixed_tag_slots.get(param_name).copied();
+                    let is_value = matches!(param_type, Type::Value);
+
+                    // Read argument word `w` into rax: from a register if w < 6,
+                    // else from the stack at [rbp + 16 + pad_offset + (w-6)*8].
+                    let read_word = |w: usize| {
+                        if w < param_regs.len() {
+                            format!("mov rax, {}", param_regs[w])
                         } else {
-                            // SysV x86_64: 7th arg is at [rbp+16], then +8 each.
-                            // +8  = return address
-                            // +0  = saved rbp
-                            // so stack args start at +16
-                            let stack_arg_off = 16 + (i - param_regs.len()) * 8;
-                            self.emit_indent(&format!("mov rax, [rbp+{}]", stack_arg_off));
-                            self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                            let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
+                            format!("mov rax, [rbp+{}]", stack_arg_off)
                         }
+                    };
+
+                    if let Some(offset) = payload_off {
+                        // Payload word.
+                        self.emit_indent(&read_word(word_index));
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
+                        if is_value {
+                            // Tag word (stored as a byte into the shadow slot).
+                            if let Some(tag_slot) = tag_off {
+                                self.emit_indent(&read_word(word_index + 1));
+                                self.emit_indent(&format!(
+                                    "mov [rbp-{}], al  ; param value tag",
+                                    tag_slot
+                                ));
+                            }
+                            word_index += 2;
+                        } else {
+                            word_index += 1;
+                        }
+                    } else if is_value {
+                        word_index += 2;
+                    } else {
+                        word_index += 1;
                     }
                 }
 
@@ -2419,6 +2616,7 @@ impl CodeGenerator {
                 self.stack_offset = saved_stack;
                 self.loop_stack = saved_loop_stack;
                 self.in_function_codegen = saved_in_function_codegen;
+                self.current_function_return_type = saved_return_type;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -2880,6 +3078,12 @@ impl CodeGenerator {
                                     "movzx edx, byte [rbp-{}]  ; runtime tag of mixed source",
                                     slot
                                 ));
+                            } else if self.expr_leaves_tag_in_r11(value) {
+                                // A freshly-read mixed element or a value-returning
+                                // function call left its tag in r11 — forward it
+                                // instead of dropping it (which previously mis-
+                                // tagged appended mixed elements as integers).
+                                self.emit_indent("mov edx, r11d  ; forward runtime tag from r11");
                             } else {
                                 self.emit_indent("xor edx, edx  ; default integer tag");
                             }
@@ -6322,5 +6526,128 @@ mod tests {
         );
         // `f is a boolean` on the boolean-typed for-each variable folds true
         // (no runtime tag compare for f).
+    }
+
+    // ---- Stage 1d: dynamic `value` type across function boundaries (plan 030)
+    //
+    // A `value` parameter/return carries its runtime type tag through the
+    // calling convention. These lock the ABI in at the asm level, independent
+    // of the runtime: inbound (2 words per value param), outbound (tag in r11,
+    // no spill), the 7-word straddle (reg/stack pad), and the append tag
+    // forwarding for a value-returning call.
+
+    #[test]
+    fn value_param_carries_tag_inbound() {
+        // Acceptance 1: a value parameter gets a shadow tag slot in the callee,
+        // and the caller pushes a 2nd (tag) word for it. Inside the callee, a
+        // predicate classifies by comparing the loaded tag to TAG_INTEGER (0).
+        let asm = compile_to_asm(
+            "To \"describe\" with a value called \"v\".\n\
+             If v is a number, print \"N\". Otherwise print \"T\".\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             For each item in m, \"describe\" of item.\n",
+        );
+        // Caller pushes the value param's tag word (payload pushed after, on top).
+        assert!(
+            asm.contains("value param tag word"),
+            "a value param must push a 2nd (tag) word at the call site"
+        );
+        // Callee stores the inbound tag byte to the value's shadow slot.
+        assert!(
+            asm.contains("param value tag"),
+            "the callee must store the inbound value tag byte to a shadow slot"
+        );
+        // The predicate inside the callee compares the loaded tag to TAG_INTEGER.
+        assert!(
+            asm.contains("cmp r11, 0"),
+            "the `v is a number` predicate must compare the loaded tag to 0"
+        );
+    }
+
+    #[test]
+    fn value_return_leaves_tag_in_r11() {
+        // Acceptance 2: a value-returning function loads its result's tag into
+        // r11 on the return path, and — because FUNC_EPILOGUE (`leave; ret`)
+        // and `_dec_call_depth` clobber neither r11 nor the saved words — no
+        // r11 spill is needed across the return.
+        let asm = compile_to_asm(
+            "To \"id\" with a value called \"v\". Return a value, v.\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             a list called \"out\" is [].\n\
+             For each item in m, append \"id\" of item to out.\n",
+        );
+        // The return path loads the tag from the shadow slot, then the existing
+        // `push rax / call _dec_call_depth / pop rax` epilogue. (This sequence
+        // is distinct from the call-site tag load, which is followed by
+        // `push r11  ; value param tag word`.)
+        assert!(
+            asm.contains("value tag (shadow slot)\n    push rax  ; save return value"),
+            "the return path must load the value tag into r11 before the epilogue"
+        );
+        // No r11 spill: r11 is never pushed/popped around the return. r11 is not
+        // a param register, so it is never saved in the prologue either.
+        assert!(
+            !asm.contains("pop r11"),
+            "the value return tag rides in r11 across leave;ret with no spill"
+        );
+    }
+
+    #[test]
+    fn value_param_two_words_in_call() {
+        // Acceptance 3: a value param occupies 2 argument words (payload, tag).
+        // With 5 scalar params + 1 value param = 7 words, 6 fill the registers
+        // and the 7th spills to the stack; an odd stack-word count needs the
+        // alignment pad (`sub rsp, 8`), cleaned up by `add rsp, 16` (1 word + pad).
+        let asm = compile_to_asm(
+            "To \"f\" with a number called \"a\" and a number called \"b\" and \
+             a number called \"c\" and a number called \"d\" and a number called \
+             \"e\" and a value called \"v\".\n\
+             If v is a text, print \"T\". Otherwise print \"N\".\n\
+             \"f\" of 1 and 2 and 3 and 4 and 5 and \"hi\".\n",
+        );
+        // The value arg pushes a tag word then its payload (2 words for 1 param).
+        assert!(
+            asm.contains("value param tag word"),
+            "a value argument must push a tag word in addition to its payload"
+        );
+        // 7 words total: 6 register words (popped into rdi..r9) + 1 stack word.
+        assert!(
+            asm.contains("pop r9") && asm.contains("pop rdi"),
+            "the 6 register words must be popped into rdi..r9"
+        );
+        // Odd stack-word count (1) needs an alignment pad before the call.
+        assert!(
+            asm.contains("align stack before call"),
+            "a 7-word call (1 stack word) must pad the stack before the call"
+        );
+        // Cleanup releases the 1 stack word + the 8-byte pad = 16 bytes.
+        assert!(
+            asm.contains("add rsp, 16"),
+            "cleanup must release the stack word plus the alignment pad"
+        );
+    }
+
+    #[test]
+    fn append_fresh_mixed_element_keeps_tag() {
+        // Plan 3f regression: appending a freshly-produced mixed value (here a
+        // value-returning function call, whose tag is left in r11 by the callee)
+        // must forward that tag into the list slot, not zero it. Previously the
+        // append None-branch did `xor edx, edx`, dropping the tag.
+        let asm = compile_to_asm(
+            "To \"id\" with a value called \"v\". Return a value, v.\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             a list called \"out\" is [].\n\
+             For each item in m, append \"id\" of item to out.\n",
+        );
+        // The append forwards the runtime tag from r11 into the slot.
+        assert!(
+            asm.contains("mov edx, r11d"),
+            "appending a value-returning call must forward its tag from r11"
+        );
+        // The append must not zero the tag for a value-returning source.
+        assert!(
+            !asm.contains("xor edx, edx"),
+            "the value-append must not zero the tag (the 3f latent-bug fix)"
+        );
     }
 }

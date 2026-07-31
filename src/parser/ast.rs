@@ -10,6 +10,7 @@ pub enum Type {
     File,
     Time,
     Timer,
+    Value,
     Void,
     Unknown,
 }

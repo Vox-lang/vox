@@ -581,6 +581,11 @@ pub struct Analyzer {
     /// numeric one, which the buffer/list/flag sets alone cannot do.
     scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
+    /// Names declared as the dynamic `value` type (value parameters and `a
+    /// value called "x"` locals). A bare `value` is not usable in arithmetic
+    /// without an explicit type check (stage 1c predicate); the arithmetic
+    /// operand check uses this set to reject unguarded use with a clear error.
+    value_typed_names: HashSet<String>,
     loop_depth: usize,
 }
 
@@ -614,6 +619,7 @@ impl Analyzer {
             allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
+            value_typed_names: HashSet::new(),
             loop_depth: 0,
         }
     }
@@ -1107,10 +1113,22 @@ impl Analyzer {
             Expr::StringLit(s) => {
                 // A quoted name may reference a variable; otherwise this is a
                 // bare text literal, which is not valid in arithmetic.
-                self.named_value_type(s).or(Some(Type::String))
+                if self.value_typed_names.contains(s) {
+                    Some(Type::Value)
+                } else {
+                    self.named_value_type(s).or(Some(Type::String))
+                }
             }
             Expr::FormatString { .. } => Some(Type::String),
-            Expr::Identifier(name) => self.named_value_type(name),
+            Expr::Identifier(name) => {
+                // A `value`-typed name is dynamic: reject it from arithmetic
+                // until the author checks its type with a predicate (stage 1c).
+                if self.value_typed_names.contains(name) {
+                    Some(Type::Value)
+                } else {
+                    self.named_value_type(name)
+                }
+            }
             Expr::Cast { target_type, .. } => Some(target_type.clone()),
             Expr::DurationCast { .. } => Some(Type::Integer),
             Expr::UnaryOp { op, operand } => match op {
@@ -1180,6 +1198,10 @@ impl Analyzer {
             Type::List(_) => format!("Cannot use list {} in arithmetic.", label),
             Type::File => format!("Cannot use file {} in arithmetic.", label),
             Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            Type::Value => format!(
+                "Cannot use a value {} in arithmetic; check its type with 'is a number'/'is a text' first.",
+                label
+            ),
             _ => return,
         };
         self.push_error(msg, None);
@@ -1328,6 +1350,7 @@ impl Analyzer {
             Type::File => "file",
             Type::Time => "time",
             Type::Timer => "timer",
+            Type::Value => "value",
             Type::Void => "void",
             Type::Unknown => "unknown",
         }
@@ -1457,6 +1480,12 @@ impl Analyzer {
                 }
                 if let Some(Type::List(_)) = var_type {
                     self.list_variables.insert(name.clone());
+                }
+                if let Some(Type::Value) = var_type {
+                    // A declared `a value called "x"` is dynamic, like a value
+                    // parameter: bare arithmetic on it is rejected until the
+                    // author checks its type with a predicate.
+                    self.value_typed_names.insert(name.clone());
                 }
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
@@ -1746,6 +1775,7 @@ impl Analyzer {
                 let saved_file_variables = self.file_variables.clone();
                 let saved_timer_variables = self.timer_variables.clone();
                 let saved_allocated_variables = self.allocated_variables.clone();
+                let saved_value_typed_names = self.value_typed_names.clone();
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -1770,6 +1800,13 @@ impl Analyzer {
                         Type::Integer | Type::Float | Type::String | Type::Boolean => {
                             self.scalar_types.insert(param_name.clone(), param_type.clone());
                         }
+                        Type::Value => {
+                            // A `value` parameter is dynamic: it carries a
+                            // runtime tag but is not statically a number/text,
+                            // so bare arithmetic on it must be rejected (the
+                            // author guards with a stage-1c predicate first).
+                            self.value_typed_names.insert(param_name.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -1786,6 +1823,7 @@ impl Analyzer {
                 self.file_variables = saved_file_variables;
                 self.timer_variables = saved_timer_variables;
                 self.allocated_variables = saved_allocated_variables;
+                self.value_typed_names = saved_value_typed_names;
                 self.apply_env(&saved_env);
             }
             

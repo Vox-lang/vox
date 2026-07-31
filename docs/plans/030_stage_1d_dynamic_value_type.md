@@ -49,6 +49,40 @@ lists with the correct tag preserved.
 - [x] Documentation
 - [x] Tests
 
+> **Scope decided during implementation.**
+> - **Name:** `value` (confirmed). It is **not** a reserved keyword — it
+>   stays a usable identifier and is recognized contextually only in
+>   type-declaration positions (parameter type, return type, and `a value
+>   called "x"` declarations), lexing as `Token::Identifier("value")`. This
+>   preserves backward compatibility (`value` is used as a variable name in
+>   real programs and in existing compile_fail cases).
+> - **Inbound transport:** a `value` parameter occupies **two argument
+>   words** in the standard SysV stream — payload then tag, consecutive,
+>   word-indexed (1 word per scalar param, 2 per `value` param). The first 6
+>   words fill rdi/rsi/rdx/rcx/r8/r9; the rest spill to the stack at
+>   `[rbp+16+pad+(w-6)*8]`. This is option (1) "paired words in-stream",
+>   generalized to word indexing so it falls back to stack words naturally
+>   when args spill (option 3's uniformity), with no separate tag channel.
+>   See [`docs/abi_value.md`](../abi_value.md).
+> - **Outbound transport:** payload in `rax` (unchanged), tag in `r11`, set
+>   by the callee just before the epilogue and read by the caller
+>   immediately after `call`. No spill is needed: `FUNC_EPILOGUE`
+>   (`leave; ret`) and `_dec_call_depth` (`dec [mem]; ret`) clobber neither
+>   r11 nor the saved register words. This reuses the existing "fresh mixed
+>   element read leaves its tag in r11" convention, extended to
+>   value-returning calls.
+> - **Declared `value` locals** (`a value called "r"`, assignment) are
+>   implemented (shadow tag slot + tag store on declaration and assignment),
+>   not deferred.
+> - **Pre-existing limitation (not introduced by 1d, documented for
+>   authors):** conditional returns via the "factorial pattern" (no
+>   `Return` on the `To` line, `If ... return a <type>, <expr>. Otherwise
+>   ...` inside) do not track the return type — `return_type` stays `Void`
+>   and the value prints as an int. This affects *all* conditional text/decimal
+>   returns, not only `value`. Therefore **`value` returns must use the
+>   single-expr `Return a value, <expr>.` form**; conditional `value`
+>   *parameters* work fine (the factorial pattern needs no outbound tag).
+
 **Out of Scope:**
 - Nested containers as `value` payloads (stage 1e adds tags 4/5/6; this
   stage must not *preclude* them but need not carry them).
@@ -99,12 +133,12 @@ how a callee inspects a `value`); stage 1b recommended.
 ---
 
 ## Success Criteria
-- [ ] Feature works as described in expected behavior
-- [ ] All tests pass
-- [ ] Calling convention documented in `docs/` (a short ABI note)
-- [ ] Recursion with `value` parameters works (prerequisite for JSON)
+- [x] Feature works as described in expected behavior
+- [x] All tests pass
+- [x] Calling convention documented in `docs/` (a short ABI note)
+- [x] Recursion with `value` parameters works (prerequisite for JSON)
 - [ ] Code reviewed and approved
-- [ ] Documentation updated
+- [x] Documentation updated
 
 ---
 
@@ -127,17 +161,17 @@ how a callee inspects a `value`); stage 1b recommended.
 ---
 
 ## Tasks
-- [ ] Choose the transport (measure options 1 and 3); write a short ABI
+- [x] Choose the transport (measure options 1 and 3); write a short ABI
       note in `docs/`
-- [ ] Add `value` to the type grammar and analyzer type table
-- [ ] Analyzer: unification at call sites; rejection of unguarded use
-- [ ] Codegen: argument passing, parameter binding to a shadow tag slot
-- [ ] Codegen: `return` of a `value`; call-site capture of the returned tag
-- [ ] Ensure stage 1c predicates work on `value` parameters
-- [ ] Ensure appending a `value` to a list forwards its runtime tag
-- [ ] Tests: pass-through, return, spill, recursion, misuse error
-- [ ] Update `LANGUAGE.md` and `docs/COLLECTIONS_ROADMAP.md`
-- [ ] Run `./test.sh` and `cargo test --release`
+- [x] Add `value` to the type grammar and analyzer type table
+- [x] Analyzer: unification at call sites; rejection of unguarded use
+- [x] Codegen: argument passing, parameter binding to a shadow tag slot
+- [x] Codegen: `return` of a `value`; call-site capture of the returned tag
+- [x] Ensure stage 1c predicates work on `value` parameters
+- [x] Ensure appending a `value` to a list forwards its runtime tag
+- [x] Tests: pass-through, return, spill, recursion, misuse error
+- [x] Update `LANGUAGE.md` and `docs/COLLECTIONS_ROADMAP.md`
+- [x] Run `./test.sh` and `cargo test --release`
 
 ---
 

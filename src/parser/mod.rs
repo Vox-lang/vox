@@ -3976,6 +3976,10 @@ impl Parser {
                         Token::File => { self.advance(); Type::File }
                         Token::Buffer => { self.advance(); Type::Buffer }
                         Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
+                        // `value` is not a reserved keyword (it stays a usable
+                        // identifier everywhere else); in a parameter type
+                        // position it denotes the dynamic `value` type.
+                        Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
                         _ => Type::Unknown,
                     };
                     
@@ -4030,12 +4034,15 @@ impl Parser {
                 self.skip_noise();
             }
             
-            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File) {
+            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File)
+                || matches!(self.current(), Token::Identifier(ref n) if n == "value")
+            {
                 return_type = match self.current() {
                     Token::Number => { self.advance(); Type::Integer }
                     Token::Text => { self.advance(); Type::String }
                     Token::Boolean => { self.advance(); Type::Boolean }
                     Token::File => { self.advance(); Type::File }
+                    Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
                     _ => Type::Void,
                 };
                 self.skip_noise();
