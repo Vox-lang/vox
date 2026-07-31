@@ -1549,8 +1549,11 @@ impl CodeGenerator {
                         }
 
                         if !self.emit_copy_expr_into_buffer_slot(val, true, Some(offset), None) {
-                            self.generate_expr(val);
+                            // Clear before materializing the value: _buffer_clear
+                            // returns the (possibly reallocated) buffer pointer in
+                            // rax and would clobber a value loaded first.
                             self.emit_clear_buffer_slot(offset);
+                            self.generate_expr(val);
                             let fmt_spec = self.parse_format_spec(None);
                             self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(val), fmt_spec);
                         }
@@ -1640,8 +1643,14 @@ impl CodeGenerator {
                     }
                     if self.variable_types.get(name) == Some(&VarType::Buffer) {
                         if !self.emit_copy_expr_into_buffer_slot(value, true, Some(offset), None) {
-                            self.generate_expr(value);
+                            // Clear the buffer BEFORE materializing the value:
+                            // _buffer_clear returns the (possibly reallocated)
+                            // buffer pointer in rax, so generating the value
+                            // first would leave append reading that pointer as
+                            // the value. Clear, then load the value into rax,
+                            // then append.
                             self.emit_clear_buffer_slot(offset);
+                            self.generate_expr(value);
                             let fmt_spec = self.parse_format_spec(None);
                             self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(value), fmt_spec);
                         }

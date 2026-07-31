@@ -567,6 +567,7 @@ pub struct Analyzer {
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
     file_variables: HashSet<String>,
+    timer_variables: HashSet<String>,
     function_param_counts: HashMap<String, usize>,
     loop_depth: usize,
 }
@@ -597,6 +598,7 @@ impl Analyzer {
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
             file_variables: HashSet::new(),
+            timer_variables: HashSet::new(),
             function_param_counts: HashMap::new(),
             loop_depth: 0,
         }
@@ -1039,6 +1041,17 @@ impl Analyzer {
         self.list_variables.contains(name)
     }
 
+    /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
+    /// flag, or a unix timestamp) rather than a pointer or handle. Number
+    /// and time properties read the raw slot, so applying them to a
+    /// buffer/list/file/timer loads a pointer or fd and yields garbage.
+    fn is_scalar_variable(&self, name: &str) -> bool {
+        !self.is_buffer_variable(name)
+            && !self.is_list_variable(name)
+            && !self.file_variables.contains(name)
+            && !self.timer_variables.contains(name)
+    }
+
     fn expr_integer_literal_value(&self, expr: &Expr) -> Option<i64> {
         match expr {
             Expr::IntegerLit(value) => Some(*value),
@@ -1467,6 +1480,11 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Freeing unknown variable: {}", name), Some(name));
+                } else if !self.is_buffer_variable(name) && !self.is_list_variable(name) {
+                    self.push_error(
+                        format!("Free requires a buffer or list: {}", name),
+                        Some(name),
+                    );
                 }
             }
             
@@ -1538,11 +1556,13 @@ impl Analyzer {
                     || self.is_list_variable(name)
                     || self.file_variables.contains(name.as_str())
                     || self.flag_variables.contains(name.as_str())
+                    || self.timer_variables.contains(name.as_str())
                 {
                     // Increment/Decrement compile to an integer `inc/dec
                     // qword` on the variable's stack slot. Applied to a
                     // buffer/list/file variable that slot holds a pointer
-                    // (which gets corrupted), and to a boolean flag it
+                    // (which gets corrupted), to a timer it holds a 56-byte
+                    // struct (also corrupted), and to a boolean flag it
                     // yields 2, 3, ... instead of a boolean. Reject these
                     // rather than emit undefined behaviour.
                     let kw = if matches!(stmt, Statement::Increment { .. }) {
@@ -1636,6 +1656,13 @@ impl Analyzer {
                     }
                 } else if self.is_list_variable(list) {
                     // Valid list append path.
+                } else if !self.is_variable_available(list) {
+                    self.push_error(format!("Unknown variable: {}", list), Some(list));
+                } else {
+                    self.push_error(
+                        format!("Append target must be a buffer or list: {}", list),
+                        Some(list),
+                    );
                 }
             }
 
@@ -1703,6 +1730,11 @@ impl Analyzer {
             Statement::FileRead { buffer, .. } => {
                 if !self.is_variable_available(buffer) {
                     self.push_error(format!("Unknown buffer: {}", buffer), Some(buffer));
+                } else if !self.is_buffer_variable(buffer) {
+                    self.push_error(
+                        format!("Read target must be a buffer: {}", buffer),
+                        Some(buffer),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1710,6 +1742,11 @@ impl Analyzer {
             Statement::FileReadLine { buffer, .. } => {
                 if !self.is_variable_available(buffer) {
                     self.push_error(format!("Unknown buffer: {}", buffer), Some(buffer));
+                } else if !self.is_buffer_variable(buffer) {
+                    self.push_error(
+                        format!("Read target must be a buffer: {}", buffer),
+                        Some(buffer),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1717,6 +1754,11 @@ impl Analyzer {
             Statement::FileSeekLine { file, line } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Seek target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(line);
                 self.deps.uses_io = true;
@@ -1725,29 +1767,49 @@ impl Analyzer {
             Statement::FileSeekByte { file, byte } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Seek target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(byte);
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileWrite { file, value } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Write target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(value);
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileWriteNewline { file } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Write target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileClose { file } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Close target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1829,6 +1891,11 @@ impl Analyzer {
             Statement::BufferResize { name, new_size } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown buffer: {}", name), Some(name));
+                } else if !self.is_buffer_variable(name) {
+                    self.push_error(
+                        format!("Resize target must be a buffer: {}", name),
+                        Some(name),
+                    );
                 }
                 self.analyze_expr(new_size);
                 self.deps.uses_heap = true;
@@ -1849,17 +1916,28 @@ impl Analyzer {
             // Time and Timer statements
             Statement::TimerDecl { name } => {
                 self.variables.insert(name.clone());
+                self.timer_variables.insert(name.clone());
             }
-            
+
             Statement::TimerStart { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
+                } else if !self.timer_variables.contains(name) {
+                    self.push_error(
+                        format!("Start requires a timer: {}", name),
+                        Some(name),
+                    );
                 }
             }
-            
+
             Statement::TimerStop { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
+                } else if !self.timer_variables.contains(name) {
+                    self.push_error(
+                        format!("Stop requires a timer: {}", name),
+                        Some(name),
+                    );
                 }
             }
             
@@ -1906,6 +1984,7 @@ impl Analyzer {
                     let is_buf = self.is_buffer_variable(object);
                     let is_list = self.is_list_variable(object);
                     let is_file = self.file_variables.contains(object.as_str());
+                    let is_scalar = self.is_scalar_variable(object);
                     match property {
                         ObjectProperty::Size | ObjectProperty::Empty | ObjectProperty::Full => {
                             if !is_buf && !is_list && !is_file {
@@ -1948,7 +2027,75 @@ impl Analyzer {
                                 );
                             }
                         }
-                        _ => {}
+                        ObjectProperty::Absolute | ObjectProperty::Sign |
+                        ObjectProperty::Even | ObjectProperty::Odd |
+                        ObjectProperty::Positive | ObjectProperty::Negative |
+                        ObjectProperty::Zero => {
+                            if !is_scalar {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a number variable: {}",
+                                        match property {
+                                            ObjectProperty::Absolute => "absolute",
+                                            ObjectProperty::Sign => "sign",
+                                            ObjectProperty::Even => "even",
+                                            ObjectProperty::Odd => "odd",
+                                            ObjectProperty::Positive => "positive",
+                                            ObjectProperty::Negative => "negative",
+                                            ObjectProperty::Zero => "zero",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Hour | ObjectProperty::Minute |
+                        ObjectProperty::Second | ObjectProperty::Day |
+                        ObjectProperty::Month | ObjectProperty::Year |
+                        ObjectProperty::Unix => {
+                            if !is_scalar {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a time value (number): {}",
+                                        match property {
+                                            ObjectProperty::Hour => "hour",
+                                            ObjectProperty::Minute => "minute",
+                                            ObjectProperty::Second => "second",
+                                            ObjectProperty::Day => "day",
+                                            ObjectProperty::Month => "month",
+                                            ObjectProperty::Year => "year",
+                                            ObjectProperty::Unix => "unix",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Duration | ObjectProperty::Elapsed |
+                        ObjectProperty::StartTime | ObjectProperty::EndTime |
+                        ObjectProperty::Running => {
+                            if !self.timer_variables.contains(object.as_str()) {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a timer: {}",
+                                        match property {
+                                            ObjectProperty::Duration => "duration",
+                                            ObjectProperty::Elapsed => "elapsed",
+                                            ObjectProperty::StartTime => "start time",
+                                            ObjectProperty::EndTime => "end time",
+                                            ObjectProperty::Running => "running",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2110,7 +2257,35 @@ impl Analyzer {
                 self.deps.uses_args = true;
                 self.analyze_expr(name);
             }
-            
+
+            Expr::DurationCast { value, .. } => {
+                // `timer's duration in seconds` parses as a DurationCast
+                // wrapping a PropertyAccess. Without recursing here the
+                // inner property access was never analyzed, so a duration
+                // cast on a non-timer (or referencing an unknown variable)
+                // compiled silently and read stack garbage at runtime.
+                self.analyze_expr(value);
+            }
+
+            Expr::Cast { value, .. } => {
+                // Recurse so unknown variables / nested type errors inside
+                // a cast (`missing as a number`) are reported instead of
+                // compiling silently and emitting garbage.
+                self.analyze_expr(value);
+            }
+
+            Expr::FileAvailable { path } => {
+                // `path is available` wraps the path expression; recurse so
+                // an unknown variable used as the path is caught.
+                self.analyze_expr(path);
+            }
+
+            Expr::ReapChild { pid } => {
+                if let Some(p) = pid {
+                    self.analyze_expr(p);
+                }
+            }
+
             _ => {}
         }
     }

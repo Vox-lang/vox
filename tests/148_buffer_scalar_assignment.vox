@@ -1,0 +1,20 @@
+(Regression test: assigning or initializing a buffer with a number -
+literal or number variable - used to print a garbage pointer address
+instead of the number's text. Both the buffer VarDecl initializer path
+and the Assignment path generated the value into rax and THEN called
+_buffer_clear, which returns the cleared buffer's new pointer in rax,
+clobbering the value; the subsequent formatted-int append then read
+that pointer as the value to format. The fix clears the buffer before
+materializing the value.)
+
+a buffer called "b1" is 5.
+Print b1.
+a number called "n" is 42.
+a buffer called "b2" is n.
+Print b2.
+a buffer called "b3" is 32 bytes in size.
+b3 is 7.
+b3 is 123.
+Print b3.
+b3 is n.
+Print b3.
