@@ -236,7 +236,7 @@ impl CodeGenerator {
         self.uses_buffers = true;
         let label = self.add_string(text);
         self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
-        self.emit_indent(&format!("lea rsi, [{}]", label));
+        self.emit_indent(&format!("lea rsi, [rel {}]", label));
         self.emit_indent(&format!("mov rdx, {}_len", label));
         self.emit_indent("call _buffer_append_bytes");
         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
@@ -417,7 +417,7 @@ impl CodeGenerator {
             match part {
                 FormatPart::Literal(s) => {
                     let label = self.add_string(s);
-                    self.emit_indent(&format!("lea rsi, [{}]", label));
+                    self.emit_indent(&format!("lea rsi, [rel {}]", label));
                     self.emit_indent(&format!("mov rdx, {}_len", label));
                     self.emit_indent("call _buffer_append_bytes");
                 }
@@ -429,14 +429,14 @@ impl CodeGenerator {
                         }
                         FormatPartValue::Literal(s) => {
                             let label = self.add_string(&s);
-                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
                             self.emit_indent("call _buffer_append_bytes");
                         }
                         FormatPartValue::Unknown => {
                             let placeholder = format!("{{{}}}", name);
                             let label = self.add_string(&placeholder);
-                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
                             self.emit_indent("call _buffer_append_bytes");
                         }
@@ -525,7 +525,7 @@ impl CodeGenerator {
                 } else if let Some(label) = dst_global {
                     let lit_label = self.add_string(s);
                     self.emit_indent(&format!("mov rdi, [rel {}]", label));
-                    self.emit_indent(&format!("lea rsi, [{}]", lit_label));
+                    self.emit_indent(&format!("lea rsi, [rel {}]", lit_label));
                     self.emit_indent(&format!("mov rdx, {}_len", lit_label));
                     self.emit_indent("call _buffer_append_bytes");
                     self.emit_indent(&format!("mov [rel {}], rax", label));
@@ -2566,7 +2566,7 @@ impl CodeGenerator {
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
-                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                        self.emit_indent(&format!("lea rdi, [rel {}]", label));
                     }
                     _ => {
                         self.generate_cstr_expr(path);
@@ -3038,7 +3038,7 @@ impl CodeGenerator {
                         match path {
                             Expr::StringLit(s) => {
                                 let label = self.add_string(s);
-                                self.emit_indent(&format!("lea rax, [{}]", label));
+                                self.emit_indent(&format!("lea rax, [rel {}]", label));
                             }
                             _ => self.generate_cstr_expr(path),
                         }
@@ -3131,7 +3131,7 @@ impl CodeGenerator {
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
-                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                        self.emit_indent(&format!("lea rdi, [rel {}]", label));
                     }
                     _ => {
                         self.generate_cstr_expr(path);
@@ -3794,7 +3794,7 @@ impl CodeGenerator {
                 if self.emit_load_named_var_into_rax(s) {
                 } else {
                     let label = self.add_string(s);
-                    self.emit_indent(&format!("lea rax, [{}]", label));
+                    self.emit_indent(&format!("lea rax, [rel {}]", label));
                 }
             }
             
@@ -5063,11 +5063,11 @@ impl CodeGenerator {
                                 let done_label = self.new_label("cast_bool_done");
                                 self.emit_indent("test rax, rax");
                                 self.emit_indent(&format!("jnz {}", true_branch));
-                                self.emit_indent(&format!("lea rsi, [{}]", false_label));
+                                self.emit_indent(&format!("lea rsi, [rel {}]", false_label));
                                 self.emit_indent(&format!("mov rdx, {}_len", false_label));
                                 self.emit_indent(&format!("jmp {}", done_label));
                                 self.emit(&format!("{}:", true_branch));
-                                self.emit_indent(&format!("lea rsi, [{}]", true_label));
+                                self.emit_indent(&format!("lea rsi, [rel {}]", true_label));
                                 self.emit_indent(&format!("mov rdx, {}_len", true_label));
                                 self.emit(&format!("{}:", done_label));
                                 self.emit_indent("call _buffer_append_bytes");

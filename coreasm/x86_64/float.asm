@@ -100,14 +100,16 @@ section .text
     movzx rax, al
 %endmacro
 
-; Load float from memory into xmm0
+; Load float from memory into xmm0. %1 is a data-section label; the
+; reference is RIP-relative.
 %macro FLOAT_LOAD 1
-    movsd xmm0, [%1]
+    movsd xmm0, [rel %1]
 %endmacro
 
-; Store xmm0 to memory
+; Store xmm0 to memory. %1 is a data-section label; the reference is
+; RIP-relative.
 %macro FLOAT_STORE 1
-    movsd [%1], xmm0
+    movsd [rel %1], xmm0
 %endmacro
 
 ; Convert integer in rax to float in xmm0

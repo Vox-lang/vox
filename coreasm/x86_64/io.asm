@@ -17,7 +17,7 @@ section .text
 %macro PRINT_NEWLINE 0
     mov rax, 1
     mov rdi, 1
-    lea rsi, [newline_char]
+    lea rsi, [rel newline_char]
     mov rdx, 1
     syscall
 %endmacro
