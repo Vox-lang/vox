@@ -2263,9 +2263,8 @@ impl CodeGenerator {
             }
 
             Statement::FileReadLine { source, buffer } => {
-                // Get source fd
                 let source_fd = if source == "stdin" {
-                    "0".to_string()  // STDIN
+                    "0".to_string()
                 } else if let Some(offset) = self.get_var(source) {
                     format!("[rbp-{}]", offset)
                 } else {
@@ -2274,17 +2273,21 @@ impl CodeGenerator {
 
                 if let Some(buf_offset) = self.get_var(buffer) {
                     let skip_label = self.new_label("skip_fd");
+                    let done_label = self.new_label("readline_done");
                     self.emit_indent(&format!("mov rdi, {}", source_fd));
-                    // Skip read if fd is invalid (negative)
                     self.emit_indent("test rdi, rdi");
                     self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
                     self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
-                    // Reset buffer length before reading (read replaces, not appends)
                     self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_line_into_buffer");
+                    // _read_line_into_buffer already sets _last_error (1=EOF, 2=read error)
                     // Update buffer pointer (may have changed if grown)
                     self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
+                    self.emit_indent(&format!("jmp {}", done_label));
                     self.emit(&format!("{}:", skip_label));
+                    // Invalid fd is an error - make On error fire
+                    self.emit_indent("mov qword [rel _last_error], 1");
+                    self.emit(&format!("{}:", done_label));
                 }
             }
 
@@ -2303,6 +2306,19 @@ impl CodeGenerator {
                 self.emit_indent("mov rsi, rax  ; target line (1-indexed)");
                 self.emit_indent(&format!("mov rdi, {}", file_fd));
                 self.emit_indent("call _seek_fd_line");
+                // _seek_fd_line sets _last_error on failure and returns -1.
+                // Ensure _last_error is cleared on success so On error doesn't
+                // fire spuriously.
+                let ok_label = self.new_label("seek_line_ok");
+                let done_label = self.new_label("seek_line_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jns {}", ok_label));
+                // Already set by _seek_fd_line, but ensure non-zero
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0");
+                self.emit(&format!("{}:", done_label));
             }
 
             Statement::FileSeekByte { file, byte } => {
@@ -2320,6 +2336,16 @@ impl CodeGenerator {
                 self.emit_indent("mov rsi, rax  ; target byte (1-indexed)");
                 self.emit_indent(&format!("mov rdi, {}", file_fd));
                 self.emit_indent("call _seek_fd_byte");
+                // _seek_fd_byte sets _last_error on failure and returns -1.
+                let ok_label = self.new_label("seek_byte_ok");
+                let done_label = self.new_label("seek_byte_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jns {}", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0");
+                self.emit(&format!("{}:", done_label));
             }
             
             Statement::FileWrite { file, value } => {

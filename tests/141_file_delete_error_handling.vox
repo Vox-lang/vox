@@ -1,0 +1,22 @@
+(Regression test: Delete the file... had two bugs:
+1. uses_files was never set, so file.asm was never included and
+   FILE_DELETE was an undefined NASM macro - the program failed to
+   assemble entirely.
+2. Even if it had assembled, _last_error was never set after the
+   syscall, so 'On error' after Delete the file would silently never
+   fire even on genuine errors like ENOENT.)
+
+(Error path: file doesn't exist -> On error must fire)
+Delete the file "/tmp/vox_test_file_delete_regression_xyz".
+On error print "error caught".
+
+(Success path: delete an actually-existing file)
+open a file for writing called tmpf at "/tmp/vox_test_file_delete_regression".
+Close tmpf.
+Delete the file "/tmp/vox_test_file_delete_regression".
+On error print "BUG: delete failed on existing file", exit 1.
+Print "deleted ok".
+
+(Double-delete must error, not silently succeed)
+Delete the file "/tmp/vox_test_file_delete_regression".
+On error print "second delete error caught".

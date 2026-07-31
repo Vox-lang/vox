@@ -1,0 +1,35 @@
+(Regression test: buffer equality comparison used _str_eq which
+NUL-scans both sides. After clear+shorter-rewrite, the buffer's data
+area is not NUL-terminated at the logical end, so _str_eq would walk
+into stale bytes and falsely report not-equal when two buffers with
+identical logical content were compared.)
+
+Create a buffer called buf1.
+Set byte 1 of buf1 to 'a'.
+Set byte 2 of buf1 to 'b'.
+
+(buf2: written with 'abcd', cleared, rewritten as 'ab' -
+ stale 'cd' remain in the data area beyond logical length 2)
+Create a buffer called buf2.
+Set byte 1 of buf2 to 'a'.
+Set byte 2 of buf2 to 'b'.
+Set byte 3 of buf2 to 'c'.
+Set byte 4 of buf2 to 'd'.
+clear buf2.
+Set byte 1 of buf2 to 'a'.
+Set byte 2 of buf2 to 'b'.
+
+(Both logically hold 'ab' - must be equal)
+If buf1 is buf2 then,
+    Print "equal".
+If buf1 is not buf2 then,
+    Print "BUG: not equal".
+
+(Genuinely different buffers must remain not-equal)
+Create a buffer called buf3.
+Set byte 1 of buf3 to 'x'.
+
+If buf1 is buf3 then,
+    Print "BUG: equal".
+If buf1 is not buf3 then,
+    Print "not equal".
