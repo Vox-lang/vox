@@ -36,6 +36,10 @@ pub enum Expr {
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),
+    // The nothing/null literal (stage 1e3, tag 6). Unit variant: the
+    // payload is always 0 and the tag is always TAG_NOTHING (6), so it
+    // carries no data. Spelled `nothing`, `null`, or `nil` in source.
+    NothingLit,
     Identifier(String),
     
     BinaryOp {

@@ -41,6 +41,7 @@ section .text
 %define LIST_TAG_BOOLEAN        3
 %define LIST_TAG_LIST           4
 %define LIST_TAG_MAP            5
+%define LIST_TAG_NOTHING        6
 
 ; Guard tested by map.asm: _map_print's LIST-tag branch calls _list_print,
 ; so it assembles that branch only when list.asm has been included. list.asm
@@ -594,6 +595,9 @@ section .data
     ; cyclic structure would otherwise recurse forever).
     _lp_trunc:     db "..."
     _lp_trunc_len: equ $ - _lp_trunc
+    ; Rendered for a nothing/null element (stage 1e3, tag 6).
+    _lp_nothing:   db "nothing"
+    _lp_nothing_len: equ $ - _lp_nothing
     ; The recursion-depth counter (_print_depth) lives in core.asm so it is
     ; shared with _map_print (one budget for a mixed map/list tree).
 
@@ -644,10 +648,12 @@ _list_print:
 %endif
     cmp r8, LIST_TAG_LIST
     je .lp_list
-%ifdef __MAP_ASM_AVAILABLE__
+%ifdef __MAP_ASM_INCLUDED__
     cmp r8, LIST_TAG_MAP
     je .lp_map
 %endif
+    cmp r8, LIST_TAG_NOTHING
+    je .lp_nothing
     ; Integer, boolean (as 1/0), and any unhandled tag print as a number.
     mov rdi, [r14]
     PRINT_INT rdi
@@ -675,13 +681,18 @@ _list_print:
     call _list_print
     jmp .lp_next
 
-%ifdef __MAP_ASM_AVAILABLE__
+%ifdef __MAP_ASM_INCLUDED__
 .lp_map:
     ; Nested map: the slot holds a map pointer. _map_print shares _print_depth
     ; with this routine, so a mixed map/list cycle stays within one budget.
     mov rdi, [r14]
     call _map_print
+    jmp .lp_next
 %endif
+
+.lp_nothing:
+    ; Tag 6: payload unused, print the literal word.
+    PRINT_STR _lp_nothing, _lp_nothing_len
     jmp .lp_next
 
 .lp_next:

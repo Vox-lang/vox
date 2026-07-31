@@ -34,6 +34,10 @@ pub enum Token {
     
     // Properties
     Even, Odd, Positive, Negative, Zero, Empty,
+    // The nothing/null literal (stage 1e3, tag 6). Distinct from the
+    // `empty` *property* predicate: `nothing`/`null`/`nil` are value
+    // literals, `empty` tests a collection's size.
+    Nothing,
     
     // Property Access
     Apostrophe, Capacity, Descriptor, Modified, Accessed, Permissions,
@@ -175,7 +179,8 @@ impl Token {
             "positive" => Some("positive"),
             "negative" => Some("negative"),
             "zero" => Some("zero"),
-            "empty" | "nothing" | "null" | "nil" => Some("empty"),
+            "empty" => Some("empty"),
+            "nothing" | "null" | "nil" => Some("nothing"),
             "capacity" => Some("capacity"),
             "descriptor" | "fd" => Some("descriptor"),
             "modified" => Some("modified"),
@@ -334,6 +339,7 @@ impl Token {
             Token::Negative => Some("negative"),
             Token::Zero => Some("zero"),
             Token::Empty => Some("empty"),
+            Token::Nothing => Some("nothing"),
             // Property Access
             Token::Apostrophe => None, // punctuation
             Token::Capacity => Some("capacity"),
@@ -791,7 +797,8 @@ impl<'a> Lexer<'a> {
             "positive" => Token::Positive,
             "negative" => Token::Negative,
             "zero" => Token::Zero,
-            "empty" | "nothing" | "null" | "nil" => Token::Empty,
+            "empty" => Token::Empty,
+            "nothing" | "null" | "nil" => Token::Nothing,
             // File I/O keywords
             "open" | "opened" => Token::Open,
             "read" => Token::Read,

@@ -5187,6 +5187,16 @@ impl Parser {
                 self.advance();
                 Ok(Expr::BoolLit(false))
             }
+            // The nothing/null literal (stage 1e3, tag 6). `nothing`/`null`/
+            // `nil` all lex to `Token::Nothing`. As a bare primary it yields
+            // `NothingLit`; in `x is nothing` it falls through
+            // `parse_comparison` (the property/article/greater-less/equals
+            // guards all skip `Nothing`) to the bare-`is` equality arm,
+            // building `BinaryOp{Equal|NotEqual, x, NothingLit}`.
+            Token::Nothing => {
+                self.advance();
+                Ok(Expr::NothingLit)
+            }
             // Handle "current time" expression
             Token::Current => {
                 self.advance();

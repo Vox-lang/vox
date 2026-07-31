@@ -18,8 +18,29 @@ parameter or local is just a `Mixed` scalar with a shadow tag slot, so the
 stage-1c predicates, printing, appending, forwarding, and recursion all work
 on it unchanged.
 
-Tag values are the list element tags (`LIST_TAG_*` in `coreasm/x86_64/list.asm`):
-`0` integer, `1` string, `2` float, `3` boolean.
+Tag values are the list element tags (`LIST_TAG_*` in `coreasm/x86_64/list.asm`,
+mirrored as `MAP_TAG_*` in `map.asm` and `TAG_*` in the codegen):
+
+| tag | meaning     | source spelling                  |
+|-----|-------------|----------------------------------|
+| 0   | integer     | `42`                             |
+| 1   | string      | `"text"`                         |
+| 2   | float       | `3.5` (a decimal)                |
+| 3   | boolean     | `true` / `false`                 |
+| 4   | list        | `[1, 2, 3]`                      |
+| 5   | map         | `{"k": v}`                       |
+| 6   | nothing     | `nothing` / `null` / `nil`       |
+
+Tag 6 (nothing, stage 1e3) carries payload 0. It is *not* a `VarType` or
+declared `Type` — `NothingLit` threads through the tag oracles
+(`prescan_expr_tag` / `emit_time_expr_tag` return `Some(6)`) only, so the
+five tag-forward sites (list literal, `append`, `element set`, `map set`,
+map literal pair) write 6 directly and a `value` return carrying nothing
+loads tag 6 into `r11` via the `Some(t)` arm of `emit_load_value_tag`.
+`is nothing` / `is not nothing` is the **equality** route (like `is true`
+/ `is false`), not a type predicate: it compares the operand's runtime tag
+against 6, and must precede the numeric payload compare so that `0 is
+nothing` is false (a nothing payload is 0).
 
 ## Inbound — a `value` parameter
 

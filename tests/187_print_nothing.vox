@@ -1,0 +1,7 @@
+(Stage 1e3 - the nothing literal (tag 6) prints as `nothing`. The three
+ source spellings `nothing`, `null`, and `nil` all produce the same
+ literal. Acceptance: three lines, each `nothing`.)
+
+print nothing.
+print null.
+print nil.

@@ -107,6 +107,7 @@ const TAG_FLOAT: u8 = 2;
 const TAG_BOOLEAN: u8 = 3;
 const TAG_LIST: u8 = 4;
 const TAG_MAP: u8 = 5;
+const TAG_NOTHING: u8 = 6;
 
 /// Three-state result of statically classifying an expression into a list
 /// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
@@ -1213,6 +1214,8 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => TagInfo::Known(TAG_INTEGER),
             Expr::FloatLit(_) => TagInfo::Known(TAG_FLOAT),
             Expr::BoolLit(_) => TagInfo::Known(TAG_BOOLEAN),
+            // The nothing/null literal is tag 6 (stage 1e3).
+            Expr::NothingLit => TagInfo::Known(TAG_NOTHING),
             // A list value in a slot is tag 4 (stage 1e1). This makes a
             // homogeneous list-of-lists `[[1,2],[3,4]]` prove a single tag
             // (4) and stay non-mixed, while a mixed `[1, [2,3], "four"]` still
@@ -1621,12 +1624,13 @@ impl CodeGenerator {
     }
 
     /// Emit a print of the value in rdi dispatched on the runtime tag held
-    /// in `tag_reg` (a full 64-bit register holding 0..=4).
+    /// in `tag_reg` (a full 64-bit register holding 0..=6).
     fn emit_mixed_print_dispatch(&mut self, tag_reg: &str) {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
         let list_label = self.new_label("mixp_list");
         let map_label = self.new_label("mixp_map");
+        let nothing_label = self.new_label("mixp_nothing");
         let done_label = self.new_label("mixp_done");
         self.emit_indent(&format!("cmp {}, {}  ; string tag?", tag_reg, TAG_STRING));
         self.emit_indent(&format!("je {}", str_label));
@@ -1642,6 +1646,10 @@ impl CodeGenerator {
         // recurse into `_map_print`.
         self.emit_indent(&format!("cmp {}, {}  ; map tag?", tag_reg, TAG_MAP));
         self.emit_indent(&format!("je {}", map_label));
+        // A nothing/null element (tag 6, stage 1e3): payload is 0 (unused),
+        // so print the literal word `nothing` regardless of rdi.
+        self.emit_indent(&format!("cmp {}, {}  ; nothing tag?", tag_reg, TAG_NOTHING));
+        self.emit_indent(&format!("je {}", nothing_label));
         // Integer and boolean both print as numbers (matches homogeneous
         // boolean lists, which print 1/0 today).
         self.emit_indent("PRINT_INT rdi");
@@ -1661,6 +1669,10 @@ impl CodeGenerator {
         self.emit(&format!("{}:", map_label));
         self.emit_indent("call _map_print  ; rdi = child map pointer");
         self.uses_maps = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", nothing_label));
+        let nothing_str = self.add_string("nothing");
+        self.emit_indent(&format!("PRINT_STR {}, {}_len", nothing_str, nothing_str));
         self.emit(&format!("{}:", done_label));
     }
 
@@ -1764,6 +1776,8 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
             Expr::FloatLit(_) => Some(TAG_FLOAT),
             Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            // The nothing/null literal is tag 6 (stage 1e3).
+            Expr::NothingLit => Some(TAG_NOTHING),
             // A list literal value in a slot is tag 4 (stage 1e1). This is the
             // tag written to a nested-list element's slot at emit time.
             Expr::ListLit { .. } => Some(TAG_LIST),
@@ -1942,15 +1956,15 @@ impl CodeGenerator {
             result.push_str("default rel  ; Use RIP-relative addressing for PIC\n\n");
             // Shared libraries don't include coreasm - they're pure function exports
         } else {
-            // _list_print dispatches the MAP tag into _map_print, but list.asm
-            // is included before map.asm (map.asm calls _list_print), so it
-            // cannot test a define from map.asm. The compiler knows the final
-            // include set, so it declares the availability up front.
-            if self.uses_maps {
-                result.push_str("%define __MAP_ASM_AVAILABLE__\n");
-            }
             // Always needed: core
             result.push_str(&format!("%include \"coreasm/{}/core.asm\"\n", self.target_arch));
+            // map.asm is included AFTER list.asm (it calls _list_print), so
+            // its `__MAP_ASM_INCLUDED__` guard is not yet visible when
+            // list.asm is assembled. Pre-define it here when maps are used so
+            // list.asm's map-element print branch can call `_map_print`.
+            if self.uses_maps {
+                result.push_str("%define __MAP_ASM_INCLUDED__\n");
+            }
             // Conditional includes based on usage
             // map.asm depends on io.asm (PRINT macros), string.asm (_str_eq),
             // and list.asm (_list_print), so uses_maps forces all three on.
@@ -4368,7 +4382,17 @@ impl CodeGenerator {
                             let expr_type = self.infer_expr_type(expr);
                             let fmt_spec = self.parse_format_spec(format.as_deref());
 
-                            if expr_type == Some(VarType::Buffer) {
+                            // A bare `nothing` literal interpolated into a
+                            // format string renders `nothing` (it would else
+                            // infer as Integer and print `0`). A `value`/
+                            // mixed expression that *holds* nothing is
+                            // already handled by the mixed dispatch below
+                            // via VarType::Mixed; this is only for the literal
+                            // itself. (stage 1e3)
+                            if matches!(expr.as_ref(), Expr::NothingLit) {
+                                let label = self.add_string("nothing");
+                                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                            } else if expr_type == Some(VarType::Buffer) {
                                 // For buffer expressions: generate the struct pointer,
                                 // not the data-area pointer - PRINT_BUF reads its own
                                 // length from the struct, so it needs the base pointer.
@@ -4467,6 +4491,16 @@ impl CodeGenerator {
                 self.emit_indent(&format!("FLOAT_LOAD {}", label));
                 self.emit_indent("PRINT_FLOAT");
                 self.uses_floats = true;
+            }
+
+            // `print nothing.` — the literal null (stage 1e3, tag 6). It
+            // would otherwise fall to the catch-all (infer_expr_type maps it
+            // to Integer) and print `0`, so handle it explicitly. Inside a
+            // list/map slot or a `value`, the mixed print dispatch already
+            // renders `nothing`; this arm is for a bare literal argument.
+            Expr::NothingLit => {
+                let label = self.add_string("nothing");
+                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
             }
             
             Expr::Identifier(name) => {
@@ -4713,6 +4747,12 @@ impl CodeGenerator {
         matches!(self.infer_expr_type(expr), Some(VarType::String) | Some(VarType::Buffer))
     }
 
+    /// True if `expr` is a `nothing`/`null`/`nil` literal (stage 1e3, tag 6).
+    /// Used by the nothing-equality guard in `generate_condition`.
+    fn is_nothing_expr(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::NothingLit)
+    }
+
     fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -4730,6 +4770,14 @@ impl CodeGenerator {
             
             Expr::BoolLit(b) => {
                 self.emit_indent(&format!("mov rax, {}", if *b { 1 } else { 0 }));
+            }
+
+            // The nothing/null literal (stage 1e3, tag 6). The payload is 0;
+            // the tag is written by callers via `emit_time_expr_tag`
+            // (returns `Some(TAG_NOTHING)`) at every store/forward site, so
+            // here we only materialize the payload.
+            Expr::NothingLit => {
+                self.emit_indent("xor rax, rax  ; nothing literal, payload 0 (tag 6 set by caller)");
             }
             
             Expr::StringLit(s) => {
@@ -4749,8 +4797,44 @@ impl CodeGenerator {
             Expr::BinaryOp { left, op, right } => {
                 // Use has_float_operands for instruction selection (includes comparisons)
                 let has_floats = self.has_float_operands(left) || self.has_float_operands(right);
-                
-                if has_floats {
+
+                // `x is nothing` / `x is not nothing` in expression position
+                // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
+                // the float/stringy/integer paths or `0 is nothing` would
+                // compare payloads and be true. Mirrors the condition-position
+                // guard in `generate_condition`.
+                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && (self.is_nothing_expr(left) || self.is_nothing_expr(right))
+                {
+                    let equal = matches!(op, BinaryOperator::Equal);
+                    if self.is_nothing_expr(left) && self.is_nothing_expr(right) {
+                        self.emit_indent(&format!("mov rax, {}  ; nothing is nothing", if equal { 1 } else { 0 }));
+                    } else {
+                        let value = if self.is_nothing_expr(left) { right } else { left };
+                        match self.emit_time_expr_tag(value) {
+                            Some(t) => {
+                                let holds = if equal { t == TAG_NOTHING } else { t != TAG_NOTHING };
+                                self.emit_indent(&format!(
+                                    "mov rax, {}  ; is {}nothing folded (static tag {})",
+                                    if holds { 1 } else { 0 }, if equal { "" } else { "not " }, t
+                                ));
+                            }
+                            None => {
+                                self.generate_expr(value);
+                                if let Some(off) = self.mixed_element_tag_slot(value) {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                        off
+                                    ));
+                                }
+                                self.emit_indent("xor rax, rax");
+                                self.emit_indent(&format!("cmp r11, {}  ; is nothing?", TAG_NOTHING));
+                                self.emit_indent(if equal { "sete al" } else { "setne al" });
+                                self.emit_indent("movzx rax, al");
+                            }
+                        }
+                    }
+                } else if has_floats {
                     self.uses_floats = true;
                     // Float operations using coreasm macros
                     // Convert int operands to float if needed
@@ -6425,6 +6509,57 @@ impl CodeGenerator {
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
                     }
+                    // `x is nothing` / `x is not nothing` (stage 1e3): tag-6
+                    // equality. Two values are equal-as-nothing iff BOTH have
+                    // runtime tag 6 (payloads are ignored). This guard MUST
+                    // precede the stringy and numeric equality arms: without
+                    // it, `0 is nothing` would fall into the numeric arm
+                    // (`cmp rax, rbx` on payloads) and wrongly be true, since
+                    // nothing's payload is 0. Modelled on the `TypeCheck`
+                    // runtime path (~line 4940): generate the non-nothing
+                    // side, load its tag into r11 (shadow slot for a Mixed
+                    // identifier, else r11 already holds it from an element
+                    // read / `_map_lookup` / `value` call), and compare to 6.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.is_nothing_expr(left) || self.is_nothing_expr(right) =>
+                    {
+                        let equal = matches!(op, BinaryOperator::Equal);
+                        if self.is_nothing_expr(left) && self.is_nothing_expr(right) {
+                            // `nothing is nothing`: tag 6 == tag 6.
+                            if !equal {
+                                self.emit_indent(&format!("jmp {}  ; nothing is not nothing -> false", false_label));
+                            }
+                        } else {
+                            let value = if self.is_nothing_expr(left) { right } else { left };
+                            match self.emit_time_expr_tag(value) {
+                                Some(t) => {
+                                    // Folded: equal iff the static tag is 6.
+                                    let holds = if equal { t == TAG_NOTHING } else { t != TAG_NOTHING };
+                                    if !holds {
+                                        self.emit_indent(&format!(
+                                            "jmp {}  ; is {}nothing folded (static tag {})",
+                                            false_label, if equal { "not " } else { "" }, t
+                                        ));
+                                    }
+                                }
+                                None => {
+                                    self.generate_expr(value);
+                                    if let Some(off) = self.mixed_element_tag_slot(value) {
+                                        self.emit_indent(&format!(
+                                            "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                            off
+                                        ));
+                                    }
+                                    self.emit_indent("xor rax, rax");
+                                    self.emit_indent(&format!("cmp r11, {}  ; is nothing?", TAG_NOTHING));
+                                    self.emit_indent(if equal { "sete al" } else { "setne al" });
+                                    self.emit_indent("movzx rax, al");
+                                    self.emit_indent("test rax, rax");
+                                    self.emit_indent(&format!("jz {}", false_label));
+                                }
+                            }
+                        }
+                    }
                     BinaryOperator::Equal | BinaryOperator::NotEqual
                         if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
                     {
@@ -7396,6 +7531,171 @@ mod tests {
         assert!(
             asm.contains("call _map_keys"),
             "map's keys must call _map_keys"
+        );
+    }
+
+    // ---- Stage 1e3: nothing/null (tag 6) ----
+    // These lock the null feature in at the compiler level, independent of
+    // the runtime: the literal threads tag 6 through the tag oracles, the
+    // `is nothing` equality routes to a tag-6 compare (NOT the numeric
+    // payload compare, so `0 is nothing` is false), the mixed print
+    // dispatch has a nothing arm, and the recursive printers carry a
+    // nothing label. The `nothing`/`null`/`nil` spellings are reserved.
+
+    #[test]
+    fn nothing_lit_emits_tag_6() {
+        // A nothing literal inside a mixed list literal threads tag 6 via
+        // prescan_expr_tag / emit_time_expr_tag: the element payload is 0
+        // (`xor rax, rax`) and its slot tag byte is written as 6.
+        let asm = compile_to_asm("a list called \"xs\" is [1, nothing, 2].\n");
+        assert!(
+            asm.contains("xor rax, rax  ; nothing literal, payload 0"),
+            "a nothing literal must emit payload 0 with the nothing-literal comment"
+        );
+        assert!(
+            asm.contains(", 6  ; slot 2 type tag"),
+            "the nothing list element's slot must carry tag 6 (TAG_NOTHING)"
+        );
+    }
+
+    #[test]
+    fn is_nothing_emits_tag_compare() {
+        // `is nothing` is the equality route. On a runtime-tagged `value`
+        // parameter it must compare the loaded tag against 6 — NOT fall
+        // through to the numeric `cmp rax, rbx` payload compare (which
+        // would make `0 is nothing` true, since a nothing payload is 0).
+        let asm = compile_to_asm(
+            "To \"check\" with a value called \"v\".\n\
+             If v is nothing, print \"y\".\n\
+             \"check\" of nothing.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 6"),
+            "`is nothing` on a value must compare the runtime tag against 6"
+        );
+        assert!(
+            !asm.contains("cmp rax, rbx"),
+            "`is nothing` must NOT use the numeric payload compare (0 is nothing must be false)"
+        );
+        // The static fold: `0 is nothing` is statically false (tag 0) and
+        // jumps to the else branch with a comment naming the folded tag.
+        let asm_fold = compile_to_asm("a number called \"n\" is 0.\nif n is nothing, print \"bug\".\n");
+        assert!(
+            asm_fold.contains("is not nothing folded (static tag 0)"),
+            "a static integer (tag 0) must fold `is nothing` to false"
+        );
+        assert!(
+            !asm_fold.contains("cmp r11, 6"),
+            "a statically-folded `is nothing` must not emit a runtime tag compare"
+        );
+    }
+
+    #[test]
+    fn print_dispatch_has_nothing_arm() {
+        // Printing a `value` that holds nothing dispatches on the runtime
+        // tag and must branch on tag 6 to a nothing arm that prints the
+        // `nothing` rodata string (mirrors the map/list dispatch arms).
+        let asm = compile_to_asm(
+            "To \"show\" with a value called \"v\".\n  print v.\n\n\
+             a map called \"m\" is {\"k\": nothing}.\n\"show\" of m's \"k\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 6") && asm.contains("mixp_nothing"),
+            "mixed print dispatch must branch on tag 6 to a nothing arm"
+        );
+        // A bare `print nothing.` routes through the explicit NothingLit
+        // print arm (a `nothing` rodata string + PRINT_STR), not PRINT_INT.
+        let asm_lit = compile_to_asm("print nothing.\n");
+        assert!(
+            asm_lit.contains("db 'nothing'") || asm_lit.contains("db \"nothing\""),
+            "`print nothing.` must materialize a `nothing` rodata string"
+        );
+        assert!(
+            !asm_lit.contains("PRINT_INT"),
+            "`print nothing.` must not fall through to PRINT_INT"
+        );
+    }
+
+    #[test]
+    fn list_and_map_print_have_nothing_arms() {
+        // The recursive printers must carry a nothing dispatch arm + label
+        // so a nothing slot inside a list or map prints as `nothing` (and
+        // closes the pre-existing LIST_TAG_MAP gap in list.asm).
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        assert!(
+            list_asm.contains("%define LIST_TAG_NOTHING        6"),
+            "list.asm must define LIST_TAG_NOTHING (6)"
+        );
+        assert!(
+            list_asm.contains("cmp r8, LIST_TAG_NOTHING") && list_asm.contains(".lp_nothing:"),
+            "_list_print must dispatch the nothing tag to a .lp_nothing label"
+        );
+        assert!(
+            list_asm.contains("%define LIST_TAG_MAP            5")
+                && list_asm.contains(".lp_map:"),
+            "_list_print must also carry the map (tag 5) arm closed in 1e3"
+        );
+
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            map_asm.contains("%define MAP_TAG_NOTHING        6"),
+            "map.asm must define MAP_TAG_NOTHING (6)"
+        );
+        assert!(
+            map_asm.contains("cmp r8, MAP_TAG_NOTHING") && map_asm.contains(".mp_nothing:"),
+            "_map_print must dispatch the nothing tag to a .mp_nothing label"
+        );
+    }
+
+    #[test]
+    fn nothing_keyword_reserved() {
+        // The three null spellings lex to Token::Nothing and reserve via
+        // as_keyword / string_is_keyword; `empty` stays its own keyword
+        // (the size-emptiness property), so the split is clean.
+        use crate::lexer::{Lexer, Token};
+        let toks: Vec<Token> = Lexer::new("nothing null nil empty")
+            .tokenize()
+            .into_iter()
+            .map(|ti| ti.token)
+            .filter(|t| !matches!(t, Token::EOF))
+            .collect();
+        assert_eq!(toks.len(), 4, "the four words must each produce one token");
+        assert!(toks.iter().all(|t| matches!(t, Token::Nothing | Token::Empty)),
+            "nothing/null/nil -> Token::Nothing; empty -> Token::Empty");
+        assert_eq!(toks[0], Token::Nothing);
+        assert_eq!(toks[1], Token::Nothing);
+        assert_eq!(toks[2], Token::Nothing);
+        assert_eq!(toks[3], Token::Empty);
+        // as_keyword reserves the word (drives check_not_keyword).
+        assert_eq!(Token::Nothing.as_keyword(), Some("nothing"));
+        assert_eq!(Token::Empty.as_keyword(), Some("empty"));
+        // string_is_keyword catches the quoted-name form too.
+        assert_eq!(Token::string_is_keyword("nothing"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("null"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("nil"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("empty"), Some("empty"));
+
+        // Using `nothing` as a variable name is rejected at parse time
+        // (both the bare and quoted forms), proving the word is reserved.
+        use crate::parser::Parser;
+        fn parse_snippet(src: &str) -> Result<(), String> {
+            let toks = Lexer::new(src).tokenize();
+            match Parser::new(toks).parse() {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        let bare = parse_snippet("a number called nothing is 1.");
+        assert!(bare.is_err(), "bare `nothing` as a name must be rejected");
+        assert!(
+            bare.unwrap_err().to_lowercase().contains("reserved"),
+            "the error must call `nothing` a reserved keyword"
+        );
+        let quoted = parse_snippet("a number called \"nothing\" is 1.");
+        assert!(quoted.is_err(), "quoted \"nothing\" as a name must be rejected");
+        assert!(
+            quoted.unwrap_err().to_lowercase().contains("reserved"),
+            "the quoted-form error must call `nothing` a reserved keyword"
         );
     }
 }
