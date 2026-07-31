@@ -23,7 +23,12 @@ target
 *.vsix
 release.sh
 *.7z
+# Compiler output: the .asm emitted next to a source being compiled.
 *.asm
+# ...but the runtime library IS source. Without this a NEW coreasm module is
+# silently untracked - map.asm was, and the build only broke on a fresh
+# checkout. Matters again for each architecture port (aarch64, riscv, Win64).
+!coreasm/**/*.asm
 
 -e 
 # Compiled vox output binaries at repo root (from running the compiler on examples)
