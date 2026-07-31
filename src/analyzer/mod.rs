@@ -1733,6 +1733,17 @@ impl Analyzer {
                 let saved_guards = self.active_guards.clone();
                 let saved_block_depth = self.block_depth;
                 let saved_in_function_scope = self.in_function_scope;
+                // Type labels are scoped like the variables themselves: a
+                // parameter (or body-local declaration) named like a
+                // top-level variable must not relabel it for the code after
+                // the function - a text parameter "x" would otherwise make
+                // top-level arithmetic on a number "x" a false error.
+                let saved_scalar_types = self.scalar_types.clone();
+                let saved_buffer_variables = self.buffer_variables.clone();
+                let saved_list_variables = self.list_variables.clone();
+                let saved_file_variables = self.file_variables.clone();
+                let saved_timer_variables = self.timer_variables.clone();
+                let saved_allocated_variables = self.allocated_variables.clone();
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -1767,6 +1778,12 @@ impl Analyzer {
                 self.block_depth = saved_block_depth;
                 self.active_guards = saved_guards;
                 self.in_function_scope = saved_in_function_scope;
+                self.scalar_types = saved_scalar_types;
+                self.buffer_variables = saved_buffer_variables;
+                self.list_variables = saved_list_variables;
+                self.file_variables = saved_file_variables;
+                self.timer_variables = saved_timer_variables;
+                self.allocated_variables = saved_allocated_variables;
                 self.apply_env(&saved_env);
             }
             
