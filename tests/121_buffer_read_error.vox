@@ -1,0 +1,11 @@
+(Read errors from the underlying syscall must set the error flag)
+
+open a file for writing called out at "./tmp_read_err.txt".
+Write "x" to out.
+
+a buffer called "b" is 1024 bytes in size.
+Read from out into b.
+On error Print "read error".
+
+Close out.
+Delete the file "./tmp_read_err.txt".

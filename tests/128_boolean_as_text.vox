@@ -1,0 +1,3 @@
+(Regression test: boolean "as text" was broken, returning raw numeric value instead of "true"/"false".)
+Print true as text.
+Print false as text.

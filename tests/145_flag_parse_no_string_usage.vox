@@ -1,0 +1,15 @@
+(Regression test: the runtime flag parser calls _str_eq to match
+argument tokens against flag aliases, but the codegen did not mark
+string.asm as needed. A program that declared and parsed flags yet used
+no strings anywhere else (no string Print, no format strings) therefore
+failed to assemble with "symbol `_str_eq' not defined". This program
+parses flags and produces only numeric output, so string.asm is
+required solely by the flag parser.)
+
+a flag called "retries" is "-r" or "--retries", it is a number with default 3.
+a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+Parse flags.
+
+Set total to retries add 1.
+Print total.
+If verbose then, Print 1. Otherwise, Print 0.

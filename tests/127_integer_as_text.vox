@@ -1,0 +1,3 @@
+(Regression test: integer "as text" was broken, returning raw numeric value instead of a printable string.)
+Print 42 as text.
+Print -7 as a text.

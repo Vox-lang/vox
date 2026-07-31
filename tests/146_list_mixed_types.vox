@@ -1,0 +1,39 @@
+(Regression test: heterogeneous lists must hold and print every element
+ correctly. Previously the element type was inferred from the first
+ element only, so [1, "two", 3.5] printed a raw pointer and a float's
+ bit pattern - silent data corruption. Per-slot runtime type tags fix
+ this; booleans print as 1/0, matching homogeneous boolean lists.)
+
+a list called "m" is [1, "two", 3.5, yes].
+
+(Iteration dispatches per element)
+For each item in m, print item.
+
+(Format interpolation dispatches per element)
+For each item in m, print "got: {item}".
+
+(1-indexed element access dispatches per element)
+Print element 1 of m.
+Print element 2 of m.
+Print element 3 of m.
+Print element 4 of m.
+
+(first/last carry their slot's tag)
+Print m's first.
+Print m's last.
+
+(Element writes retag their slot)
+Set element 1 of m to "one".
+Print element 1 of m.
+Set element 2 of m to 22.
+Print element 2 of m.
+
+(Aliases share the same tagged block)
+a list called "alias" is the m.
+For each av in alias, print av.
+
+(Homogeneous lists are untouched by all of this)
+a list called "nums" is [10, 20, 30].
+For each n in nums, print n.
+a list called "names" is ["ada", "bob"].
+For each nm in names, print nm.

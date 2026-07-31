@@ -63,6 +63,15 @@ done
 
 # Get script directory (where vox project lives)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Use the in-repo coreasm library so local runtime changes are exercised
+# without requiring a system install. The compiler reads EC_CORE_PATH
+# (not VOX_CORE_PATH) and expects the coreasm directory itself, so point
+# it at $SCRIPT_DIR/coreasm. Without this the override was a no-op and a
+# present system install at /usr/local/share/vox/coreasm would shadow
+# the in-repo runtime.
+export EC_CORE_PATH="$SCRIPT_DIR/coreasm"
+
 VOX_BIN="$SCRIPT_DIR/target/release/vox"
 
 # Build compiler if needed

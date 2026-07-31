@@ -692,11 +692,16 @@
     push rdx
     push rsi
     push rdi
-    
+
     mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_UNLINK
     syscall
-    
+
+    cmp rax, 0
+    jge %%.file_delete_done
+    mov qword [rel _last_error], 2  ; file operation error
+%%.file_delete_done:
+
     pop rdi
     pop rsi
     pop rdx

@@ -316,3 +316,49 @@ _str_len:
 .strlen_done:
     pop rcx
     ret
+
+; Convert a NUL-terminated text string to a boolean value.
+; Returns 1 if the string equals "true" (case-insensitive), 0 otherwise.
+; "false" and any other string therefore produce 0, matching the only
+; text-to-boolean case documented in LANGUAGE.md.
+global _text_to_boolean
+_text_to_boolean:
+    push rbx
+
+    test rdi, rdi
+    jz .tb_false
+
+    mov rbx, rdi
+
+    ; Must be exactly 4 characters followed by NUL.
+    cmp byte [rbx + 4], 0
+    jne .tb_false
+
+    mov al, [rbx]
+    or al, 0x20
+    cmp al, 't'
+    jne .tb_false
+
+    mov al, [rbx + 1]
+    or al, 0x20
+    cmp al, 'r'
+    jne .tb_false
+
+    mov al, [rbx + 2]
+    or al, 0x20
+    cmp al, 'u'
+    jne .tb_false
+
+    mov al, [rbx + 3]
+    or al, 0x20
+    cmp al, 'e'
+    jne .tb_false
+
+    mov rax, 1
+    pop rbx
+    ret
+
+.tb_false:
+    xor rax, rax
+    pop rbx
+    ret

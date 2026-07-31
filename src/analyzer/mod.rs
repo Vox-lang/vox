@@ -567,6 +567,17 @@ pub struct Analyzer {
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
     file_variables: HashSet<String>,
+    timer_variables: HashSet<String>,
+    /// Declared/inferred scalar category (Integer/Float/String/Boolean) for
+    /// non-buffer, non-list, non-file, non-timer variables. Vox is dynamically
+    /// typed - a variable's runtime category is whatever its last assignment
+    /// stored - so this map is updated on every VarDecl and Assignment to stay
+    /// current. It lets the arithmetic type check distinguish a text variable
+    /// (must be cast with `as a number`/`as a float` before arithmetic) from a
+    /// numeric one, which the buffer/list/flag sets alone cannot do.
+    scalar_types: HashMap<String, Type>,
+    function_param_counts: HashMap<String, usize>,
+    loop_depth: usize,
 }
 
 #[derive(Clone, Default)]
@@ -595,6 +606,10 @@ impl Analyzer {
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
             file_variables: HashSet::new(),
+            timer_variables: HashSet::new(),
+            scalar_types: HashMap::new(),
+            function_param_counts: HashMap::new(),
+            loop_depth: 0,
         }
     }
 
@@ -625,8 +640,9 @@ impl Analyzer {
 
         for stmt in &program.statements {
             match stmt {
-                Statement::FunctionDef { name, .. } => {
+                Statement::FunctionDef { name, params, .. } => {
                     self.functions.insert(name.clone());
+                    self.function_param_counts.insert(name.clone(), params.len());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -863,6 +879,28 @@ impl Analyzer {
         self.push_error(format!("Unknown variable: {}", name), Some(name));
     }
 
+    /// Validate that a function call supplies exactly the number of
+    /// arguments the function declares. A mismatch previously compiled
+    /// to undefined runtime behaviour: too few arguments read stale
+    /// register values (silently using 0 or garbage), while too many
+    /// were silently dropped.
+    fn validate_function_call_args(&mut self, name: &str, args: &[Expr]) {
+        if let Some(&expected) = self.function_param_counts.get(name) {
+            if args.len() != expected {
+                self.push_error(
+                    format!(
+                        "Function '{}' expects {} argument{} but was called with {}.",
+                        name,
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        args.len()
+                    ),
+                    Some(name),
+                );
+            }
+        }
+    }
+
     fn current_env(&self) -> AnalysisEnv {
         AnalysisEnv {
             always: self.variables.clone(),
@@ -1010,6 +1048,153 @@ impl Analyzer {
 
     fn is_list_variable(&self, name: &str) -> bool {
         self.list_variables.contains(name)
+    }
+
+    /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
+    /// flag, or a unix timestamp) rather than a pointer or handle. Number
+    /// and time properties read the raw slot, so applying them to a
+    /// buffer/list/file/timer loads a pointer or fd and yields garbage.
+    fn is_scalar_variable(&self, name: &str) -> bool {
+        !self.is_buffer_variable(name)
+            && !self.is_list_variable(name)
+            && !self.file_variables.contains(name)
+            && !self.timer_variables.contains(name)
+    }
+
+    /// Resolve a named reference (an `Identifier` or a quoted-name `StringLit`)
+    /// to its tracked category. Buffer/list/file/timer/flag are detected from
+    /// their dedicated sets; otherwise the dynamic `scalar_types` map supplies
+    /// the current number/float/text/boolean category. Returns None for an
+    /// unknown or untracked name (treated as "allow" by the arithmetic check to
+    /// avoid false positives).
+    fn named_value_type(&self, name: &str) -> Option<Type> {
+        if self.is_buffer_variable(name) {
+            Some(Type::Buffer)
+        } else if self.is_list_variable(name) {
+            Some(Type::List(Box::new(Type::Unknown)))
+        } else if self.file_variables.contains(name) {
+            Some(Type::File)
+        } else if self.timer_variables.contains(name) {
+            Some(Type::Timer)
+        } else if self.flag_variables.contains(name) {
+            Some(Type::Boolean)
+        } else {
+            self.scalar_types.get(name).cloned()
+        }
+    }
+
+    /// Classify an expression's value category for the arithmetic type check.
+    /// Returns the type, or None when it cannot be determined statically
+    /// (function calls, property/element/byte access) - None means "allow",
+    /// biasing against false positives. A bare text literal or a text variable
+    /// resolves to `Type::String`; a cast resolves to its target type, so
+    /// `s as a number` is accepted while bare `s` (text) is rejected.
+    fn arithmetic_operand_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::IntegerLit(_)
+            | Expr::LastError
+            | Expr::ArgumentCount
+            | Expr::EnvironmentVariableCount => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::StringLit(s) => {
+                // A quoted name may reference a variable; otherwise this is a
+                // bare text literal, which is not valid in arithmetic.
+                self.named_value_type(s).or(Some(Type::String))
+            }
+            Expr::FormatString { .. } => Some(Type::String),
+            Expr::Identifier(name) => self.named_value_type(name),
+            Expr::Cast { target_type, .. } => Some(target_type.clone()),
+            Expr::DurationCast { .. } => Some(Type::Integer),
+            Expr::UnaryOp { op, operand } => match op {
+                UnaryOperator::Negate => self.arithmetic_operand_type(operand),
+                UnaryOperator::Not => Some(Type::Boolean),
+            },
+            Expr::BinaryOp { op, left, right } => match op {
+                BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+                | BinaryOperator::And
+                | BinaryOperator::Or => Some(Type::Boolean),
+                _ => {
+                    // Arithmetic result: float if either operand is float, else
+                    // integer. Nested operands are checked separately when
+                    // analyze_expr recurses into them.
+                    if matches!(self.arithmetic_operand_type(left), Some(Type::Float))
+                        || matches!(self.arithmetic_operand_type(right), Some(Type::Float))
+                    {
+                        Some(Type::Float)
+                    } else {
+                        Some(Type::Integer)
+                    }
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// A short, human-readable label for an operand, used in error messages.
+    fn operand_label(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Identifier(name) => name.clone(),
+            Expr::StringLit(s) => {
+                if self.is_variable_available(s) {
+                    s.clone()
+                } else {
+                    format!("\"{}\"", s)
+                }
+            }
+            _ => "this value".to_string(),
+        }
+    }
+
+    /// Reject text/buffer/list/file/timer operands in arithmetic. Without an
+    /// explicit cast these compile to pointer/handle arithmetic and produce
+    /// garbage at runtime; a cast (`s as a number`) routes through atoi/atof
+    /// and is accepted because `arithmetic_operand_type` resolves it to a
+    /// numeric type.
+    fn check_arithmetic_operand(&mut self, expr: &Expr) {
+        let Some(ty) = self.arithmetic_operand_type(expr) else {
+            return;
+        };
+        let label = self.operand_label(expr);
+        let msg = match ty {
+            Type::String => format!(
+                "Cannot use text {} in arithmetic; cast it first with 'as a number' or 'as a float'.",
+                label
+            ),
+            Type::Buffer => format!(
+                "Cannot use buffer {} in arithmetic; cast it with 'as a number' to read its content.",
+                label
+            ),
+            Type::List(_) => format!("Cannot use list {} in arithmetic.", label),
+            Type::File => format!("Cannot use file {} in arithmetic.", label),
+            Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            _ => return,
+        };
+        self.push_error(msg, None);
+    }
+
+    /// Arithmetic/bitwise operators require numeric operands. Comparisons and
+    /// logical and/or are excluded (they are valid across types and handled
+    /// elsewhere).
+    fn is_arithmetic_op(&self, op: &BinaryOperator) -> bool {
+        matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo
+                | BinaryOperator::BitAnd
+                | BinaryOperator::BitOr
+                | BinaryOperator::BitXor
+                | BinaryOperator::ShiftLeft
+                | BinaryOperator::ShiftRight
+        )
     }
 
     fn expr_integer_literal_value(&self, expr: &Expr) -> Option<i64> {
@@ -1269,13 +1454,67 @@ impl Analyzer {
                 if let Some(v) = value {
                     self.analyze_expr(v);
                 }
+                // Track the scalar category (number/float/text/boolean) for
+                // the arithmetic type check. Numeric/boolean declarations are
+                // recorded from the declared type (preferring the initializer's
+                // type when it is clearly numeric). A text declaration is only
+                // pinned as text when the initializer is positively text - a
+                // function-call or property initializer of unknown type might
+                // return a number, and pinning it as text would wrongly reject
+                // later arithmetic on it.
+                if let Some(vt) = var_type {
+                    match vt {
+                        Type::Integer | Type::Float | Type::Boolean => {
+                            let t = value
+                                .as_ref()
+                                .and_then(|v| self.arithmetic_operand_type(v))
+                                .unwrap_or_else(|| vt.clone());
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        Type::String => {
+                            let is_text = value
+                                .as_ref()
+                                .map(|v| matches!(self.arithmetic_operand_type(v), Some(Type::String)))
+                                .unwrap_or(false);
+                            if is_text {
+                                self.scalar_types.insert(name.clone(), Type::String);
+                            } else {
+                                self.scalar_types.remove(name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
 
-            Statement::FlagSchemaDecl { name, default, .. } => {
+            Statement::FlagSchemaDecl { name, value_type, default, .. } => {
                 self.deps.uses_args = true;
                 self.declare_variable_in_current_scope(name);
                 if let Some(v) = default {
                     self.analyze_expr(v);
+                    // The default must match the flag's declared value
+                    // type. A mismatch previously compiled and produced
+                    // garbage at runtime: a number flag defaulted to
+                    // text printed the string's address, and a boolean
+                    // flag defaulted to a number printed the integer.
+                    let expected = match value_type {
+                        FlagValueType::Boolean => Type::Boolean,
+                        FlagValueType::Number => Type::Integer,
+                        FlagValueType::Text => Type::String,
+                    };
+                    if let Some(actual) = self.infer_simple_expr_type(v) {
+                        if !self.treating_types_compatible(&expected, &actual) {
+                            self.push_error(
+                                format!(
+                                    "Flag '{}' is a {} but its default is a {}.",
+                                    name,
+                                    self.type_name(&expected),
+                                    self.type_name(&actual)
+                                ),
+                                Some(name),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -1303,8 +1542,29 @@ impl Analyzer {
                 }
 
                 self.analyze_expr(value);
+
+                // Mirror Vox's dynamic typing: a reassignment relabels the
+                // variable to whatever category the value has. `s is 5` turns
+                // a text `s` into a number, so `s add 1` must then be allowed.
+                // When the value's category can't be determined (e.g. a
+                // function result), drop the entry rather than keep a stale
+                // text label that would falsely reject valid arithmetic.
+                if !self.is_buffer_variable(name)
+                    && !self.is_list_variable(name)
+                    && !self.file_variables.contains(name.as_str())
+                    && !self.timer_variables.contains(name.as_str())
+                {
+                    match self.arithmetic_operand_type(value) {
+                        Some(t) => {
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        None => {
+                            self.scalar_types.remove(name);
+                        }
+                    }
+                }
             }
-            
+
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
                 self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
@@ -1355,35 +1615,55 @@ impl Analyzer {
             Statement::While { condition, body } => {
                 self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::ForRange { variable, range, body } => {
                 self.variables.insert(variable.clone());
+                // A range loop variable steps over integers.
+                self.scalar_types.insert(variable.clone(), Type::Integer);
                 self.analyze_expr(range);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::ForEach { variable, collection, body } => {
                 self.variables.insert(variable.clone());
                 self.analyze_expr(collection);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::Repeat { count, body } => {
                 self.analyze_expr(count);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
             
             Statement::Return { value } => {
+                // `Return` is only meaningful inside a function. At top
+                // level the codegen still emits a function epilogue
+                // (leave/ret) which is undefined from _start, so reject
+                // it here rather than produce broken output.
+                if !self.in_function_scope {
+                    self.push_error(
+                        "Return is only valid inside a function".to_string(),
+                        None,
+                    );
+                }
                 if let Some(v) = value {
                     self.analyze_expr(v);
                 }
@@ -1399,6 +1679,11 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Freeing unknown variable: {}", name), Some(name));
+                } else if !self.is_buffer_variable(name) && !self.is_list_variable(name) {
+                    self.push_error(
+                        format!("Free requires a buffer or list: {}", name),
+                        Some(name),
+                    );
                 }
             }
             
@@ -1410,6 +1695,8 @@ impl Analyzer {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));
                     }
                     self.push_error(err, Some(name));
+                } else {
+                    self.validate_function_call_args(name, args);
                 }
                 for arg in args {
                     self.analyze_expr(arg);
@@ -1418,6 +1705,7 @@ impl Analyzer {
             
             Statement::FunctionDef { name, params, body, .. } => {
                 self.functions.insert(name.clone());
+                self.function_param_counts.insert(name.clone(), params.len());
                 self.deps.uses_funcs = true; // Track that functions are used
 
                 // Functions can access top-level globals, but locals declared inside
@@ -1447,6 +1735,9 @@ impl Analyzer {
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::File => { self.file_variables.insert(param_name.clone()); }
+                        Type::Integer | Type::Float | Type::String | Type::Boolean => {
+                            self.scalar_types.insert(param_name.clone(), param_type.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -1463,10 +1754,43 @@ impl Analyzer {
             Statement::Increment { name } | Statement::Decrement { name } => {
                 if !self.is_variable_available(name) {
                     self.push_unknown_variable(name);
+                } else if self.is_buffer_variable(name)
+                    || self.is_list_variable(name)
+                    || self.file_variables.contains(name.as_str())
+                    || self.flag_variables.contains(name.as_str())
+                    || self.timer_variables.contains(name.as_str())
+                {
+                    // Increment/Decrement compile to an integer `inc/dec
+                    // qword` on the variable's stack slot. Applied to a
+                    // buffer/list/file variable that slot holds a pointer
+                    // (which gets corrupted), to a timer it holds a 56-byte
+                    // struct (also corrupted), and to a boolean flag it
+                    // yields 2, 3, ... instead of a boolean. Reject these
+                    // rather than emit undefined behaviour.
+                    let kw = if matches!(stmt, Statement::Increment { .. }) {
+                        "Increment"
+                    } else {
+                        "Decrement"
+                    };
+                    self.push_error(
+                        format!("{} requires a number variable: {}", kw, name),
+                        Some(name),
+                    );
                 }
             }
             
-            Statement::Break | Statement::Continue => {}
+            Statement::Break | Statement::Continue => {
+                // Break/Continue are loop-control constructs. Outside a
+                // loop the codegen silently emits nothing, so the author's
+                // intent is lost with no signal - reject it at compile time.
+                if self.loop_depth == 0 {
+                    let kw = if matches!(stmt, Statement::Break) { "Break" } else { "Continue" };
+                    self.push_error(
+                        format!("{} is only valid inside a loop", kw),
+                        None,
+                    );
+                }
+            }
             
             // File I/O statements
             Statement::BufferDecl { name, size } => {
@@ -1534,6 +1858,13 @@ impl Analyzer {
                     }
                 } else if self.is_list_variable(list) {
                     // Valid list append path.
+                } else if !self.is_variable_available(list) {
+                    self.push_error(format!("Unknown variable: {}", list), Some(list));
+                } else {
+                    self.push_error(
+                        format!("Append target must be a buffer or list: {}", list),
+                        Some(list),
+                    );
                 }
             }
 
@@ -1601,6 +1932,11 @@ impl Analyzer {
             Statement::FileRead { buffer, .. } => {
                 if !self.is_variable_available(buffer) {
                     self.push_error(format!("Unknown buffer: {}", buffer), Some(buffer));
+                } else if !self.is_buffer_variable(buffer) {
+                    self.push_error(
+                        format!("Read target must be a buffer: {}", buffer),
+                        Some(buffer),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1608,6 +1944,11 @@ impl Analyzer {
             Statement::FileReadLine { buffer, .. } => {
                 if !self.is_variable_available(buffer) {
                     self.push_error(format!("Unknown buffer: {}", buffer), Some(buffer));
+                } else if !self.is_buffer_variable(buffer) {
+                    self.push_error(
+                        format!("Read target must be a buffer: {}", buffer),
+                        Some(buffer),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1615,6 +1956,11 @@ impl Analyzer {
             Statement::FileSeekLine { file, line } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Seek target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(line);
                 self.deps.uses_io = true;
@@ -1623,29 +1969,49 @@ impl Analyzer {
             Statement::FileSeekByte { file, byte } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Seek target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(byte);
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileWrite { file, value } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Write target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.analyze_expr(value);
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileWriteNewline { file } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Write target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.deps.uses_io = true;
             }
-            
+
             Statement::FileClose { file } => {
                 if !self.is_variable_available(file) {
                     self.push_error(format!("Unknown file: {}", file), Some(file));
+                } else if !self.file_variables.contains(file.as_str()) {
+                    self.push_error(
+                        format!("Close target must be a file: {}", file),
+                        Some(file),
+                    );
                 }
                 self.deps.uses_io = true;
             }
@@ -1727,6 +2093,11 @@ impl Analyzer {
             Statement::BufferResize { name, new_size } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown buffer: {}", name), Some(name));
+                } else if !self.is_buffer_variable(name) {
+                    self.push_error(
+                        format!("Resize target must be a buffer: {}", name),
+                        Some(name),
+                    );
                 }
                 self.analyze_expr(new_size);
                 self.deps.uses_heap = true;
@@ -1747,17 +2118,28 @@ impl Analyzer {
             // Time and Timer statements
             Statement::TimerDecl { name } => {
                 self.variables.insert(name.clone());
+                self.timer_variables.insert(name.clone());
             }
-            
+
             Statement::TimerStart { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
+                } else if !self.timer_variables.contains(name) {
+                    self.push_error(
+                        format!("Start requires a timer: {}", name),
+                        Some(name),
+                    );
                 }
             }
-            
+
             Statement::TimerStop { name } => {
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Unknown timer: {}", name), Some(name));
+                } else if !self.timer_variables.contains(name) {
+                    self.push_error(
+                        format!("Stop requires a timer: {}", name),
+                        Some(name),
+                    );
                 }
             }
             
@@ -1773,14 +2155,26 @@ impl Analyzer {
     
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::BinaryOp { left, op: _, right } => {
+            Expr::BinaryOp { left, op, right } => {
                 self.analyze_expr(left);
                 self.analyze_expr(right);
-                
+                // Arithmetic operators require numeric operands. Text,
+                // buffer, list, file, and timer values compile to
+                // pointer/handle arithmetic and yield garbage without an
+                // explicit cast (`s as a number`).
+                if self.is_arithmetic_op(op) {
+                    self.check_arithmetic_operand(left);
+                    self.check_arithmetic_operand(right);
+                }
             }
-            
-            Expr::UnaryOp { operand, .. } => {
+
+            Expr::UnaryOp { op, operand } => {
                 self.analyze_expr(operand);
+                // Negation is arithmetic; `minus s` on a text/buffer/etc.
+                // value has the same garbage problem as `0 subtract s`.
+                if matches!(op, UnaryOperator::Negate) {
+                    self.check_arithmetic_operand(operand);
+                }
             }
             
             Expr::Range { start, end, .. } => {
@@ -1804,6 +2198,7 @@ impl Analyzer {
                     let is_buf = self.is_buffer_variable(object);
                     let is_list = self.is_list_variable(object);
                     let is_file = self.file_variables.contains(object.as_str());
+                    let is_scalar = self.is_scalar_variable(object);
                     match property {
                         ObjectProperty::Size | ObjectProperty::Empty | ObjectProperty::Full => {
                             if !is_buf && !is_list && !is_file {
@@ -1846,7 +2241,75 @@ impl Analyzer {
                                 );
                             }
                         }
-                        _ => {}
+                        ObjectProperty::Absolute | ObjectProperty::Sign |
+                        ObjectProperty::Even | ObjectProperty::Odd |
+                        ObjectProperty::Positive | ObjectProperty::Negative |
+                        ObjectProperty::Zero => {
+                            if !is_scalar {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a number variable: {}",
+                                        match property {
+                                            ObjectProperty::Absolute => "absolute",
+                                            ObjectProperty::Sign => "sign",
+                                            ObjectProperty::Even => "even",
+                                            ObjectProperty::Odd => "odd",
+                                            ObjectProperty::Positive => "positive",
+                                            ObjectProperty::Negative => "negative",
+                                            ObjectProperty::Zero => "zero",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Hour | ObjectProperty::Minute |
+                        ObjectProperty::Second | ObjectProperty::Day |
+                        ObjectProperty::Month | ObjectProperty::Year |
+                        ObjectProperty::Unix => {
+                            if !is_scalar {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a time value (number): {}",
+                                        match property {
+                                            ObjectProperty::Hour => "hour",
+                                            ObjectProperty::Minute => "minute",
+                                            ObjectProperty::Second => "second",
+                                            ObjectProperty::Day => "day",
+                                            ObjectProperty::Month => "month",
+                                            ObjectProperty::Year => "year",
+                                            ObjectProperty::Unix => "unix",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Duration | ObjectProperty::Elapsed |
+                        ObjectProperty::StartTime | ObjectProperty::EndTime |
+                        ObjectProperty::Running => {
+                            if !self.timer_variables.contains(object.as_str()) {
+                                self.push_error(
+                                    format!(
+                                        "Property '{}' requires a timer: {}",
+                                        match property {
+                                            ObjectProperty::Duration => "duration",
+                                            ObjectProperty::Elapsed => "elapsed",
+                                            ObjectProperty::StartTime => "start time",
+                                            ObjectProperty::EndTime => "end time",
+                                            ObjectProperty::Running => "running",
+                                            _ => "unknown",
+                                        },
+                                        object,
+                                    ),
+                                    Some(object),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1859,6 +2322,8 @@ impl Analyzer {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));
                     }
                     self.push_error(err, Some(name));
+                } else {
+                    self.validate_function_call_args(name, args);
                 }
                 for arg in args {
                     self.analyze_expr(arg);
@@ -2006,7 +2471,35 @@ impl Analyzer {
                 self.deps.uses_args = true;
                 self.analyze_expr(name);
             }
-            
+
+            Expr::DurationCast { value, .. } => {
+                // `timer's duration in seconds` parses as a DurationCast
+                // wrapping a PropertyAccess. Without recursing here the
+                // inner property access was never analyzed, so a duration
+                // cast on a non-timer (or referencing an unknown variable)
+                // compiled silently and read stack garbage at runtime.
+                self.analyze_expr(value);
+            }
+
+            Expr::Cast { value, .. } => {
+                // Recurse so unknown variables / nested type errors inside
+                // a cast (`missing as a number`) are reported instead of
+                // compiling silently and emitting garbage.
+                self.analyze_expr(value);
+            }
+
+            Expr::FileAvailable { path } => {
+                // `path is available` wraps the path expression; recurse so
+                // an unknown variable used as the path is caught.
+                self.analyze_expr(path);
+            }
+
+            Expr::ReapChild { pid } => {
+                if let Some(p) = pid {
+                    self.analyze_expr(p);
+                }
+            }
+
             _ => {}
         }
     }

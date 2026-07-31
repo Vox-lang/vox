@@ -960,26 +960,46 @@ _print_int_padded_impl:
     ; rdi = pointer to start of number string
     mov r15, rdi                ; save number string pointer
     mov r8, rcx                 ; save number length
-    
+
     cmp rcx, r13
     jge .print_result
-    
+
     ; Need padding
     mov rax, r13
     sub rax, rcx                ; padding needed
-    
+
     ; Print padding chars
     test r14, r14
     jz .pad_space
     mov r9b, '0'
+    ; For zero-padding a negative number, print the sign first and
+    ; pad only the magnitude so the result is e.g. -0007 rather than 000-7.
+    cmp byte [r15], '-'
+    jne .pad_loop
+    push rax
+    mov byte [_format_buffer + 32], '-'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer + 32]
+    mov rdx, 1
+    syscall
+    pop rax
+    inc r15                     ; skip the sign in the digit string
+    dec r8                      ; magnitude length
+    mov rbx, r13
+    dec rbx                     ; remaining width for magnitude
+    sub rbx, r8                 ; padding needed for magnitude
+    cmp rbx, 0
+    jle .print_result
+    mov rax, rbx
     jmp .pad_loop
 .pad_space:
     mov r9b, ' '
-    
+
 .pad_loop:
     test rax, rax
     jz .print_result
-    
+
     push rax
     mov byte [_format_buffer + 32], r9b
     mov rax, 1
@@ -990,7 +1010,7 @@ _print_int_padded_impl:
     pop rax
     dec rax
     jmp .pad_loop
-    
+
 .print_result:
     ; Print the actual number
     mov rax, 1
@@ -998,7 +1018,7 @@ _print_int_padded_impl:
     mov rsi, r15                ; number string pointer
     mov rdx, r8                 ; number length
     syscall
-    
+
     pop r15
     pop r14
     pop r13
@@ -1020,16 +1040,16 @@ _print_float_precision:
     push r13
     push r14
     push r15
-    
+
     mov r12, rdi                ; precision
-    
+
     ; Get the float value
     movq rax, xmm0
-    
+
     ; Check for negative
     test rax, rax
     jns .positive
-    
+
     ; Print minus sign
     mov byte [_format_buffer], '-'
     push rax
@@ -1039,66 +1059,85 @@ _print_float_precision:
     mov rdx, 1
     syscall
     pop rax
-    
+
     ; Make positive
     mov rcx, 0x7FFFFFFFFFFFFFFF
     and rax, rcx
     movq xmm0, rax
-    
+
 .positive:
     ; Get integer part
     cvttsd2si r13, xmm0         ; r13 = integer part
-    
-    ; Print integer part
-    push r12
-    PRINT_INT r13
-    pop r12
-    
-    ; Check if we need decimal places
+
+    ; If no decimal places are required, just print the truncated integer.
     test r12, r12
-    jz .done
-    
-    ; Print decimal point
-    mov byte [_format_buffer], '.'
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [_format_buffer]
-    mov rdx, 1
-    syscall
-    
-    ; Get fractional part
+    jz .print_int_only
+
+    ; Compute fractional part
     cvtsi2sd xmm1, r13          ; xmm1 = integer as float
     subsd xmm0, xmm1            ; xmm0 = fractional part
-    
+
     ; Multiply by 10^precision
     mov r14, r12                ; counter
     movsd xmm1, [_ten_const]
 .mul_loop:
     test r14, r14
-    jz .print_frac
+    jz .round_frac
     mulsd xmm0, xmm1
     dec r14
     jmp .mul_loop
-    
-.print_frac:
+
+.round_frac:
     ; Round and convert to integer
     addsd xmm0, [_half_const]
-    cvttsd2si r13, xmm0
-    
-    ; Print with leading zeros if needed
+    cvttsd2si r14, xmm0         ; r14 = rounded fractional integer
+
+    ; Compute threshold = 10^precision
+    mov r15, 1
+    mov rcx, r12
+.threshold_loop:
+    imul r15, 10
+    dec rcx
+    jnz .threshold_loop
+
+    ; Handle carry into the integer part (e.g. 0.9995 -> 1.000).
+    cmp r14, r15
+    jl .no_carry
+    sub r14, r15
+    inc r13
+.no_carry:
+
+    ; Print integer part
+    push r12
+    push r14
+    push r15
+    PRINT_INT r13
+    pop r15
+    pop r14
+    pop r12
+
+    ; Print decimal point
+    mov byte [_format_buffer], '.'
+    push rax
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [_format_buffer]
+    mov rdx, 1
+    syscall
+    pop rax
+
+    ; Print fractional digits: r14 value, r12 precision width
+    mov r15, r14                ; value
     mov r14, r12                ; digits needed
-    mov r15, r13                ; value
-    
+
     ; Count digits in value
     xor rcx, rcx
     mov rax, r15
     test rax, rax
     jnz .count_digits
-    
-    ; Value is 0, so we need precision digits of zeros
-    mov rcx, 0               ; no actual digits in value
+    mov rcx, 0
     jmp .pad_zeros
-    
+
 .count_digits:
     test rax, rax
     jz .pad_zeros
@@ -1107,12 +1146,12 @@ _print_float_precision:
     mov rbx, 10
     div rbx
     jmp .count_digits
-    
+
 .pad_zeros:
     ; Print leading zeros: r14 - rcx zeros needed
     sub r14, rcx
     jle .print_value
-    
+
 .zero_loop:
     test r14, r14
     jz .print_value
@@ -1130,13 +1169,17 @@ _print_float_precision:
     pop rcx
     dec r14
     jmp .zero_loop
-    
+
 .print_value:
     ; Print the fractional digits
     test r15, r15
     jz .done
     PRINT_INT r15
-    
+    jmp .done
+
+.print_int_only:
+    PRINT_INT r13
+
 .done:
     pop r15
     pop r14

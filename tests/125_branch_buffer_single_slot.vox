@@ -1,0 +1,9 @@
+(Buffer declared in both branches must share a single stack slot)
+
+If true then,
+  a buffer called "b" is 10 bytes.
+Otherwise,
+  a buffer called "b" is 20 bytes.
+
+Set byte 1 of b to 65.
+Print b.

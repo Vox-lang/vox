@@ -1,0 +1,27 @@
+(Regression test: a recent fix correctly stopped flagging an EXACT fit
+of a fixed buffer as an error, but as a side effect also stopped
+flagging GENUINE overflow (more data waiting than fits) - meaning data
+was silently truncated with zero error signal. This checks the real
+overflow case is still caught, and that no data is lost for a
+subsequent read on the same fd (the fix peeks one byte ahead and
+seeks back on overflow).)
+
+open a file for writing called out at "./tmp_overflow_regression.txt".
+Write "0123456789ABCDEF" to out.
+Close out.
+
+open a file for reading called inp at "./tmp_overflow_regression.txt".
+a buffer called "b1" is 5 bytes in size.
+Read from inp into b1.
+On error Print "overflow detected".
+Print b1.
+
+(No data should be lost - the next read must pick up exactly where
+the first one left off, not skip the probed-and-seeked-back byte)
+a buffer called "b2" is 20 bytes in size.
+Read from inp into b2.
+On error Print "BUG: second read should not error".
+Print b2.
+Close inp.
+
+Delete the file "./tmp_overflow_regression.txt".

@@ -1003,28 +1003,60 @@ _read_into_buffer:
     
     ; Check result
     cmp rax, 0
-    jle .done               ; EOF or error
-    
+    jl .read_error          ; negative = syscall error
+    je .done                ; EOF, success
+
     ; Update length
     add [r13 + BUF_LENGTH], rax
     add r14, rax
-    
+
     ; If we filled the available space, there might be more
     mov rcx, [r13 + BUF_CAPACITY]
     sub rcx, [r13 + BUF_LENGTH]
     cmp rcx, 0
     jne .done               ; still have space, we're done
-    
-    ; Buffer full - check if fixed
+
+    ; Buffer full after a successful read. For dynamic buffers loop to read
+    ; any remaining data. For fixed buffers, exactly filling is fine IF
+    ; there's no more data waiting - but if more data exists, silently
+    ; discarding it would be silent data loss with no error signal. Peek
+    ; one more byte to tell the two cases apart.
     test r15, BUF_FLAG_FIXED
-    jnz .fixed_full         ; fixed buffer full, stop reading (not error)
-    jmp .read_loop          ; dynamic buffer, might have more data
-    
-.fixed_full:
-    ; Fixed buffer is full - set error flag and stop reading
-    mov qword [rel _last_error], 1  ; buffer overflow error
+    jz .read_loop            ; dynamic buffer, might have more data
+
+    ; Probe for additional data using a scratch byte on the stack.
+    push rax                 ; 8-byte scratch slot to read into
+    mov rax, 0               ; SYS_READ
+    mov rdi, r12             ; fd
+    mov rsi, rsp             ; probe destination
+    mov rdx, 1               ; try to read 1 more byte
+    syscall
+
+    cmp rax, 1
+    jne .no_more_data        ; 0 = EOF, <0 = error: either way, no data lost
+
+    ; There WAS more data waiting - this is genuine overflow, not an exact
+    ; fit. Best-effort seek back one byte so a seekable file isn't left
+    ; missing a byte (harmless no-op failure on pipes/sockets, where the
+    ; byte is unavoidably lost - but the error is still correctly signaled).
+    mov rax, 8               ; SYS_LSEEK
+    mov rdi, r12
+    mov rsi, -1
+    mov rdx, 1               ; SEEK_CUR
+    syscall
+    pop rax                  ; discard scratch
+    mov qword [rel _last_error], 1  ; buffer overflow error - data was truncated
     jmp .done
-    
+
+.no_more_data:
+    pop rax                  ; discard scratch
+    jmp .done                ; genuinely an exact fit - success, no error
+
+.read_error:
+    ; Read syscall failed - set error so On error handlers fire.
+    mov qword [rel _last_error], 2  ; file operation error
+    jmp .done
+
 .overflow_error:
     ; Fixed buffer has no space - set error and return 0 bytes read
     mov qword [rel _last_error], 1  ; buffer overflow error
@@ -1650,7 +1682,12 @@ _realloc_buffer:
     mov rcx, r13
 .set_len:
     mov [rbx + BUF_LENGTH], rcx
-    
+
+    ; Preserve the original fixed/dynamic flag. Resizing a dynamic buffer
+    ; must not convert it to fixed-size (it must keep auto-grow behavior).
+    mov rdx, [r12 + BUF_FLAGS]
+    mov [rbx + BUF_FLAGS], rdx
+
     ; Free old buffer (unregister from tracking)
     mov rdi, r12
     call _unregister_buffer

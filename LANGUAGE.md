@@ -408,6 +408,8 @@ Print "add numbers" of x and y.
 
 **Note:** Float literals are recognized by the presence of a decimal point. Floats and integers can be mixed in arithmetic expressions.
 
+**Note:** Arithmetic operates on numbers (booleans count as 0/1). Text, buffers, and lists must be cast with `as a number` or `as a float` before they can be used in arithmetic - using them directly is a compile error, since they hold pointers rather than numeric values.
+
 **Hex and Binary:**
 - Hexadecimal literals use `0x` prefix: `0xFF` equals 255
 - Binary literals use `0b` prefix: `0b1010` equals 10
@@ -434,6 +436,7 @@ x modulo 3
 Note: `the` is optional before variable names in expressions.
 
 For complex arithmetic subexpressions, use curly braces `{...}` to group each subexpression.
+A cast (`as a <type>`) binds tighter than arithmetic and applies to the expression immediately to its left, so `s as a number add 1` casts `s` and then adds 1. To cast a whole arithmetic expression, brace it: `{a add b} as a number`.
 Comma-separated arithmetic continuation (for example `..., add ...`) is not valid syntax.
 
 ### Comparisons
@@ -611,8 +614,10 @@ Print the hour padded.  (prints "09")
 
 **Casting Rules:**
 - `as a <type>` and `as <type>` are equivalent (article is optional)
+- A cast binds tighter than arithmetic and applies to the expression immediately to its left: `n as a number add 1` is `(n as a number) add 1`. Brace to cast a whole expression: `{a add b} as a number`
 - Float to number **truncates** (does not round)
-- To round: add 0.5 before casting (`3.7 add 0.5 as a number` → `4`)
+- To round: add 0.5 before casting (`{3.7 add 0.5} as a number` → `4`)
+- Text, buffers, and lists cannot be used directly in arithmetic; cast them with `as a number` / `as a float` first
 - Text to number fails if text is not a valid number (sets error flag)
 - Text to number in a non-default base (`as a hex/octal/binary/base N
   number`) stops parsing at the first character invalid for that base,
@@ -763,6 +768,29 @@ a list called "empty" is [].
 - Lists can contain mixed types
 - Empty lists `[]` are allowed
 - Lists are allocated on the heap with automatic memory management
+
+### Mixed-Type Lists
+
+A list may freely hold numbers, texts, decimals, and booleans together.
+The author never declares this - the compiler resolves it. Lists it can
+prove homogeneous keep a statically-typed fast path; lists with mixed
+elements carry a small per-slot type tag at runtime, so every element
+prints and reads back as what it is:
+
+```
+a list called "m" is [1, "two", 3.5, yes].
+For each item in m, print item.
+(prints: 1, two, 3.5, 1)
+```
+
+Appending, `set element`, `element N of`, `first`/`last`, iteration, and
+`{...}` format interpolation all respect each element's actual type.
+Booleans print as `1`/`0`, matching homogeneous boolean lists.
+
+Current limitation: a value whose type is not statically knowable (for
+example a function result) appended to an otherwise homogeneous list does
+not yet widen it to mixed; see `docs/COLLECTIONS_ROADMAP.md` for the plan
+that closes this.
 
 ### List Properties
 

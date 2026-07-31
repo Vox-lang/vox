@@ -3986,9 +3986,30 @@ impl Parser {
             let expr = self.parse_condition()?;
             body.push(Statement::Return { value: Some(expr) });
         }
-        
+
+        // A top-level Return ends the function body. LANGUAGE.md states
+        // that blank lines are optional and have no effect on program
+        // execution, so a function whose body ends in `Return ... .` must
+        // not keep consuming following sentences when the author omits the
+        // separating blank line. Without this, the next top-level
+        // statement was silently absorbed into the function body as dead
+        // code (emitted after the epilogue `ret`), producing empty or
+        // wrong output. Multi-statement bodies that do not end in a
+        // top-level Return still terminate at the paragraph break below.
+        let body_ended_at_return =
+            matches!(body.last(), Some(Statement::Return { .. }));
+        if body_ended_at_return {
+            self.skip_noise();
+            if matches!(self.current(), Token::Period | Token::Comma) {
+                self.advance();
+                self.skip_noise();
+            }
+        }
+
         // Continue parsing body until paragraph break
-        while !matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
+        while !body_ended_at_return
+            && !matches!(self.current(), Token::ParagraphBreak | Token::EOF)
+        {
             self.skip_noise();
             if matches!(self.current(), Token::Comma) {
                 self.advance();
@@ -4003,7 +4024,19 @@ impl Parser {
                 break;
             }
             let stmt = self.parse_statement()?;
+            let is_return = matches!(stmt, Statement::Return { .. });
             body.push(stmt);
+
+            // A top-level Return parsed as a body statement terminates the
+            // body; consume its trailing period and stop.
+            if is_return {
+                self.skip_noise();
+                if matches!(self.current(), Token::Period | Token::Comma) {
+                    self.advance();
+                    self.skip_noise();
+                }
+                break;
+            }
 
             self.skip_noise();
             if *self.current() == Token::Comma {
@@ -4420,20 +4453,37 @@ impl Parser {
     }
     
     fn parse_expression(&mut self) -> Result<Expr, Box<CompileError>> {
-        let mut expr = self.parse_additive()?;
-        
-        // Check for type casting with 'as' keyword
-        self.skip_noise();
-        if *self.current() == Token::As {
+        // Type casts (`as a <type>`) are parsed by `parse_cast`, which sits
+        // below the arithmetic levels (additive/multiplicative/bitwise). This
+        // makes a cast bind TIGHTER than arithmetic, so it applies to the
+        // expression immediately to its left - matching natural English, where
+        // "X as a number" modifies X itself. To cast a whole arithmetic
+        // expression, brace it: `{a add b} as a number`. See LANGUAGE.md.
+        self.parse_additive()
+    }
+
+    /// Parse a primary expression followed by zero or more type casts.
+    /// Sits between `parse_primary` (postfix) and `parse_bitwise` (the
+    /// tightest binary level), so a cast applies to a single primary and
+    /// binds tighter than every arithmetic/bitwise operator.
+    fn parse_cast(&mut self) -> Result<Expr, Box<CompileError>> {
+        let mut expr = self.parse_primary()?;
+
+        loop {
+            // Check for type casting with 'as' keyword
+            self.skip_noise();
+            if *self.current() != Token::As {
+                break;
+            }
             self.advance();
             self.skip_noise();
-            
+
             // Optional 'a'/'an' before type
             if matches!(self.current(), Token::A | Token::An) {
                 self.advance();
                 self.skip_noise();
             }
-            
+
             // Optional radix word before 'number': hex/binary/octal, or 'base N'
             let mut radix: u32 = 10;
             if let Token::Identifier(ref id) = self.current() {
@@ -4495,14 +4545,14 @@ impl Parser {
                 Token::Float => { self.advance(); Type::Float }
                 _ => return Err(self.err("Expected type after 'as'")),
             };
-            
+
             expr = Expr::Cast {
                 value: Box::new(expr),
                 target_type,
                 radix,
             };
         }
-        
+
         Ok(expr)
     }
     
@@ -4564,8 +4614,8 @@ impl Parser {
     }
     
     fn parse_bitwise(&mut self) -> Result<Expr, Box<CompileError>> {
-        let mut left = self.parse_primary()?;
-        
+        let mut left = self.parse_cast()?;
+
         loop {
             self.skip_noise();
             let op = match self.current() {
@@ -4576,11 +4626,11 @@ impl Parser {
                 Token::BitShiftRight => Some(BinaryOperator::ShiftRight),
                 _ => None,
             };
-            
+
             if let Some(operator) = op {
                 self.advance();
                 self.skip_noise();
-                let right = self.parse_primary()?;
+                let right = self.parse_cast()?;
                 left = Expr::BinaryOp {
                     left: Box::new(left),
                     op: operator,
@@ -5179,7 +5229,7 @@ impl Parser {
                                 Token::Capacity => ObjectProperty::Capacity,
                                 Token::Empty => ObjectProperty::Empty,
                                 Token::Full => ObjectProperty::Full,
-                                
+
                                 // File properties
                                 Token::Descriptor => ObjectProperty::Descriptor,
                                 Token::Modified => ObjectProperty::Modified,
@@ -5187,11 +5237,11 @@ impl Parser {
                                 Token::Permissions => ObjectProperty::Permissions,
                                 Token::Readable => ObjectProperty::Readable,
                                 Token::Writable => ObjectProperty::Writable,
-                                
+
                                 // List properties
                                 Token::First => ObjectProperty::First,
                                 Token::Last => ObjectProperty::Last,
-                                
+
                                 // Number properties
                                 Token::Absolute => ObjectProperty::Absolute,
                                 Token::Sign => ObjectProperty::Sign,
@@ -5200,7 +5250,7 @@ impl Parser {
                                 Token::Positive => ObjectProperty::Positive,
                                 Token::Negative => ObjectProperty::Negative,
                                 Token::Zero => ObjectProperty::Zero,
-                                
+
                                 // Time properties
                                 Token::Hour => ObjectProperty::Hour,
                                 Token::Minute => ObjectProperty::Minute,
@@ -5209,17 +5259,47 @@ impl Parser {
                                 Token::Month => ObjectProperty::Month,
                                 Token::Year => ObjectProperty::Year,
                                 Token::Unix => ObjectProperty::Unix,
-                                
+
                                 // Timer properties
                                 Token::Duration => ObjectProperty::Duration,
                                 Token::Elapsed => ObjectProperty::Elapsed,
                                 Token::Identifier(ref id) if id.to_lowercase() == "start" => ObjectProperty::StartTime,
                                 Token::Identifier(ref id) if id.to_lowercase() == "end" => ObjectProperty::EndTime,
                                 Token::Running => ObjectProperty::Running,
-                                
+
                                 _ => return Err(self.err_expected("property name", self.current())),
                             };
                             self.advance();
+
+                            // Timer duration/elapsed may be followed by a unit,
+                            // e.g. "t's duration in seconds". This matches the
+                            // handling already present for quoted variable and
+                            // "the ..." property-access forms.
+                            if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
+                                self.skip_noise();
+                                if *self.current() == Token::In {
+                                    self.advance();
+                                    self.skip_noise();
+                                }
+                                if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
+                                    let unit = match self.current() {
+                                        Token::Seconds | Token::Second => {
+                                            self.advance();
+                                            ast::TimeUnit::Seconds
+                                        }
+                                        Token::Milliseconds | Token::Millisecond => {
+                                            self.advance();
+                                            ast::TimeUnit::Milliseconds
+                                        }
+                                        _ => unreachable!(),
+                                    };
+                                    return Ok(Expr::DurationCast {
+                                        value: Box::new(Expr::PropertyAccess { object: name, property }),
+                                        unit,
+                                    });
+                                }
+                            }
+
                             return Ok(Expr::PropertyAccess {
                                 object: name,
                                 property,

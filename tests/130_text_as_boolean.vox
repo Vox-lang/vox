@@ -1,0 +1,12 @@
+(Regression test: text "as a boolean" used pointer truthiness, so "false" printed as true.)
+A text called "trueText" is "true".
+Print trueText as a boolean.
+
+A text called "falseText" is "false".
+Print falseText as a boolean.
+
+A text called "otherText" is "hello".
+Print otherText as a boolean.
+
+A text called "upperText" is "TRUE".
+Print upperText as a boolean.

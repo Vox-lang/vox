@@ -1,0 +1,5 @@
+(Regression test: zero-padding a negative integer placed the sign after the zeros, e.g. 000-7 instead of -0007.)
+A number called "x" is -7.
+Print "[{x:05}]".
+A number called "y" is 7.
+Print "[{y:05}]".

@@ -1,0 +1,33 @@
+(Regression test: FileSeekLine, FileSeekByte, and FileReadLine codegen
+never set _last_error after calls, so 'On error' silently never fired
+even on genuine failures.)
+
+open a file for writing called setup at "/tmp/vox_test_seek_readline.txt".
+Write "hello\nworld\n" to setup.
+Close setup.
+
+(SeekLine error: line 0 is invalid (1-indexed))
+open a file for reading called f1 at "/tmp/vox_test_seek_readline.txt".
+Seek f1 to line 0.
+On error print "seek line error caught".
+Close f1.
+
+(SeekLine success: must not fire On error)
+open a file for reading called f2 at "/tmp/vox_test_seek_readline.txt".
+Seek f2 to line 2.
+On error print "BUG: seek line 2 fired error", exit 1.
+Print "seek line 2 ok".
+a buffer called b1 is 32 bytes in size.
+Read line from f2 into b1.
+On error print "BUG: readline fired error", exit 1.
+Print b1.
+Close f2.
+
+(SeekByte success: must not fire On error)
+open a file for reading called f3 at "/tmp/vox_test_seek_readline.txt".
+Seek f3 to byte 7.
+On error print "BUG: seek byte 7 fired error", exit 1.
+Print "seek byte 7 ok".
+Close f3.
+
+Delete the file "/tmp/vox_test_seek_readline.txt".

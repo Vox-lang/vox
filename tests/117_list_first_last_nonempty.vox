@@ -1,0 +1,4 @@
+(Test first/last on non-empty list still work)
+a list called "m" is [10, 20, 30].
+Print m's first.
+Print m's last.
