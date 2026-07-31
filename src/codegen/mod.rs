@@ -134,6 +134,16 @@ fn type_to_tag(t: &Type) -> Option<u8> {
     }
 }
 
+/// Where a value's runtime type tag lives once the value has been emitted.
+/// See `CodeGenerator::runtime_tag_source`.
+enum RuntimeTagSource {
+    /// A mixed-list read left the slot's tag byte in r11. Must be consumed
+    /// immediately - any call or syscall clobbers r11.
+    R11,
+    /// A Mixed variable's tag, at this rbp offset.
+    ShadowSlot(i64),
+}
+
 /// Author-facing name for a type-predicate noun, for asm comments.
 fn type_noun_name(t: &Type) -> &'static str {
     match t {
@@ -1579,9 +1589,55 @@ impl CodeGenerator {
         }
     }
 
+    /// Where the runtime type tag of `e` can be found immediately after
+    /// `generate_expr(e)` has run.
+    ///
+    /// Only two forms carry one. A read out of a Mixed list leaves the slot's
+    /// tag byte in `r11` - and only while nothing has intervened, since any
+    /// `call` or `syscall` clobbers r11. A Mixed *variable* keeps its tag in a
+    /// shadow stack slot, which survives anything. For every other expression
+    /// r11 holds an unrelated value, so comparing against it reads garbage;
+    /// callers must fall back to a static answer instead.
+    fn runtime_tag_source(&self, e: &Expr) -> Option<RuntimeTagSource> {
+        if let Some(off) = self.mixed_element_tag_slot(e) {
+            return Some(RuntimeTagSource::ShadowSlot(off));
+        }
+        match e {
+            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. }
+                if self.list_expr_is_mixed(list) =>
+            {
+                Some(RuntimeTagSource::R11)
+            }
+            Expr::PropertyAccess { object, property }
+                if matches!(property, ObjectProperty::First | ObjectProperty::Last)
+                    && (self.mixed_lists.contains(object)
+                        || self.list_element_types.get(object) == Some(&VarType::Mixed)) =>
+            {
+                Some(RuntimeTagSource::R11)
+            }
+            _ => None,
+        }
+    }
+
+    /// Static tag for a *type predicate* operand. Identical to
+    /// `emit_time_expr_tag` except that it still trusts a variable's declared
+    /// type for an unprovable scalar: a predicate only reads a tag, it never
+    /// writes one, so an over-confident answer here cannot produce the wild
+    /// dereference `unprovable_scalars` guards against. Stage 1d gives these
+    /// values real runtime tags and makes the answer exact.
+    fn predicate_static_tag(&self, e: &Expr) -> Option<u8> {
+        if let Expr::StringLit(name) | Expr::Identifier(name) = e {
+            if self.unprovable_scalars.contains(name) {
+                return self.variable_types.get(name).cloned().and_then(vartype_to_tag);
+            }
+        }
+        self.emit_time_expr_tag(e)
+    }
+
     /// If `e` is a reference to a Mixed-typed variable with a shadow tag
     /// slot, return that slot's rbp offset.
-    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {        match e {
+    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {
+        match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
                 if self.variable_types.get(name) == Some(&VarType::Mixed) {
                     self.mixed_tag_slots.get(name).copied()
@@ -4460,7 +4516,7 @@ impl CodeGenerator {
             Expr::TypeCheck { value, type_noun } => {
                 let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
                 let noun = type_noun_name(type_noun);
-                match self.emit_time_expr_tag(value) {
+                match self.predicate_static_tag(value) {
                     Some(t) => {
                         self.emit_indent(&format!(
                             "mov rax, {}  ; is a {} folded (static tag {})",
@@ -4468,23 +4524,31 @@ impl CodeGenerator {
                         ));
                     }
                     None => {
-                        // Runtime: rax := value; the element read leaves the
-                        // slot's type tag in r11 (ElementAccess / First /
-                        // Last of a mixed list). A Mixed *identifier* (e.g. a
-                        // for-each variable) carries its tag in a shadow slot
-                        // instead, so load it explicitly. Nothing between the
-                        // load and the cmp can clobber r11 (no calls).
                         self.generate_expr(value);
-                        if let Some(off) = self.mixed_element_tag_slot(value) {
-                            self.emit_indent(&format!(
-                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                off
-                            ));
+                        match self.runtime_tag_source(value) {
+                            Some(src) => {
+                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                        off
+                                    ));
+                                }
+                                self.emit_indent("xor rax, rax");
+                                self.emit_indent(&format!(
+                                    "cmp r11, {}  ; is a {}?", target, noun
+                                ));
+                                self.emit_indent("sete al");
+                                self.emit_indent("movzx rax, al");
+                            }
+                            // No tag exists for this value and r11 holds
+                            // something unrelated. Such a value is stored with
+                            // the integer tag everywhere else, so answer
+                            // consistently instead of comparing garbage.
+                            None => self.emit_indent(&format!(
+                                "mov rax, {}  ; is a {}: no runtime tag, treated as number",
+                                u8::from(target == TAG_INTEGER), noun
+                            )),
                         }
-                        self.emit_indent("xor rax, rax");
-                        self.emit_indent(&format!("cmp r11, {}  ; is a {}?", target, noun));
-                        self.emit_indent("sete al");
-                        self.emit_indent("movzx rax, al");
                     }
                 }
             }
@@ -5701,7 +5765,7 @@ impl CodeGenerator {
             Expr::TypeCheck { value, type_noun } => {
                 let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
                 let noun = type_noun_name(type_noun);
-                match self.emit_time_expr_tag(value) {
+                match self.predicate_static_tag(value) {
                     Some(t) => {
                         if t != target {
                             self.emit_indent(&format!(
@@ -5713,14 +5777,30 @@ impl CodeGenerator {
                     }
                     None => {
                         self.generate_expr(value);
-                        if let Some(off) = self.mixed_element_tag_slot(value) {
-                            self.emit_indent(&format!(
-                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                off
-                            ));
+                        match self.runtime_tag_source(value) {
+                            Some(src) => {
+                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                        off
+                                    ));
+                                }
+                                self.emit_indent(&format!(
+                                    "cmp r11, {}  ; is a {}?", target, noun
+                                ));
+                                self.emit_indent(&format!(
+                                    "jne {}  ; not a {}", false_label, noun
+                                ));
+                            }
+                            // No tag to compare (see the value form above).
+                            None if target != TAG_INTEGER => {
+                                self.emit_indent(&format!(
+                                    "jmp {}  ; is a {}: no runtime tag, treated as number",
+                                    false_label, noun
+                                ));
+                            }
+                            None => {}
                         }
-                        self.emit_indent(&format!("cmp r11, {}  ; is a {}?", target, noun));
-                        self.emit_indent(&format!("jne {}  ; not a {}", false_label, noun));
                     }
                 }
             }
@@ -6150,6 +6230,41 @@ mod tests {
         assert!(
             asm.contains("movzx r11, byte [rbp-"),
             "the for-each variable's tag must be loaded from its shadow slot"
+        );
+    }
+
+    #[test]
+    fn type_predicate_never_compares_an_unset_r11() {
+        // r11 carries a runtime tag only straight out of a mixed-list read.
+        // An opaque function result has no tag anywhere, and the `call` that
+        // produced it has already clobbered r11 - comparing against it would
+        // read garbage. The predicate must answer statically instead.
+        let asm = compile_to_asm(
+            "To \"opaque\" with a number called \"n\".\n  Return n add 1.\n\
+             if \"opaque\" of 4 is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11,"),
+            "a tagless operand must not be compared against r11"
+        );
+    }
+
+    #[test]
+    fn type_predicate_on_unprovable_scalar_uses_declared_type() {
+        // `unprovable_scalars` stops a declared type from being written as a
+        // slot tag (it would forge a pointer), but a predicate only reads a
+        // tag. It must still fold on the declared type rather than fall
+        // through to a runtime compare against an unset r11.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [\"a\", \"b\"].\n\
+             append 42 to m.\n\
+             a text called \"s\" is element 3 of m.\n\
+             print \"sep\".\n\
+             if s is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11,"),
+            "an unprovable scalar predicate must fold, not compare a stale r11"
         );
     }
 
