@@ -1,0 +1,9 @@
+(Global buffer mutation from inside a function must use the global mirror)
+
+a buffer called "b" is 10 bytes.
+
+To "setit".
+  Set byte 1 of b to 65.
+
+"setit".
+Print b.

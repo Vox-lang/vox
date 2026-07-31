@@ -1,0 +1,8 @@
+(Regression test: comparisons involving NaN used raw ucomisd flags, so NaN was considered less than, equal to, and not-not-equal to ordinary numbers.)
+A float called "nan" is 0.0 divide 0.0.
+If nan is less than 1.0 then, Print "lt1". Otherwise, Print "lt0".
+If nan is less than or equal to 1.0 then, Print "le1". Otherwise, Print "le0".
+If nan is greater than 1.0 then, Print "gt1". Otherwise, Print "gt0".
+If nan is greater than or equal to 1.0 then, Print "ge1". Otherwise, Print "ge0".
+If nan is equal to 1.0 then, Print "eq1". Otherwise, Print "eq0".
+If nan is not equal to 1.0 then, Print "ne1". Otherwise, Print "ne0".

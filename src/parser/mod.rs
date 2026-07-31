@@ -5179,7 +5179,7 @@ impl Parser {
                                 Token::Capacity => ObjectProperty::Capacity,
                                 Token::Empty => ObjectProperty::Empty,
                                 Token::Full => ObjectProperty::Full,
-                                
+
                                 // File properties
                                 Token::Descriptor => ObjectProperty::Descriptor,
                                 Token::Modified => ObjectProperty::Modified,
@@ -5187,11 +5187,11 @@ impl Parser {
                                 Token::Permissions => ObjectProperty::Permissions,
                                 Token::Readable => ObjectProperty::Readable,
                                 Token::Writable => ObjectProperty::Writable,
-                                
+
                                 // List properties
                                 Token::First => ObjectProperty::First,
                                 Token::Last => ObjectProperty::Last,
-                                
+
                                 // Number properties
                                 Token::Absolute => ObjectProperty::Absolute,
                                 Token::Sign => ObjectProperty::Sign,
@@ -5200,7 +5200,7 @@ impl Parser {
                                 Token::Positive => ObjectProperty::Positive,
                                 Token::Negative => ObjectProperty::Negative,
                                 Token::Zero => ObjectProperty::Zero,
-                                
+
                                 // Time properties
                                 Token::Hour => ObjectProperty::Hour,
                                 Token::Minute => ObjectProperty::Minute,
@@ -5209,17 +5209,47 @@ impl Parser {
                                 Token::Month => ObjectProperty::Month,
                                 Token::Year => ObjectProperty::Year,
                                 Token::Unix => ObjectProperty::Unix,
-                                
+
                                 // Timer properties
                                 Token::Duration => ObjectProperty::Duration,
                                 Token::Elapsed => ObjectProperty::Elapsed,
                                 Token::Identifier(ref id) if id.to_lowercase() == "start" => ObjectProperty::StartTime,
                                 Token::Identifier(ref id) if id.to_lowercase() == "end" => ObjectProperty::EndTime,
                                 Token::Running => ObjectProperty::Running,
-                                
+
                                 _ => return Err(self.err_expected("property name", self.current())),
                             };
                             self.advance();
+
+                            // Timer duration/elapsed may be followed by a unit,
+                            // e.g. "t's duration in seconds". This matches the
+                            // handling already present for quoted variable and
+                            // "the ..." property-access forms.
+                            if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
+                                self.skip_noise();
+                                if *self.current() == Token::In {
+                                    self.advance();
+                                    self.skip_noise();
+                                }
+                                if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
+                                    let unit = match self.current() {
+                                        Token::Seconds | Token::Second => {
+                                            self.advance();
+                                            ast::TimeUnit::Seconds
+                                        }
+                                        Token::Milliseconds | Token::Millisecond => {
+                                            self.advance();
+                                            ast::TimeUnit::Milliseconds
+                                        }
+                                        _ => unreachable!(),
+                                    };
+                                    return Ok(Expr::DurationCast {
+                                        value: Box::new(Expr::PropertyAccess { object: name, property }),
+                                        unit,
+                                    });
+                                }
+                            }
+
                             return Ok(Expr::PropertyAccess {
                                 object: name,
                                 property,

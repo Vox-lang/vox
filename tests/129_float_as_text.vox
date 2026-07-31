@@ -1,0 +1,4 @@
+(Regression test: float "as text" was broken, returning raw IEEE-754 bits instead of a decimal string.)
+Print 3.14 as text.
+Print 0.5 as a text.
+Print 2.0 as text.

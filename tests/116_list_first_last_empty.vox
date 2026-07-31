@@ -1,0 +1,6 @@
+(Test first/last on empty list set error and return 0)
+a list called "l" is [].
+Print l's first.
+On error Print "first-error".
+Print l's last.
+On error Print "last-error".

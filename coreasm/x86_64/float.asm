@@ -50,6 +50,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     sete al
+    setnp bl
+    and al, bl
     movzx rax, al
 %endmacro
 
@@ -57,6 +59,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     setne al
+    setp bl
+    or al, bl
     movzx rax, al
 %endmacro
 
@@ -64,6 +68,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     setb al
+    setnp bl
+    and al, bl
     movzx rax, al
 %endmacro
 
@@ -71,6 +77,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     setbe al
+    setnp bl
+    and al, bl
     movzx rax, al
 %endmacro
 
@@ -78,6 +86,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     seta al
+    setnp bl
+    and al, bl
     movzx rax, al
 %endmacro
 
@@ -85,6 +95,8 @@ section .text
     xor eax, eax
     ucomisd xmm0, xmm1
     setae al
+    setnp bl
+    and al, bl
     movzx rax, al
 %endmacro
 
@@ -330,9 +342,11 @@ _parse_f64:
     push rdx
     push r8              ; sign flag
     push r9               ; fractional digit count
+    push r11              ; parsed-a-digit flag
 
     xor r8, r8
     xor r9, r9
+    xor r11, r11
     mov rbx, rdi
 
     mov dl, [rbx]
@@ -354,6 +368,7 @@ _parse_f64:
     sub rdx, '0'
     add rax, rdx
     inc rbx
+    mov r11, 1
     jmp .pf64_int_loop
 
 .pf64_int_done:
@@ -361,7 +376,7 @@ _parse_f64:
 
     mov dl, [rbx]
     cmp dl, '.'
-    jne .pf64_sign
+    jne .pf64_check_digits
     inc rbx
 
     xor rax, rax
@@ -377,11 +392,12 @@ _parse_f64:
     add rax, rdx
     inc r9
     inc rbx
+    mov r11, 1
     jmp .pf64_frac_loop
 
 .pf64_frac_done:
     test r9, r9
-    jz .pf64_sign
+    jz .pf64_check_digits
     cvtsi2sd xmm1, rax
     mov rcx, r9
 .pf64_pow10_loop:
@@ -395,6 +411,10 @@ _parse_f64:
 .pf64_pow10_done:
     addsd xmm0, xmm1
 
+.pf64_check_digits:
+    test r11, r11
+    jnz .pf64_sign
+    mov qword [rel _last_error], 1
 .pf64_sign:
     test r8, r8
     jz .pf64_done
@@ -405,6 +425,7 @@ _parse_f64:
 .pf64_done:
     movq rax, xmm0
 
+    pop r11
     pop r9
     pop r8
     pop rdx
@@ -428,15 +449,17 @@ _parse_f64_bounded:
     push r8               ; sign flag
     push r9                ; fractional digit count
     push r10               ; remaining length
+    push r11               ; parsed-a-digit flag
 
     xor r8, r8
     xor r9, r9
+    xor r11, r11
     xor rax, rax
     mov rbx, rdi
     mov r10, rsi
 
     test r10, r10
-    jz .pf64b_int_done       ; zero length -> 0.0 immediately
+    jz .pf64b_no_digits
 
     mov dl, [rbx]
     cmp dl, '-'
@@ -459,16 +482,17 @@ _parse_f64_bounded:
     add rax, rdx
     inc rbx
     dec r10
+    mov r11, 1
     jmp .pf64b_int_loop
 
 .pf64b_int_done:
     cvtsi2sd xmm0, rax
 
     test r10, r10
-    jz .pf64b_sign
+    jz .pf64b_check_digits
     mov dl, [rbx]
     cmp dl, '.'
-    jne .pf64b_sign
+    jne .pf64b_check_digits
     inc rbx
     dec r10
 
@@ -488,11 +512,12 @@ _parse_f64_bounded:
     inc r9
     inc rbx
     dec r10
+    mov r11, 1
     jmp .pf64b_frac_loop
 
 .pf64b_frac_done:
     test r9, r9
-    jz .pf64b_sign
+    jz .pf64b_check_digits
     cvtsi2sd xmm1, rax
     mov rcx, r9
 .pf64b_pow10_loop:
@@ -506,6 +531,11 @@ _parse_f64_bounded:
 .pf64b_pow10_done:
     addsd xmm0, xmm1
 
+.pf64b_check_digits:
+    test r11, r11
+    jnz .pf64b_sign
+.pf64b_no_digits:
+    mov qword [rel _last_error], 1
 .pf64b_sign:
     test r8, r8
     jz .pf64b_done
@@ -516,10 +546,157 @@ _parse_f64_bounded:
 .pf64b_done:
     movq rax, xmm0
 
+    pop r11
     pop r10
     pop r9
     pop r8
     pop rdx
     pop rcx
     pop rbx
+    ret
+
+; Append a double-precision float's decimal representation to a dynamic
+; buffer. The output is trimmed of trailing zeros in the fractional part,
+; but always includes a decimal point and at least one fractional digit
+; (e.g. 3.0 becomes "3.0", 3.14 becomes "3.14"), matching LANGUAGE.md.
+; Args: rdi = destination buffer pointer, rax = raw float bits
+; Returns: rax = destination buffer pointer (possibly reallocated)
+global _buffer_append_float
+_buffer_append_float:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 128
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi            ; destination buffer
+    movq xmm0, rax          ; float value
+
+    ; Handle negative values.
+    xorpd xmm1, xmm1
+    ucomisd xmm0, xmm1
+    jae .baf_not_neg
+
+    mov byte [rbp-1], '-'
+    lea rsi, [rbp-1]
+    mov rdi, r12
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+
+    mov rax, 0x8000000000000000
+    movq xmm1, rax
+    xorpd xmm0, xmm1
+
+.baf_not_neg:
+    ; Append the integer part.
+    cvttsd2si r13, xmm0
+    mov rax, r13
+    lea rdi, [rbp-32]
+    xor rcx, rcx
+    test rax, rax
+    jnz .baf_int_loop
+    mov byte [rdi], '0'
+    mov rcx, 1
+    jmp .baf_int_append
+
+.baf_int_loop:
+    test rax, rax
+    jz .baf_int_append
+    xor rdx, rdx
+    mov rbx, 10
+    div rbx
+    add dl, '0'
+    dec rdi
+    mov [rdi], dl
+    inc rcx
+    jmp .baf_int_loop
+
+.baf_int_append:
+    mov r15, rdi            ; save digit buffer pointer
+    mov rdi, r12
+    mov rsi, r15
+    mov rdx, rcx
+    call _buffer_append_bytes
+    mov r12, rax
+
+    ; Append the decimal point.
+    mov byte [rbp-1], '.'
+    lea rsi, [rbp-1]
+    mov rdi, r12
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+
+    ; Compute the fractional part with 15 decimal digits of precision.
+    cvtsi2sd xmm1, r13
+    subsd xmm0, xmm1
+    mov rax, 1000000000000000
+    cvtsi2sd xmm1, rax
+    mulsd xmm0, xmm1
+    roundsd xmm0, xmm0, 0
+    cvttsd2si r14, xmm0
+    test r14, r14
+    jns .baf_frac_pos
+    neg r14
+
+.baf_frac_pos:
+    ; Generate 15 fractional digits backwards into [rbp-64].
+    lea rdi, [rbp-64]
+    add rdi, 14
+    mov rcx, 15
+.baf_frac_loop:
+    mov rax, r14
+    xor rdx, rdx
+    mov rbx, 10
+    div rbx
+    add dl, '0'
+    mov [rdi], dl
+    mov r14, rax
+    dec rdi
+    dec rcx
+    jnz .baf_frac_loop
+
+    ; Find the last non-zero digit so trailing zeros are trimmed.
+    lea rdi, [rbp-64]
+    add rdi, 14
+    mov rcx, 15
+.baf_trim_loop:
+    cmp byte [rdi], '0'
+    jne .baf_trim_done
+    dec rdi
+    dec rcx
+    jnz .baf_trim_loop
+.baf_trim_done:
+
+    test rcx, rcx
+    jnz .baf_frac_append
+    ; The fractional part was entirely zero; emit a single '0'.
+    mov byte [rbp-1], '0'
+    lea rsi, [rbp-1]
+    mov rdi, r12
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+    jmp .baf_done
+
+.baf_frac_append:
+    mov rdi, r12
+    lea rsi, [rbp-64]
+    mov rdx, rcx
+    call _buffer_append_bytes
+    mov r12, rax
+
+.baf_done:
+    mov rax, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    mov rsp, rbp
+    pop rbp
     ret

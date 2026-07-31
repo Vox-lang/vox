@@ -1,0 +1,5 @@
+(Regression test: integer modulo by zero returned 0 but did not set _last_error, so On error could not detect it.)
+A number called "x" is 10.
+A number called "y" is 0.
+Set z to x modulo y.
+On error Print "mod-zero".

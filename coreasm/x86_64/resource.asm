@@ -1003,28 +1003,31 @@ _read_into_buffer:
     
     ; Check result
     cmp rax, 0
-    jle .done               ; EOF or error
-    
+    jl .read_error          ; negative = syscall error
+    je .done                ; EOF, success
+
     ; Update length
     add [r13 + BUF_LENGTH], rax
     add r14, rax
-    
+
     ; If we filled the available space, there might be more
     mov rcx, [r13 + BUF_CAPACITY]
     sub rcx, [r13 + BUF_LENGTH]
     cmp rcx, 0
     jne .done               ; still have space, we're done
-    
-    ; Buffer full - check if fixed
+
+    ; Buffer full after a successful read. For dynamic buffers loop to read
+    ; any remaining data; for fixed buffers the read fit exactly and is not
+    ; an error.
     test r15, BUF_FLAG_FIXED
-    jnz .fixed_full         ; fixed buffer full, stop reading (not error)
+    jnz .done               ; fixed buffer full after successful read: success
     jmp .read_loop          ; dynamic buffer, might have more data
-    
-.fixed_full:
-    ; Fixed buffer is full - set error flag and stop reading
-    mov qword [rel _last_error], 1  ; buffer overflow error
+
+.read_error:
+    ; Read syscall failed - set error so On error handlers fire.
+    mov qword [rel _last_error], 2  ; file operation error
     jmp .done
-    
+
 .overflow_error:
     ; Fixed buffer has no space - set error and return 0 bytes read
     mov qword [rel _last_error], 1  ; buffer overflow error
@@ -1650,7 +1653,12 @@ _realloc_buffer:
     mov rcx, r13
 .set_len:
     mov [rbx + BUF_LENGTH], rcx
-    
+
+    ; Preserve the original fixed/dynamic flag. Resizing a dynamic buffer
+    ; must not convert it to fixed-size (it must keep auto-grow behavior).
+    mov rdx, [r12 + BUF_FLAGS]
+    mov [rbx + BUF_FLAGS], rdx
+
     ; Free old buffer (unregister from tracking)
     mov rdi, r12
     call _unregister_buffer

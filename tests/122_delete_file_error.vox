@@ -1,0 +1,5 @@
+(Deleting a nonexistent file must set the error flag and compile)
+
+Delete the file "./tmp_no_such_vox_file.txt".
+On error Print "error".
+Print "done".

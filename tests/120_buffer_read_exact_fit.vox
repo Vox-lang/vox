@@ -1,0 +1,14 @@
+(Reading exactly fills a fixed-size buffer should not raise an error)
+
+open a file for writing called out at "./tmp_exact_fit.txt".
+Write "hello" to out.
+Close out.
+
+open a file for reading called inp at "./tmp_exact_fit.txt".
+a buffer called "b" is 5 bytes in size.
+Read from inp into b.
+On error Print "error".
+Print b's size.
+Close inp.
+
+Delete the file "./tmp_exact_fit.txt".

@@ -190,6 +190,21 @@ impl CodeGenerator {
         }
     }
 
+    /// Load the address/pointer of a named variable into `rax`, looking in both
+    /// the local function frame and the global BSS mirrors used for
+    /// top-level/branch-declared names. Returns true if the name was found.
+    fn emit_load_named_var_addr(&mut self, name: &str) -> bool {
+        if let Some(offset) = self.get_var(name) {
+            self.emit_indent(&format!("mov rax, [rbp-{}]  ; local {}", offset, name));
+            true
+        } else if let Some(label) = self.global_var_label(name).cloned() {
+            self.emit_indent(&format!("mov rax, [rel {}]  ; global mirror {}", label, name));
+            true
+        } else {
+            false
+        }
+    }
+
     fn emit_clear_buffer_slot(&mut self, offset: i64) {
         self.uses_buffers = true;
         self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
@@ -207,7 +222,7 @@ impl CodeGenerator {
         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
     }
 
-    fn emit_append_formatted_int_to_buffer_slot(&mut self, offset: i64, fmt: FormatSpec) {
+    fn emit_append_formatted_int_to_buffer(&mut self, fmt: FormatSpec) {
         self.uses_buffers = true;
         let (base, uppercase) = match fmt.base {
             IntegerBase::Decimal => (0, 0),
@@ -220,35 +235,40 @@ impl CodeGenerator {
         let zero_pad = if fmt.zero_pad { 1 } else { 0 };
 
         self.emit_indent("mov rsi, rax");
-        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
         self.emit_indent(&format!("mov rdx, {}", width));
         self.emit_indent(&format!("mov rcx, {}", zero_pad));
         self.emit_indent(&format!("mov r8, {}", base));
         self.emit_indent(&format!("mov r9, {}", uppercase));
         self.emit_indent("call _buffer_append_formatted_int");
-        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
     }
 
-    fn emit_append_runtime_value_to_buffer_slot(&mut self, offset: i64, value_type: Option<VarType>, fmt: FormatSpec) {
+    fn emit_append_runtime_value_to_buffer_ptr(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
         match value_type {
             Some(VarType::Buffer) => {
                 self.uses_buffers = true;
                 self.emit_indent("mov rsi, rax");
-                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                 self.emit_indent("call _buffer_append");
-                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
             }
             Some(VarType::String) => {
                 self.uses_buffers = true;
                 self.emit_indent("mov rsi, rax");
-                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                 self.emit_indent("call _buffer_append_cstr");
-                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
             }
             _ => {
-                self.emit_append_formatted_int_to_buffer_slot(offset, fmt);
+                self.emit_append_formatted_int_to_buffer(fmt);
             }
         }
+    }
+
+    fn emit_append_runtime_value_to_buffer_slot(
+        &mut self,
+        offset: i64,
+        value_type: Option<VarType>,
+        fmt: FormatSpec,
+    ) {
+        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt);
+        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
     }
 
     /// Resolve a `{name}` format part: emit code leaving the runtime value
@@ -357,38 +377,156 @@ impl CodeGenerator {
         }
     }
 
-    fn emit_copy_expr_into_buffer_slot(&mut self, offset: i64, value: &Expr, clear_first: bool) -> bool {
+    fn emit_format_parts_into_buffer(
+        &mut self,
+        dst_local: Option<i64>,
+        dst_global: Option<&str>,
+        parts: &[FormatPart],
+    ) {
+        let load_dst = |this: &mut Self| {
+            if let Some(offset) = dst_local {
+                this.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+            } else if let Some(label) = dst_global {
+                this.emit_indent(&format!("mov rdi, [rel {}]", label));
+            }
+        };
+
+        for part in parts {
+            load_dst(self);
+            self.emit_indent("push rdi  ; save destination buffer pointer");
+            match part {
+                FormatPart::Literal(s) => {
+                    let label = self.add_string(s);
+                    self.emit_indent(&format!("lea rsi, [{}]", label));
+                    self.emit_indent(&format!("mov rdx, {}_len", label));
+                    self.emit_indent("call _buffer_append_bytes");
+                }
+                FormatPart::Variable { name, format } => {
+                    match self.resolve_format_variable(name) {
+                        FormatPartValue::Loaded(value_type) => {
+                            let fmt_spec = self.parse_format_spec(format.as_deref());
+                            self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt_spec);
+                        }
+                        FormatPartValue::Literal(s) => {
+                            let label = self.add_string(&s);
+                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("mov rdx, {}_len", label));
+                            self.emit_indent("call _buffer_append_bytes");
+                        }
+                        FormatPartValue::Unknown => {
+                            let placeholder = format!("{{{}}}", name);
+                            let label = self.add_string(&placeholder);
+                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("mov rdx, {}_len", label));
+                            self.emit_indent("call _buffer_append_bytes");
+                        }
+                    }
+                }
+                FormatPart::Expression { expr, format } => {
+                    self.generate_expr(expr);
+                    let expr_type = self.infer_expr_type(expr);
+                    let fmt_spec = self.parse_format_spec(format.as_deref());
+                    self.emit_append_runtime_value_to_buffer_ptr(expr_type, fmt_spec);
+                }
+            }
+            if let Some(offset) = dst_local {
+                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+            } else if let Some(label) = dst_global {
+                self.emit_indent(&format!("mov [rel {}], rax", label));
+            }
+            self.emit_indent("pop rsi  ; discard saved pointer copy");
+        }
+    }
+
+    fn emit_copy_expr_into_buffer_slot(
+        &mut self,
+        value: &Expr,
+        clear_first: bool,
+        dst_local: Option<i64>,
+        dst_global: Option<&str>,
+    ) -> bool {
+        let emit_dst_load = |this: &mut Self| {
+            if let Some(offset) = dst_local {
+                this.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+            } else if let Some(label) = dst_global {
+                this.emit_indent(&format!("mov rdi, [rel {}]", label));
+            }
+        };
+        let emit_dst_store = |this: &mut Self| {
+            if let Some(offset) = dst_local {
+                this.emit_indent(&format!("mov [rbp-{}], rax", offset));
+            } else if let Some(label) = dst_global {
+                this.emit_indent(&format!("mov [rel {}], rax", label));
+            }
+        };
+
         match value {
             Expr::FormatString { parts } => {
-                self.emit_format_parts_into_buffer_slot(offset, parts, clear_first);
+                if clear_first {
+                    emit_dst_load(self);
+                    self.emit_indent("push rdi");
+                    self.emit_indent("call _buffer_clear");
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("pop rsi  ; discard original pointer copy");
+                }
+                self.emit_format_parts_into_buffer(dst_local, dst_global, parts);
                 true
             }
             Expr::StringLit(s) => {
-                if let Some(src_offset) = self.get_var(s) {
-                    if self.variable_types.get(s) == Some(&VarType::Buffer) {
+                if self.variable_types.get(s) == Some(&VarType::Buffer) {
+                    if let Some(src_offset) = self.get_var(s) {
                         self.uses_buffers = true;
-                        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                        emit_dst_load(self);
                         self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
                         self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
-                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        emit_dst_store(self);
+                        return true;
+                    } else if let Some(label) = self.global_var_label(s).cloned() {
+                        self.uses_buffers = true;
+                        emit_dst_load(self);
+                        self.emit_indent(&format!("mov rsi, [rel {}]", label));
+                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
+                        emit_dst_store(self);
                         return true;
                     }
                 }
 
                 if clear_first {
-                    self.emit_clear_buffer_slot(offset);
+                    if let Some(offset) = dst_local {
+                        self.emit_clear_buffer_slot(offset);
+                    } else if let Some(label) = dst_global {
+                        self.emit_indent(&format!("mov rdi, [rel {}]", label));
+                        self.emit_indent("call _buffer_clear");
+                        self.emit_indent(&format!("mov [rel {}], rax", label));
+                    }
                 }
-                self.emit_append_literal_to_buffer_slot(offset, s);
+                if let Some(offset) = dst_local {
+                    self.emit_append_literal_to_buffer_slot(offset, s);
+                } else if let Some(label) = dst_global {
+                    let lit_label = self.add_string(s);
+                    self.emit_indent(&format!("mov rdi, [rel {}]", label));
+                    self.emit_indent(&format!("lea rsi, [{}]", lit_label));
+                    self.emit_indent(&format!("mov rdx, {}_len", lit_label));
+                    self.emit_indent("call _buffer_append_bytes");
+                    self.emit_indent(&format!("mov [rel {}], rax", label));
+                }
                 true
             }
             Expr::Identifier(name) => {
                 if self.variable_types.get(name) == Some(&VarType::Buffer) {
                     if let Some(src_offset) = self.get_var(name) {
                         self.uses_buffers = true;
-                        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                        emit_dst_load(self);
                         self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
                         self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
-                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        emit_dst_store(self);
+                        return true;
+                    } else if let Some(label) = self.global_var_label(name).cloned() {
+                        self.uses_buffers = true;
+                        emit_dst_load(self);
+                        self.emit_indent(&format!("mov rsi, [rel {}]", label));
+                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
+                        emit_dst_store(self);
                         return true;
                     }
                 }
@@ -762,6 +900,23 @@ impl CodeGenerator {
         }
     }
 
+    fn is_boolean_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::BoolLit(_) => true,
+            Expr::Identifier(name) => self.variable_types.get(name) == Some(&VarType::Boolean),
+            Expr::Cast { target_type, .. } => matches!(target_type, Type::Boolean),
+            Expr::UnaryOp { op: UnaryOperator::Not, .. } => true,
+            Expr::BinaryOp { op, .. } => {
+                matches!(op,
+                    BinaryOperator::Equal | BinaryOperator::NotEqual |
+                    BinaryOperator::Greater | BinaryOperator::Less |
+                    BinaryOperator::GreaterEqual | BinaryOperator::LessEqual |
+                    BinaryOperator::And | BinaryOperator::Or)
+            }
+            _ => false,
+        }
+    }
+
     /// Emit code for an equality comparison between two stringy (String or
     /// Buffer) expressions. Routes to _mem_eq when either side is a buffer
     /// (length-bounded, avoids NUL-scanning stale bytes after clear+rewrite)
@@ -919,7 +1074,7 @@ impl CodeGenerator {
             if self.uses_files {
                 result.push_str(&format!("%include \"coreasm/{}/file.asm\"\n", self.target_arch));
             }
-            if self.uses_buffers || self.uses_files {
+            if self.uses_buffers || self.uses_files || self.uses_floats {
                 result.push_str(&format!("%include \"coreasm/{}/resource.asm\"\n", self.target_arch));
             }
             if self.uses_ints {
@@ -1118,7 +1273,7 @@ impl CodeGenerator {
                             self.uses_buffers = true;
                         }
 
-                        if !self.emit_copy_expr_into_buffer_slot(offset, val, true) {
+                        if !self.emit_copy_expr_into_buffer_slot(val, true, Some(offset), None) {
                             self.generate_expr(val);
                             self.emit_clear_buffer_slot(offset);
                             let fmt_spec = self.parse_format_spec(None);
@@ -1209,7 +1364,7 @@ impl CodeGenerator {
                         }
                     }
                     if self.variable_types.get(name) == Some(&VarType::Buffer) {
-                        if !self.emit_copy_expr_into_buffer_slot(offset, value, true) {
+                        if !self.emit_copy_expr_into_buffer_slot(value, true, Some(offset), None) {
                             self.generate_expr(value);
                             self.emit_clear_buffer_slot(offset);
                             let fmt_spec = self.parse_format_spec(None);
@@ -1690,13 +1845,27 @@ impl CodeGenerator {
             
             // File I/O statements
             Statement::BufferDecl { name, size } => {
+                // Reuse an existing slot for the same buffer name, exactly like
+                // VarDecl reassignment. This ensures a buffer declared in both
+                // branches of an if/otherwise pair shares a single stack slot,
+                // so code after the branch reads the slot that was actually
+                // written at runtime.
+                let offset = if let Some(&existing) = self.variables.get(name) {
+                    existing
+                } else {
+                    self.stack_offset += 8;
+                    self.variables.insert(name.clone(), self.stack_offset);
+                    self.stack_offset
+                };
+                self.variable_types.insert(name.clone(), VarType::Buffer);
+
                 // Check if size is specified (non-zero)
                 let is_sized = match size {
                     Expr::IntegerLit(0) => false,
                     Expr::IntegerLit(_) => true,
                     _ => true, // Any expression means sized
                 };
-                
+
                 if is_sized {
                     // Fixed-size buffer (bounds checked, no auto-grow)
                     self.generate_expr(size);
@@ -1707,9 +1876,11 @@ impl CodeGenerator {
                     self.emit_indent("call _alloc_buffer");
                 }
                 self.uses_buffers = true;
-                let offset = self.alloc_var(name);
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer struct pointer", offset));
-                self.variable_types.insert(name.clone(), VarType::Buffer);
+
+                // Top-level/branch-declared buffers must be mirrored into BSS
+                // so functions can read (and write) them via the global label.
+                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
             }
             
             Statement::ByteSet { buffer, index, value } => {
@@ -1719,22 +1890,39 @@ impl CodeGenerator {
                 let noupd_label = self.new_label("bset_noupd");
 
                 self.emit_indent("; Set byte N of buffer to value (with bounds check)");
-                // Get buffer pointer
-                if let Some(offset) = self.get_var(buffer) {
-                    self.emit_indent(&format!("mov rbx, [rbp-{}]  ; buffer ptr", offset));
-                }
+                // Get buffer pointer (local or global mirror)
+                self.emit_load_named_var_addr(buffer);
+                self.emit_indent("mov rbx, rax  ; buffer ptr");
                 self.emit_indent("push rbx  ; save buffer pointer");
                 // Get index
                 self.generate_expr(index);
                 self.emit_indent("mov rcx, rax  ; index in rcx (1-indexed)");
                 self.emit_indent("pop rbx  ; buffer pointer in rbx");
 
-                // Bounds check: index must be >= 1 and <= capacity
+                // Bounds check: index must be >= 1
                 self.emit_indent("cmp rcx, 1");
                 self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
                 self.emit_indent("mov rdx, [rbx]  ; get buffer capacity (offset 0)");
                 self.emit_indent("cmp rcx, rdx");
                 self.emit_indent(&format!("jle {}  ; index <= capacity is OK", ok_label));
+
+                // Index beyond current capacity: dynamic buffers auto-grow,
+                // fixed buffers are an error.
+                self.emit_indent("mov rdx, [rbx + 16]  ; buffer flags");
+                self.emit_indent("test rdx, 1  ; BUF_FLAG_FIXED");
+                self.emit_indent(&format!("jnz {}  ; fixed buffer overflow", error_label));
+
+                // Grow dynamic buffer so the 1-indexed position fits.
+                self.emit_indent("push rcx  ; save index across grow call");
+                self.emit_indent("mov rdi, rbx  ; buffer pointer");
+                self.emit_indent("mov rsi, rcx  ; required capacity = index");
+                self.emit_indent("call _grow_buffer");
+                self.emit_indent("mov rbx, rax  ; new buffer pointer");
+                if let Some(offset) = self.get_var(buffer) {
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; update buffer pointer", offset));
+                }
+                self.emit_indent("pop rcx  ; restore 1-indexed position");
+                self.emit_indent(&format!("jmp {}  ; grown buffer now has space", ok_label));
 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
@@ -1768,10 +1956,9 @@ impl CodeGenerator {
                 let done_label = self.new_label("eset_done");
 
                 self.emit_indent("; Set element N of list to value (with bounds check)");
-                // Get list pointer
-                if let Some(offset) = self.get_var(list) {
-                    self.emit_indent(&format!("mov rbx, [rbp-{}]  ; list ptr", offset));
-                }
+                // Get list pointer (local or global mirror)
+                self.emit_load_named_var_addr(list);
+                self.emit_indent("mov rbx, rax  ; list ptr");
                 self.emit_indent("push rbx  ; save list pointer");
                 // Get index (1-indexed)
                 self.generate_expr(index);
@@ -1813,11 +2000,20 @@ impl CodeGenerator {
             
             Statement::ListAppend { list, value } => {
                 if self.variable_types.get(list) == Some(&VarType::Buffer) {
-                    if let Some(dst_offset) = self.get_var(list) {
-                        if !self.emit_copy_expr_into_buffer_slot(dst_offset, value, false) {
+                    let dst_local = self.get_var(list);
+                    let dst_global = self.global_var_label(list).cloned();
+                    if dst_local.is_some() || dst_global.is_some() {
+                        if !self.emit_copy_expr_into_buffer_slot(value, false, dst_local, dst_global.as_deref()) {
                             self.generate_expr(value);
                             let fmt_spec = self.parse_format_spec(None);
-                            self.emit_append_runtime_value_to_buffer_slot(dst_offset, self.infer_expr_type(value), fmt_spec);
+                            if let Some(offset) = dst_local {
+                                self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(value), fmt_spec);
+                            } else if let Some(ref label) = dst_global {
+                                self.emit_load_named_var_addr(list);
+                                self.emit_indent("mov rdi, rax");
+                                self.emit_append_runtime_value_to_buffer_ptr(self.infer_expr_type(value), fmt_spec);
+                                self.emit_indent(&format!("mov [rel {}], rax", label));
+                            }
                         }
                     }
                     return;
@@ -1848,8 +2044,11 @@ impl CodeGenerator {
                     }
                 }
                 
-                // Get list pointer
-                if let Some(offset) = self.get_var(list) {
+                // Resolve list pointer (local slot or global mirror) and save it.
+                let list_ptr_loaded = self.emit_load_named_var_addr(list);
+                if list_ptr_loaded {
+                    self.emit_indent("push rax  ; save list pointer");
+
                     // Check if the value is a buffer variable
                     let is_buffer_value = match value {
                         Expr::StringLit(name) | Expr::Identifier(name) => {
@@ -1857,10 +2056,10 @@ impl CodeGenerator {
                         }
                         _ => false,
                     };
-                    
-                    // Evaluate value first and save it
+
+                    // Evaluate value to append
                     self.generate_expr(value);
-                    
+
                     if is_buffer_value {
                         // For buffer values, extract string data and duplicate it.
                         // Bounded by the buffer's own tracked length rather than
@@ -1882,28 +2081,46 @@ impl CodeGenerator {
                         self.emit_indent("pop r12");
                         self.emit_indent("pop rbx");
                     }
-                    
+
                     self.emit_indent("push rax  ; save value to append");
-                    
-                    // Get list pointer
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; list ptr", offset));
-                    
-                    // Call list_append helper (rdi = list ptr, rsi = value)
+
+                    // rdi = list pointer, rsi = value to append
                     self.emit_indent("pop rsi  ; value to append");
+                    self.emit_indent("pop rdi  ; list ptr");
                     self.emit_indent("call _list_append");
-                    
-                    // Store potentially new list pointer back
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
+
+                    // Store potentially new list pointer back to wherever it came from
+                    if let Some(offset) = self.get_var(list) {
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
+                    } else if let Some(label) = self.global_var_label(list).cloned() {
+                        self.emit_indent(&format!("mov [rel {}], rax  ; store new list ptr", label));
+                    }
                 }
             }
 
             Statement::BufferCopy { source, destination } => {
-                if let Some(dst_offset) = self.get_var(destination) {
-                    if !self.emit_copy_expr_into_buffer_slot(dst_offset, source, true) {
+                let dst_local = self.get_var(destination);
+                let dst_global = self.global_var_label(destination).cloned();
+                if dst_local.is_some() || dst_global.is_some() {
+                    if !self.emit_copy_expr_into_buffer_slot(source, true, dst_local, dst_global.as_deref()) {
+                        // Fallback for non-buffer source expressions.
+                        // Load destination pointer into rdi, clear it, then append.
+                        self.emit_load_named_var_addr(destination);
+                        self.emit_indent("mov rdi, rax  ; destination buffer");
+                        self.emit_indent("push rdi");
+                        self.emit_indent("call _buffer_clear");
+                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent("push rdi");
                         self.generate_expr(source);
-                        self.emit_clear_buffer_slot(dst_offset);
+                        let src_type = self.infer_expr_type(source);
                         let fmt_spec = self.parse_format_spec(None);
-                        self.emit_append_runtime_value_to_buffer_slot(dst_offset, self.infer_expr_type(source), fmt_spec);
+                        self.emit_append_runtime_value_to_buffer_ptr(src_type, fmt_spec);
+                        self.emit_indent("pop rdi  ; original destination buffer pointer");
+                        if let Some(offset) = dst_local {
+                            self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination pointer", offset));
+                        } else if let Some(ref label) = dst_global {
+                            self.emit_indent(&format!("mov [rel {}], rax  ; updated destination pointer", label));
+                        }
                     }
                 }
             }
@@ -1911,10 +2128,13 @@ impl CodeGenerator {
             Statement::BufferClear { name } => {
                 self.uses_buffers = true;
                 self.emit_indent("; Clear buffer contents");
+                self.emit_load_named_var_addr(name);
+                self.emit_indent("mov rdi, rax  ; buffer");
+                self.emit_indent("call _buffer_clear");
                 if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; buffer", offset));
-                    self.emit_indent("call _buffer_clear");
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer (unchanged pointer)", offset));
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.emit_indent(&format!("mov [rel {}], rax  ; buffer (unchanged pointer)", label));
                 }
             }
             
@@ -2250,6 +2470,7 @@ impl CodeGenerator {
             }
             
             Statement::FileDelete { path } => {
+                self.uses_files = true;
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
@@ -2560,12 +2781,16 @@ impl CodeGenerator {
             }
             
             Statement::BufferResize { name, new_size } => {
-                if let Some(offset) = self.get_var(name) {
+                if self.emit_load_named_var_addr(name) {
+                    self.emit_indent("mov rdi, rax  ; buffer pointer");
                     self.generate_expr(new_size);
                     self.emit_indent("mov rsi, rax  ; new size");
-                    self.emit_indent(&format!("mov rdi, [rbp-{}]  ; buffer pointer", offset));
                     self.emit_indent("call _realloc_buffer");
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; updated buffer pointer", offset));
+                    if let Some(offset) = self.get_var(name) {
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; updated buffer pointer", offset));
+                    } else if let Some(label) = self.global_var_label(name).cloned() {
+                        self.emit_indent(&format!("mov [rel {}], rax  ; updated buffer pointer", label));
+                    }
                 }
             }
             
@@ -2589,11 +2814,13 @@ impl CodeGenerator {
             // Time and Timer statements
             Statement::TimerDecl { name } => {
                 self.uses_time = true;
-                // Allocate space for timer struct (56 bytes)
+                // Allocate the 8-byte name slot; the timer struct itself needs
+                // TIMER_SIZE (56) bytes below it. Account for the full struct in
+                // the frame size so later variables do not overlap the timer.
                 let offset = self.alloc_var(name);
                 self.variable_types.insert(name.clone(), VarType::Integer); // Track as integer for now
+                self.stack_offset = std::cmp::max(self.stack_offset, offset + 48);
                 self.emit_indent(&format!("; Timer declaration: {}", name));
-                self.emit_indent("sub rsp, 56");  // TIMER_SIZE
                 self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48)); // Point to timer area
                 self.emit_indent("TIMER_INIT rax");
             }
@@ -3488,13 +3715,26 @@ impl CodeGenerator {
             }
             
             Expr::PropertyAccess { object, property } => {
-                if let Some(offset) = self.get_var(object) {
+                let offset = self.get_var(object);
+                // Load the variable's runtime value (pointer for containers,
+                // raw value for scalars/time). Falls back to global mirrors so
+                // top-level/branch-declared names are reachable inside functions.
+                let found = if let Some(off) = offset {
+                    self.emit_indent(&format!("mov rax, [rbp-{}]", off));
+                    true
+                } else if let Some(label) = self.global_var_label(object).cloned() {
+                    self.emit_indent(&format!("mov rax, [rel {}]", label));
+                    true
+                } else {
+                    false
+                };
+
+                if found {
                     let var_type = self.variable_types.get(object).cloned().unwrap_or(VarType::Unknown);
-                    
+
                     match property {
                         // Buffer/List properties
                         ObjectProperty::Size => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             if var_type == VarType::Buffer {
                                 self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
                             } else if var_type == VarType::List {
@@ -3506,11 +3746,9 @@ impl CodeGenerator {
                             }
                         }
                         ObjectProperty::Capacity => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("mov rax, [rax]  ; buffer capacity");
                         }
                         ObjectProperty::Empty => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             if var_type == VarType::List {
                                 self.emit_indent("mov rax, [rax + 8]  ; get list length (offset 8)");
                             } else {
@@ -3521,7 +3759,6 @@ impl CodeGenerator {
                             self.emit_indent("movzx rax, al  ; 1 if empty, 0 otherwise");
                         }
                         ObjectProperty::Full => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             if var_type == VarType::List {
                                 // Lists can grow dynamically, so never full
                                 self.emit_indent("xor rax, rax  ; lists are never full");
@@ -3534,26 +3771,25 @@ impl CodeGenerator {
                                 self.emit_indent("movzx rax, al  ; 1 if full, 0 otherwise");
                             }
                         }
-                        
+
                         // File properties
                         ObjectProperty::Descriptor => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]  ; fd", offset));
+                            // rax already holds the fd
                         }
                         ObjectProperty::Modified => {
-                            self.emit_indent(&format!("mov rdi, [rbp-{}]  ; fd", offset));
+                            self.emit_indent("mov rdi, rax  ; fd");
                             self.emit_indent("call _file_modified");
                         }
                         ObjectProperty::Accessed => {
-                            self.emit_indent(&format!("mov rdi, [rbp-{}]  ; fd", offset));
+                            self.emit_indent("mov rdi, rax  ; fd");
                             self.emit_indent("call _file_accessed");
                         }
                         ObjectProperty::Permissions => {
-                            self.emit_indent(&format!("mov rdi, [rbp-{}]  ; fd", offset));
+                            self.emit_indent("mov rdi, rax  ; fd");
                             self.emit_indent("call _file_permissions");
                         }
                         ObjectProperty::Readable => {
                             // Check if fd >= 0 (valid for reading)
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setns al");
                             self.emit_indent("movzx rax, al  ; 1 if readable, 0 otherwise");
@@ -3567,35 +3803,54 @@ impl CodeGenerator {
                                 self.emit_indent("xor rax, rax  ; file opened for reading only");
                             }
                         }
-                        
+
                         // List properties
                         // List structure: [capacity:8][length:8][elem_size:8][data...]
                         ObjectProperty::First => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                            let ok_label = self.new_label("list_first_ok");
+                            let error_label = self.new_label("list_first_err");
+                            let done_label = self.new_label("list_first_done");
+                            self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
+                            self.emit_indent("test rbx, rbx");
+                            self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
+                            self.emit(&format!("{}:", error_label));
+                            self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            self.emit_indent("xor rax, rax  ; return 0 on error");
+                            self.emit_indent(&format!("jmp {}", done_label));
+                            self.emit(&format!("{}:", ok_label));
                             self.emit_indent("mov rax, [rax + 24]  ; first element (data at offset 24)");
+                            self.emit(&format!("{}:", done_label));
                         }
                         ObjectProperty::Last => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                            let ok_label = self.new_label("list_last_ok");
+                            let error_label = self.new_label("list_last_err");
+                            let done_label = self.new_label("list_last_done");
                             self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
+                            self.emit_indent("test rbx, rbx");
+                            self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
+                            self.emit(&format!("{}:", error_label));
+                            self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            self.emit_indent("xor rax, rax  ; return 0 on error");
+                            self.emit_indent(&format!("jmp {}", done_label));
+                            self.emit(&format!("{}:", ok_label));
                             self.emit_indent("dec rbx             ; 0-indexed");
                             self.emit_indent("shl rbx, 3          ; * 8");
                             self.emit_indent("add rbx, 24         ; + header offset");
                             self.emit_indent("add rax, rbx        ; offset to last");
                             self.emit_indent("mov rax, [rax]      ; last element");
+                            self.emit(&format!("{}:", done_label));
                         }
-                        
+
                         // Number properties
                         ObjectProperty::Absolute => {
                             let lbl = self.label_counter;
                             self.label_counter += 1;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent(&format!("jns .abs_done_{}", lbl));
                             self.emit_indent("neg rax");
                             self.emit(&format!(".abs_done_{}:", lbl));
                         }
                         ObjectProperty::Sign => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent("mov rbx, 1");
                             self.emit_indent("mov rcx, -1");
@@ -3604,98 +3859,86 @@ impl CodeGenerator {
                             self.emit_indent("cmovz rax, rax  ; zero -> 0 (already)");
                         }
                         ObjectProperty::Even => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("and rax, 1");
                             self.emit_indent("xor rax, 1  ; 1 if even, 0 if odd");
                         }
                         ObjectProperty::Odd => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("and rax, 1  ; 1 if odd, 0 if even");
                         }
                         ObjectProperty::Positive => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setg al");
                             self.emit_indent("movzx rax, al");
                         }
                         ObjectProperty::Negative => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setl al");
                             self.emit_indent("movzx rax, al");
                         }
                         ObjectProperty::Zero => {
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setz al");
                             self.emit_indent("movzx rax, al");
                         }
-                        
+
                         // Time properties (unix timestamp -> component extraction)
                         ObjectProperty::Hour => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_HOUR rax");
                         }
                         ObjectProperty::Minute => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_MINUTE rax");
                         }
                         ObjectProperty::Second => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_SECOND rax");
                         }
                         ObjectProperty::Day => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_DAY rax");
                         }
                         ObjectProperty::Month => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_MONTH rax");
                         }
                         ObjectProperty::Year => {
                             self.uses_time = true;
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                             self.emit_indent("TIME_GET_YEAR rax");
                         }
                         ObjectProperty::Unix => {
                             // Unix timestamp is the raw value
-                            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                         }
-                        
+
                         // Timer properties
                         ObjectProperty::Duration => {
                             self.uses_time = true;
                             self.emit_indent("; Timer duration");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
                             self.emit_indent("TIMER_DURATION_SECONDS rax");
                         }
                         ObjectProperty::Elapsed => {
                             self.uses_time = true;
                             self.emit_indent("; Timer elapsed");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
                             self.emit_indent("TIMER_ELAPSED_SECONDS rax");
                         }
                         ObjectProperty::StartTime => {
                             self.uses_time = true;
                             self.emit_indent("; Timer start time");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
                             self.emit_indent("TIMER_START_TIME rax");
                         }
                         ObjectProperty::EndTime => {
                             self.uses_time = true;
                             self.emit_indent("; Timer end time");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
                             self.emit_indent("TIMER_END_TIME rax");
                         }
                         ObjectProperty::Running => {
                             self.uses_time = true;
                             self.emit_indent("; Timer running status");
-                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset + 48));
+                            self.emit_indent(&format!("lea rax, [rbp - {}]", offset.unwrap_or(0) + 48));
                             self.emit_indent("mov rax, [rax + TIMER_RUNNING]");
                         }
                     }
@@ -4240,11 +4483,84 @@ impl CodeGenerator {
                         }
                     }
                     Type::Boolean => {
-                        // Convert to boolean (0 = false, non-zero = true)
-                        self.emit_indent("; Cast to boolean");
-                        self.emit_indent("test rax, rax");
-                        self.emit_indent("setne al");
-                        self.emit_indent("movzx rax, al");
+                        let src_type = self.infer_expr_type(value);
+                        if matches!(src_type, Some(VarType::String) | Some(VarType::Buffer)) {
+                            // A text/buffer cast to boolean must inspect the
+                            // content, not the pointer. "true" (case-insensitive)
+                            // yields 1, everything else yields 0.
+                            self.uses_strings = true;
+                            self.emit_indent("; Cast text/buffer to boolean");
+                            self.emit_indent("test rax, rax");
+                            let null_label = self.new_label("bool_null");
+                            let done_label = self.new_label("bool_done");
+                            self.emit_indent(&format!("jz {}", null_label));
+                            if src_type == Some(VarType::Buffer) {
+                                self.emit_indent("add rax, 24  ; buffer data area");
+                            }
+                            self.emit_indent("mov rdi, rax");
+                            self.emit_indent("call _text_to_boolean");
+                            self.emit_indent(&format!("jmp {}", done_label));
+                            self.emit(&format!("{}:", null_label));
+                            self.emit_indent("xor rax, rax");
+                            self.emit(&format!("{}:", done_label));
+                        } else {
+                            // Convert to boolean (0 = false, non-zero = true)
+                            self.emit_indent("; Cast to boolean");
+                            self.emit_indent("test rax, rax");
+                            self.emit_indent("setne al");
+                            self.emit_indent("movzx rax, al");
+                        }
+                    }
+                    Type::String => {
+                        // "as text" must materialise a NUL-terminated C string
+                        // pointer. Booleans become "true"/"false", integers
+                        // become decimal digits, and floats become a trimmed
+                        // decimal representation. Text/buffer values are already
+                        // valid text pointers, so they are left unchanged.
+                        let src_type = self.infer_expr_type(value);
+                        if !matches!(src_type, Some(VarType::String) | Some(VarType::Buffer)) {
+                            self.uses_buffers = true;
+                            self.stack_offset += 8;
+                            let tmp = self.stack_offset;
+
+                            self.emit_indent("push rax  ; value to format");
+                            self.emit_indent("mov rdi, 1024  ; default buffer size");
+                            self.emit_indent("call _alloc_buffer");
+                            self.emit_indent(&format!("mov [rbp-{}], rax  ; format result buffer", tmp));
+                            self.emit_indent(&format!("mov rdi, [rbp-{}]", tmp));
+                            self.emit_indent("pop rax  ; restore value to format");
+
+                            if self.is_float_expr(value) {
+                                self.uses_floats = true;
+                                self.emit_indent("call _buffer_append_float");
+                            } else if self.is_boolean_expr(value) {
+                                let true_label = self.add_string("true");
+                                let false_label = self.add_string("false");
+                                let true_branch = self.new_label("cast_bool_true");
+                                let done_label = self.new_label("cast_bool_done");
+                                self.emit_indent("test rax, rax");
+                                self.emit_indent(&format!("jnz {}", true_branch));
+                                self.emit_indent(&format!("lea rsi, [{}]", false_label));
+                                self.emit_indent(&format!("mov rdx, {}_len", false_label));
+                                self.emit_indent(&format!("jmp {}", done_label));
+                                self.emit(&format!("{}:", true_branch));
+                                self.emit_indent(&format!("lea rsi, [{}]", true_label));
+                                self.emit_indent(&format!("mov rdx, {}_len", true_label));
+                                self.emit(&format!("{}:", done_label));
+                                self.emit_indent("call _buffer_append_bytes");
+                            } else {
+                                let fmt_spec = FormatSpec {
+                                    base: IntegerBase::Decimal,
+                                    width: None,
+                                    zero_pad: false,
+                                    precision: None,
+                                };
+                                self.emit_append_formatted_int_to_buffer(fmt_spec);
+                            }
+
+                            self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
+                            self.emit_indent("add rax, 24  ; buffer data area -> NUL-terminated C string");
+                        }
                     }
                     _ => {
                         // Other casts - no-op
@@ -4453,25 +4769,29 @@ impl CodeGenerator {
                         let is_float = self.is_float_expr(left) || self.is_float_expr(right);
 
                         if is_float {
-                            // Float comparison using SSE2
+                            // Float comparison using SSE2. Use the helper macros so that
+                            // NaN/unordered results behave like Vox comparisons: ordered
+                            // comparisons are false when either operand is NaN, and != is
+                            // true for NaN. The macro leaves a 0/1 result in rax.
                             self.generate_expr(right);
                             self.emit_indent("push rax");
                             self.generate_expr(left);
                             self.emit_indent("movq xmm0, rax");       // left in xmm0
                             self.emit_indent("pop rax");
                             self.emit_indent("movq xmm1, rax");       // right in xmm1
-                            self.emit_indent("ucomisd xmm0, xmm1");
 
-                            let jmp = match op {
-                                BinaryOperator::Equal => "jne",
-                                BinaryOperator::NotEqual => "je",
-                                BinaryOperator::Greater => "jbe",    // below or equal (unsigned)
-                                BinaryOperator::Less => "jae",       // above or equal (unsigned)
-                                BinaryOperator::GreaterEqual => "jb", // below (unsigned)
-                                BinaryOperator::LessEqual => "ja",   // above (unsigned)
+                            let macro_name = match op {
+                                BinaryOperator::Equal => "FLOAT_EQ",
+                                BinaryOperator::NotEqual => "FLOAT_NE",
+                                BinaryOperator::Greater => "FLOAT_GT",
+                                BinaryOperator::Less => "FLOAT_LT",
+                                BinaryOperator::GreaterEqual => "FLOAT_GE",
+                                BinaryOperator::LessEqual => "FLOAT_LE",
                                 _ => unreachable!(),
                             };
-                            self.emit_indent(&format!("{} {}", jmp, false_label));
+                            self.emit_indent(macro_name);
+                            self.emit_indent("test rax, rax");
+                            self.emit_indent(&format!("jz {}", false_label));
                         } else {
                             // Integer comparison
                             self.generate_expr(right);

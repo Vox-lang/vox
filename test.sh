@@ -63,6 +63,11 @@ done
 
 # Get script directory (where vox project lives)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Use the in-repo coreasm library so local runtime changes are exercised
+# without requiring a system install.
+export VOX_CORE_PATH="$SCRIPT_DIR"
+
 VOX_BIN="$SCRIPT_DIR/target/release/vox"
 
 # Build compiler if needed

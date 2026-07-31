@@ -24,6 +24,7 @@ section .text
     jmp %%div_done
 %%div_zero:
     xor rax, rax
+    mov qword [rel _last_error], 1
 %%div_done:
 %endmacro
 
@@ -36,6 +37,7 @@ section .text
     jmp %%mod_done
 %%mod_zero:
     xor rax, rax
+    mov qword [rel _last_error], 1
 %%mod_done:
 %endmacro
 
@@ -104,9 +106,11 @@ _parse_i64:
     push rbx
     push rcx
     push rdx
+    push r8
 
     xor rax, rax            ; accumulator
     xor rcx, rcx            ; sign flag (0=+,1=-)
+    xor r8, r8              ; parsed-a-digit flag
     mov rbx, rdi
 
     mov dl, [rbx]
@@ -128,14 +132,20 @@ _parse_i64:
     movzx rdx, dl
     add rax, rdx
     inc rbx
+    mov r8, 1
     jmp .pi64_loop
 
 .pi64_done:
+    test r8, r8
+    jnz .pi64_sign
+    mov qword [rel _last_error], 1
+.pi64_sign:
     test rcx, rcx
     jz .pi64_ret
     neg rax
 
 .pi64_ret:
+    pop r8
     pop rdx
     pop rcx
     pop rbx
@@ -154,10 +164,12 @@ _parse_int_radix:
     push rdx
     push r8
     push r9
+    push r10
 
     mov r8, rsi              ; base
     xor rax, rax             ; accumulator
     xor r9, r9               ; sign flag (0=+, 1=-)
+    xor r10, r10             ; parsed-a-digit flag
     mov rbx, rdi
 
     mov dl, [rbx]
@@ -199,14 +211,20 @@ _parse_int_radix:
     add rax, rcx
 
     inc rbx
+    mov r10, 1
     jmp .pir_loop
 
 .pir_done:
+    test r10, r10
+    jnz .pir_sign
+    mov qword [rel _last_error], 1
+.pir_sign:
     test r9, r9
     jz .pir_ret
     neg rax
 
 .pir_ret:
+    pop r10
     pop r9
     pop r8
     pop rdx
@@ -230,14 +248,16 @@ _parse_i64_bounded:
     push rcx
     push rdx
     push r8
+    push r9
 
     xor rax, rax             ; accumulator
     xor rcx, rcx             ; sign flag (0=+, 1=-)
+    xor r9, r9               ; parsed-a-digit flag
     mov rbx, rdi
     mov r8, rsi              ; remaining length
 
     test r8, r8
-    jz .pi64b_ret
+    jz .pi64b_no_digits
 
     mov dl, [rbx]
     cmp dl, '-'
@@ -262,14 +282,21 @@ _parse_i64_bounded:
     add rax, rdx
     inc rbx
     dec r8
+    mov r9, 1
     jmp .pi64b_loop
 
 .pi64b_done:
+    test r9, r9
+    jnz .pi64b_sign
+.pi64b_no_digits:
+    mov qword [rel _last_error], 1
+.pi64b_sign:
     test rcx, rcx
     jz .pi64b_ret
     neg rax
 
 .pi64b_ret:
+    pop r9
     pop r8
     pop rdx
     pop rcx
@@ -289,15 +316,17 @@ _parse_int_radix_bounded:
     push r8
     push r9
     push r10
+    push r11
 
     mov r8, rsi              ; base
     mov r10, rdx             ; remaining length
     xor rax, rax
     xor r9, r9               ; sign flag
+    xor r11, r11             ; parsed-a-digit flag
     mov rbx, rdi
 
     test r10, r10
-    jz .pirb_ret
+    jz .pirb_no_digits
 
     mov dl, [rbx]
     cmp dl, '-'
@@ -342,14 +371,21 @@ _parse_int_radix_bounded:
 
     inc rbx
     dec r10
+    mov r11, 1
     jmp .pirb_loop
 
 .pirb_done:
+    test r11, r11
+    jnz .pirb_sign
+.pirb_no_digits:
+    mov qword [rel _last_error], 1
+.pirb_sign:
     test r9, r9
     jz .pirb_ret
     neg rax
 
 .pirb_ret:
+    pop r11
     pop r10
     pop r9
     pop r8
