@@ -59,7 +59,7 @@ Tag values (must match `LIST_TAG_*` in `coreasm/*/list.asm`):
 | 2 | float | IEEE 754 double bit pattern |
 | 3 | boolean | 0 or 1 |
 | 4 | list | child list pointer — nesting (stage 1e1) |
-| 5 | map *(reserved)* | future JSON objects |
+| 5 | map | map struct pointer — key/value collection (stage 1e2) |
 | 6 | null *(reserved)* | future JSON null |
 
 All list allocations come from `mmap`, which zero-fills, so untouched tag
@@ -69,9 +69,11 @@ read or write tags and keep the statically-typed fast path bit-for-bit.
 
 Tags 4–6 were reserved early, while the layout was young, so nested JSON
 arrays/objects slot into the existing representation without a layout
-change. Tag 4 (list) is now **active** as of stage 1e1: a list slot may
+change. Tag 4 (list) is **active** as of stage 1e1: a list slot may
 hold a child list pointer, `_list_print` recurses on it, and `is a list`
-recognises it; tags 5–6 remain reserved for maps and null.
+recognises it. Tag 5 (map) is **active** as of stage 1e2: a list slot (or
+a `value` payload) may hold a map struct pointer, `_map_print` recurses
+on it, and `is a map` recognises it; tag 6 remains reserved for null.
 
 ### Stages
 
@@ -108,8 +110,23 @@ recognises it; tags 5–6 remain reserved for maps and null.
     predicate (folds on a static list, runtime `cmp` on a mixed element);
     homogeneous list-of-lists keeps the non-mixed fast path. See
     `LANGUAGE.md` (Nested Lists) and [`docs/plans/040_stage_1e1_nested_lists.md`](plans/040_stage_1e1_nested_lists.md).
-  - **1e2. Maps** *(pending)*. Tag 5 for key/value collections (JSON
-    objects).
+  - **1e2. Maps** *(done)*. Tag 5 activated for key/value collections
+    (JSON objects). A new `coreasm/x86_64/map.asm` runtime stores entries
+    in an insertion-ordered array alongside an FNV-1a hash table (linear
+    probing over power-of-two capacity, grow at load ≤ 1/2, allocate-copy-
+    do-not-free-old-block like `_list_append`) for O(1) lookup. Map
+    literals `{"k": v}`, `map's "k"` access, `set map's "k" to v`
+    insert/replace (store-back on realloc), `map's keys`/`values` (fresh
+    lists, insertion-ordered), `map's length`/`empty`, `for each key in
+    … keys` / `for each v in … values`, `is a map` (folds on a static map,
+    runtime `cmp r11, 5` on a mixed value), recursive `_map_print`
+    (`{"k": v, …}`) sharing one 64-deep `_print_depth` budget with
+    `_list_print` so a mixed map/list tree is cycle-safe, and `value`-ABI
+    carriage (a map rides a `value` as payload + tag 5). Missing-key
+    lookup sets `_last_error` (observed via `on error`), not a null
+    return. Non-text keys and map deletion are out of scope (deferred to
+    the JSON-parser stage). See `LANGUAGE.md` (Maps) and
+    [`docs/plans/050_stage_1e2_maps_and_null.md`](plans/050_stage_1e2_maps_and_null.md).
   - **1e3. Null and the JSON/YAML parser** *(pending)*. Tag 6 for null;
     then a JSON/YAML parser written in Vox functions as the track capstone.
 
@@ -270,6 +287,6 @@ is exactly what Vox's no-resident-runtime, compile-to-plain-NASM identity
 defines itself against; and Python has spent fifteen years growing type
 hints to claw back static guarantees. Vox's position is **dynamic at the
 data boundary, static in the core**: tagged values live inside containers
-(lists now, maps later), scalars and arithmetic stay statically typed, and
+(lists and maps), scalars and arithmetic stay statically typed, and
 extraction from the dynamic world is either implicitly dispatched
 (printing) or explicitly checked (`If item is a number, ...`).

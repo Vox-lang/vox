@@ -43,6 +43,11 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    // Set when codegen emits any map runtime call (_map_new/_map_insert/
+    // _map_lookup/_map_keys/_map_values/_map_print) or a map-tagged dispatch.
+    // Gates `%include "coreasm/<arch>/map.asm"`. _map_keys/_map_values also
+    // set uses_lists (they return a list struct).
+    uses_maps: bool,
     // Set when codegen itself emits a call to _str_eq (string/buffer
     // equality comparisons). Distinct from program.uses_strings, which the
     // analyzer computes from string literals/format strings and may miss
@@ -87,6 +92,7 @@ enum VarType {
     String,      // Raw string pointer (from lists, etc.)
     Buffer,      // Dynamic buffer struct (has header)
     List,        // List struct [length, elem0, elem1, ...]
+    Map,         // Map struct (tag 5); key/value collection
     Boolean,
     Mixed,       // Runtime-tagged value from a heterogeneous list; the
                  // actual type is dispatched via a per-slot tag byte
@@ -100,6 +106,7 @@ const TAG_STRING: u8 = 1;
 const TAG_FLOAT: u8 = 2;
 const TAG_BOOLEAN: u8 = 3;
 const TAG_LIST: u8 = 4;
+const TAG_MAP: u8 = 5;
 
 /// Three-state result of statically classifying an expression into a list
 /// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
@@ -124,6 +131,7 @@ fn vartype_to_tag(vt: VarType) -> Option<u8> {
         VarType::String | VarType::Buffer => Some(TAG_STRING),
         VarType::Boolean => Some(TAG_BOOLEAN),
         VarType::List => Some(TAG_LIST),
+        VarType::Map => Some(TAG_MAP),
         // Mixed/Unknown: no single static tag — runtime tag (1d) or fallback.
         _ => None,
     }
@@ -146,6 +154,7 @@ fn type_to_tag(t: &Type) -> Option<u8> {
         Type::Boolean => Some(TAG_BOOLEAN),
         Type::Buffer => Some(TAG_STRING),
         Type::List(_) => Some(TAG_LIST),
+        Type::Map(_) => Some(TAG_MAP),
         // File/Time/Timer/Void/Unknown: no scalar slot tag.
         _ => None,
     }
@@ -169,6 +178,7 @@ fn type_noun_name(t: &Type) -> &'static str {
         Type::String => "text",
         Type::Boolean => "boolean",
         Type::List(_) => "list",
+        Type::Map(_) => "map",
         _ => "type",
     }
 }
@@ -232,6 +242,7 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            uses_maps: false,
             uses_strings: false,
             function_return_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
@@ -1207,6 +1218,8 @@ impl CodeGenerator {
             // (4) and stay non-mixed, while a mixed `[1, [2,3], "four"]` still
             // widens (tags {0, 4, 1}).
             Expr::ListLit { .. } => TagInfo::Known(TAG_LIST),
+            // A map value in a slot is tag 5 (stage 1e2).
+            Expr::MapLit { .. } => TagInfo::Known(TAG_MAP),
             // A type predicate yields a boolean, so appending its result to a
             // list does not widen the list (stage 1c).
             Expr::TypeCheck { .. } => TagInfo::Known(TAG_BOOLEAN),
@@ -1613,6 +1626,7 @@ impl CodeGenerator {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
         let list_label = self.new_label("mixp_list");
+        let map_label = self.new_label("mixp_map");
         let done_label = self.new_label("mixp_done");
         self.emit_indent(&format!("cmp {}, {}  ; string tag?", tag_reg, TAG_STRING));
         self.emit_indent(&format!("je {}", str_label));
@@ -1624,6 +1638,10 @@ impl CodeGenerator {
         // clobbering r11/rax/etc. is safe.
         self.emit_indent(&format!("cmp {}, {}  ; list tag?", tag_reg, TAG_LIST));
         self.emit_indent(&format!("je {}", list_label));
+        // A map element (tag 5, stage 1e2): rdi holds the child map pointer;
+        // recurse into `_map_print`.
+        self.emit_indent(&format!("cmp {}, {}  ; map tag?", tag_reg, TAG_MAP));
+        self.emit_indent(&format!("je {}", map_label));
         // Integer and boolean both print as numbers (matches homogeneous
         // boolean lists, which print 1/0 today).
         self.emit_indent("PRINT_INT rdi");
@@ -1639,6 +1657,10 @@ impl CodeGenerator {
         self.emit(&format!("{}:", list_label));
         self.emit_indent("call _list_print  ; rdi = child list pointer");
         self.uses_lists = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", map_label));
+        self.emit_indent("call _map_print  ; rdi = child map pointer");
+        self.uses_maps = true;
         self.emit(&format!("{}:", done_label));
     }
 
@@ -1745,6 +1767,8 @@ impl CodeGenerator {
             // A list literal value in a slot is tag 4 (stage 1e1). This is the
             // tag written to a nested-list element's slot at emit time.
             Expr::ListLit { .. } => Some(TAG_LIST),
+            // A map literal value in a slot is tag 5 (stage 1e2).
+            Expr::MapLit { .. } => Some(TAG_MAP),
             // A type predicate result is a boolean (stage 1c).
             Expr::TypeCheck { .. } => Some(TAG_BOOLEAN),
             // Logical negation is always a boolean. `infer_expr_type` maps
@@ -1776,6 +1800,7 @@ impl CodeGenerator {
                     Some(VarType::Boolean) => Some(TAG_BOOLEAN),
                     Some(VarType::String) | Some(VarType::Buffer) => Some(TAG_STRING),
                     Some(VarType::List) => Some(TAG_LIST),
+                    Some(VarType::Map) => Some(TAG_MAP),
                     Some(VarType::Mixed) => None, // runtime tag in shadow slot
                     _ => {
                         if matches!(e, Expr::StringLit(_))
@@ -1857,6 +1882,9 @@ impl CodeGenerator {
             Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
                 self.list_expr_is_mixed(list)
             }
+            // A map key read: `_map_lookup` leaves the value in rax and its
+            // runtime tag in r11 (stage 1e2), mirroring a mixed-list element.
+            Expr::MapAccess { .. } => true,
             Expr::PropertyAccess { object, property }
                 if matches!(property, ObjectProperty::First | ObjectProperty::Last) =>
             {
@@ -1917,7 +1945,9 @@ impl CodeGenerator {
             // Always needed: core
             result.push_str(&format!("%include \"coreasm/{}/core.asm\"\n", self.target_arch));
             // Conditional includes based on usage
-            if self.uses_io {
+            // map.asm depends on io.asm (PRINT macros), string.asm (_str_eq),
+            // and list.asm (_list_print), so uses_maps forces all three on.
+            if self.uses_io || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/io.asm\"\n", self.target_arch));
             }
             if self.uses_files {
@@ -1935,7 +1965,7 @@ impl CodeGenerator {
             if program.uses_heap {
                 result.push_str(&format!("%include \"coreasm/{}/heap.asm\"\n", self.target_arch));
             }
-            if program.uses_strings || self.uses_strings {
+            if program.uses_strings || self.uses_strings || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/string.asm\"\n", self.target_arch));
             }
             if program.uses_args {
@@ -1950,8 +1980,11 @@ impl CodeGenerator {
             if self.uses_funcs {
                 result.push_str(&format!("%include \"coreasm/{}/funcs.asm\"\n", self.target_arch));
             }
-            if self.uses_lists {
+            if self.uses_lists || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/list.asm\"\n", self.target_arch));
+            }
+            if self.uses_maps {
+                result.push_str(&format!("%include \"coreasm/{}/map.asm\"\n", self.target_arch));
             }
         }
         result.push('\n');
@@ -2044,6 +2077,7 @@ impl CodeGenerator {
                         Type::Boolean => VarType::Boolean,
                         Type::Buffer => VarType::Buffer,
                         Type::List(_) => VarType::List,
+                        Type::Map(_) => VarType::Map,
                         // A declared `value` local is a Mixed-typed scalar
                         // carrying its runtime tag in a shadow slot, exactly
                         // like a value parameter / for-each variable.
@@ -2061,6 +2095,12 @@ impl CodeGenerator {
                     // Track list type and element type for lists
                     if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
+                        // A nested map-literal element makes this a list-of-maps;
+                        // the element type is Map so a for-each loop var prints
+                        // via `_map_print` (stage 1e2).
+                        if let Some(Expr::MapLit { .. }) = elements.first() {
+                            self.list_element_types.insert(name.clone(), VarType::Map);
+                        }
                         if self.mixed_lists.contains(name) {
                             // Pre-scan proved this list heterogeneous:
                             // element reads dispatch on runtime tags.
@@ -2260,7 +2300,8 @@ impl CodeGenerator {
                                 VarType::Float => {
                                     self.variable_types.insert(name.clone(), VarType::Float);
                                 }
-                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List | VarType::Mixed => {
+                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List
+                                | VarType::Map | VarType::Mixed => {
                                     self.variable_types.insert(name.clone(), vt);
                                 }
                                 VarType::Buffer | VarType::Unknown => {}
@@ -2761,6 +2802,22 @@ impl CodeGenerator {
                 let elem_type = if let Expr::Identifier(list_name) = collection {
                     // Get element type from list_element_types, not variable_types
                     self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
+                } else if let Expr::PropertyAccess { object, property } = collection {
+                    // `map's keys` yields a list of text pointers; `map's
+                    // values` yields a mixed-tagged list (each value carries
+                    // its own runtime tag). (stage 1e2)
+                    match property {
+                        ObjectProperty::Keys => VarType::String,
+                        ObjectProperty::Values => VarType::Mixed,
+                        // `first`/`last` of a list-of-maps -> each is a map.
+                        ObjectProperty::First | ObjectProperty::Last => {
+                            match self.list_element_types.get(object) {
+                                Some(VarType::Map) => VarType::Map,
+                                _ => VarType::Unknown,
+                            }
+                        }
+                        _ => VarType::Unknown,
+                    }
                 } else if let Expr::ListLit { elements } = collection {
                     // Inline literal: classify every element, not just the
                     // first - two distinct types means Mixed.
@@ -3047,7 +3104,53 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", done_label));
             }
-            
+
+            // Set map's "<key>" to value: insert or replace. _map_insert may
+            // reallocate on growth, so the returned pointer is stored back
+            // into the map variable's slot (mirroring ListAppend's store-back
+            // — forgetting this corrupts the var after the first growth).
+            // (stage 1e2, tag 5)
+            Statement::MapSet { map, key, value } => {
+                self.uses_maps = true;
+                self.emit_indent("; Set map's key to value (insert/replace)");
+                // map pointer -> stack
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("push rax  ; save map pointer");
+                // key -> stack (literal text; never a variable reference)
+                self.generate_text_key(key);
+                self.emit_indent("push rax  ; save key pointer");
+                // value -> rdx
+                self.generate_expr(value);
+                self.emit_indent("mov rdx, rax  ; value");
+                // tag -> rcx (forward runtime tag for mixed sources)
+                match self.emit_time_expr_tag(value) {
+                    Some(tag) => {
+                        self.emit_indent(&format!("mov ecx, {}  ; value type tag", tag));
+                    }
+                    None => {
+                        if let Some(slot) = self.mixed_element_tag_slot(value) {
+                            self.emit_indent(&format!(
+                                "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
+                                slot
+                            ));
+                        } else if self.expr_leaves_tag_in_r11(value) {
+                            self.emit_indent("mov ecx, r11d  ; forward runtime tag from r11");
+                        } else {
+                            self.emit_indent("xor ecx, ecx  ; default integer tag");
+                        }
+                    }
+                }
+                self.emit_indent("pop rsi  ; key pointer");
+                self.emit_indent("pop rdi  ; map pointer");
+                self.emit_indent("call _map_insert");
+                // Store the (possibly reallocated) map pointer back.
+                if let Some(offset) = self.get_var(map) {
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new map ptr", offset));
+                } else if let Some(label) = self.global_var_label(map).cloned() {
+                    self.emit_indent(&format!("mov [rel {}], rax  ; store new map ptr", label));
+                }
+            }
+
             Statement::ListAppend { list, value } => {
                 if self.variable_types.get(list) == Some(&VarType::Buffer) {
                     let dst_local = self.get_var(list);
@@ -4243,6 +4346,12 @@ impl CodeGenerator {
                                 // scope for stage 000 - the default rendering only).
                                 self.uses_lists = true;
                                 self.emit_indent("call _list_print");
+                            } else if var_type == Some(VarType::Map) {
+                                // Whole-map interpolation: rdi holds the map
+                                // pointer; _map_print renders {"k": v, ...}.
+                                // (stage 1e2)
+                                self.uses_maps = true;
+                                self.emit_indent("call _map_print");
                             } else {
                                 let fmt_spec = self.parse_format_spec(format.as_deref());
                                 self.emit_formatted_value(var_type, fmt_spec);
@@ -4266,6 +4375,13 @@ impl CodeGenerator {
                                     self.emit_indent("add rdi, 24  ; buffer data area");
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
+                            } else if expr_type == Some(VarType::Map) {
+                                // Map expression interpolation: rdi holds the map
+                                // pointer; _map_print renders it. (stage 1e2)
+                                self.generate_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                self.uses_maps = true;
+                                self.emit_indent("call _map_print");
                             } else {
                                 // Non-buffer: generate_cstr_expr adds +24 for buffer
                                 // (irrelevant here), then falls through to normal path.
@@ -4315,6 +4431,12 @@ impl CodeGenerator {
                             // reference - render the whole list.
                             self.uses_lists = true;
                             self.emit_indent("call _list_print");
+                        }
+                        Some(VarType::Map) => {
+                            // String literal that is actually a map variable
+                            // reference - render the whole map. (stage 1e2)
+                            self.uses_maps = true;
+                            self.emit_indent("call _map_print");
                         }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
@@ -4377,6 +4499,14 @@ impl CodeGenerator {
                             self.uses_lists = true;
                             self.emit_indent("call _list_print");
                         }
+                        Some(VarType::Map) => {
+                            // Whole-map print: rdi holds the map pointer;
+                            // _map_print walks the entries and renders
+                            // {"key": value, ...} with per-tag dispatch.
+                            // (stage 1e2)
+                            self.uses_maps = true;
+                            self.emit_indent("call _map_print");
+                        }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
                         }
@@ -4408,6 +4538,7 @@ impl CodeGenerator {
                             Expr::StringLit(_) => Some(VarType::String),
                             Expr::BoolLit(_) => Some(VarType::Boolean),
                             Expr::ListLit { .. } => Some(VarType::List),
+                            Expr::MapLit { .. } => Some(VarType::Map),
                             _ => None,
                         }
                     } else {
@@ -4436,6 +4567,13 @@ impl CodeGenerator {
                         self.emit_indent("call _list_print");
                         self.uses_lists = true;
                     }
+                    Some(VarType::Map) => {
+                        // A homogeneous list-of-maps: rdi already holds the
+                        // child map pointer, so recurse into `_map_print`
+                        // (stage 1e2).
+                        self.emit_indent("call _map_print");
+                        self.uses_maps = true;
+                    }
                     Some(VarType::String) => {
                         self.emit_indent("PRINT_CSTR rdi");
                     }
@@ -4450,6 +4588,16 @@ impl CodeGenerator {
                 }
             }
             
+            Expr::MapAccess { .. } => {
+                // A map value read leaves its runtime tag in r11 (mirroring
+                // ElementAccess), so dispatch on it immediately. The map's
+                // value may be any tagged type (stage 1e2).
+                self.generate_expr(value);
+                self.emit_indent("mov rdi, rax");
+                self.uses_maps = true;
+                self.emit_mixed_print_dispatch("r11");
+            }
+
             _ => {
                 let is_float = self.is_float_expr(value);
                 let expr_type = self.infer_expr_type(value);
@@ -4481,6 +4629,11 @@ impl CodeGenerator {
                         // so recurse into `_list_print` (stage 1e1).
                         self.emit_indent("call _list_print");
                         self.uses_lists = true;
+                    } else if matches!(expr_type, Some(VarType::Map)) {
+                        // A bare map literal: rdi holds a map pointer, so
+                        // recurse into `_map_print` (stage 1e2).
+                        self.emit_indent("call _map_print");
+                        self.uses_maps = true;
                     } else {
                         self.emit_indent("PRINT_INT rdi");
                     }
@@ -4522,6 +4675,23 @@ impl CodeGenerator {
         self.generate_expr(expr);
         if self.infer_expr_type(expr) == Some(VarType::Buffer) {
             self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes, data is NUL-terminated)");
+        }
+    }
+
+    /// Materialize a map key expression as a NUL-terminated text pointer in
+    /// `rax`. A quoted key (`"name"`) is ALWAYS the literal text, even when a
+    /// variable with that name exists — otherwise the key would silently
+    /// become the variable's value (e.g. `{"inner": ...}` colliding with a
+    /// later `a map called "inner"` stored the variable's pointer as the key
+    /// and crashed `_map_print`'s C-string read). A non-literal key (a bare
+    /// variable holding text) is evaluated normally. (stage 1e2)
+    fn generate_text_key(&mut self, key: &Expr) {
+        match key {
+            Expr::StringLit(s) => {
+                let label = self.add_string(s);
+                self.emit_indent(&format!("lea rax, [rel {}]  ; literal map key", label));
+            }
+            _ => self.generate_expr(key),
         }
     }
 
@@ -4968,7 +5138,66 @@ impl CodeGenerator {
                 
                 self.emit_indent("pop rax  ; list pointer in rax");
             }
-            
+
+            // Map literal: {"key": value, ...}. Build via _map_new then one
+            // _map_insert per pair. _map_insert may reallocate on growth, so
+            // each call's returned pointer is pushed and becomes the next
+            // call's map operand; the final pointer is left in rax. Keys are
+            // text (validated by the analyzer); values carry their runtime
+            // tag in rcx via the same forwarding pattern as ListAppend.
+            // (stage 1e2, tag 5)
+            Expr::MapLit { pairs } => {
+                self.uses_maps = true;
+                self.emit_indent(&format!(
+                    "; Map literal with {} pair(s)",
+                    pairs.len()
+                ));
+                let hint = std::cmp::max(pairs.len(), 8);
+                self.emit_indent(&format!("mov rdi, {}  ; capacity hint", hint));
+                self.emit_indent("call _map_new");
+                self.emit_indent("push rax  ; save map pointer");
+
+                for (key, value) in pairs {
+                    // key -> rsi (text pointer). A quoted key is always the
+                    // literal text (never a variable reference), so a key
+                    // spelling that collides with a variable name still maps
+                    // to the literal string.
+                    self.generate_text_key(key);
+                    self.emit_indent("push rax  ; save key pointer");
+                    // value -> rdx
+                    self.generate_expr(value);
+                    self.emit_indent("mov rdx, rax  ; value");
+                    // tag -> rcx (forward runtime tag for mixed sources)
+                    match self.emit_time_expr_tag(value) {
+                        Some(tag) => {
+                            self.emit_indent(&format!(
+                                "mov ecx, {}  ; value type tag",
+                                tag
+                            ));
+                        }
+                        None => {
+                            if let Some(slot) = self.mixed_element_tag_slot(value) {
+                                self.emit_indent(&format!(
+                                    "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
+                                    slot
+                                ));
+                            } else if self.expr_leaves_tag_in_r11(value) {
+                                self.emit_indent(
+                                    "mov ecx, r11d  ; forward runtime tag from r11",
+                                );
+                            } else {
+                                self.emit_indent("xor ecx, ecx  ; default integer tag");
+                            }
+                        }
+                    }
+                    self.emit_indent("pop rsi  ; key pointer");
+                    self.emit_indent("pop rdi  ; map pointer");
+                    self.emit_indent("call _map_insert");
+                    self.emit_indent("push rax  ; save (possibly reallocated) map pointer");
+                }
+                self.emit_indent("pop rax  ; final map pointer in rax");
+            }
+
             // ListAccess: 0-indexed access (internal use)
             // MEMORY SAFETY: Always bounds-check before access
             // List structure: [capacity:8][length:8][elem_size:8][data...]
@@ -5050,6 +5279,8 @@ impl CodeGenerator {
                                 self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
                             } else if var_type == VarType::List {
                                 self.emit_indent("mov rax, [rax + 8]  ; list length at offset 8");
+                            } else if var_type == VarType::Map {
+                                self.emit_indent("mov rax, [rax + 8]  ; map length (live entries)");
                             } else {
                                 // For files, call _file_size
                                 self.emit_indent("mov rdi, rax");
@@ -5062,12 +5293,31 @@ impl CodeGenerator {
                         ObjectProperty::Empty => {
                             if var_type == VarType::List {
                                 self.emit_indent("mov rax, [rax + 8]  ; get list length (offset 8)");
+                            } else if var_type == VarType::Map {
+                                self.emit_indent("mov rax, [rax + 8]  ; get map length (offset 8)");
                             } else {
                                 self.emit_indent("mov rax, [rax + 8]  ; get buffer size");
                             }
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setz al");
                             self.emit_indent("movzx rax, al  ; 1 if empty, 0 otherwise");
+                        }
+                        // Map properties: keys/values yield a fresh list of
+                        // the map's keys (text pointers) or values (with their
+                        // runtime tags), in insertion order. Building a list
+                        // forces the list runtime on, so set both flags.
+                        // (stage 1e2, tag 5)
+                        ObjectProperty::Keys => {
+                            self.uses_maps = true;
+                            self.uses_lists = true;
+                            self.emit_indent("mov rdi, rax  ; map pointer");
+                            self.emit_indent("call _map_keys  ; -> rax = list of key texts");
+                        }
+                        ObjectProperty::Values => {
+                            self.uses_maps = true;
+                            self.uses_lists = true;
+                            self.emit_indent("mov rdi, rax  ; map pointer");
+                            self.emit_indent("call _map_values  ; -> rax = list of values (tagged)");
                         }
                         ObjectProperty::Full => {
                             if var_type == VarType::List {
@@ -6017,7 +6267,26 @@ impl CodeGenerator {
                 
                 self.emit(&format!("{}:", done_label));
             }
-            
+
+            // Map key access: person's "name". Loads the map variable, looks
+            // up the key, and returns the value in rax with its runtime tag in
+            // r11 (mirroring ElementAccess). A miss sets _last_error and
+            // yields rax=0/r11=0. (stage 1e2, tag 5)
+            Expr::MapAccess { map, key } => {
+                self.uses_maps = true;
+                self.emit_indent("; Map key access (lookup)");
+                // map pointer -> rax, save on stack
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("push rax  ; save map pointer");
+                // key -> rsi (literal text; never a variable reference)
+                self.generate_text_key(key);
+                self.emit_indent("mov rsi, rax  ; key pointer");
+                self.emit_indent("pop rdi  ; map pointer");
+                self.emit_indent("call _map_lookup");
+                // rax = value, r11 = tag (set by _map_lookup); on miss
+                // _map_lookup sets _last_error=1, rax=0, r11=0.
+            }
+
             // Format string in expression context (e.g. a text initializer
             // or a function argument): materialize it into a fresh dynamic
             // buffer and yield a pointer to the data area - a NUL-terminated
@@ -6242,6 +6511,10 @@ impl CodeGenerator {
             // gets tag 4, and lets a bare `print <list-literal>` route to
             // `_list_print`.
             Expr::ListLit { .. } => Some(VarType::List),
+            // A map literal is a map value (stage 1e2). Lets a bare
+            // `print <map-literal>` route to `_map_print` and a map element's
+            // slot get tag 5.
+            Expr::MapLit { .. } => Some(VarType::Map),
             // A type predicate is boolean-valued; codegen treats booleans as
             // integers (0/1), matching BoolLit above (stage 1c).
             Expr::TypeCheck { .. } => Some(VarType::Integer),
@@ -6266,6 +6539,8 @@ impl CodeGenerator {
                             Some(VarType::Integer)
                         }
                     }
+                    // A map's keys/values yield a list (stage 1e2).
+                    ObjectProperty::Keys | ObjectProperty::Values => Some(VarType::List),
                     ObjectProperty::Size | ObjectProperty::Capacity => Some(VarType::Integer),
                     _ => Some(VarType::Integer),
                 }
@@ -6278,6 +6553,11 @@ impl CodeGenerator {
                     Some(VarType::Integer)
                 }
             }
+            // A map key read yields a runtime-tagged value (the value's type
+            // depends on the key); `_map_lookup` leaves its tag in r11, so the
+            // Mixed/value-ABI machinery handles it. Returning None marks it
+            // unknowable, matching ElementAccess on a mixed list. (stage 1e2)
+            Expr::MapAccess { .. } => None,
             Expr::BinaryOp { left, op, right } => match op {
                 BinaryOperator::Add | BinaryOperator::Subtract | 
                 BinaryOperator::Multiply | BinaryOperator::Divide |
@@ -6910,8 +7190,8 @@ mod tests {
             "_list_print must define the LIST tag constant"
         );
         assert!(
-            list_asm.contains("cmp qword [rel _list_print_depth], 64"),
-            "_list_print must cap recursion at depth 64"
+            list_asm.contains("cmp qword [rel _print_depth], 64"),
+            "_list_print must cap recursion at depth 64 (shared _print_depth, stage 1e2)"
         );
         assert!(
             list_asm.contains("mov qword [rel _last_error], 1"),
@@ -6920,6 +7200,195 @@ mod tests {
         assert!(
             list_asm.contains("je .lp_list") && list_asm.contains("call _list_print"),
             "_list_print must recurse on the LIST tag"
+        );
+    }
+
+    // ---- Stage 1e2: maps (tag 5) ----
+    // These lock the map codegen routing in at the compiler level so a
+    // regression is caught without assembling/linking (plan 050).
+
+    #[test]
+    fn map_literal_emits_map_insert() {
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\n");
+        assert!(
+            asm.contains("call _map_new"),
+            "a map literal must allocate via _map_new"
+        );
+        // One insert per pair.
+        assert_eq!(
+            asm.matches("call _map_insert").count(),
+            2,
+            "expected one _map_insert per pair"
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/map.asm\""),
+            "map usage must include map.asm"
+        );
+    }
+
+    #[test]
+    fn map_literal_empty_emits_map_new() {
+        let asm = compile_to_asm("a map called \"m\" is {}.\nprint m.\n");
+        assert!(
+            asm.contains("call _map_new"),
+            "an empty map literal must still allocate via _map_new"
+        );
+        // No pairs -> no inserts.
+        assert_eq!(
+            asm.matches("call _map_insert").count(),
+            0,
+            "an empty map literal must not insert anything"
+        );
+        assert!(
+            asm.contains("call _map_print"),
+            "printing a map must route to _map_print"
+        );
+    }
+
+    #[test]
+    fn is_a_map_compiles_to_cmp_5() {
+        // Runtime predicate on a value holding a map: the element's tag
+        // travels in r11, so `is a map` compiles to `cmp r11, 5`. Mirrors the
+        // `is a list` test (170) - iterate a mixed list so each item is a
+        // runtime-tagged value.
+        let asm = compile_to_asm(
+            "for each item in [{\"a\": 1}, 2]\n  if item is a map, print \"M\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 5"),
+            "`is a map` on a runtime-tagged value must compare against tag 5"
+        );
+    }
+
+    #[test]
+    fn is_a_map_folds_on_static_map() {
+        // A statically-typed map variable is known to be a map at compile
+        // time, so `is a map` folds to constant true and emits NO runtime
+        // `cmp r11, 5` - the taken-branch print runs unconditionally.
+        let asm = compile_to_asm(
+            "a map called \"m\" is {\"a\": 1}.\nif m is a map, print \"yes\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11, 5"),
+            "`is a map` on a static map variable must fold (no runtime cmp)"
+        );
+        assert!(
+            asm.contains("PRINT_STR") || asm.contains("PRINT_CSTR"),
+            "the folded-true branch's print must still be emitted"
+        );
+    }
+
+    #[test]
+    fn map_access_emits_map_lookup_and_sets_r11() {
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's \"a\".\n");
+        assert!(
+            asm.contains("call _map_lookup"),
+            "map key access must call _map_lookup"
+        );
+        // The looked-up value's tag travels in r11 and is dispatched on.
+        assert!(
+            asm.contains("cmp r11, 1"),
+            "map access print must dispatch on the r11 tag"
+        );
+    }
+
+    #[test]
+    fn map_missing_key_emits_last_error_path() {
+        // _map_lookup sets _last_error on a miss; the codegen doesn't need a
+        // special path (the runtime owns the flag), but the lookup must be
+        // emitted and the error flag must be observable.
+        let asm = compile_to_asm(
+            "a map called \"m\" is {\"a\": 1}.\nprint m's \"nope\".\non error print \"miss\".\n",
+        );
+        assert!(asm.contains("call _map_lookup"));
+        // The on-error handler reads _last_error.
+        assert!(
+            asm.contains("_last_error"),
+            "the on-error handler must reference _last_error"
+        );
+    }
+
+    #[test]
+    fn map_print_dispatch_tag_5() {
+        // Mixed dispatch (used when a map is read into a value slot and
+        // printed) must branch on tag 5 to _map_print. A `value` parameter
+        // carries the map with its tag in a shadow slot, and `print v`
+        // dispatches on it.
+        let asm = compile_to_asm(
+            "To \"show\" with a value called \"v\".\n  print v.\n\na map called \"m\" is {\"a\": 1}.\n\"show\" of m.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 5") && asm.contains("call _map_print"),
+            "mixed print dispatch must branch on tag 5 to _map_print"
+        );
+    }
+
+    #[test]
+    fn map_asm_has_fnv_constants() {
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            map_asm.contains("0xcbf29ce484222325"),
+            "map.asm must define the FNV-1a 64-bit offset basis"
+        );
+        assert!(
+            map_asm.contains("0x100000001b3"),
+            "map.asm must define the FNV-1a 64-bit prime"
+        );
+    }
+
+    #[test]
+    fn map_print_depth_guard_shared() {
+        // The recursion-depth counter was renamed from _list_print_depth to a
+        // shared _print_depth so a mixed map/list tree is cycle-safe under
+        // one 64-deep budget. Both printers must reference the shared name.
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            !list_asm.contains("_list_print_depth"),
+            "list.asm must no longer reference the old _list_print_depth"
+        );
+        assert!(
+            list_asm.contains("_print_depth"),
+            "list.asm must reference the shared _print_depth"
+        );
+        assert!(
+            map_asm.contains("_print_depth"),
+            "map.asm must reference the shared _print_depth"
+        );
+    }
+
+    #[test]
+    fn homogeneous_map_values_dont_widen() {
+        // A whole-map print routes straight to _map_print (which reads each
+        // entry's stored tag); it must NOT emit the mixp_ dispatch for the
+        // whole-map print itself.
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\nprint m.\n");
+        assert!(
+            asm.contains("call _map_print"),
+            "whole-map print must route to _map_print"
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous whole-map print must not emit mixp_ dispatch"
+        );
+    }
+
+    #[test]
+    fn keys_values_sets_uses_lists() {
+        // `map's keys`/`values` build a fresh list, so both list.asm and
+        // map.asm must be included.
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's keys.\n");
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/map.asm\""),
+            "keys/values must include map.asm"
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/list.asm\""),
+            "keys/values must also include list.asm (they build a list)"
+        );
+        assert!(
+            asm.contains("call _map_keys"),
+            "map's keys must call _map_keys"
         );
     }
 }

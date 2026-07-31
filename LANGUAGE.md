@@ -250,6 +250,7 @@ If the loop variable equals `<match>`, it's replaced with `<replacement>` for th
 | String | `text` | Text strings |
 | Boolean | `boolean` | `true` or `false` |
 | List | `list` | Collection of items |
+| Map | `map` | Key/value collection (JSON object; text keys) |
 | Buffer | `buffer` | Memory block for I/O (dynamic or fixed-size) |
 | File | `file` | File descriptor handle (auto-cleaned) |
 | Time | `time` | Date/time value (unix timestamp with components) |
@@ -268,6 +269,7 @@ a number called "x" is 5.
 a text called "name" is "Alice".
 a boolean called "flag" is true.
 a list called "numbers" is [1, 2, 3].
+a map called "person" is {"name": "Alice", "age": 30}.
 ```
 
 ### Declaration with Set/Create
@@ -334,11 +336,12 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 
 ### Parameter and Local Types (v0.1.16)
 
-Parameters may use any variable type, including `buffer`, `list`, and
-`file` - and a typed parameter supports the same properties and
+Parameters may use any variable type, including `buffer`, `list`, `map`,
+and `file` - and a typed parameter supports the same properties and
 operations as a top-level variable of that type. A parameter (or return
 type) may also be `value`, the dynamic type whose runtime tag travels with
-its payload across the call; see [Dynamic Values (`value`)](#dynamic-values-value)
+its payload across the call (a map rides this as payload + tag 5); see
+[Dynamic Values (`value`)](#dynamic-values-value)
 below.
 
 ```
@@ -875,6 +878,76 @@ nested}"` — has no runtime-tag dispatch, so a nested list does not render
 there; use the *variable* form `print "{nested}"` (or `print element 2 of
 nested.`) instead. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
+### Maps
+
+A map is a key/value collection — a JSON object. Keys are text; values may
+be any type (number, text, decimal, boolean, list, or another map). A map
+literal uses braces with `"key": value` pairs, and an empty map is `{}`:
+
+```
+a map called "person" is {"name": "Ada", "age": 36}.
+a map called "empty" is {}.
+print person.            (prints: {"name": "Ada", "age": 36})
+print empty.             (prints: {})
+```
+
+Read a value by key with `map's "key"` (the key is a text literal; a
+quoted key with `{...}` interpolation builds a dynamic key). The value
+carries its runtime tag, so a text prints as text and a number as a
+number:
+
+```
+print person's "name".   (prints: Ada)
+print person's "age".    (prints: 36)
+```
+
+Insert or replace an entry with `Set map's "key" to value` (mirroring
+`Set element N of list to …`). The map may reallocate on growth, so the
+returned pointer is stored back into the variable automatically:
+
+```
+set person's "age" to 37.
+print person's "age".    (prints: 37)
+print person's length.   (prints: 2 — replace, not insert)
+```
+
+The properties `length` (live entry count) and `empty` (true when zero
+entries) work as for lists. `keys` and `values` each yield a fresh list,
+in insertion order, for iteration:
+
+```
+for each key in person's keys, print key.   (prints: name, then age)
+for each v in person's values, print v.     (prints: Ada, then 37)
+```
+
+A missing key does not crash: the lookup yields 0 and sets the error
+flag, so an `on error` handler can react (there is no `null` value yet —
+that arrives with the JSON parser in a later stage):
+
+```
+print person's "nope".    (prints: 0)
+on error print "missing". (prints: missing)
+```
+
+A map value may be a list or another map, and printing is recursive:
+`_map_print` renders `{"key": value, …}` and shares the same 64-deep
+`_print_depth` budget as `_list_print`, so a mixed map/list tree is
+cycle-safe. A self-referential map (`set m's "self" to m.`) prints 64
+levels deep, then `...`, sets the error flag, and unwinds safely.
+
+The `is a map` predicate recognises a map (runtime tag 5): it folds to
+true on a statically-typed map variable and compares the tag at run time
+on a mixed value. A map also rides the `value` ABI (see Values): a map
+passed to a `value` parameter or returned from a `value` function carries
+its tag (5) alongside the payload, so it round-trips through functions
+intact.
+
+A map may also be an element of a list (`[{"a": 1}, {"b": 2}]`) — the
+slot carries the map tag (5) and a `For each` over such a list types the
+loop variable as a map. Two limitations remain for this stage: keys are
+text only (a non-text key is rejected with "Map keys must be text"), and
+there is no entry deletion. See `docs/COLLECTIONS_ROADMAP.md`.
+
 ### Type Predicates
 
 You can ask what type a value actually holds and branch on it. The
@@ -891,9 +964,10 @@ For each item in m,
 (prints: number: 1 / text: two / decimal: 3.5 / boolean: 1)
 ```
 
-The type nouns are `number`, `text`, `decimal`, `boolean`, and `list`. The
-declaration synonyms also work (`integer`→number, `string`→text,
-`float`/`real`→decimal, `bool`→boolean). Negate with `is not a`:
+The type nouns are `number`, `text`, `decimal`, `boolean`, `list`, and
+`map`. The declaration synonyms also work (`integer`→number, `string`→text,
+`float`/`real`→decimal, `bool`→boolean, `dictionary`→map). Negate with
+`is not a`:
 
 ```
 if item is not a number, print "not a number".
@@ -1025,10 +1099,11 @@ renders exactly as it does when printed individually: text elements are
 quoted (so `["1"]` is distinguishable from `[1]`), booleans as `1`/`0`,
 floats and numbers as usual. Empty lists print `[]`. A nested list
 element renders recursively with the same rules (see Nested Lists above),
-so `[1, [2, 3], "four"]` prints with inner brackets intact. The same
-rendering appears inside the *variable* form of `{...}` format
-interpolation (`print "{xs}"`); the *expression* form (`print "{element 2
-of xs}"`) does not dispatch on a nested element's runtime tag.
+so `[1, [2, 3], "four"]` prints with inner brackets intact. A map element
+(or a whole map) renders as `{"key": value, …}` via `_map_print` (see Maps
+above). The same rendering appears inside the *variable* form of `{...}`
+format interpolation (`print "{xs}"`); the *expression* form (`print
+"{element 2 of xs}"`) does not dispatch on a nested element's runtime tag.
 
 ### List Properties
 

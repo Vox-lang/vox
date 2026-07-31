@@ -27,7 +27,7 @@ pub enum Token {
     From, To, Between, In, Of, On, The, A, An, All, Treating,
     
     // Types
-    Number, Float, Int, Text, Boolean, List, True, False,
+    Number, Float, Int, Text, Boolean, List, Map, True, False,
     
     // File I/O Types and Keywords
     Buffer, File, Bytes, Size, Into, Reading, Writing, Appending, Standard, Input,
@@ -37,7 +37,7 @@ pub enum Token {
     
     // Property Access
     Apostrophe, Capacity, Descriptor, Modified, Accessed, Permissions,
-    Readable, Writable, Full, First, Last, Absolute, Sign,
+    Readable, Writable, Full, First, Last, Keys, Values, Absolute, Sign,
     
     // Error Handling
     Error, Auto, Enable, Disable,
@@ -313,6 +313,7 @@ impl Token {
             Token::Text => Some("text"),
             Token::Boolean => Some("boolean"),
             Token::List => Some("list"),
+            Token::Map => Some("map"),
             Token::True => Some("true"),
             Token::False => Some("false"),
             // File I/O Types and Keywords
@@ -345,6 +346,8 @@ impl Token {
             Token::Full => Some("full"),
             Token::First => Some("first"),
             Token::Last => Some("last"),
+            Token::Keys => Some("keys"),
+            Token::Values => Some("values"),
             Token::Absolute => Some("absolute"),
             Token::Sign => Some("sign"),
             // Error Handling
@@ -780,6 +783,7 @@ impl<'a> Lexer<'a> {
             "text" | "string" | "message" => Token::Text,
             "boolean" | "bool" => Token::Boolean,
             "list" | "array" | "collection" => Token::List,
+            "map" | "dictionary" => Token::Map,
             "true" | "yes" => Token::True,
             "false" | "no" => Token::False,
             "even" => Token::Even,
@@ -821,6 +825,8 @@ impl<'a> Lexer<'a> {
             "full" => Token::Full,
             "first" => Token::First,
             "last" => Token::Last,
+            "keys" => Token::Keys,
+            "values" => Token::Values,
             "absolute" | "abs" => Token::Absolute,
             "sign" => Token::Sign,
             // Library system

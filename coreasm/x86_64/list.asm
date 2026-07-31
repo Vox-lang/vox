@@ -41,6 +41,11 @@ section .text
 %define LIST_TAG_BOOLEAN        3
 %define LIST_TAG_LIST           4
 
+; Guard tested by map.asm: _map_print's LIST-tag branch calls _list_print,
+; so it assembles that branch only when list.asm has been included. list.asm
+; is included before map.asm, so this define is visible. (stage 1e2)
+%define __LIST_ASM_INCLUDED__
+
 ; Compute the address of the tag byte for a 0-based index.
 ; Args: %1 = destination register, %2 = list base register, %3 = 0-based
 ;       index register. %1 must differ from %2 and %3; clobbers only %1.
@@ -588,9 +593,8 @@ section .data
     ; cyclic structure would otherwise recurse forever).
     _lp_trunc:     db "..."
     _lp_trunc_len: equ $ - _lp_trunc
-    ; Reentrancy-safe recursion depth counter for _list_print. inc'd on
-    ; entry, dec'd on every exit path; returns to 0 between top-level prints.
-    _list_print_depth: dq 0
+    ; The recursion-depth counter (_print_depth) lives in core.asm so it is
+    ; shared with _map_print (one budget for a mixed map/list tree).
 
 section .text
 _list_print:
@@ -602,8 +606,8 @@ _list_print:
     ; Depth guard (stage 1e1): cap recursion at 64 levels so a cyclic list
     ; (e.g. `append x to x`) terminates instead of overflowing the stack.
     ; On overflow, set the error flag, print a truncation marker, and return.
-    inc qword [rel _list_print_depth]
-    cmp qword [rel _list_print_depth], 64
+    inc qword [rel _print_depth]
+    cmp qword [rel _print_depth], 64
     jg .lp_depth
 
     mov rbx, rdi                        ; rbx = list pointer
@@ -674,7 +678,7 @@ _list_print:
 .lp_close:
     PRINT_STR _lp_rbrk, _lp_rbrk_len
 
-    dec qword [rel _list_print_depth]
+    dec qword [rel _print_depth]
     pop r14
     pop r13
     pop r12
@@ -686,7 +690,7 @@ _list_print:
     ; truncation marker in place of the over-deep subtree, then unwind.
     mov qword [rel _last_error], 1
     PRINT_STR _lp_trunc, _lp_trunc_len
-    dec qword [rel _list_print_depth]
+    dec qword [rel _print_depth]
     pop r14
     pop r13
     pop r12

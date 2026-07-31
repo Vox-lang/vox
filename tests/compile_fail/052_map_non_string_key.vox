@@ -1,0 +1,5 @@
+(Stage 1e2 - map keys must be text. A non-text key literal is rejected by
+ the analyzer with "Map keys must be text" — JSON objects require string
+ keys, and the runtime hashes/compares key C-strings.)
+
+a map called "m" is {1: "x"}.

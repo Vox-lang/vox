@@ -1154,7 +1154,28 @@ impl Parser {
             let value = self.parse_expression()?;
             return Ok(Statement::ElementSet { list, index, value });
         }
-        
+
+        // Handle "Set <map>'s \"<key>\" to <value>" (map insert/replace).
+        // The target `<map>'s \"<key>\"` parses as an Expr::MapAccess, so we
+        // tentatively parse a primary and commit only if it is a MapAccess
+        // followed by `to`. Otherwise we restore position and let the
+        // generic declaration/assignment path below handle it (e.g.
+        // `Set x to 5.`). (stage 1e2, tag 5)
+        if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+            let saved = self.pos;
+            let target = self.parse_primary();
+            if let Ok(Expr::MapAccess { map, key }) = target {
+                self.skip_noise();
+                if *self.current() == Token::To {
+                    self.advance();
+                    self.skip_noise();
+                    let value = self.parse_expression()?;
+                    return Ok(Statement::MapSet { map, key: *key, value });
+                }
+            }
+            self.pos = saved;
+        }
+
         // Handle "the/a/an <type> called <name>" pattern
         if matches!(self.current(), Token::The | Token::A | Token::An) {
             self.advance();
@@ -1421,7 +1442,8 @@ impl Parser {
                 Some(Type::Value)
             }
             Token::List => { self.advance(); Some(Type::List(Box::new(Type::Unknown))) }
-            Token::Buffer => { 
+            Token::Map => { self.advance(); Some(Type::Map(Box::new(Type::Unknown))) }
+            Token::Buffer => {
                 self.advance();
                 self.skip_noise();
                 
@@ -3983,6 +4005,7 @@ impl Parser {
                         Token::File => { self.advance(); Type::File }
                         Token::Buffer => { self.advance(); Type::Buffer }
                         Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
+                        Token::Map => { self.advance(); Type::Map(Box::new(Type::Unknown)) }
                         // `value` is not a reserved keyword (it stays a usable
                         // identifier everywhere else); in a parameter type
                         // position it denotes the dynamic `value` type.
@@ -4338,8 +4361,11 @@ impl Parser {
             // `is a list` type predicate (stage 1e1): a list value carries
             // tag 4, so this folds/compares against TAG_LIST.
             Token::List => { self.advance(); Ok(Type::List(Box::new(Type::Unknown))) }
+            // `is a map` type predicate (stage 1e2): a map value carries
+            // tag 5, so this folds/compares against TAG_MAP.
+            Token::Map => { self.advance(); Ok(Type::Map(Box::new(Type::Unknown))) }
             _ => Err(self.err(
-                "Expected a type noun (number, text, decimal, boolean, or list) after 'is a'"
+                "Expected a type noun (number, text, decimal, boolean, list, or map) after 'is a'"
             )),
         }
     }
@@ -4915,10 +4941,51 @@ impl Parser {
             Token::OpenBrace => {
                 self.advance();
                 self.skip_noise();
-                let expr = self.parse_expression()?;
+                // Disambiguate a map literal from a grouping {expr}:
+                //   {}                -> empty map
+                //   {k: v, ...}       -> map literal (a colon follows the
+                //                        first expression)
+                //   {expr}            -> grouping (existing behaviour)
+                // Parse the first expression, then branch on whether a colon
+                // follows. This lets a non-text key (e.g. {1: "x"}) reach the
+                // analyzer's "Map keys must be text" check rather than being
+                // rejected as a malformed grouping. (stage 1e2)
+                if *self.current() == Token::CloseBrace {
+                    self.advance();
+                    return Ok(Expr::MapLit { pairs: vec![] });
+                }
+                let first = self.parse_expression()?;
                 self.skip_noise();
+                if *self.current() == Token::Colon {
+                    let mut pairs = Vec::new();
+                    self.advance(); // consume colon
+                    self.skip_noise();
+                    let first_value = self.parse_expression()?;
+                    pairs.push((first, first_value));
+                    loop {
+                        self.skip_noise();
+                        if *self.current() != Token::Comma {
+                            break;
+                        }
+                        self.advance();
+                        self.skip_noise();
+                        // tolerate a trailing comma before the close brace
+                        if *self.current() == Token::CloseBrace {
+                            break;
+                        }
+                        let key = self.parse_expression()?;
+                        self.skip_noise();
+                        self.expect(&Token::Colon);
+                        self.skip_noise();
+                        let value = self.parse_expression()?;
+                        pairs.push((key, value));
+                    }
+                    self.expect(&Token::CloseBrace);
+                    return Ok(Expr::MapLit { pairs });
+                }
+                // grouping
                 self.expect(&Token::CloseBrace);
-                Ok(expr)
+                Ok(first)
             }
             Token::Byte => {
                 // byte N of buffer
@@ -5012,6 +5079,9 @@ impl Parser {
                                 Token::Capacity => ObjectProperty::Capacity,
                                 Token::Empty => ObjectProperty::Empty,
                                 Token::Full => ObjectProperty::Full,
+                                // Map properties
+                                Token::Keys => ObjectProperty::Keys,
+                                Token::Values => ObjectProperty::Values,
                                 // Time properties
                                 Token::Hour => ObjectProperty::Hour,
                                 Token::Minute => ObjectProperty::Minute,
@@ -5024,6 +5094,18 @@ impl Parser {
                                 Token::Duration => ObjectProperty::Duration,
                                 Token::Elapsed => ObjectProperty::Elapsed,
                                 Token::Running => ObjectProperty::Running,
+                                // Map key access on a quoted variable: "person"'s "name"
+                                // (text key). A quoted key with `{...}` interpolation
+                                // materializes a fresh text. (stage 1e2)
+                                Token::StringLiteral(k) => {
+                                    let k = k.clone();
+                                    self.advance();
+                                    self.skip_noise();
+                                    return Ok(Expr::MapAccess {
+                                        map: s,
+                                        key: Box::new(self.string_value_expr(k)),
+                                    });
+                                }
                                 // Handle single-quoted multi-word property names and 'start'
                                 Token::Identifier(ref prop_name) => {
                                     match prop_name.to_lowercase().as_str() {
@@ -5345,6 +5427,20 @@ impl Parser {
                                 }
                             }
                             
+                            // Map key access: person's "name" (text-literal key).
+                            // Keys are text in stage 1e2; a quoted key with
+                            // `{...}` interpolation materializes a fresh text
+                            // (so `m's "key{i}"` builds a dynamic key). An
+                            // unquoted identifier here is a property name.
+                            if let Token::StringLiteral(k) = self.current().clone() {
+                                self.advance();
+                                self.skip_noise();
+                                return Ok(Expr::MapAccess {
+                                    map: name,
+                                    key: Box::new(self.string_value_expr(k)),
+                                });
+                            }
+
                             // Parse property name for other objects
                             let property = match self.current() {
                                 // Buffer properties
@@ -5364,6 +5460,10 @@ impl Parser {
                                 // List properties
                                 Token::First => ObjectProperty::First,
                                 Token::Last => ObjectProperty::Last,
+
+                                // Map properties
+                                Token::Keys => ObjectProperty::Keys,
+                                Token::Values => ObjectProperty::Values,
 
                                 // Number properties
                                 Token::Absolute => ObjectProperty::Absolute,

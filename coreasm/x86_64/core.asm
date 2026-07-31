@@ -6,6 +6,12 @@
 section .bss
     _last_error: resq 1      ; 0 = no error, non-zero = error code
     _call_depth: resq 1      ; current function call depth (recursion guard)
+    ; Shared recursion-depth counter for the recursive printers (_list_print
+    ; and _map_print). inc'd on entry, dec'd on every exit path, so it returns
+    ; to 0 between top-level prints. Lives here (not in list.asm/map.asm) so a
+    ; mixed map/list tree is cycle-safe under ONE 64-deep budget regardless of
+    ; which runtime is included. (stage 1e2)
+    _print_depth: resq 1
 
 section .data
     _max_call_depth: dq 10000          ; maximum recursion depth

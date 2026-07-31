@@ -1,0 +1,7 @@
+(Stage 1e2 - empty map literal. {} allocates a zero-length map; length
+ is 0 and empty is 1 (true). Acceptance: {}, 0, 1.)
+
+a map called "e" is {}.
+print e.
+print e's length.
+print e's empty.
