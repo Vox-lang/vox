@@ -901,8 +901,21 @@ After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
 — the value return brought each tag back out, and the append forwarded it.
 
 **`value` is not a reserved word.** It is recognized only where a type is
-expected (a parameter type, a return type, or `a value called "x"`), so you
-can still name a variable `value` anywhere else.
+expected: a parameter type, a return type, or directly before `called` in
+`a value called "x"`. Everywhere else it is an ordinary identifier, so
+`a value is 5.` still declares a variable named `value`.
+
+A `value` local keeps its tag through reassignment, so `set r to 7.`
+retags it as a number:
+
+```
+To "echo" with a value called "v". Return a value, v.
+
+a value called "r" is "echo" of "hello".
+print r.                      (prints: hello)
+set r to 7.
+If r is a number, print "now a number".
+```
 
 **A `value` is not usable in arithmetic without checking its type first.**
 Because a `value` might hold a string or a decimal, the compiler rejects

@@ -1630,33 +1630,22 @@ impl CodeGenerator {
     }
 
     /// Where the runtime type tag of `e` can be found immediately after
-    /// `generate_expr(e)` has run.
+    /// `generate_expr(e)` has run, or `None` when `e` carries no tag at all.
     ///
-    /// Only two forms carry one. A read out of a Mixed list leaves the slot's
-    /// tag byte in `r11` - and only while nothing has intervened, since any
-    /// `call` or `syscall` clobbers r11. A Mixed *variable* keeps its tag in a
-    /// shadow stack slot, which survives anything. For every other expression
-    /// r11 holds an unrelated value, so comparing against it reads garbage;
-    /// callers must fall back to a static answer instead.
+    /// A Mixed *variable* keeps its tag in a shadow stack slot, which survives
+    /// anything. Everything else that has a tag leaves it in r11 (see
+    /// `expr_leaves_tag_in_r11`), where it is only valid until the next call or
+    /// syscall. For any other expression r11 holds an unrelated value, so
+    /// comparing against it reads garbage - callers must fall back to a static
+    /// answer instead.
     fn runtime_tag_source(&self, e: &Expr) -> Option<RuntimeTagSource> {
         if let Some(off) = self.mixed_element_tag_slot(e) {
             return Some(RuntimeTagSource::ShadowSlot(off));
         }
-        match e {
-            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. }
-                if self.list_expr_is_mixed(list) =>
-            {
-                Some(RuntimeTagSource::R11)
-            }
-            Expr::PropertyAccess { object, property }
-                if matches!(property, ObjectProperty::First | ObjectProperty::Last)
-                    && (self.mixed_lists.contains(object)
-                        || self.list_element_types.get(object) == Some(&VarType::Mixed)) =>
-            {
-                Some(RuntimeTagSource::R11)
-            }
-            _ => None,
+        if self.expr_leaves_tag_in_r11(e) {
+            return Some(RuntimeTagSource::R11);
         }
+        None
     }
 
     /// Static tag for a *type predicate* operand. Identical to
@@ -1803,7 +1792,9 @@ impl CodeGenerator {
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(name) == Some(&VarType::Mixed)
             }
-            Expr::ElementAccess { list, .. } => self.list_expr_is_mixed(list),
+            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
+                self.list_expr_is_mixed(list)
+            }
             Expr::PropertyAccess { object, property }
                 if matches!(property, ObjectProperty::First | ObjectProperty::Last) =>
             {
@@ -4342,17 +4333,18 @@ impl CodeGenerator {
             _ => {
                 let is_float = self.is_float_expr(value);
                 let expr_type = self.infer_expr_type(value);
-                // `mixed's first` / `mixed's last`: the property read leaves
-                // the slot's type tag in r11 - dispatch on it immediately.
-                let mixed_property = matches!(
-                    value,
-                    Expr::PropertyAccess { object, property }
-                        if matches!(property, ObjectProperty::First | ObjectProperty::Last)
-                            && (self.mixed_lists.contains(object)
-                                || self.list_element_types.get(object) == Some(&VarType::Mixed))
-                );
+                // A value carrying a runtime tag - `mixed's first`/`last`, a
+                // mixed element read, or a `value`-returning call - must be
+                // rendered by that tag, not by its static type. The tag is only
+                // valid until the next call or syscall, so capture it here.
+                let tag_source = self.runtime_tag_source(value);
                 self.generate_expr(value);
-                if mixed_property {
+                if let Some(src) = tag_source {
+                    if let RuntimeTagSource::ShadowSlot(off) = src {
+                        self.emit_indent(&format!(
+                            "movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off
+                        ));
+                    }
                     self.emit_indent("mov rdi, rax");
                     self.emit_mixed_print_dispatch("r11");
                 } else if is_float {

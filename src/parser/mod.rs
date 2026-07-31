@@ -1413,6 +1413,13 @@ impl Parser {
             Token::Float => { self.advance(); Some(Type::Float) }
             Token::Text => { self.advance(); Some(Type::String) }
             Token::Boolean => { self.advance(); Some(Type::Boolean) }
+            // `value` is not a reserved keyword, so it only denotes the dynamic
+            // type when it sits in a type position - here, directly before
+            // `called`. `a value is 5.` still declares a variable named value.
+            Token::Identifier(n) if n == "value" && *self.peek(1) == Token::Called => {
+                self.advance();
+                Some(Type::Value)
+            }
             Token::List => { self.advance(); Some(Type::List(Box::new(Type::Unknown))) }
             Token::Buffer => { 
                 self.advance();

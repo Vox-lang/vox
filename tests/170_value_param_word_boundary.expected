@@ -1,0 +1,8 @@
+w8 text f=6
+w8 num 99 f=6
+w9 text g=7
+w9 num 88 g=7
+vfirst text b=2
+vfirst num 77 b=2
+twovals v-text a=5
+twovals v-num a=5
