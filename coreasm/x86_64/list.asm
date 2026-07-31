@@ -15,11 +15,41 @@ section .text
 ;   offset 8:  length (8 bytes) - current number of elements
 ;   offset 16: element_size (8 bytes) - size of each element in bytes
 ;   offset 24: data starts here - elements stored contiguously
+;   offset 24 + capacity*element_size: type tags - one byte per slot
+;
+; Type tags make heterogeneous lists work: each slot records what kind of
+; value it holds so reads can be dispatched correctly at runtime. Every
+; list allocation must therefore reserve capacity extra bytes after the
+; data region. Allocations come from mmap (zero-filled), so untagged
+; slots default to TAG_INTEGER - homogeneous lists never touch tags and
+; keep their statically-typed fast path.
+;
+; Tag values:
+;   0 = integer (default; also the fallback for unknown)
+;   1 = string  (slot holds a NUL-terminated C-string pointer)
+;   2 = float   (slot holds an IEEE 754 double's bit pattern)
+;   3 = boolean (slot holds 0 or 1)
 
 %define LIST_CAPACITY_OFFSET    0
 %define LIST_LENGTH_OFFSET      8
 %define LIST_ELEMSIZE_OFFSET    16
 %define LIST_DATA_OFFSET        24
+
+%define LIST_TAG_INTEGER        0
+%define LIST_TAG_STRING         1
+%define LIST_TAG_FLOAT          2
+%define LIST_TAG_BOOLEAN        3
+
+; Compute the address of the tag byte for a 0-based index.
+; Args: %1 = destination register, %2 = list base register, %3 = 0-based
+;       index register. %1 must differ from %2 and %3; clobbers only %1.
+; tag_addr = base + LIST_DATA_OFFSET + capacity * element_size + index
+%macro LIST_TAG_ADDR 3
+    mov %1, [%2 + LIST_CAPACITY_OFFSET]
+    imul %1, [%2 + LIST_ELEMSIZE_OFFSET]
+    add %1, %3
+    lea %1, [%2 + %1 + LIST_DATA_OFFSET]
+%endmacro
 
 ; ============================================================================
 ; LIST PROPERTIES
@@ -314,10 +344,11 @@ section .text
 ; LIST APPEND FUNCTION (with reallocation)
 ; ============================================================================
 ; _list_append - Append an element to a list, growing if necessary
-; Args: rdi = list pointer, rsi = value to append
+; Args: rdi = list pointer, rsi = value to append, dl = type tag
+;       (LIST_TAG_* - callers appending to homogeneous lists pass 0)
 ; Returns: rax = new list pointer (may differ if reallocated)
 ; 
-; List structure: [capacity:8][length:8][elem_size:8][data...]
+; List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
 ;
 _list_append:
     push rbx
@@ -326,9 +357,11 @@ _list_append:
     push r12
     push r13
     push r14
+    push r15
     
     mov rbx, rdi                    ; rbx = list pointer
     mov r12, rsi                    ; r12 = value to append
+    movzx r15, dl                   ; r15 = type tag
     
     mov rcx, [rbx + LIST_LENGTH_OFFSET]     ; current length
     mov rdx, [rbx + LIST_CAPACITY_OFFSET]   ; capacity
@@ -338,7 +371,12 @@ _list_append:
     jge .need_realloc
     
     ; We have space - append directly
-    mov rax, [rbx + LIST_ELEMSIZE_OFFSET]   ; element size
+    ; Store the tag first: tag_addr = base + 24 + capacity*elem_size + length
+    mov rax, [rbx + LIST_ELEMSIZE_OFFSET]
+    imul rdx, rax                           ; capacity * elem_size
+    lea rdx, [rbx + rdx + LIST_DATA_OFFSET]
+    mov [rdx + rcx], r15b                   ; tags[length] = tag
+
     imul rcx, rax                           ; offset = length * elem_size
     
     lea rax, [rbx + LIST_DATA_OFFSET]
@@ -364,9 +402,11 @@ _list_append:
     
 .do_alloc:
     ; Calculate new size: header (24) + capacity * element_size
+    ;                     + capacity tag bytes
     mov rax, [rbx + LIST_ELEMSIZE_OFFSET]
     mov r14, rax                            ; r14 = element size
     imul rax, r13                           ; data size
+    add rax, r13                            ; + tag bytes (1 per slot)
     add rax, LIST_DATA_OFFSET               ; + header
     
     ; Allocate new memory using mmap
@@ -412,8 +452,28 @@ _list_append:
     rep movsb                               ; no-op when rcx = 0
     pop rdi                                 ; rdi = new list pointer
 
-    ; Now append the new element
+    ; Copy type tags: old tags start at old_base + 24 + old_cap*elem_size,
+    ; new tags at new_base + 24 + new_cap*elem_size. One byte per element.
+    push rdi                                ; save new list base
+    mov rax, [rbx + LIST_CAPACITY_OFFSET]
+    imul rax, r14
+    lea rsi, [rbx + rax + LIST_DATA_OFFSET] ; source = old tags
+    mov rax, r13
+    imul rax, r14
+    lea rdi, [rdi + rax + LIST_DATA_OFFSET] ; dest = new tags
+    mov rcx, [rbx + LIST_LENGTH_OFFSET]     ; one tag byte per element
+    rep movsb                               ; no-op when rcx = 0
+    pop rdi                                 ; rdi = new list pointer
+
+    ; Store the tag for the appended element:
+    ; tag_addr = new_base + 24 + new_cap*elem_size + length
     mov rcx, [rdi + LIST_LENGTH_OFFSET]
+    mov rax, r13
+    imul rax, r14
+    lea rax, [rdi + rax + LIST_DATA_OFFSET]
+    mov [rax + rcx], r15b                   ; tags[length] = tag
+
+    ; Now append the new element
     mov rax, r14                            ; element size
     imul rcx, rax
     
@@ -426,6 +486,7 @@ _list_append:
     mov rax, rdi                            ; return new pointer
     
 .done:
+    pop r15
     pop r14
     pop r13
     pop r12

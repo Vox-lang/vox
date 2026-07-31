@@ -13,6 +13,15 @@ pub struct CodeGenerator {
     variable_types: HashMap<String, VarType>,
     global_constants: HashMap<String, Expr>,
     list_element_types: HashMap<String, VarType>,
+    // Lists proven heterogeneous by the pre-scan pass: their element reads
+    // and prints dispatch on the per-slot runtime tag instead of a single
+    // static element type. Homogeneous lists never enter this set and keep
+    // the statically-typed fast path unchanged.
+    mixed_lists: std::collections::HashSet<String>,
+    // Stack slot ([rbp - offset]) holding the runtime type tag for each
+    // Mixed-typed scalar variable (e.g. a for-each loop variable over a
+    // mixed list). Written when the element is read, consulted on print.
+    mixed_tag_slots: HashMap<String, i64>,
     file_writable: HashMap<String, bool>,
     stack_offset: i64,
     shared_lib_mode: bool,
@@ -63,8 +72,17 @@ enum VarType {
     Buffer,      // Dynamic buffer struct (has header)
     List,        // List struct [length, elem0, elem1, ...]
     Boolean,
+    Mixed,       // Runtime-tagged value from a heterogeneous list; the
+                 // actual type is dispatched via a per-slot tag byte
     Unknown,
 }
+
+// Per-slot list type tags. Must match LIST_TAG_* in coreasm/*/list.asm.
+// 0 is integer so zero-filled (mmap'd) tag regions default correctly.
+const TAG_INTEGER: u8 = 0;
+const TAG_STRING: u8 = 1;
+const TAG_FLOAT: u8 = 2;
+const TAG_BOOLEAN: u8 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 enum IntegerBase {
@@ -109,6 +127,8 @@ impl CodeGenerator {
             variable_types: HashMap::new(),
             global_constants: HashMap::new(),
             list_element_types: HashMap::new(),
+            mixed_lists: std::collections::HashSet::new(),
+            mixed_tag_slots: HashMap::new(),
             file_writable: HashMap::new(),
             stack_offset: 0,
             shared_lib_mode: false,
@@ -1024,7 +1044,250 @@ impl CodeGenerator {
         self.parsed_args_active
     }
     
+    /// Static classification of an expression into a list slot tag, using
+    /// only what's knowable without emitting code. `env` maps scalar
+    /// variable names to their literal-derived tags (best effort).
+    fn prescan_expr_tag(e: &Expr, env: &HashMap<String, u8>) -> Option<u8> {
+        match e {
+            Expr::IntegerLit(_) => Some(TAG_INTEGER),
+            Expr::StringLit(s) => {
+                // A quoted name can be a variable reference in Vox; if we
+                // tracked it as a scalar, use that. Otherwise it's a string.
+                env.get(s).copied().or(Some(TAG_STRING))
+            }
+            Expr::FloatLit(_) => Some(TAG_FLOAT),
+            Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            Expr::Identifier(name) => env.get(name).copied(),
+            _ => None,
+        }
+    }
+
+    /// Pre-scan pass: walk the whole program and decide, before any code is
+    /// emitted, which lists are heterogeneous ("mixed"). A list is mixed
+    /// when there is positive evidence of two distinct element types: a
+    /// mixed list literal, or an append/element-set whose value's type
+    /// provably differs from the list's established element type.
+    ///
+    /// Conservative by design: values whose type can't be determined
+    /// statically (e.g. function results) never mark a list mixed, so
+    /// every homogeneous list keeps today's static fast path. Aliasing a
+    /// mixed list (`a list called "b" is the a.`) propagates mixedness.
+    fn prescan_mixed_lists(&mut self, statements: &[Statement]) {
+        // Iterate to a fixed point so aliases and later evidence propagate
+        // regardless of declaration order (bounded: each pass can only add).
+        let mut env: HashMap<String, u8> = HashMap::new();
+        let mut list_seen_tags: HashMap<String, u8> = HashMap::new();
+        loop {
+            let before = self.mixed_lists.len();
+            env.clear();
+            list_seen_tags.clear();
+            self.prescan_walk(statements, &mut env, &mut list_seen_tags);
+            if self.mixed_lists.len() == before {
+                break;
+            }
+        }
+    }
+
+    fn prescan_note_list_value(
+        &mut self,
+        list: &str,
+        tag: Option<u8>,
+        list_seen_tags: &mut HashMap<String, u8>,
+    ) {
+        if let Some(t) = tag {
+            match list_seen_tags.get(list) {
+                Some(prev) if *prev != t => {
+                    self.mixed_lists.insert(list.to_string());
+                }
+                Some(_) => {}
+                None => {
+                    list_seen_tags.insert(list.to_string(), t);
+                }
+            }
+        }
+    }
+
+    fn prescan_walk(
+        &mut self,
+        statements: &[Statement],
+        env: &mut HashMap<String, u8>,
+        list_seen_tags: &mut HashMap<String, u8>,
+    ) {
+        for stmt in statements {
+            match stmt {
+                Statement::VarDecl { name, value, .. } => {
+                    match value {
+                        Some(Expr::ListLit { elements }) => {
+                            let mut tags: Vec<u8> = Vec::new();
+                            for e in elements {
+                                if let Some(t) = Self::prescan_expr_tag(e, env) {
+                                    if !tags.contains(&t) {
+                                        tags.push(t);
+                                    }
+                                }
+                            }
+                            if tags.len() > 1 {
+                                self.mixed_lists.insert(name.clone());
+                            } else if let Some(t) = tags.first() {
+                                list_seen_tags.insert(name.clone(), *t);
+                            }
+                        }
+                        // Alias: `a list called "b" is the a.` inherits
+                        // mixedness (both names refer to the same block).
+                        Some(Expr::Identifier(src)) | Some(Expr::StringLit(src)) => {
+                            if self.mixed_lists.contains(src) {
+                                self.mixed_lists.insert(name.clone());
+                            } else if let Some(t) = list_seen_tags.get(src).copied() {
+                                list_seen_tags.insert(name.clone(), t);
+                            } else if let Some(t) = Self::prescan_expr_tag(
+                                value.as_ref().unwrap(),
+                                env,
+                            ) {
+                                env.insert(name.clone(), t);
+                            }
+                        }
+                        Some(other) => {
+                            if let Some(t) = Self::prescan_expr_tag(other, env) {
+                                env.insert(name.clone(), t);
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                Statement::Assignment { name, value } => {
+                    if let Expr::ListLit { elements } = value {
+                        let mut tags: Vec<u8> = Vec::new();
+                        for e in elements {
+                            if let Some(t) = Self::prescan_expr_tag(e, env) {
+                                if !tags.contains(&t) {
+                                    tags.push(t);
+                                }
+                            }
+                        }
+                        if tags.len() > 1 {
+                            self.mixed_lists.insert(name.clone());
+                        } else if let Some(t) = tags.first() {
+                            self.prescan_note_list_value(name, Some(*t), list_seen_tags);
+                        }
+                    } else if let Some(t) = Self::prescan_expr_tag(value, env) {
+                        env.insert(name.clone(), t);
+                    }
+                }
+                Statement::ListAppend { list, value } => {
+                    let tag = Self::prescan_expr_tag(value, env);
+                    self.prescan_note_list_value(list, tag, list_seen_tags);
+                }
+                Statement::ElementSet { list, value, .. } => {
+                    let tag = Self::prescan_expr_tag(value, env);
+                    self.prescan_note_list_value(list, tag, list_seen_tags);
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    self.prescan_walk(then_block, env, list_seen_tags);
+                    for (_, block) in else_if_blocks {
+                        self.prescan_walk(block, env, list_seen_tags);
+                    }
+                    if let Some(block) = else_block {
+                        self.prescan_walk(block, env, list_seen_tags);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. }
+                | Statement::FunctionDef { body, .. } => {
+                    self.prescan_walk(body, env, list_seen_tags);
+                }
+                Statement::OnError { actions } => {
+                    self.prescan_walk(actions, env, list_seen_tags);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Emit a print of the value in rdi dispatched on the runtime tag held
+    /// in `tag_reg` (a full 64-bit register holding 0..=3).
+    fn emit_mixed_print_dispatch(&mut self, tag_reg: &str) {
+        let str_label = self.new_label("mixp_str");
+        let flt_label = self.new_label("mixp_flt");
+        let done_label = self.new_label("mixp_done");
+        self.emit_indent(&format!("cmp {}, {}  ; string tag?", tag_reg, TAG_STRING));
+        self.emit_indent(&format!("je {}", str_label));
+        self.emit_indent(&format!("cmp {}, {}  ; float tag?", tag_reg, TAG_FLOAT));
+        self.emit_indent(&format!("je {}", flt_label));
+        // Integer and boolean both print as numbers (matches homogeneous
+        // boolean lists, which print 1/0 today).
+        self.emit_indent("PRINT_INT rdi");
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", str_label));
+        self.emit_indent("PRINT_CSTR rdi");
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", flt_label));
+        self.emit_indent("movq xmm0, rdi");
+        self.emit_indent("PRINT_FLOAT");
+        self.uses_floats = true;
+        self.emit(&format!("{}:", done_label));
+    }
+
+    /// Whether a list-valued expression refers to a list the pre-scan
+    /// proved heterogeneous (element reads must carry the runtime tag).
+    fn list_expr_is_mixed(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Identifier(name) | Expr::StringLit(name) => {
+                self.mixed_lists.contains(name)
+                    || self.list_element_types.get(name) == Some(&VarType::Mixed)
+            }
+            _ => false,
+        }
+    }
+
+    /// If `e` is a reference to a Mixed-typed variable with a shadow tag
+    /// slot, return that slot's rbp offset.
+    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {        match e {
+            Expr::Identifier(name) | Expr::StringLit(name) => {
+                if self.variable_types.get(name) == Some(&VarType::Mixed) {
+                    self.mixed_tag_slots.get(name).copied()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Best-effort static tag for a value being written into a list slot
+    /// at emit time (richer than the pre-scan version: consults
+    /// variable_types). Returns None when only a runtime tag would do.
+    fn emit_time_expr_tag(&self, e: &Expr) -> Option<u8> {
+        match e {
+            Expr::IntegerLit(_) => Some(TAG_INTEGER),
+            Expr::FloatLit(_) => Some(TAG_FLOAT),
+            Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            Expr::StringLit(name) | Expr::Identifier(name) => {
+                match self.variable_types.get(name) {
+                    Some(VarType::Integer) => Some(TAG_INTEGER),
+                    Some(VarType::Float) => Some(TAG_FLOAT),
+                    Some(VarType::Boolean) => Some(TAG_BOOLEAN),
+                    Some(VarType::String) | Some(VarType::Buffer) => Some(TAG_STRING),
+                    Some(VarType::Mixed) => None, // runtime tag in shadow slot
+                    _ => {
+                        if matches!(e, Expr::StringLit(_))
+                            && !self.variables.contains_key(name)
+                            && self.global_var_label(name).is_none()
+                        {
+                            Some(TAG_STRING) // a genuine string literal
+                        } else {
+                            Some(TAG_INTEGER)
+                        }
+                    }
+                }
+            }
+            _ => Some(TAG_INTEGER),
+        }
+    }
+
     pub fn generate(&mut self, program: &Program) -> String {
+        self.prescan_mixed_lists(&program.statements);
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
         self.collect_function_signatures(program);
@@ -1204,8 +1467,13 @@ impl CodeGenerator {
                     // Track list type and element type for lists
                     if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
+                        if self.mixed_lists.contains(name) {
+                            // Pre-scan proved this list heterogeneous:
+                            // element reads dispatch on runtime tags.
+                            self.list_element_types.insert(name.clone(), VarType::Mixed);
+                        }
                         // Track element type separately
-                        if let Some(first) = elements.first() {
+                        else if let Some(first) = elements.first() {
                             let elem_type = match first {
                                 Expr::StringLit(_) => VarType::String,
                                 Expr::IntegerLit(_) => VarType::Integer,
@@ -1356,7 +1624,7 @@ impl CodeGenerator {
                                 VarType::Float => {
                                     self.variable_types.insert(name.clone(), VarType::Float);
                                 }
-                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List => {
+                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List | VarType::Mixed => {
                                     self.variable_types.insert(name.clone(), vt);
                                 }
                                 VarType::Buffer | VarType::Unknown => {}
@@ -1778,11 +2046,29 @@ impl CodeGenerator {
                     // Get element type from list_element_types, not variable_types
                     self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
                 } else if let Expr::ListLit { elements } = collection {
-                    if let Some(first) = elements.first() {
+                    // Inline literal: classify every element, not just the
+                    // first - two distinct types means Mixed.
+                    let mut tags: Vec<u8> = Vec::new();
+                    let mut any_unknown = false;
+                    for e in elements {
+                        match self.emit_time_expr_tag(e) {
+                            Some(t) => {
+                                if !tags.contains(&t) {
+                                    tags.push(t);
+                                }
+                            }
+                            None => any_unknown = true,
+                        }
+                    }
+                    if tags.len() > 1 {
+                        VarType::Mixed
+                    } else if let Some(first) = elements.first() {
+                        let _ = any_unknown;
                         match first {
                             Expr::StringLit(_) => VarType::String,
                             Expr::IntegerLit(_) => VarType::Integer,
                             Expr::BoolLit(_) => VarType::Boolean,
+                            Expr::FloatLit(_) => VarType::Float,
                             _ => VarType::Unknown,
                         }
                     } else {
@@ -1810,7 +2096,19 @@ impl CodeGenerator {
                 // Allocate variable for current element and track its type
                 let elem_var = self.alloc_var(variable);
                 self.variables.insert(variable.clone(), elem_var);
-                self.variable_types.insert(variable.clone(), elem_type);
+                self.variable_types.insert(variable.clone(), elem_type.clone());
+
+                // For mixed lists the element's runtime type tag shadows the
+                // loop variable in its own stack slot, refreshed every
+                // iteration and consulted wherever the variable is printed.
+                let tag_slot = if elem_type == VarType::Mixed {
+                    let slot = self.alloc_var(&format!("{}_mixtag", variable));
+                    self.mixed_tag_slots.insert(variable.clone(), slot);
+                    Some(slot)
+                } else {
+                    self.mixed_tag_slots.remove(variable);
+                    None
+                };
                 
                 self.emit(&format!("{}:", start_label));
                 
@@ -1821,6 +2119,14 @@ impl CodeGenerator {
                 
                 // Get current element: data starts at offset 24
                 self.emit_indent(&format!("mov rbx, [rbp-{}]  ; list pointer", list_ptr));
+                if let Some(slot) = tag_slot {
+                    // tag_addr = base + 24 + capacity*8 + index
+                    self.emit_indent("mov r11, [rbx]  ; capacity");
+                    self.emit_indent("shl r11, 3  ; * element size (8)");
+                    self.emit_indent("add r11, rax  ; + index");
+                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!("mov [rbp-{}], r11b  ; stash element's type tag", slot));
+                }
                 self.emit_indent("shl rax, 3  ; index * 8");
                 self.emit_indent("add rax, 24  ; skip header (24 bytes)");
                 self.emit_indent("add rbx, rax");
@@ -1987,6 +2293,30 @@ impl CodeGenerator {
                 self.emit_indent("mov r8, rax  ; value in r8");
                 self.emit_indent("pop rcx  ; index in rcx");
                 self.emit_indent("pop rbx  ; list pointer in rbx");
+                // Write the slot's type tag:
+                // tag_addr = base + 24 + capacity*elem_size + index
+                self.emit_indent("mov rdx, [rbx]  ; capacity");
+                self.emit_indent("imul rdx, [rbx + 16]  ; capacity * element_size");
+                self.emit_indent("add rdx, rcx  ; + 0-based index");
+                match self.emit_time_expr_tag(value) {
+                    Some(tag) => {
+                        self.emit_indent(&format!(
+                            "mov byte [rbx + rdx + 24], {}  ; slot type tag",
+                            tag
+                        ));
+                    }
+                    None => {
+                        if let Some(slot) = self.mixed_element_tag_slot(value) {
+                            self.emit_indent(&format!(
+                                "mov al, [rbp-{}]  ; runtime tag of mixed source",
+                                slot
+                            ));
+                            self.emit_indent("mov [rbx + rdx + 24], al  ; slot type tag");
+                        } else {
+                            self.emit_indent("mov byte [rbx + rdx + 24], 0  ; default integer tag");
+                        }
+                    }
+                }
                 // Get element size (at offset 16 in list structure)
                 self.emit_indent("mov rdx, [rbx + 16]  ; element size");
                 // Calculate offset
@@ -2023,7 +2353,9 @@ impl CodeGenerator {
                 self.emit_indent("; Append value to list");
                 
                 // Track element type from appended value if not already set
-                if !self.list_element_types.contains_key(list) {
+                if self.mixed_lists.contains(list) {
+                    self.list_element_types.insert(list.clone(), VarType::Mixed);
+                } else if !self.list_element_types.contains_key(list) {
                     let elem_type = match value {
                         Expr::StringLit(_) => VarType::String,
                         Expr::IntegerLit(_) => VarType::Integer,
@@ -2084,7 +2416,27 @@ impl CodeGenerator {
 
                     self.emit_indent("push rax  ; save value to append");
 
-                    // rdi = list pointer, rsi = value to append
+                    // rdi = list pointer, rsi = value to append, dl = type tag
+                    match self.emit_time_expr_tag(value) {
+                        Some(tag) => {
+                            self.emit_indent(&format!(
+                                "mov edx, {}  ; element type tag",
+                                tag
+                            ));
+                        }
+                        None => {
+                            // Mixed-typed source variable: forward its
+                            // runtime tag from the shadow slot.
+                            if let Some(slot) = self.mixed_element_tag_slot(value) {
+                                self.emit_indent(&format!(
+                                    "movzx edx, byte [rbp-{}]  ; runtime tag of mixed source",
+                                    slot
+                                ));
+                            } else {
+                                self.emit_indent("xor edx, edx  ; default integer tag");
+                            }
+                        }
+                    }
                     self.emit_indent("pop rsi  ; value to append");
                     self.emit_indent("pop rdi  ; list ptr");
                     self.emit_indent("call _list_append");
@@ -3129,7 +3481,20 @@ impl CodeGenerator {
                             // Buffer: use PRINT_BUF with the struct pointer (length-bounded,
                             // avoids the NUL-scan stale-byte bug). For all other types, rdi
                             // already holds the correct value/pointer.
-                            if var_type == Some(VarType::Buffer) {
+                            if var_type == Some(VarType::Mixed) {
+                                // Heterogeneous-list element: dispatch on its
+                                // runtime tag. Format specs are parsed but
+                                // only the default spec is honored for now.
+                                if let Some(slot) = self.mixed_tag_slots.get(name.as_str()).copied() {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
+                                        slot
+                                    ));
+                                    self.emit_mixed_print_dispatch("r11");
+                                } else {
+                                    self.emit_indent("PRINT_INT rdi");
+                                }
+                            } else if var_type == Some(VarType::Buffer) {
                                 let fmt_spec = self.parse_format_spec(format.as_deref());
                                 if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
                                     self.emit_indent("PRINT_BUF rdi");
@@ -3184,6 +3549,17 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     let var_type = self.variable_types.get(s).cloned();
                     match var_type {
+                        Some(VarType::Mixed) => {
+                            if let Some(slot) = self.mixed_tag_slots.get(s).copied() {
+                                self.emit_indent(&format!(
+                                    "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
+                                    slot
+                                ));
+                                self.emit_mixed_print_dispatch("r11");
+                            } else {
+                                self.emit_indent("PRINT_INT rdi");
+                            }
+                        }
                         Some(VarType::Buffer) => {
                             self.emit_indent("PRINT_BUF rdi");
                         }
@@ -3224,6 +3600,17 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     let var_type = self.variable_types.get(name).cloned();
                     match var_type {
+                        Some(VarType::Mixed) => {
+                            if let Some(slot) = self.mixed_tag_slots.get(name).copied() {
+                                self.emit_indent(&format!(
+                                    "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
+                                    slot
+                                ));
+                                self.emit_mixed_print_dispatch("r11");
+                            } else {
+                                self.emit_indent("PRINT_INT rdi");
+                            }
+                        }
                         Some(VarType::Buffer) => {
                             // Dynamic buffer - PRINT_BUF reads length/data directly
                             // from the struct, no NUL-scan needed
@@ -3260,6 +3647,12 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, rax");
                 
                 match elem_type {
+                    Some(VarType::Mixed) => {
+                        // generate_expr left the slot's type tag in r11
+                        // (captured immediately - nothing can clobber it
+                        // between the element load and this dispatch).
+                        self.emit_mixed_print_dispatch("r11");
+                    }
                     Some(VarType::String) => {
                         self.emit_indent("PRINT_CSTR rdi");
                     }
@@ -3277,8 +3670,20 @@ impl CodeGenerator {
             _ => {
                 let is_float = self.is_float_expr(value);
                 let expr_type = self.infer_expr_type(value);
+                // `mixed's first` / `mixed's last`: the property read leaves
+                // the slot's type tag in r11 - dispatch on it immediately.
+                let mixed_property = matches!(
+                    value,
+                    Expr::PropertyAccess { object, property }
+                        if matches!(property, ObjectProperty::First | ObjectProperty::Last)
+                            && (self.mixed_lists.contains(object)
+                                || self.list_element_types.get(object) == Some(&VarType::Mixed))
+                );
                 self.generate_expr(value);
-                if is_float {
+                if mixed_property {
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_mixed_print_dispatch("r11");
+                } else if is_float {
                     self.emit_indent("movq xmm0, rax");
                     self.emit_indent("PRINT_FLOAT");
                     self.uses_floats = true;
@@ -3647,12 +4052,13 @@ impl CodeGenerator {
             }
 
             Expr::ListLit { elements } => {
-                // List structure: [capacity:8][length:8][elem_size:8][data...]
-                // Each element is 8 bytes, header is 24 bytes
+                // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
+                // Each element is 8 bytes, header is 24 bytes, plus one type
+                // tag byte per slot after the data region.
                 let capacity = std::cmp::max(elements.len(), 8); // minimum capacity 8
                 let header_size = 24;
                 let data_size = capacity * 8;
-                let total_size = header_size + data_size;
+                let total_size = header_size + data_size + capacity;
                 
                 self.uses_lists = true;
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
@@ -3683,13 +4089,43 @@ impl CodeGenerator {
                 // Store element size
                 self.emit_indent("mov qword [rax + 16], 8  ; element size");
                 
-                // Store elements (data starts at offset 24)
+                // Store elements (data starts at offset 24) along with each
+                // slot's type tag (tags start at offset 24 + capacity*8).
+                // mmap zero-fills, so only non-integer tags need a write.
+                let tags_base = header_size + data_size;
                 for (i, elem) in elements.iter().enumerate() {
                     self.emit_indent("pop rbx  ; get list pointer");
                     self.emit_indent("push rbx ; save it back");
                     self.generate_expr(elem);
                     self.emit_indent("pop rbx  ; get list pointer");
                     self.emit_indent(&format!("mov [rbx+{}], rax", header_size + i * 8));
+                    match self.emit_time_expr_tag(elem) {
+                        Some(tag) => {
+                            if tag != TAG_INTEGER {
+                                self.emit_indent(&format!(
+                                    "mov byte [rbx+{}], {}  ; slot {} type tag",
+                                    tags_base + i,
+                                    tag,
+                                    i + 1
+                                ));
+                            }
+                        }
+                        None => {
+                            // Mixed-typed source variable: copy its runtime
+                            // tag from the shadow slot.
+                            if let Some(slot) = self.mixed_element_tag_slot(elem) {
+                                self.emit_indent(&format!(
+                                    "mov cl, [rbp-{}]  ; runtime tag of mixed source",
+                                    slot
+                                ));
+                                self.emit_indent(&format!(
+                                    "mov [rbx+{}], cl  ; slot {} type tag",
+                                    tags_base + i,
+                                    i + 1
+                                ));
+                            }
+                        }
+                    }
                     self.emit_indent("push rbx ; save list pointer");
                 }
                 
@@ -3703,6 +4139,7 @@ impl CodeGenerator {
                 let ok_label = self.new_label("list_ok");
                 let error_label = self.new_label("list_err");
                 let done_label = self.new_label("list_done");
+                let is_mixed = self.list_expr_is_mixed(list);
                 
                 self.emit_indent("; List access (0-indexed) with bounds check");
                 // Get list pointer
@@ -3725,12 +4162,23 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", error_label));
                 self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
                 self.emit_indent("xor rax, rax  ; return 0 on error");
+                if is_mixed {
+                    self.emit_indent("xor r11d, r11d  ; integer tag on error path");
+                }
                 self.emit_indent(&format!("jmp {}", done_label));
                 
                 // Success path: safe access
-                // List structure: [capacity:8][length:8][elem_size:8][data...]
+                // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
                 // Data starts at offset 24
                 self.emit(&format!("{}:", ok_label));
+                if is_mixed {
+                    // tag_addr = base + 24 + capacity*8 + index; tag rides in
+                    // r11 for the immediate consumer.
+                    self.emit_indent("mov r11, [rbx]  ; capacity");
+                    self.emit_indent("shl r11, 3  ; * element size (8)");
+                    self.emit_indent("add r11, rcx  ; + index");
+                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; multiply by 8 (element size)");
                 self.emit_indent("add rax, 24  ; skip header (24 bytes)");
@@ -3836,14 +4284,25 @@ impl CodeGenerator {
                             let ok_label = self.new_label("list_first_ok");
                             let error_label = self.new_label("list_first_err");
                             let done_label = self.new_label("list_first_done");
+                            let is_mixed = self.mixed_lists.contains(object)
+                                || self.list_element_types.get(object) == Some(&VarType::Mixed);
                             self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
                             self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
                             self.emit_indent("xor rax, rax  ; return 0 on error");
+                            if is_mixed {
+                                self.emit_indent("xor r11d, r11d  ; integer tag on error path");
+                            }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
+                            if is_mixed {
+                                // tags[0] = base + 24 + capacity*8
+                                self.emit_indent("mov r11, [rax]  ; capacity");
+                                self.emit_indent("shl r11, 3  ; * element size (8)");
+                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                            }
                             self.emit_indent("mov rax, [rax + 24]  ; first element (data at offset 24)");
                             self.emit(&format!("{}:", done_label));
                         }
@@ -3851,15 +4310,27 @@ impl CodeGenerator {
                             let ok_label = self.new_label("list_last_ok");
                             let error_label = self.new_label("list_last_err");
                             let done_label = self.new_label("list_last_done");
+                            let is_mixed = self.mixed_lists.contains(object)
+                                || self.list_element_types.get(object) == Some(&VarType::Mixed);
                             self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
                             self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
                             self.emit_indent("xor rax, rax  ; return 0 on error");
+                            if is_mixed {
+                                self.emit_indent("xor r11d, r11d  ; integer tag on error path");
+                            }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
                             self.emit_indent("dec rbx             ; 0-indexed");
+                            if is_mixed {
+                                // tags[len-1] = base + 24 + capacity*8 + (len-1)
+                                self.emit_indent("mov r11, [rax]  ; capacity");
+                                self.emit_indent("shl r11, 3  ; * element size (8)");
+                                self.emit_indent("add r11, rbx  ; + 0-based last index");
+                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                            }
                             self.emit_indent("shl rbx, 3          ; * 8");
                             self.emit_indent("add rbx, 24         ; + header offset");
                             self.emit_indent("add rax, rbx        ; offset to last");
@@ -4101,9 +4572,10 @@ impl CodeGenerator {
                 self.emit_indent("mov r13, 8");
                 self.emit(&format!("{}:", min_ok));
 
-                // Allocate: size = capacity*8 + 24 (header)
+                // Allocate: size = capacity*8 + 24 (header) + capacity tag bytes
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
+                self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent("add rax, 24");
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
@@ -4166,6 +4638,7 @@ impl CodeGenerator {
 
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
+                self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent("add rax, 24");
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
@@ -4659,6 +5132,7 @@ impl CodeGenerator {
                 let ok_label = self.new_label("elem_ok");
                 let error_label = self.new_label("elem_err");
                 let done_label = self.new_label("elem_done");
+                let is_mixed = self.list_expr_is_mixed(list);
                 
                 self.emit_indent("; Element access (1-indexed) with bounds check");
                 // Get list pointer
@@ -4680,12 +5154,24 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", error_label));
                 self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
                 self.emit_indent("xor rax, rax  ; return 0 on error");
+                if is_mixed {
+                    self.emit_indent("xor r11d, r11d  ; integer tag on error path");
+                }
                 self.emit_indent(&format!("jmp {}", done_label));
                 
                 // Success path: safe access
                 // Data starts at offset 24, 1-indexed so element 1 is at offset 24
                 self.emit(&format!("{}:", ok_label));
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
+                if is_mixed {
+                    // Runtime type tag travels in r11 (captured immediately
+                    // by the consumer - never held across calls/syscalls):
+                    // tag_addr = base + 24 + capacity*8 + index
+                    self.emit_indent("mov r11, [rbx]  ; capacity");
+                    self.emit_indent("shl r11, 3  ; * element size (8)");
+                    self.emit_indent("add r11, rcx  ; + 0-based index");
+                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; index * 8");
                 self.emit_indent("add rax, 24  ; skip header (24 bytes)");

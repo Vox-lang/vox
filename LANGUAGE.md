@@ -764,6 +764,29 @@ a list called "empty" is [].
 - Empty lists `[]` are allowed
 - Lists are allocated on the heap with automatic memory management
 
+### Mixed-Type Lists
+
+A list may freely hold numbers, texts, decimals, and booleans together.
+The author never declares this - the compiler resolves it. Lists it can
+prove homogeneous keep a statically-typed fast path; lists with mixed
+elements carry a small per-slot type tag at runtime, so every element
+prints and reads back as what it is:
+
+```
+a list called "m" is [1, "two", 3.5, yes].
+For each item in m, print item.
+(prints: 1, two, 3.5, 1)
+```
+
+Appending, `set element`, `element N of`, `first`/`last`, iteration, and
+`{...}` format interpolation all respect each element's actual type.
+Booleans print as `1`/`0`, matching homogeneous boolean lists.
+
+Current limitation: a value whose type is not statically knowable (for
+example a function result) appended to an otherwise homogeneous list does
+not yet widen it to mixed; see `docs/COLLECTIONS_ROADMAP.md` for the plan
+that closes this.
+
 ### List Properties
 
 Access list properties using the `'s` syntax:
