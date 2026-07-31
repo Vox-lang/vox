@@ -720,6 +720,13 @@ impl CodeGenerator {
             return;
         }
 
+        // The routine calls _str_eq to match argument tokens against flag
+        // aliases, so string.asm must be included even when the program
+        // itself uses no other strings. Without this, a program that
+        // declares and parses flags but never prints/compares text failed
+        // to assemble with "symbol `_str_eq' not defined".
+        self.uses_strings = true;
+
         self.emit_indent("; Runtime flag schema parsing");
         self.emit_indent("call _reset_parsed_args");
 

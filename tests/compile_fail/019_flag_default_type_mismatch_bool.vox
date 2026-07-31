@@ -1,0 +1,2 @@
+a flag called "v" is "-v" or "--verbose", it is a boolean with default 5.
+Parse flags.

@@ -1,0 +1,11 @@
+(Regression test: a function definition whose body ends in a top-level
+Return used to silently swallow the next top-level sentence into the
+function body as dead code whenever the author omitted the separating
+blank line. LANGUAGE.md states blank lines are optional and have no
+effect on program execution, so the call below must run at top level
+and produce real output. Before the fix it printed nothing because the
+Print statement was emitted after the function's return epilogue.)
+
+To "double" with a number called "x". Return a number, x multiply 2.
+Print "double" of 21.
+Print "double" of 5.

@@ -3986,9 +3986,30 @@ impl Parser {
             let expr = self.parse_condition()?;
             body.push(Statement::Return { value: Some(expr) });
         }
-        
+
+        // A top-level Return ends the function body. LANGUAGE.md states
+        // that blank lines are optional and have no effect on program
+        // execution, so a function whose body ends in `Return ... .` must
+        // not keep consuming following sentences when the author omits the
+        // separating blank line. Without this, the next top-level
+        // statement was silently absorbed into the function body as dead
+        // code (emitted after the epilogue `ret`), producing empty or
+        // wrong output. Multi-statement bodies that do not end in a
+        // top-level Return still terminate at the paragraph break below.
+        let mut body_ended_at_return =
+            matches!(body.last(), Some(Statement::Return { .. }));
+        if body_ended_at_return {
+            self.skip_noise();
+            if matches!(self.current(), Token::Period | Token::Comma) {
+                self.advance();
+                self.skip_noise();
+            }
+        }
+
         // Continue parsing body until paragraph break
-        while !matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
+        while !body_ended_at_return
+            && !matches!(self.current(), Token::ParagraphBreak | Token::EOF)
+        {
             self.skip_noise();
             if matches!(self.current(), Token::Comma) {
                 self.advance();
@@ -4003,7 +4024,20 @@ impl Parser {
                 break;
             }
             let stmt = self.parse_statement()?;
+            let is_return = matches!(stmt, Statement::Return { .. });
             body.push(stmt);
+
+            // A top-level Return parsed as a body statement terminates the
+            // body; consume its trailing period and stop.
+            if is_return {
+                body_ended_at_return = true;
+                self.skip_noise();
+                if matches!(self.current(), Token::Period | Token::Comma) {
+                    self.advance();
+                    self.skip_noise();
+                }
+                break;
+            }
 
             self.skip_noise();
             if *self.current() == Token::Comma {

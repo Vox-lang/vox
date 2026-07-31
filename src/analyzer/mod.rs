@@ -567,6 +567,8 @@ pub struct Analyzer {
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
     file_variables: HashSet<String>,
+    function_param_counts: HashMap<String, usize>,
+    loop_depth: usize,
 }
 
 #[derive(Clone, Default)]
@@ -595,6 +597,8 @@ impl Analyzer {
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
             file_variables: HashSet::new(),
+            function_param_counts: HashMap::new(),
+            loop_depth: 0,
         }
     }
 
@@ -625,8 +629,9 @@ impl Analyzer {
 
         for stmt in &program.statements {
             match stmt {
-                Statement::FunctionDef { name, .. } => {
+                Statement::FunctionDef { name, params, .. } => {
                     self.functions.insert(name.clone());
+                    self.function_param_counts.insert(name.clone(), params.len());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -861,6 +866,28 @@ impl Analyzer {
 
     fn push_unknown_variable(&mut self, name: &str) {
         self.push_error(format!("Unknown variable: {}", name), Some(name));
+    }
+
+    /// Validate that a function call supplies exactly the number of
+    /// arguments the function declares. A mismatch previously compiled
+    /// to undefined runtime behaviour: too few arguments read stale
+    /// register values (silently using 0 or garbage), while too many
+    /// were silently dropped.
+    fn validate_function_call_args(&mut self, name: &str, args: &[Expr]) {
+        if let Some(&expected) = self.function_param_counts.get(name) {
+            if args.len() != expected {
+                self.push_error(
+                    format!(
+                        "Function '{}' expects {} argument{} but was called with {}.",
+                        name,
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        args.len()
+                    ),
+                    Some(name),
+                );
+            }
+        }
     }
 
     fn current_env(&self) -> AnalysisEnv {
@@ -1271,11 +1298,34 @@ impl Analyzer {
                 }
             }
 
-            Statement::FlagSchemaDecl { name, default, .. } => {
+            Statement::FlagSchemaDecl { name, value_type, default, .. } => {
                 self.deps.uses_args = true;
                 self.declare_variable_in_current_scope(name);
                 if let Some(v) = default {
                     self.analyze_expr(v);
+                    // The default must match the flag's declared value
+                    // type. A mismatch previously compiled and produced
+                    // garbage at runtime: a number flag defaulted to
+                    // text printed the string's address, and a boolean
+                    // flag defaulted to a number printed the integer.
+                    let expected = match value_type {
+                        FlagValueType::Boolean => Type::Boolean,
+                        FlagValueType::Number => Type::Integer,
+                        FlagValueType::Text => Type::String,
+                    };
+                    if let Some(actual) = self.infer_simple_expr_type(v) {
+                        if !self.treating_types_compatible(&expected, &actual) {
+                            self.push_error(
+                                format!(
+                                    "Flag '{}' is a {} but its default is a {}.",
+                                    name,
+                                    self.type_name(&expected),
+                                    self.type_name(&actual)
+                                ),
+                                Some(name),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -1355,35 +1405,53 @@ impl Analyzer {
             Statement::While { condition, body } => {
                 self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::ForRange { variable, range, body } => {
                 self.variables.insert(variable.clone());
                 self.analyze_expr(range);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::ForEach { variable, collection, body } => {
                 self.variables.insert(variable.clone());
                 self.analyze_expr(collection);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
-            
+
             Statement::Repeat { count, body } => {
                 self.analyze_expr(count);
+                self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
                 }
+                self.loop_depth -= 1;
             }
             
             Statement::Return { value } => {
+                // `Return` is only meaningful inside a function. At top
+                // level the codegen still emits a function epilogue
+                // (leave/ret) which is undefined from _start, so reject
+                // it here rather than produce broken output.
+                if !self.in_function_scope {
+                    self.push_error(
+                        "Return is only valid inside a function".to_string(),
+                        None,
+                    );
+                }
                 if let Some(v) = value {
                     self.analyze_expr(v);
                 }
@@ -1410,6 +1478,8 @@ impl Analyzer {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));
                     }
                     self.push_error(err, Some(name));
+                } else {
+                    self.validate_function_call_args(name, args);
                 }
                 for arg in args {
                     self.analyze_expr(arg);
@@ -1418,6 +1488,7 @@ impl Analyzer {
             
             Statement::FunctionDef { name, params, body, .. } => {
                 self.functions.insert(name.clone());
+                self.function_param_counts.insert(name.clone(), params.len());
                 self.deps.uses_funcs = true; // Track that functions are used
 
                 // Functions can access top-level globals, but locals declared inside
@@ -1463,10 +1534,41 @@ impl Analyzer {
             Statement::Increment { name } | Statement::Decrement { name } => {
                 if !self.is_variable_available(name) {
                     self.push_unknown_variable(name);
+                } else if self.is_buffer_variable(name)
+                    || self.is_list_variable(name)
+                    || self.file_variables.contains(name.as_str())
+                    || self.flag_variables.contains(name.as_str())
+                {
+                    // Increment/Decrement compile to an integer `inc/dec
+                    // qword` on the variable's stack slot. Applied to a
+                    // buffer/list/file variable that slot holds a pointer
+                    // (which gets corrupted), and to a boolean flag it
+                    // yields 2, 3, ... instead of a boolean. Reject these
+                    // rather than emit undefined behaviour.
+                    let kw = if matches!(stmt, Statement::Increment { .. }) {
+                        "Increment"
+                    } else {
+                        "Decrement"
+                    };
+                    self.push_error(
+                        format!("{} requires a number variable: {}", kw, name),
+                        Some(name),
+                    );
                 }
             }
             
-            Statement::Break | Statement::Continue => {}
+            Statement::Break | Statement::Continue => {
+                // Break/Continue are loop-control constructs. Outside a
+                // loop the codegen silently emits nothing, so the author's
+                // intent is lost with no signal - reject it at compile time.
+                if self.loop_depth == 0 {
+                    let kw = if matches!(stmt, Statement::Break) { "Break" } else { "Continue" };
+                    self.push_error(
+                        format!("{} is only valid inside a loop", kw),
+                        None,
+                    );
+                }
+            }
             
             // File I/O statements
             Statement::BufferDecl { name, size } => {
@@ -1859,6 +1961,8 @@ impl Analyzer {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));
                     }
                     self.push_error(err, Some(name));
+                } else {
+                    self.validate_function_call_args(name, args);
                 }
                 for arg in args {
                     self.analyze_expr(arg);
