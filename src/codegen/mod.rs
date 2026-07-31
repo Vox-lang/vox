@@ -1466,7 +1466,11 @@ impl CodeGenerator {
                                     TagInfo::Unknowable => unknowable = true,
                                 }
                             }
-                            if unknowable || tags.len() > 1 {
+                            // A list holding `nothing` is treated as mixed even
+                            // when every element is nothing: the fast path
+                            // reads a slot without its tag, and a nothing slot
+                            // read that way is indistinguishable from 0.
+                            if unknowable || tags.len() > 1 || tags.contains(&TAG_NOTHING) {
                                 self.mixed_lists.insert(name.clone());
                             } else if let Some(t) = tags.first() {
                                 list_seen_tags.insert(name.clone(), *t);
@@ -1537,7 +1541,7 @@ impl CodeGenerator {
                                 TagInfo::Unknowable => unknowable = true,
                             }
                         }
-                        if unknowable || tags.len() > 1 {
+                        if unknowable || tags.len() > 1 || tags.contains(&TAG_NOTHING) {
                             self.mixed_lists.insert(name.clone());
                         } else if let Some(t) = tags.first() {
                             self.prescan_note_list_value(
@@ -1731,6 +1735,63 @@ impl CodeGenerator {
             return Some(RuntimeTagSource::R11);
         }
         None
+    }
+
+    /// Operators that compute a number from their operands, so a `nothing`
+    /// operand is meaningless. Comparisons and logical and/or are excluded:
+    /// they are valid across types, and `is nothing` is itself an equality.
+    /// Mirrors `Analyzer::is_arithmetic_op`.
+    fn is_arithmetic_operator(&self, op: &BinaryOperator) -> bool {
+        matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo
+                | BinaryOperator::BitAnd
+                | BinaryOperator::BitOr
+                | BinaryOperator::BitXor
+                | BinaryOperator::ShiftLeft
+                | BinaryOperator::ShiftRight
+        )
+    }
+
+    /// Flag an arithmetic operand that turned out to hold `nothing`.
+    ///
+    /// Emitted only for operands whose tag is dynamic - a mixed-list or map
+    /// read, a `value`, a for-each variable. A statically-typed operand cannot
+    /// be nothing, so homogeneous arithmetic emits nothing extra and keeps its
+    /// fast path. A literal `nothing` never reaches here: the analyzer rejects
+    /// it outright.
+    ///
+    /// Must follow `generate_expr(e)` immediately, while r11 still holds the
+    /// operand's tag. Touches only r11 and the flags, never rax, so the
+    /// operand's value survives.
+    fn emit_nothing_operand_check(&mut self, e: &Expr) {
+        // Provably nothing (e.g. an element of a homogeneous `[nothing]`
+        // list): no test needed, the operand is always nothing. The analyzer
+        // cannot see this one - it has no element-type tracking - so the flag
+        // is set here rather than reported as a compile error.
+        if self.emit_time_expr_tag(e) == Some(TAG_NOTHING) {
+            self.emit_indent(
+                "mov qword [rel _last_error], 1  ; nothing in arithmetic (static)",
+            );
+            return;
+        }
+        let Some(src) = self.runtime_tag_source(e) else {
+            return;
+        };
+        if let RuntimeTagSource::ShadowSlot(off) = src {
+            self.emit_indent(&format!(
+                "movzx r11, byte [rbp-{}]  ; operand tag (shadow slot)", off
+            ));
+        }
+        let ok = self.new_label("arith_not_nothing");
+        self.emit_indent(&format!("cmp r11, {}  ; nothing operand?", TAG_NOTHING));
+        self.emit_indent(&format!("jne {}", ok));
+        self.emit_indent("mov qword [rel _last_error], 1  ; nothing in arithmetic");
+        self.emit(&format!("{}:", ok));
     }
 
     /// Static tag for a *type predicate* operand. Identical to
@@ -4821,16 +4882,30 @@ impl CodeGenerator {
                             }
                             None => {
                                 self.generate_expr(value);
-                                if let Some(off) = self.mixed_element_tag_slot(value) {
-                                    self.emit_indent(&format!(
-                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                        off
-                                    ));
+                                match self.runtime_tag_source(value) {
+                                    Some(src) => {
+                                        if let RuntimeTagSource::ShadowSlot(off) = src {
+                                            self.emit_indent(&format!(
+                                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                                off
+                                            ));
+                                        }
+                                        self.emit_indent("xor rax, rax");
+                                        self.emit_indent(&format!(
+                                            "cmp r11, {}  ; is nothing?", TAG_NOTHING
+                                        ));
+                                        self.emit_indent(if equal { "sete al" } else { "setne al" });
+                                        self.emit_indent("movzx rax, al");
+                                    }
+                                    // No tag anywhere and r11 holds unrelated
+                                    // data (a call or syscall clobbers it), so
+                                    // the value cannot be nothing as far as the
+                                    // compiler can tell - answer statically.
+                                    None => self.emit_indent(&format!(
+                                        "mov rax, {}  ; is {}nothing: operand carries no tag",
+                                        u8::from(!equal), if equal { "" } else { "not " }
+                                    )),
                                 }
-                                self.emit_indent("xor rax, rax");
-                                self.emit_indent(&format!("cmp r11, {}  ; is nothing?", TAG_NOTHING));
-                                self.emit_indent(if equal { "sete al" } else { "setne al" });
-                                self.emit_indent("movzx rax, al");
                             }
                         }
                     }
@@ -4946,9 +5021,16 @@ impl CodeGenerator {
                 } else {
                     // Integer operations
                     self.uses_ints = true;
+                    let arith = self.is_arithmetic_operator(op);
                     self.generate_expr(right);
+                    if arith {
+                        self.emit_nothing_operand_check(right);
+                    }
                     self.emit_indent("push rax");
                     self.generate_expr(left);
+                    if arith {
+                        self.emit_nothing_operand_check(left);
+                    }
                     self.emit_indent("pop rbx");
 
                     match op {
@@ -6544,18 +6626,35 @@ impl CodeGenerator {
                                 }
                                 None => {
                                     self.generate_expr(value);
-                                    if let Some(off) = self.mixed_element_tag_slot(value) {
-                                        self.emit_indent(&format!(
-                                            "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                            off
-                                        ));
+                                    match self.runtime_tag_source(value) {
+                                        Some(src) => {
+                                            if let RuntimeTagSource::ShadowSlot(off) = src {
+                                                self.emit_indent(&format!(
+                                                    "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                                    off
+                                                ));
+                                            }
+                                            self.emit_indent("xor rax, rax");
+                                            self.emit_indent(&format!(
+                                                "cmp r11, {}  ; is nothing?", TAG_NOTHING
+                                            ));
+                                            self.emit_indent(
+                                                if equal { "sete al" } else { "setne al" },
+                                            );
+                                            self.emit_indent("movzx rax, al");
+                                            self.emit_indent("test rax, rax");
+                                            self.emit_indent(&format!("jz {}", false_label));
+                                        }
+                                        // No tag anywhere and r11 holds
+                                        // unrelated data, so the operand cannot
+                                        // be shown to be nothing - decide
+                                        // statically rather than read garbage.
+                                        None if equal => self.emit_indent(&format!(
+                                            "jmp {}  ; is nothing: operand carries no tag",
+                                            false_label
+                                        )),
+                                        None => {}
                                     }
-                                    self.emit_indent("xor rax, rax");
-                                    self.emit_indent(&format!("cmp r11, {}  ; is nothing?", TAG_NOTHING));
-                                    self.emit_indent(if equal { "sete al" } else { "setne al" });
-                                    self.emit_indent("movzx rax, al");
-                                    self.emit_indent("test rax, rax");
-                                    self.emit_indent(&format!("jz {}", false_label));
                                 }
                             }
                         }

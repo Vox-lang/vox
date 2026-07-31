@@ -1197,6 +1197,22 @@ impl Analyzer {
     /// and is accepted because `arithmetic_operand_type` resolves it to a
     /// numeric type.
     fn check_arithmetic_operand(&mut self, expr: &Expr) {
+        // `nothing` has no numeric value. It is not a `Type` (tag 6 exists
+        // only at runtime), so it is matched here rather than through
+        // `arithmetic_operand_type`. Unchecked it compiles to its payload, 0,
+        // so `total add missing` silently yields `total` - a wrong number that
+        // looks right, which is the failure this whole track exists to stop.
+        // Operands that only turn out to be nothing at runtime cannot be
+        // caught here; those set the error flag instead (see
+        // `emit_nothing_operand_check` in codegen).
+        if matches!(expr, Expr::NothingLit) {
+            self.push_error(
+                "Cannot use nothing in arithmetic; check it with 'is nothing' first."
+                    .to_string(),
+                None,
+            );
+            return;
+        }
         let Some(ty) = self.arithmetic_operand_type(expr) else {
             return;
         };

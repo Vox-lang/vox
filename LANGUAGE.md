@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.21**
+**Version 0.1.23**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -921,8 +921,9 @@ for each v in person's values, print v.     (prints: Ada, then 37)
 ```
 
 A missing key does not crash: the lookup yields 0 and sets the error
-flag, so an `on error` handler can react (there is no `null` value yet —
-that arrives with the JSON parser in a later stage):
+flag, so an `on error` handler can react. Note this is deliberately *not*
+the same as a key that holds [`nothing`](#nothing-the-absent-value) — "no
+such key" stays distinguishable from "the key is set to nothing":
 
 ```
 print person's "nope".    (prints: 0)
@@ -1080,6 +1081,86 @@ Conditional `value` *parameters* (the factorial pattern with a void return)
 work fine. The internal ABI that carries the tag is documented in
 `docs/abi_value.md`; the roadmap context is in
 `docs/COLLECTIONS_ROADMAP.md` (stage 1d).
+
+### Nothing (the absent value)
+
+`nothing` is the value that means "no value here" — the equivalent of null
+in other languages. It can sit in a list slot, a map value, or a `value`
+parameter or return, and it prints as the word `nothing`:
+
+```
+a list called "L" is [1, nothing, "x"].
+print L.
+(prints: [1, nothing, "x"])
+
+a map called "m" is {"found": 4, "absent": nothing}.
+print m.
+(prints: {"found": 4, "absent": nothing})
+```
+
+`null` and `nil` are accepted spellings of the same literal; all three
+produce the identical value. `nothing` is a reserved word, so it cannot be
+used as a variable name.
+
+**Test for it with `is nothing`**, which is an equality (like `is true`),
+not a type predicate — there is no `is a nothing`:
+
+```
+If m's "absent" is nothing, print "no value stored".
+If m's "found" is not nothing, print "has a value".
+```
+
+**`nothing` is not zero.** This is the distinction that matters most:
+
+```
+If 0 is nothing, print "never printed".
+```
+
+`0 is nothing` is **false**, and `nothing is 0` is false too. They are
+different values, and `is nothing` compares the runtime type tag rather
+than the stored number, so the two never collide.
+
+**A missing map key is an error, not `nothing`.** Reading a key that was
+never set sets the error flag; it does not silently hand back `nothing`.
+So "the key is absent" and "the key holds nothing" stay distinguishable:
+
+```
+a map called "m" is {"k": nothing}.
+If m's "k" is nothing, print "k is present and holds nothing".
+a number called "x" is m's "never_set".
+on error print "never_set is absent".
+```
+
+**Arithmetic on `nothing` is refused, not treated as 0.** Writing it
+literally is a compile error:
+
+```
+a number called "n" is nothing add 1.
+(compile error: Cannot use nothing in arithmetic; check it with
+ 'is nothing' first.)
+```
+
+When a value only turns out to be `nothing` at run time — read out of a
+map or a mixed list — the compiler cannot catch it, so the operation sets
+the error flag instead:
+
+```
+a map called "m" is {"absent": nothing}.
+a number called "bad" is m's "absent" add 1.
+on error print "cannot do arithmetic on nothing".
+```
+
+The reason for both is that the stored payload of `nothing` really is 0.
+Left unchecked, `total add missing_field` would quietly evaluate to
+`total` — a wrong answer that looks completely plausible. Guard with a
+predicate first, exactly as you would for a mixed element:
+
+```
+If m's "absent" is not nothing, set total to total add m's "absent".
+```
+
+Comparisons are not arithmetic, so `is nothing`, `is not nothing`, and
+ordinary equality keep working on a `nothing` without raising the flag.
 
 ### Printing a List
 
