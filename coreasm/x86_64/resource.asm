@@ -1017,11 +1017,40 @@ _read_into_buffer:
     jne .done               ; still have space, we're done
 
     ; Buffer full after a successful read. For dynamic buffers loop to read
-    ; any remaining data; for fixed buffers the read fit exactly and is not
-    ; an error.
+    ; any remaining data. For fixed buffers, exactly filling is fine IF
+    ; there's no more data waiting - but if more data exists, silently
+    ; discarding it would be silent data loss with no error signal. Peek
+    ; one more byte to tell the two cases apart.
     test r15, BUF_FLAG_FIXED
-    jnz .done               ; fixed buffer full after successful read: success
-    jmp .read_loop          ; dynamic buffer, might have more data
+    jz .read_loop            ; dynamic buffer, might have more data
+
+    ; Probe for additional data using a scratch byte on the stack.
+    push rax                 ; 8-byte scratch slot to read into
+    mov rax, 0               ; SYS_READ
+    mov rdi, r12             ; fd
+    mov rsi, rsp             ; probe destination
+    mov rdx, 1               ; try to read 1 more byte
+    syscall
+
+    cmp rax, 1
+    jne .no_more_data        ; 0 = EOF, <0 = error: either way, no data lost
+
+    ; There WAS more data waiting - this is genuine overflow, not an exact
+    ; fit. Best-effort seek back one byte so a seekable file isn't left
+    ; missing a byte (harmless no-op failure on pipes/sockets, where the
+    ; byte is unavoidably lost - but the error is still correctly signaled).
+    mov rax, 8               ; SYS_LSEEK
+    mov rdi, r12
+    mov rsi, -1
+    mov rdx, 1               ; SEEK_CUR
+    syscall
+    pop rax                  ; discard scratch
+    mov qword [rel _last_error], 1  ; buffer overflow error - data was truncated
+    jmp .done
+
+.no_more_data:
+    pop rax                  ; discard scratch
+    jmp .done                ; genuinely an exact fit - success, no error
 
 .read_error:
     ; Read syscall failed - set error so On error handlers fire.
