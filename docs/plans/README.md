@@ -26,6 +26,7 @@ plan's **Dependencies** section.
 | [110](110_stage_3a_tuple_type.md) | 3a — tuple type | 3: Records | none |
 | [120](120_stage_3b_tuple_access_destructuring.md) | 3b — destructuring | 3: Records | 3a |
 | [130](130_stage_3c_multiple_return_values.md) | 3c — multiple return values | 3: Records | 3a, 3b |
+| [200](200_shared_library_repair.md) | Shared-library repair (`--shared` phases 0–2) | 4: Shared libraries | none |
 
 Stage 1a (per-slot runtime type tags for heterogeneous lists) is already
 implemented — see commit `6d60ea5`.
