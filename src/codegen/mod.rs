@@ -27,6 +27,16 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    // Set when codegen itself emits a call to _str_eq (string/buffer
+    // equality comparisons). Distinct from program.uses_strings, which the
+    // analyzer computes from string literals/format strings and may miss
+    // a pure variable-vs-variable comparison with no literal operand.
+    uses_strings: bool,
+    // Declared return type of each user function, keyed by function name.
+    // Populated by collect_function_signatures() before codegen so
+    // infer_expr_type() can report a FunctionCall's real type instead of
+    // silently defaulting to Integer (see collect_function_signatures).
+    function_return_types: std::collections::HashMap<String, VarType>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -73,6 +83,18 @@ struct FormatSpec {
     precision: Option<i32>,
 }
 
+/// Outcome of resolve_format_variable - how a `{name}` format part's value
+/// was resolved, so each sink (print / buffer append) can render it.
+enum FormatPartValue {
+    /// Code was emitted leaving the value (or pointer) in rax; the VarType
+    /// tells the sink how to render it (None = integer-ish fallback).
+    Loaded(Option<VarType>),
+    /// The part resolved to a compile-time string constant.
+    Literal(String),
+    /// Unknown name - sinks render the `{name}` placeholder literally.
+    Unknown,
+}
+
 impl CodeGenerator {
     pub fn new() -> Self {
         CodeGenerator {
@@ -100,6 +122,8 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            uses_strings: false,
+            function_return_types: std::collections::HashMap::new(),
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -122,6 +146,27 @@ impl CodeGenerator {
 
     fn global_var_label(&self, name: &str) -> Option<&String> {
         self.global_var_labels.get(name)
+    }
+
+    /// Assign bss mirror labels to every definitely-declared main-line
+    /// name (see collect_definite_decls): an `Open ... called "output"`
+    /// present in BOTH arms of an if/otherwise still executes in _start's
+    /// frame on every path, so functions must be able to reach it via its
+    /// mirror global exactly like a top-level declaration. Uses the same
+    /// walker as the analyzer so the two can never disagree. Names are
+    /// sorted so label numbering stays deterministic across builds.
+    fn collect_global_var_labels(&mut self, stmts: &[Statement]) {
+        let definite = collect_definite_decls(stmts);
+        let mut names: Vec<&String> = definite.keys().collect();
+        names.sort();
+        for name in names {
+            self.ensure_global_var_label(name);
+        }
+        for stmt in stmts {
+            if let Statement::FlagSchemaDecl { name, .. } = stmt {
+                self.ensure_global_var_label(name);
+            }
+        }
     }
 
     fn emit_mirror_stack_var_to_global_if_needed(&mut self, name: &str, offset: i64) {
@@ -206,6 +251,78 @@ impl CodeGenerator {
         }
     }
 
+    /// Resolve a `{name}` format part: emit code leaving the runtime value
+    /// (or pointer) in rax, and classify what was found. This is THE single
+    /// name-resolution path shared by every format-string sink - Print, the
+    /// buffer set/copy/append writers, and the expression materializer that
+    /// write payloads, paths, and text initializers go through. Special
+    /// names, variable/global lookup, and the constant fallback must never
+    /// be re-implemented per sink: that duplication is exactly how the
+    /// buffer sinks shipped without `{current time's hour}` support while
+    /// Print had it.
+    fn resolve_format_variable(&mut self, name: &str) -> FormatPartValue {
+        match name {
+            "current time's hour" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_HOUR rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "current time's minute" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_MINUTE rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "current time's second" => {
+                self.emit_indent("TIME_GET");
+                self.emit_indent("TIME_GET_SECOND rax");
+                self.uses_time = true;
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "arguments's count" | "argument's count" => {
+                self.generate_expr(&Expr::ArgumentCount);
+                FormatPartValue::Loaded(Some(VarType::Integer))
+            }
+            "arguments's name" | "argument's name" => {
+                self.generate_expr(&Expr::ArgumentName);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            "arguments's first" | "argument's first" => {
+                self.generate_expr(&Expr::ArgumentFirst);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            "arguments's last" | "argument's last" => {
+                self.generate_expr(&Expr::ArgumentLast);
+                FormatPartValue::Loaded(Some(VarType::String))
+            }
+            _ => {
+                if let Some(offset) = self.get_var(name) {
+                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                    FormatPartValue::Loaded(self.variable_types.get(name).cloned())
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    self.emit_indent(&format!("mov rax, [rel {}]", label));
+                    FormatPartValue::Loaded(self.variable_types.get(name).cloned())
+                } else if let Some(expr) = self.global_constants.get(name).cloned() {
+                    match expr {
+                        Expr::StringLit(s) => FormatPartValue::Literal(s),
+                        Expr::IntegerLit(n) => {
+                            self.emit_indent(&format!("mov rax, {}", n));
+                            FormatPartValue::Loaded(Some(VarType::Integer))
+                        }
+                        Expr::BoolLit(b) => {
+                            self.emit_indent(&format!("mov rax, {}", if b { 1 } else { 0 }));
+                            FormatPartValue::Loaded(Some(VarType::Integer))
+                        }
+                        _ => FormatPartValue::Unknown,
+                    }
+                } else {
+                    FormatPartValue::Unknown
+                }
+            }
+        }
+    }
+
     fn emit_format_parts_into_buffer_slot(&mut self, offset: i64, parts: &[FormatPart], clear_first: bool) {
         if clear_first {
             self.emit_clear_buffer_slot(offset);
@@ -215,30 +332,18 @@ impl CodeGenerator {
             match part {
                 FormatPart::Literal(s) => self.emit_append_literal_to_buffer_slot(offset, s),
                 FormatPart::Variable { name, format } => {
-                    if let Some(src_offset) = self.get_var(name) {
-                        self.emit_indent(&format!("mov rax, [rbp-{}]", src_offset));
-                        let value_type = self.variable_types.get(name).cloned();
-                        let fmt_spec = self.parse_format_spec(format.as_deref());
-                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
-                    } else if let Some(label) = self.global_var_label(name).cloned() {
-                        self.emit_indent(&format!("mov rax, [rel {}]", label));
-                        let value_type = self.variable_types.get(name).cloned();
-                        let fmt_spec = self.parse_format_spec(format.as_deref());
-                        self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
-                    } else if let Some(expr) = self.global_constants.get(name).cloned() {
-                        match expr {
-                            Expr::StringLit(s) => self.emit_append_literal_to_buffer_slot(offset, &s),
-                            Expr::IntegerLit(n) => {
-                                self.emit_indent(&format!("mov rax, {}", n));
-                                let fmt_spec = self.parse_format_spec(format.as_deref());
-                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
-                            }
-                            Expr::BoolLit(b) => {
-                                self.emit_indent(&format!("mov rax, {}", if b { 1 } else { 0 }));
-                                let fmt_spec = self.parse_format_spec(format.as_deref());
-                                self.emit_append_runtime_value_to_buffer_slot(offset, Some(VarType::Integer), fmt_spec);
-                            }
-                            _ => {}
+                    match self.resolve_format_variable(name) {
+                        FormatPartValue::Loaded(value_type) => {
+                            let fmt_spec = self.parse_format_spec(format.as_deref());
+                            self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                        }
+                        FormatPartValue::Literal(s) => {
+                            self.emit_append_literal_to_buffer_slot(offset, &s);
+                        }
+                        FormatPartValue::Unknown => {
+                            // Same placeholder Print renders for unknown names
+                            let placeholder = format!("{{{}}}", name);
+                            self.emit_append_literal_to_buffer_slot(offset, &placeholder);
                         }
                     }
                 }
@@ -399,6 +504,32 @@ impl CodeGenerator {
                 if matches!(expr, Expr::StringLit(_) | Expr::IntegerLit(_) | Expr::BoolLit(_)) {
                     self.global_constants.insert(name.clone(), expr.clone());
                 }
+            }
+        }
+    }
+
+    // Record each function's declared return type so infer_expr_type() can
+    // resolve Expr::FunctionCall correctly instead of falling through to
+    // its generic "Integer for anything unrecognized" default. Without
+    // this, reassigning an EXISTING variable from a function call (`the x
+    // is "some func" of y.`) silently corrupted the variable's tracked
+    // type to Integer - a fresh `a text called "x" is ...` declaration
+    // happened to read the correct type from a different code path and
+    // was unaffected, which is what made this easy to miss.
+    fn collect_function_signatures(&mut self, program: &Program) {
+        self.function_return_types.clear();
+        for stmt in &program.statements {
+            if let Statement::FunctionDef { name, return_type, .. } = stmt {
+                let vt = match return_type {
+                    Type::Integer => VarType::Integer,
+                    Type::Float => VarType::Float,
+                    Type::String => VarType::String,
+                    Type::Boolean => VarType::Boolean,
+                    Type::Buffer => VarType::Buffer,
+                    Type::List(_) => VarType::List,
+                    _ => VarType::Unknown,
+                };
+                self.function_return_types.insert(name.clone(), vt);
             }
         }
     }
@@ -617,6 +748,92 @@ impl CodeGenerator {
             _ => false,
         }
     }
+
+    fn is_buffer_expr(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Buffer),
+            Expr::Identifier(name) => {
+                self.variable_types.get(name) == Some(&VarType::Buffer)
+            }
+            _ => false,
+        }
+    }
+
+    /// Emit code for an equality comparison between two stringy (String or
+    /// Buffer) expressions. Routes to _mem_eq when either side is a buffer
+    /// (length-bounded, avoids NUL-scanning stale bytes after clear+rewrite)
+    /// and falls back to _str_eq for pure string/string comparisons.
+    /// Result in rax: 1 = equal, 0 = not equal.
+    fn emit_stringy_equality(&mut self, left: &Expr, right: &Expr) {
+        self.uses_strings = true;
+        let left_is_buf = self.is_buffer_expr(left);
+        let right_is_buf = self.is_buffer_expr(right);
+
+        if left_is_buf || right_is_buf {
+            // At least one side is a buffer - use _mem_eq(ptr1, ptr2, len1, len2).
+            // Evaluate both sides, keeping data ptrs and lengths on the stack.
+
+            // --- RIGHT side ---
+            if right_is_buf {
+                self.generate_expr(right);           // rax = struct ptr
+                self.emit_indent("push rax           ; R: struct ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _buffer_length");
+                self.emit_indent("push rax           ; R: len");
+                self.emit_indent("mov rdi, [rsp+8]   ; reload struct ptr");
+                self.emit_indent("call _buffer_data");
+                self.emit_indent("push rax           ; R: data ptr");
+                // stack (top): R_data | R_len | R_struct
+            } else {
+                self.generate_cstr_expr(right);      // rax = NUL-term str ptr
+                self.emit_indent("push rax           ; R: str ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _str_len");
+                self.emit_indent("push rax           ; R: len");
+                // stack (top): R_len | R_str_ptr  (use R_str_ptr as data ptr later)
+            }
+
+            // --- LEFT side ---
+            if left_is_buf {
+                self.generate_expr(left);            // rax = struct ptr
+                self.emit_indent("push rax           ; L: struct ptr");
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _buffer_length");
+                self.emit_indent("mov rdx, rax       ; len1 = L len");
+                self.emit_indent("mov rdi, [rsp]     ; reload L struct ptr");
+                self.emit_indent("call _buffer_data");
+                self.emit_indent("mov rdi, rax       ; ptr1 = L data");
+                self.emit_indent("pop rax            ; drop L struct ptr");
+            } else {
+                self.generate_cstr_expr(left);       // rax = NUL-term str ptr
+                self.emit_indent("mov rdi, rax       ; ptr1 = L str");
+                self.emit_indent("push rdi");
+                self.emit_indent("call _str_len");
+                self.emit_indent("mov rdx, rax       ; len1 = L len");
+                self.emit_indent("pop rdi            ; restore ptr1");
+            }
+
+            // --- Restore RIGHT from stack into rsi (ptr2) and rcx (len2) ---
+            if right_is_buf {
+                self.emit_indent("pop rsi            ; ptr2 = R data");
+                self.emit_indent("pop rcx            ; len2 = R len");
+                self.emit_indent("pop rax            ; drop R struct ptr");
+            } else {
+                self.emit_indent("pop rcx            ; len2 = R len");
+                self.emit_indent("pop rsi            ; ptr2 = R str");
+            }
+
+            self.emit_indent("call _mem_eq");
+        } else {
+            // Pure string/string - both NUL-terminated, _str_eq is correct
+            self.generate_cstr_expr(right);
+            self.emit_indent("push rax  ; park right operand");
+            self.generate_cstr_expr(left);
+            self.emit_indent("mov rdi, rax  ; left operand");
+            self.emit_indent("pop rsi  ; right operand");
+            self.emit_indent("call _str_eq");
+        }
+    }
     
     // Check if operands involve floats (for choosing comparison instructions)
     fn has_float_operands(&self, expr: &Expr) -> bool {
@@ -652,19 +869,11 @@ impl CodeGenerator {
     pub fn generate(&mut self, program: &Program) -> String {
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
+        self.collect_function_signatures(program);
 
         self.global_var_labels.clear();
         self.global_var_counter = 0;
-        for stmt in &program.statements {
-            match stmt {
-                Statement::VarDecl { name, .. }
-                | Statement::FlagSchemaDecl { name, .. }
-                | Statement::FileOpen { name, .. } => {
-                    self.ensure_global_var_label(name);
-                }
-                _ => {}
-            }
-        }
+        self.collect_global_var_labels(&program.statements);
 
         let explicit_parse_idx = program
             .statements
@@ -719,7 +928,7 @@ impl CodeGenerator {
             if program.uses_heap {
                 result.push_str(&format!("%include \"coreasm/{}/heap.asm\"\n", self.target_arch));
             }
-            if program.uses_strings {
+            if program.uses_strings || self.uses_strings {
                 result.push_str(&format!("%include \"coreasm/{}/string.asm\"\n", self.target_arch));
             }
             if program.uses_args {
@@ -827,6 +1036,7 @@ impl CodeGenerator {
                         Type::Float => VarType::Float,
                         Type::Boolean => VarType::Boolean,
                         Type::Buffer => VarType::Buffer,
+                        Type::List(_) => VarType::List,
                         _ => VarType::Unknown,
                     };
                     self.variable_types.insert(name.clone(), vt);
@@ -858,13 +1068,33 @@ impl CodeGenerator {
                         self.list_element_types.insert(name.clone(), VarType::String);
                     }
                     // Argument/environment expressions return string pointers
-                    else if matches!(val, 
-                        Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst | 
+                    else if matches!(val,
+                        Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst |
                         Expr::ArgumentSecond | Expr::ArgumentLast |
                         Expr::EnvironmentVariable { .. } | Expr::EnvironmentVariableAt { .. } |
                         Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
                     ) {
                         self.variable_types.insert(name.clone(), VarType::String);
+                    }
+                    // Initializing from another variable: inherit its type
+                    // (and element type, for lists) unless the declaration
+                    // already pinned one. Without this, `a list called "b"
+                    // is the a.` left "b" untyped and property access
+                    // misrouted to the file fallback (_file_size).
+                    else if var_type.is_none() || matches!(var_type, Some(Type::List(_))) {
+                        let src_name = match val {
+                            Expr::Identifier(src) => Some(src),
+                            Expr::StringLit(src) if self.variables.contains_key(src) => Some(src),
+                            _ => None,
+                        };
+                        if let Some(src) = src_name {
+                            if let Some(vt) = self.variable_types.get(src).cloned() {
+                                self.variable_types.insert(name.clone(), vt);
+                            }
+                            if let Some(et) = self.list_element_types.get(src).cloned() {
+                                self.list_element_types.insert(name.clone(), et);
+                            }
+                        }
                     }
                     
                     // Special handling for buffer initialization/assignment with text/format/buffer source
@@ -906,6 +1136,12 @@ impl CodeGenerator {
                                 self.emit_indent("call _alloc_buffer");
                                 self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                                 self.uses_buffers = true;
+                            }
+                            Type::List(_) => {
+                                // Allocate an empty list; a null pointer here
+                                // would make the first append dereference 0.
+                                self.generate_expr(&Expr::ListLit { elements: vec![] });
+                                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                             }
                             _ => {
                                 // Initialize to 0/null
@@ -1623,11 +1859,25 @@ impl CodeGenerator {
                     self.generate_expr(value);
                     
                     if is_buffer_value {
-                        // For buffer values, extract string data and duplicate it
-                        self.emit_indent("mov rdi, rax  ; buffer struct pointer");
+                        // For buffer values, extract string data and duplicate it.
+                        // Bounded by the buffer's own tracked length rather than
+                        // scanning for NUL - see _strdup_bounded's comment for why
+                        // (buffer content isn't reliably NUL-terminated at its
+                        // logical end after a clear+shorter-rewrite).
+                        self.uses_strings = true;
+                        self.emit_indent("push rbx");
+                        self.emit_indent("push r12");
+                        self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                        self.emit_indent("mov rdi, rbx");
+                        self.emit_indent("call _buffer_length");
+                        self.emit_indent("mov r12, rax  ; save length");
+                        self.emit_indent("mov rdi, rbx");
                         self.emit_indent("call _buffer_data  ; get data pointer");
                         self.emit_indent("mov rdi, rax  ; source string");
-                        self.emit_indent("call _strdup  ; duplicate string");
+                        self.emit_indent("mov rsi, r12  ; max length");
+                        self.emit_indent("call _strdup_bounded  ; duplicate string");
+                        self.emit_indent("pop r12");
+                        self.emit_indent("pop rbx");
                     }
                     
                     self.emit_indent("push rax  ; save value to append");
@@ -1673,7 +1923,17 @@ impl CodeGenerator {
                 let is_writable = matches!(mode, FileMode::Writing | FileMode::Appending);
                 self.file_writable.insert(name.clone(), is_writable);
 
-                let offset = self.alloc_var(name);
+                // Reuse the existing slot when the handle name is already
+                // known, exactly like VarDecl reassignment. Two Opens of the
+                // same name in an if/otherwise pair must share one slot -
+                // separate slots meant code after the branch read whichever
+                // slot the LAST-generated branch owned, which the branch
+                // actually taken at runtime never wrote.
+                let offset = if let Some(existing) = self.get_var(name) {
+                    existing
+                } else {
+                    self.alloc_var(name)
+                };
 
                 if path_is_fd {
                     let fd_ok_label = self.new_label("fd_ok");
@@ -1710,7 +1970,7 @@ impl CodeGenerator {
                         self.emit_indent(&format!("lea rdi, [{}]", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("mov rdi, rax  ; path pointer");
                     }
                 }
@@ -1896,14 +2156,30 @@ impl CodeGenerator {
                             
                             // Generate buffer value
                             self.generate_expr(inner_val);
-                            self.emit_indent("push rax  ; save buffer ptr");
+                            self.emit_indent("push rax  ; save buffer struct ptr");
                             
-                            // Compare buffer data with match value
-                            self.emit_indent("add rax, 24  ; buffer data offset");
+                            // Get the buffer's tracked length and data pointer.
+                            // Use _mem_eq rather than _str_eq to avoid the stale-byte
+                            // bug: the buffer's data area may not be NUL-terminated at
+                            // its logical end after a clear+shorter-rewrite.
                             self.emit_indent("mov rdi, rax");
+                            self.emit_indent("call _buffer_length");
+                            self.emit_indent("mov rdx, rax  ; len1 = buf length");
+                            self.emit_indent("mov rdi, [rsp]  ; reload buf struct ptr");
+                            self.emit_indent("call _buffer_data");
+                            self.emit_indent("mov rdi, rax  ; ptr1 = buf data");
                             self.generate_expr(match_value);
-                            self.emit_indent("mov rsi, rax");
-                            self.emit_indent("call _str_eq");
+                            self.emit_indent("mov rsi, rax  ; ptr2 = match string");
+                            self.emit_indent("push rdi      ; save ptr1 across str_len call");
+                            self.emit_indent("push rsi      ; save ptr2");
+                            self.emit_indent("push rdx      ; save len1");
+                            self.emit_indent("mov rdi, rsi");
+                            self.emit_indent("call _str_len");
+                            self.emit_indent("mov rcx, rax  ; len2 = match string len");
+                            self.emit_indent("pop rdx       ; restore len1");
+                            self.emit_indent("pop rsi       ; restore ptr2");
+                            self.emit_indent("pop rdi       ; restore ptr1");
+                            self.emit_indent("call _mem_eq");
                             self.emit_indent("test rax, rax");
                             self.emit_indent(&format!("jz {}", skip_label));
                             
@@ -1977,12 +2253,291 @@ impl CodeGenerator {
                         self.emit_indent(&format!("FILE_DELETE {}", label));
                     }
                     _ => {
-                        self.generate_expr(path);
+                        self.generate_cstr_expr(path);
                         self.emit_indent("FILE_DELETE rax");
                     }
                 }
             }
-            
+
+            Statement::Rmdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("RMDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_cstr_expr(path);
+                        self.emit_indent("RMDIR rax");
+                    }
+                }
+            }
+
+            Statement::Mkdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("MKDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_cstr_expr(path);
+                        self.emit_indent("MKDIR rax");
+                    }
+                }
+            }
+
+            Statement::Chdir { path } => {
+                self.uses_files = true;
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("CHDIR {}", label));
+                    }
+                    _ => {
+                        self.generate_cstr_expr(path);
+                        self.emit_indent("CHDIR rax");
+                    }
+                }
+            }
+
+            Statement::Mount { source, target, fstype, options } => {
+                self.uses_files = true;
+
+                // Detect the "move"/"bind" pseudo-mount pattern used for
+                // relocating already-mounted filesystems to a new root
+                // (fstype "none" + options "move"/"bind"): for these, the
+                // real mount(2) syscall wants a NULL filesystemtype and
+                // NULL data, with the operation encoded entirely in flags.
+                let is_none_fstype = matches!(fstype, Expr::StringLit(s) if s == "none");
+                let move_flag = matches!(options, Some(Expr::StringLit(s)) if s == "move");
+                let bind_flag = matches!(options, Some(Expr::StringLit(s)) if s == "bind");
+                let flags: i64 = if is_none_fstype && move_flag {
+                    8192 // MS_MOVE
+                } else if is_none_fstype && bind_flag {
+                    4096 // MS_BIND
+                } else {
+                    0
+                };
+                let suppress_fstype_and_data = is_none_fstype && (move_flag || bind_flag);
+
+                // Park each evaluated argument on the stack so later
+                // expressions (function calls, format strings) cannot
+                // clobber earlier results, then pop into the syscall
+                // registers in reverse order.
+                self.generate_cstr_expr(source);
+                self.emit_indent("push rax  ; park source");
+
+                self.generate_cstr_expr(target);
+                self.emit_indent("push rax  ; park target");
+
+                // fstype (NULL for move/bind pseudo-mounts)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor rax, rax  ; fstype = NULL (move/bind)");
+                } else {
+                    self.generate_cstr_expr(fstype);
+                }
+                self.emit_indent("push rax  ; park fstype");
+
+                // options/data (NULL for move/bind pseudo-mounts, or if omitted)
+                if suppress_fstype_and_data {
+                    self.emit_indent("xor rax, rax  ; data = NULL (move/bind)");
+                } else {
+                    match options {
+                        None => self.emit_indent("xor rax, rax  ; data = NULL (no options given)"),
+                        Some(expr) => self.generate_cstr_expr(expr),
+                    }
+                }
+                self.emit_indent("push rax  ; park data (options)");
+
+                // NOTE: raw `syscall` uses r10 for arg4, NOT rcx (rcx/r11
+                // get clobbered by the syscall instruction itself) -
+                // matches the convention already established by the
+                // existing MMAP macro in this file.
+                self.emit_indent("pop r8   ; data (options)");
+                self.emit_indent("pop rdx  ; fstype");
+                self.emit_indent("pop rsi  ; target");
+                self.emit_indent("pop rdi  ; source");
+                self.emit_indent(&format!("mov r10, {}  ; mount flags", flags));
+                self.emit_indent("MOUNT");
+            }
+
+            Statement::Shutdown => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x4321FEDC  ; LINUX_REBOOT_CMD_POWER_OFF");
+            }
+
+            Statement::Reboot => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0x01234567  ; LINUX_REBOOT_CMD_RESTART");
+            }
+
+            Statement::Halt => {
+                self.uses_files = true;
+                self.emit_indent("REBOOT_CMD 0xCDEF0123  ; LINUX_REBOOT_CMD_HALT");
+            }
+
+            Statement::Unmount { target, lazy } => {
+                self.uses_files = true;
+                self.generate_cstr_expr(target);
+                self.emit_indent("mov rdi, rax  ; mount target");
+                let flags = if *lazy { 2 } else { 0 }; // MNT_DETACH = 2
+                self.emit_indent(&format!(
+                    "mov rsi, {}  ; flags{}",
+                    flags,
+                    if *lazy { " (MNT_DETACH)" } else { "" }
+                ));
+                self.emit_indent("UMOUNT");
+            }
+
+            Statement::PivotRoot { new_root, put_old } => {
+                self.uses_files = true;
+                self.emit_syscall_args(&[(new_root, "rdi"), (put_old, "rsi")]);
+                self.emit_indent("PIVOT_ROOT");
+            }
+
+            Statement::Execute { path, args } => {
+                self.uses_files = true;
+
+                // A list variable (or any non-literal list expression):
+                // argv is built at runtime by _list_to_argv, which sizes the
+                // allocation and bounds the copy from a single read of the
+                // list's length - the array cannot be overrun.
+                let elements: &[Expr] = match args {
+                    Expr::ListLit { elements } => elements,
+                    other => {
+                        self.uses_lists = true;
+                        self.generate_expr(other);
+                        self.emit_indent("push rax  ; park list pointer");
+                        match path {
+                            Expr::StringLit(s) => {
+                                let label = self.add_string(s);
+                                self.emit_indent(&format!("lea rax, [{}]", label));
+                            }
+                            _ => self.generate_cstr_expr(path),
+                        }
+                        self.emit_indent("mov rsi, rax  ; path (becomes argv[0])");
+                        self.emit_indent("pop rdi  ; list pointer");
+                        self.emit_indent("call _list_to_argv");
+                        self.emit_indent("mov rsi, rax  ; argv array pointer");
+                        self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                        self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                        self.emit_indent("EXECVE");
+                        return;
+                    }
+                };
+
+                let slot_count = elements.len() + 2; // path + args + NULL terminator
+                let total_size = slot_count * 8;
+
+                // Allocate the argv array via mmap (same pattern as list
+                // literals elsewhere in this file), but WITHOUT the normal
+                // Vox-list header - execve needs a plain C-style array.
+                self.emit_indent("; Build argv array for execve");
+                self.emit_indent("mov rdi, 0  ; addr = NULL");
+                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
+                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
+                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
+                self.emit_indent("mov r8, -1  ; fd = -1");
+                self.emit_indent("mov r9, 0  ; offset = 0");
+                self.emit_indent("mov rax, 9  ; sys_mmap");
+                self.emit_indent("syscall");
+                let mmap_ok = self.new_label("execve_argv_mmap_ok");
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
+                self.emit_indent("mov rdi, 1");
+                self.emit_indent("mov rax, 60");
+                self.emit_indent("syscall");
+                self.emit(&format!("{}:", mmap_ok));
+                self.emit_indent("push rax  ; save argv array pointer");
+
+                // Slot 0: path (also argv[0] by convention)
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("mov rbx, {}", label));
+                    }
+                    _ => {
+                        self.generate_cstr_expr(path);
+                        self.emit_indent("mov rbx, rax");
+                    }
+                }
+                self.emit_indent("mov rax, [rsp]  ; peek argv array pointer");
+                self.emit_indent("mov [rax], rbx  ; argv[0] = path");
+
+                // Slots 1..n: the rest of the arguments
+                for (i, elem) in elements.iter().enumerate() {
+                    match elem {
+                        Expr::StringLit(s) => {
+                            let label = self.add_string(s);
+                            self.emit_indent(&format!("mov rbx, {}", label));
+                        }
+                        _ => {
+                            self.generate_cstr_expr(elem);
+                            self.emit_indent("mov rbx, rax");
+                        }
+                    }
+                    self.emit_indent("mov rax, [rsp]  ; peek argv array pointer");
+                    self.emit_indent(&format!("mov [rax+{}], rbx  ; argv[{}]", (i + 1) * 8, i + 1));
+                }
+
+                // Final slot: NULL terminator
+                self.emit_indent("pop rax  ; argv array pointer");
+                self.emit_indent(&format!("mov qword [rax+{}], 0  ; argv NULL terminator", (elements.len() + 1) * 8));
+
+                // path -> rdi (argv[0], reloaded from the array, not re-generated)
+                self.emit_indent("mov rsi, rax  ; argv array pointer");
+                self.emit_indent("mov rdi, [rsi]  ; path = argv[0]");
+                self.emit_indent("mov rdx, [rel _envp]  ; inherit the real environment");
+                self.emit_indent("EXECVE");
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                self.uses_files = true;
+                self.emit_syscall_args(&[(target, "rdi"), (linkpath, "rsi")]);
+                self.emit_indent("SYMLINK");
+            }
+
+            Statement::Mknod { path, node_type, major, minor } => {
+                self.uses_files = true;
+
+                // Path -> rdi
+                match path {
+                    Expr::StringLit(s) => {
+                        let label = self.add_string(s);
+                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                    }
+                    _ => {
+                        self.generate_cstr_expr(path);
+                        self.emit_indent("mov rdi, rax  ; path pointer");
+                    }
+                }
+                self.emit_indent("push rdi  ; save path pointer");
+
+                // Mode = S_IFCHR|S_IFBLK|S_IFIFO + 0666 permissions -> rsi
+                // S_IFCHR = 0o020000 = 8192, S_IFBLK = 0o060000 = 24576,
+                // S_IFIFO = 0o010000 = 4096, 0666 = 438
+                let mode = match node_type {
+                    DeviceNodeType::Character => 8192 + 438,
+                    DeviceNodeType::Block => 24576 + 438,
+                    DeviceNodeType::Fifo => 4096 + 438,
+                };
+
+                // dev = (major << 8) | minor -> rdx
+                self.generate_expr(major);
+                self.emit_indent("push rax  ; save major");
+                self.generate_expr(minor);
+                self.emit_indent("mov rcx, rax  ; minor");
+                self.emit_indent("pop rax  ; major");
+                self.emit_indent("shl rax, 8");
+                self.emit_indent("or rax, rcx");
+                self.emit_indent("mov rdx, rax  ; dev = (major << 8) | minor");
+
+                self.emit_indent(&format!("mov rsi, {}  ; mode", mode));
+                self.emit_indent("pop rdi  ; restore path pointer");
+                self.emit_indent("MKNOD");
+            }
+
             Statement::OnError { actions } => {
                 // Check if last operation had an error
                 let skip_label = self.new_label("skip_error");
@@ -2175,7 +2730,15 @@ impl CodeGenerator {
                     self.emit_indent("PRINT_FLOAT");
                     self.uses_floats = true;
                 }
-                Some(VarType::String) | Some(VarType::Buffer) => {
+                Some(VarType::Buffer) => {
+                    // rdi must be the struct pointer (not data area) here.
+                    // The fixed call sites guarantee this; it's documented on
+                    // each one. Kept separate from VarType::String to make the
+                    // contract explicit and catch any future callers that get
+                    // it wrong (PRINT_BUF on a data pointer would print garbage).
+                    self.emit_indent("PRINT_BUF rdi");
+                }
+                Some(VarType::String) => {
                     self.emit_indent("PRINT_CSTR rdi");
                 }
                 _ => {
@@ -2288,75 +2851,68 @@ impl CodeGenerator {
                             self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                         }
                         FormatPart::Variable { name, format } => {
-                            // Check for property access patterns first
-                            let var_type: Option<VarType>;
-                            
-                            if name == "current time's hour" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_HOUR rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "current time's minute" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_MINUTE rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "current time's second" {
-                                self.emit_indent("TIME_GET");
-                                self.emit_indent("TIME_GET_SECOND rax");
-                                self.emit_indent("mov rdi, rax");
-                                self.uses_time = true;
-                                var_type = Some(VarType::Integer);
-                            } else if name == "arguments's count" || name == "argument's count" {
-                                self.emit_indent("ARGS_COUNT");
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::Integer);
-                            } else if name == "arguments's name" || name == "argument's name" {
-                                self.emit_indent("ARGS_NAME");
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if name == "arguments's first" || name == "argument's first" {
-                                self.emit_indent("ARGS_FIRST");
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if name == "arguments's last" || name == "argument's last" {
-                                self.emit_indent("ARGS_LAST");
-                                self.emit_indent("mov rdi, rax");
-                                var_type = Some(VarType::String);
-                            } else if let Some(offset) = self.get_var(name) {
-                                // Regular variable lookup
-                                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
-                                var_type = self.variable_types.get(name).cloned();
-                            } else if let Some(label) = self.global_var_label(name).cloned() {
-                                self.emit_indent(&format!("mov rdi, [rel {}]", label));
-                                var_type = self.variable_types.get(name).cloned();
-                            } else if self.emit_global_constant_format_fallback(name, format.as_ref()) {
-                                continue;
+                            let var_type: Option<VarType> = match self.resolve_format_variable(name) {
+                                FormatPartValue::Loaded(t) => {
+                                    self.emit_indent("mov rdi, rax");
+                                    t
+                                }
+                                FormatPartValue::Literal(s) => {
+                                    let label = self.add_string(&s);
+                                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                                    continue;
+                                }
+                                FormatPartValue::Unknown => {
+                                    let placeholder = format!("{{{}}}", name);
+                                    let label = self.add_string(&placeholder);
+                                    self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                                    continue;
+                                }
+                            };
+
+                            // Parse format spec and emit formatted value.
+                            // Buffer: use PRINT_BUF with the struct pointer (length-bounded,
+                            // avoids the NUL-scan stale-byte bug). For all other types, rdi
+                            // already holds the correct value/pointer.
+                            if var_type == Some(VarType::Buffer) {
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
+                                    self.emit_indent("PRINT_BUF rdi");
+                                } else {
+                                    // Format spec: value is formatted as a number, so point
+                                    // rdi at the data area so the formatter reads the string.
+                                    self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                                    self.emit_formatted_value(var_type, fmt_spec);
+                                }
                             } else {
-                                // Unknown - print placeholder
-                                let placeholder = format!("{{{}}}", name);
-                                let label = self.add_string(&placeholder);
-                                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
-                                continue;
+                                let fmt_spec = self.parse_format_spec(format.as_deref());
+                                self.emit_formatted_value(var_type, fmt_spec);
                             }
-                            
-                            // Parse format spec and emit formatted value
-                            let fmt_spec = self.parse_format_spec(format.as_deref());
-                            self.emit_formatted_value(var_type, fmt_spec);
                         }
                         FormatPart::Expression { expr, format } => {
-                            // Generate code for the expression, result will be in rax
-                            self.generate_expr(expr);
-                            self.emit_indent("mov rdi, rax");
-                            
-                            // Determine the type of the expression for formatting
                             let expr_type = self.infer_expr_type(expr);
-                            
-                            // Parse format spec and emit formatted value
                             let fmt_spec = self.parse_format_spec(format.as_deref());
-                            self.emit_formatted_value(expr_type, fmt_spec);
+
+                            if expr_type == Some(VarType::Buffer) {
+                                // For buffer expressions: generate the struct pointer,
+                                // not the data-area pointer - PRINT_BUF reads its own
+                                // length from the struct, so it needs the base pointer.
+                                self.generate_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
+                                    self.emit_indent("PRINT_BUF rdi");
+                                } else {
+                                    // Format spec present: adjust to data area for
+                                    // the NUL-scanned formatter.
+                                    self.emit_indent("add rdi, 24  ; buffer data area");
+                                    self.emit_formatted_value(expr_type, fmt_spec);
+                                }
+                            } else {
+                                // Non-buffer: generate_cstr_expr adds +24 for buffer
+                                // (irrelevant here), then falls through to normal path.
+                                self.generate_cstr_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                self.emit_formatted_value(expr_type, fmt_spec);
+                            }
                         }
                     }
                 }
@@ -2373,9 +2929,7 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(s).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
-                            self.emit_indent("call _buffer_data");
-                            self.emit_indent("mov rdi, rax");
-                            self.emit_indent("PRINT_CSTR rdi");
+                            self.emit_indent("PRINT_BUF rdi");
                         }
                         Some(VarType::String) => {
                             self.emit_indent("PRINT_CSTR rdi");
@@ -2415,10 +2969,9 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(name).cloned();
                     match var_type {
                         Some(VarType::Buffer) => {
-                            // Dynamic buffer - get data pointer (skip header)
-                            self.emit_indent("call _buffer_data");
-                            self.emit_indent("mov rdi, rax");
-                            self.emit_indent("PRINT_CSTR rdi");
+                            // Dynamic buffer - PRINT_BUF reads length/data directly
+                            // from the struct, no NUL-scan needed
+                            self.emit_indent("PRINT_BUF rdi");
                         }
                         Some(VarType::String) => {
                             // Raw string pointer (from lists, etc.)
@@ -2488,6 +3041,50 @@ impl CodeGenerator {
         }
     }
     
+    /// Evaluate a sequence of syscall argument expressions safely.
+    ///
+    /// Each expression's result (in rax) is parked on the stack before the
+    /// next expression is generated, then everything is popped into the
+    /// target registers in reverse order. Loading argument registers
+    /// directly between generate_expr calls is unsound: a later expression
+    /// containing a function call, format string, or buffer operation can
+    /// clobber any register already loaded (user functions only preserve
+    /// rbp, and syscalls clobber rcx/r11).
+    fn emit_syscall_args(&mut self, args: &[(&Expr, &'static str)]) {
+        for (expr, _) in args {
+            self.generate_cstr_expr(expr);
+            self.emit_indent("push rax  ; park syscall arg");
+        }
+        for (_, reg) in args.iter().rev() {
+            self.emit_indent(&format!("pop {}", reg));
+        }
+    }
+
+    /// Evaluate an expression that will be handed to the kernel as a
+    /// C-string (path, mount option, execve argument). Buffer variables
+    /// evaluate to their struct pointer (capacity/length/flags header
+    /// first), so adjust to the data area - the runtime maintains a
+    /// trailing NUL at data[length], making buffer contents directly
+    /// usable as a C string. Text variables and string literals already
+    /// point at NUL-terminated bytes.
+    fn generate_cstr_expr(&mut self, expr: &Expr) {
+        self.generate_expr(expr);
+        if self.infer_expr_type(expr) == Some(VarType::Buffer) {
+            self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes, data is NUL-terminated)");
+        }
+    }
+
+    /// True when comparing this expression with `==`/`!=` needs byte-content
+    /// comparison (_str_eq) rather than a raw pointer `cmp`. Text variables,
+    /// string literals, and buffers all qualify - two equal-content strings
+    /// are essentially never the same address (add_string mints a fresh
+    /// label per literal occurrence with no deduplication), so pointer
+    /// comparison silently fails for the overwhelmingly common case of
+    /// `some_variable is "literal"`.
+    fn is_stringy_expr(&self, expr: &Expr) -> bool {
+        matches!(self.infer_expr_type(expr), Some(VarType::String) | Some(VarType::Buffer))
+    }
+
     fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -2626,6 +3223,14 @@ impl CodeGenerator {
                                      BinaryOperator::And | BinaryOperator::Or) {
                         self.emit_indent("XMM0_TO_RAX");
                     }
+                } else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && (self.is_stringy_expr(left) || self.is_stringy_expr(right))
+                {
+                    // Content comparison via _str_eq/_mem_eq - see emit_stringy_equality.
+                    self.emit_stringy_equality(left, right);
+                    if matches!(op, BinaryOperator::NotEqual) {
+                        self.emit_indent("xor rax, 1  ; 1=equal -> 0=notequal");
+                    }
                 } else {
                     // Integer operations
                     self.uses_ints = true;
@@ -2633,7 +3238,7 @@ impl CodeGenerator {
                     self.emit_indent("push rax");
                     self.generate_expr(left);
                     self.emit_indent("pop rbx");
-                    
+
                     match op {
                         BinaryOperator::Add => {
                             self.emit_indent("INT_ADD");
@@ -2771,7 +3376,13 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.uses_files = true;
+                self.generate_cstr_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+            }
+
             Expr::Range { .. } => {}
 
             Expr::FunctionCall { name, args } => {
@@ -2799,10 +3410,10 @@ impl CodeGenerator {
                 self.emit_indent("mov r9, 0  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("list_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -3230,10 +3841,10 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("arglist_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -3292,10 +3903,10 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9  ; offset = 0");
                 self.emit_indent("mov rax, 9  ; sys_mmap");
                 self.emit_indent("syscall");
-                // Check for mmap failure (MAP_FAILED == -1)
+                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
                 let mmap_ok = self.new_label("argraw_mmap_ok");
-                self.emit_indent("cmp rax, -1");
-                self.emit_indent(&format!("jne {}", mmap_ok));
+                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
+                self.emit_indent(&format!("jbe {}", mmap_ok));
                 self.emit_indent("mov rdi, 1          ; exit code 1");
                 self.emit_indent("mov rax, 60         ; sys_exit");
                 self.emit_indent("syscall");
@@ -3390,20 +4001,35 @@ impl CodeGenerator {
                 if is_buffer || matches!(treating_type, Some(VarType::String)) {
                     // Evaluate the value
                     self.generate_expr(value);
-                    self.emit_indent("push rax  ; save original value");
+                    self.emit_indent("push rax  ; save original value (struct ptr if buffer)");
 
-                    // If buffer, get pointer to data (offset 24) for comparison
                     if is_buffer {
-                        self.emit_indent("add rax, 24  ; buffer data offset");
+                        // Get length and data pointer from struct - avoid NUL-scanning
+                        // stale bytes (same fix applied to all other buffer comparisons)
+                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent("call _buffer_length");
+                        self.emit_indent("mov rdx, rax  ; len1");
+                        self.emit_indent("mov rdi, [rsp]");
+                        self.emit_indent("call _buffer_data");
+                        self.emit_indent("mov rdi, rax  ; ptr1 = data");
+                        self.generate_expr(match_value);
+                        self.emit_indent("mov rsi, rax  ; ptr2 = match");
+                        self.emit_indent("push rdi");
+                        self.emit_indent("push rsi");
+                        self.emit_indent("push rdx");
+                        self.emit_indent("mov rdi, rsi");
+                        self.emit_indent("call _str_len");
+                        self.emit_indent("mov rcx, rax  ; len2");
+                        self.emit_indent("pop rdx");
+                        self.emit_indent("pop rsi");
+                        self.emit_indent("pop rdi");
+                        self.emit_indent("call _mem_eq");
+                    } else {
+                        self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
+                        self.generate_expr(match_value);
+                        self.emit_indent("mov rsi, rax  ; match value in rsi");
+                        self.emit_indent("call _str_eq");
                     }
-                    self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
-
-                    // Evaluate match_value
-                    self.generate_expr(match_value);
-                    self.emit_indent("mov rsi, rax  ; match value in rsi");
-
-                    // Compare strings
-                    self.emit_indent("call _str_eq");
                     self.emit_indent("test rax, rax");
                     self.emit_indent(&format!("jz {}", skip_label));
 
@@ -3487,9 +4113,30 @@ impl CodeGenerator {
                 self.emit_indent("; Get current time");
                 self.emit_indent("TIME_GET");
             }
+
+            Expr::Fork => {
+                self.uses_files = true;
+                self.emit_indent("; fork() - 0 in child, child pid in parent, negative on error");
+                self.emit_indent("FORK");
+            }
+
+            Expr::ReapChild { pid } => {
+                self.uses_files = true;
+                match pid {
+                    None => {
+                        self.emit_indent("mov rdi, -1  ; wait for any child");
+                    }
+                    Some(pid_expr) => {
+                        self.generate_expr(pid_expr);
+                        self.emit_indent("mov rdi, rax  ; wait for this specific pid");
+                    }
+                }
+                self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
+                self.emit_indent("REAP_CHILD");
+            }
             
             // Type casting
-            Expr::Cast { value, target_type } => {
+            Expr::Cast { value, target_type, radix } => {
                 self.generate_expr(value);
                 match target_type {
                     Type::Integer => {
@@ -3505,15 +4152,40 @@ impl CodeGenerator {
                                 Some(VarType::Buffer) => {
                                     self.uses_ints = true;
                                     self.uses_buffers = true;
-                                    self.emit_indent("mov rdi, rax");
+                                    // Buffer content isn't reliably NUL-terminated at its
+                                    // logical end (_buffer_clear only zeroes the first byte,
+                                    // not the whole allocation), so a NUL-scanning parse could
+                                    // read stale bytes left over from a longer previous value.
+                                    // Use the buffer's own tracked length as a hard bound instead.
+                                    self.emit_indent("push rbx");
+                                    self.emit_indent("push r12");
+                                    self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                                    self.emit_indent("mov rdi, rbx");
+                                    self.emit_indent("call _buffer_length");
+                                    self.emit_indent("mov r12, rax  ; save length");
+                                    self.emit_indent("mov rdi, rbx");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_i64");
+                                    if *radix == 10 {
+                                        self.emit_indent("mov rsi, r12  ; max length");
+                                        self.emit_indent("call _parse_i64_bounded");
+                                    } else {
+                                        self.emit_indent(&format!("mov rsi, {}", radix));
+                                        self.emit_indent("mov rdx, r12  ; max length");
+                                        self.emit_indent("call _parse_int_radix_bounded");
+                                    }
+                                    self.emit_indent("pop r12");
+                                    self.emit_indent("pop rbx");
                                 }
                                 Some(VarType::String) => {
                                     self.uses_ints = true;
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_i64");
+                                    if *radix == 10 {
+                                        self.emit_indent("call _parse_i64");
+                                    } else {
+                                        self.emit_indent(&format!("mov rsi, {}", radix));
+                                        self.emit_indent("call _parse_int_radix");
+                                    }
                                 }
                                 _ => {
                                     // Other types stay as-is (already integer)
@@ -3529,10 +4201,23 @@ impl CodeGenerator {
                                 Some(VarType::Buffer) => {
                                     self.uses_floats = true;
                                     self.uses_buffers = true;
-                                    self.emit_indent("mov rdi, rax");
+                                    // Buffer content isn't reliably NUL-terminated at its
+                                    // logical end (see the int.asm bounded parsers for the
+                                    // full explanation) - use the buffer's own tracked
+                                    // length as a hard bound instead of scanning for NUL.
+                                    self.emit_indent("push rbx");
+                                    self.emit_indent("push r12");
+                                    self.emit_indent("mov rbx, rax  ; save buffer pointer");
+                                    self.emit_indent("mov rdi, rbx");
+                                    self.emit_indent("call _buffer_length");
+                                    self.emit_indent("mov r12, rax  ; save length");
+                                    self.emit_indent("mov rdi, rbx");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
-                                    self.emit_indent("call _parse_f64");
+                                    self.emit_indent("mov rsi, r12  ; max length");
+                                    self.emit_indent("call _parse_f64_bounded");
+                                    self.emit_indent("pop r12");
+                                    self.emit_indent("pop rbx");
                                 }
                                 Some(VarType::String) => {
                                     self.uses_floats = true;
@@ -3665,11 +4350,22 @@ impl CodeGenerator {
                 self.emit(&format!("{}:", done_label));
             }
             
-            // Format string - result is left in rax as a pointer (not used here, handled in generate_print)
-            Expr::FormatString { .. } => {
-                // Format strings are handled specially in generate_print
-                // For expression context, just return 0
-                self.emit_indent("xor rax, rax");
+            // Format string in expression context (e.g. a text initializer
+            // or a function argument): materialize it into a fresh dynamic
+            // buffer and yield a pointer to the data area - a NUL-terminated
+            // C string usable anywhere a text is. Previously this returned 0,
+            // so `a text called "t" is "{buf}"` silently produced a NULL
+            // text that printed as empty and crashed execve argv arrays.
+            Expr::FormatString { parts } => {
+                self.uses_buffers = true;
+                self.stack_offset += 8;
+                let tmp = self.stack_offset;
+                self.emit_indent("mov rdi, 1024  ; default buffer size");
+                self.emit_indent("call _alloc_buffer");
+                self.emit_indent(&format!("mov [rbp-{}], rax", tmp));
+                self.emit_format_parts_into_buffer_slot(tmp, parts, false);
+                self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
+                self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes)");
             }
         }
     }
@@ -3715,7 +4411,15 @@ impl CodeGenerator {
                     }
                 }
             }
-            
+
+            Expr::FileAvailable { path } => {
+                self.uses_files = true;
+                self.generate_cstr_expr(path);
+                self.emit_indent("FILE_AVAILABLE");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", false_label));
+            }
+
             Expr::BinaryOp { left, op, right } => {
                 match op {
                     BinaryOperator::And => {
@@ -3730,11 +4434,21 @@ impl CodeGenerator {
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
                     }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
+                    {
+                        // Content comparison - see emit_stringy_equality for why
+                        // _mem_eq is used when either side is a buffer.
+                        self.emit_stringy_equality(left, right);
+                        self.emit_indent("test rax, rax");
+                        let jmp = if matches!(op, BinaryOperator::Equal) { "jz" } else { "jnz" };
+                        self.emit_indent(&format!("{} {}  ; 1=equal", jmp, false_label));
+                    }
                     BinaryOperator::Equal | BinaryOperator::NotEqual |
                     BinaryOperator::Greater | BinaryOperator::Less |
                     BinaryOperator::GreaterEqual | BinaryOperator::LessEqual => {
                         let is_float = self.is_float_expr(left) || self.is_float_expr(right);
-                        
+
                         if is_float {
                             // Float comparison using SSE2
                             self.generate_expr(right);
@@ -3744,7 +4458,7 @@ impl CodeGenerator {
                             self.emit_indent("pop rax");
                             self.emit_indent("movq xmm1, rax");       // right in xmm1
                             self.emit_indent("ucomisd xmm0, xmm1");
-                            
+
                             let jmp = match op {
                                 BinaryOperator::Equal => "jne",
                                 BinaryOperator::NotEqual => "je",
@@ -3814,6 +4528,7 @@ impl CodeGenerator {
             | Expr::EnvironmentVariableEmpty => Some(VarType::Integer),
             Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
+            Expr::FunctionCall { name, .. } => self.function_return_types.get(name).cloned(),
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type
                 match property {

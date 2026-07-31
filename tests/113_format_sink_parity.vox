@@ -1,0 +1,20 @@
+(Regression test: format-string parts must resolve identically in every
+ sink. Name resolution lives in one shared resolve_format_variable -
+ previously Print supported special names like {arguments's name} that
+ the buffer set/copy/append sinks silently dropped.)
+
+a number called "v" is 255.
+
+Print "print: {v} {v:04x} {v:b} {v:o}".
+
+Create a buffer called buf.
+copy "buffer: {v} {v:04x} {v:b} {v:o}" to buf.
+Print buf.
+
+Open a file at 1 for writing called out.
+write "write: {v} {v:04x} {v:b} {v:o}\n" to out.
+
+(special name in a buffer sink - previously Print-only)
+Create a buffer called argbuf.
+copy "count via buffer: {arguments's count}" to argbuf.
+Print argbuf.

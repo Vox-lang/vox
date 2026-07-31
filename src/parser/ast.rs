@@ -123,11 +123,16 @@ pub enum Expr {
     
     // Time expressions
     CurrentTime,                // current time value
+    Fork,                       // fork() - 0 in child, child pid in parent, negative on error
+    ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
+        pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+    },
     
     // Type casting
     Cast {
         value: Box<Expr>,
         target_type: Type,
+        radix: u32, // base for string->integer casts (2, 8, 10, or 16); ignored otherwise
     },
     
     // Duration cast (timer's duration in seconds)
@@ -141,16 +146,21 @@ pub enum Expr {
         buffer: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Element access: element N of list
     ElementAccess {
         list: Box<Expr>,
         index: Box<Expr>,
     },
-    
+
     // Format string: "Hello {name}, you are {age} years old"
     FormatString {
         parts: Vec<FormatPart>,
+    },
+
+    // File availability check: path is available
+    FileAvailable {
+        path: Box<Expr>,
     },
 }
 
@@ -416,6 +426,10 @@ pub enum Statement {
     FileDelete {
         path: Expr,
     },
+
+    Rmdir {
+        path: Expr,
+    },
     
     // Error handling - actions are comma-separated within the sentence
     OnError {
@@ -462,6 +476,69 @@ pub enum Statement {
     GetTime {
         into: String,
     },
+
+    // Filesystem operations
+    Mkdir {
+        path: Expr,
+    },
+
+    Chdir {
+        path: Expr,
+    },
+
+    Symlink {
+        target: Expr,
+        linkpath: Expr,
+    },
+
+    // Create device node: mknod(path, mode, dev)
+    Mknod {
+        path: Expr,
+        node_type: DeviceNodeType,
+        major: Expr,
+        minor: Expr,
+    },
+
+    Mount {
+        source: Expr,
+        target: Expr,
+        fstype: Expr,
+        options: Option<Expr>,
+    },
+
+    Unmount {
+        target: Expr,
+        /// true = MNT_DETACH (lazy unmount, succeeds even while busy)
+        lazy: bool,
+    },
+
+    /// reboot(2) with LINUX_REBOOT_CMD_POWER_OFF (syncs filesystems first)
+    Shutdown,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_RESTART (syncs filesystems first)
+    Reboot,
+
+    /// reboot(2) with LINUX_REBOOT_CMD_HALT (syncs filesystems first)
+    Halt,
+
+    PivotRoot {
+        new_root: Expr,
+        put_old: Expr,
+    },
+
+    // execve(path, argv, envp) - argv is built as [path, args..., NULL]
+    // envp is always the process's own inherited environment (_envp)
+    Execute {
+        path: Expr,
+        args: Expr, // expected to be an Expr::ListLit
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceNodeType {
+    Character, // 'c' - requires CAP_MKNOD/root on real hardware
+    Block,     // 'b' - requires CAP_MKNOD/root on real hardware
+    Fifo,      // 'p' - named pipe, no special privilege required
 }
 
 #[derive(Debug, Clone)]
@@ -483,4 +560,65 @@ impl Program {
             uses_args: false,
         }
     }
+}
+
+/// What kind of definitely-declared name this is, so consumers can route
+/// it into their type-specific tracking (buffer/list/file sets).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DefiniteDeclKind {
+    Plain,
+    Buffer,
+    List,
+    File,
+}
+
+/// Names that are DEFINITELY declared by the time this statement sequence
+/// finishes, regardless of which control-flow path ran: unconditional
+/// declarations, plus - for if/otherwise chains that have an else branch -
+/// the intersection of what every branch declares. A name declared in only
+/// some branches is not definite (the analyzer's guard tracking owns those),
+/// and loop bodies never count (they may run zero times). Function bodies
+/// are their own scope and are never entered.
+///
+/// Shared by the analyzer (function-visible globals) and codegen (bss
+/// mirror labels) so the two can never disagree about which main-line
+/// declarations behave as globals.
+pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<String, DefiniteDeclKind> {
+    let mut out = std::collections::HashMap::new();
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDecl { name, var_type, .. } => {
+                let kind = match var_type {
+                    Some(Type::Buffer) => DefiniteDeclKind::Buffer,
+                    Some(Type::List(_)) => DefiniteDeclKind::List,
+                    _ => DefiniteDeclKind::Plain,
+                };
+                out.insert(name.clone(), kind);
+            }
+            Statement::BufferDecl { name, .. } => {
+                out.insert(name.clone(), DefiniteDeclKind::Buffer);
+            }
+            Statement::Allocate { name, .. } | Statement::TimerDecl { name } => {
+                out.insert(name.clone(), DefiniteDeclKind::Plain);
+            }
+            Statement::FileOpen { name, .. } => {
+                out.insert(name.clone(), DefiniteDeclKind::File);
+            }
+            Statement::GetTime { into } => {
+                out.insert(into.clone(), DefiniteDeclKind::Plain);
+            }
+            Statement::If { then_block, else_if_blocks, else_block: Some(else_block), .. } => {
+                let mut definite = collect_definite_decls(then_block);
+                for (_, block) in else_if_blocks {
+                    let branch = collect_definite_decls(block);
+                    definite.retain(|name, kind| branch.get(name) == Some(kind));
+                }
+                let branch = collect_definite_decls(else_block);
+                definite.retain(|name, kind| branch.get(name) == Some(kind));
+                out.extend(definite);
+            }
+            _ => {}
+        }
+    }
+    out
 }

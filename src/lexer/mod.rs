@@ -5,14 +5,14 @@ use std::str::Chars;
 pub enum Token {
     // Actions
     Print, Set, Create, Add, Subtract, Multiply, Divide, Increment, Decrement,
-    Call, Allocate, Free, Append, Copy, Clear,
-    
+    Allocate, Free, Append, Copy, Clear,
+
     // File I/O Actions
     Open, Read, Write, Close, Delete, Exists, Resize, Seek,
-    
+
     // Control Flow
-    If, When, Then, Else, But, Otherwise, While, Until, For, Each, Every,
-    Loop, Repeat, Times, Break, Continue, Return, Exit,
+    If, When, Then, Else, But, Otherwise, While, For, Each,
+    Repeat, Times, Break, Continue, Return, Exit,
     
     // Functions
     With, Called, Modulo,
@@ -24,7 +24,7 @@ pub enum Token {
     Is, Are, Equals, Equal, Greater, Less, Than, Not, And, Or,
     
     // Range/Collection
-    From, To, Between, Through, In, Of, On, The, A, An, All, By, Treating,
+    From, To, Between, In, Of, On, The, A, An, All, Treating,
     
     // Types
     Number, Float, Int, Text, Boolean, List, True, False,
@@ -40,7 +40,7 @@ pub enum Token {
     Readable, Writable, Full, First, Last, Absolute, Sign,
     
     // Error Handling
-    Error, Stderr, Auto, Catching, Enable, Disable,
+    Error, Auto, Enable, Disable,
     
     // Library System
     See, Library, Version,
@@ -91,7 +91,7 @@ impl Token {
             "divide" | "over" => Some("divide"),
             "increment" | "increase" => Some("increment"),
             "decrement" | "decrease" => Some("decrement"),
-            "call" | "invoke" | "run" | "execute" => Some("call"),
+            "execute" => Some("execute"),
             "allocate" => Some("allocate"),
             "free" | "deallocate" | "release" => Some("free"),
             "clear" => Some("clear"),
@@ -104,11 +104,9 @@ impl Token {
             "but" => Some("but"),
             "otherwise" => Some("otherwise"),
             "while" => Some("while"),
-            "until" => Some("until"),
             "for" => Some("for"),
             "each" => Some("each"),
-            "every" => Some("every"),
-            "loop" | "repeat" => Some("loop"),
+            "repeat" => Some("repeat"),
             "break" => Some("break"),
             "stop" => Some("stop"),
             "continue" | "skip" => Some("continue"),
@@ -134,7 +132,6 @@ impl Token {
             "from" | "starting" => Some("from"),
             "to" | "up" => Some("to"),
             "between" => Some("between"),
-            "through" => Some("through"),
             "in" | "inside" | "within" => Some("in"),
             "of" => Some("of"),
             "on" | "at" => Some("on"),
@@ -142,7 +139,6 @@ impl Token {
             "a" => Some("a"),
             "an" => Some("an"),
             "all" => Some("all"),
-            "by" => Some("by"),
             "treating" | "treat" => Some("treating"),
             // Types
             "number" | "numbers" => Some("number"),
@@ -194,9 +190,7 @@ impl Token {
             "sign" => Some("sign"),
             // Error handling
             "error" => Some("error"),
-            "stderr" => Some("stderr"),
             "auto" | "automatic" => Some("auto"),
-            "catching" => Some("catching"),
             "enable" | "enabled" => Some("enable"),
             "disable" | "disabled" => Some("disable"),
             // Library
@@ -251,7 +245,6 @@ impl Token {
             Token::Divide => Some("divide"),
             Token::Increment => Some("increment"),
             Token::Decrement => Some("decrement"),
-            Token::Call => Some("call"),
             Token::Allocate => Some("allocate"),
             Token::Free => Some("free"),
             Token::Append => Some("append"),
@@ -274,11 +267,8 @@ impl Token {
             Token::But => Some("but"),
             Token::Otherwise => Some("otherwise"),
             Token::While => Some("while"),
-            Token::Until => Some("until"),
             Token::For => Some("for"),
             Token::Each => Some("each"),
-            Token::Every => Some("every"),
-            Token::Loop => Some("loop"),
             Token::Repeat => Some("repeat"),
             Token::Times => Some("times"),
             Token::Break => Some("break"),
@@ -308,7 +298,6 @@ impl Token {
             Token::From => Some("from"),
             Token::To => Some("to"),
             Token::Between => Some("between"),
-            Token::Through => Some("through"),
             Token::In => Some("in"),
             Token::Of => Some("of"),
             Token::On => Some("on"),
@@ -316,7 +305,6 @@ impl Token {
             Token::A => Some("a"),
             Token::An => Some("an"),
             Token::All => Some("all"),
-            Token::By => Some("by"),
             Token::Treating => Some("treating"),
             // Types
             Token::Number => Some("number"),
@@ -361,9 +349,7 @@ impl Token {
             Token::Sign => Some("sign"),
             // Error Handling
             Token::Error => Some("error"),
-            Token::Stderr => Some("stderr"),
             Token::Auto => Some("auto"),
-            Token::Catching => Some("catching"),
             Token::Enable => Some("enable"),
             Token::Disable => Some("disable"),
             // Library System
@@ -738,7 +724,6 @@ impl<'a> Lexer<'a> {
             "divide" => Token::Divide,
             "increment" => Token::Increment,
             "decrement" => Token::Decrement,
-            "call" | "invoke" | "run" => Token::Call,
             "allocate" => Token::Allocate,
             "free" | "release" | "deallocate" => Token::Free,
             "append" | "push" => Token::Append,
@@ -751,11 +736,8 @@ impl<'a> Lexer<'a> {
             "but" => Token::But,
             "otherwise" => Token::Otherwise,
             "while" => Token::While,
-            "until" => Token::Until,
             "for" => Token::For,
             "each" => Token::Each,
-            "every" => Token::Every,
-            "loop" => Token::Loop,
             "repeat" => Token::Repeat,
             "times" => Token::Times,
             "break" => Token::Break,
@@ -785,7 +767,6 @@ impl<'a> Lexer<'a> {
             "from" | "starting" => Token::From,
             "up" => Token::To,
             "between" => Token::Between,
-            "through" => Token::Through,
             "in" | "inside" | "within" => Token::In,
             "of" => Token::Of,
             "on" | "at" => Token::On,
@@ -793,7 +774,6 @@ impl<'a> Lexer<'a> {
             "a" => Token::A,
             "an" => Token::An,
             "all" => Token::All,
-            "by" => Token::By,
             "number" | "numbers" => Token::Number,
             "float" | "decimal" | "real" => Token::Float,
             "int" | "integer" => Token::Int,
@@ -829,9 +809,7 @@ impl<'a> Lexer<'a> {
             "standard" => Token::Standard,
             "input" => Token::Input,
             "error" => Token::Error,
-            "stderr" => Token::Stderr,
             "auto" | "automatic" => Token::Auto,
-            "catching" => Token::Catching,
             "enable" | "enabled" => Token::Enable,
             "disable" | "disabled" => Token::Disable,
             "descriptor" | "fd" => Token::Descriptor,

@@ -10,6 +10,23 @@
 %define SYS_MUNMAP  11
 %define SYS_ACCESS  21
 %define SYS_UNLINK  87
+%define SYS_MKDIR   83
+%define SYS_RMDIR   84
+%define SYS_CHDIR   80
+%define SYS_SYMLINK 88
+%define SYS_MKNOD   133
+%define SYS_MOUNT   165
+%define SYS_UMOUNT2 166
+%define SYS_PIVOT_ROOT 155
+%define SYS_SYNC    162
+%define SYS_REBOOT  169
+%define SYS_FORK    57
+%define SYS_WAIT4   61
+
+; reboot(2) magic values (see linux/reboot.h)
+%define LINUX_REBOOT_MAGIC1 0xFEE1DEAD
+%define LINUX_REBOOT_MAGIC2 672274793
+%define SYS_EXECVE  59
 
 ; Open flags
 %define O_RDONLY    0
@@ -322,11 +339,343 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_ACCESS
-    mov rdi, %1                     ; pathname
     mov rsi, F_OK                   ; mode = existence check
     syscall
     
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MKDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
+    mov rax, SYS_MKDIR
+    mov rsi, 493                    ; mode 0755 (rwxr-xr-x)
+    syscall
+
+    test rax, rax
+    jns %%mkdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mkdir_done
+%%mkdir_ok:
+    mov qword [rel _last_error], 0
+%%mkdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Remove a directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro RMDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
+    mov rax, SYS_RMDIR
+    syscall
+
+    test rax, rax
+    jns %%rmdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%rmdir_done
+%%rmdir_ok:
+    mov qword [rel _last_error], 0
+%%rmdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Change current working directory
+; Args: path (null-terminated string)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro CHDIR 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
+    mov rax, SYS_CHDIR
+    syscall
+
+    test rax, rax
+    jns %%chdir_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%chdir_done
+%%chdir_ok:
+    mov qword [rel _last_error], 0
+%%chdir_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a symbolic link
+; Args: rdi = target path, rsi = linkpath (both pre-loaded by codegen)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro SYMLINK 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_SYMLINK
+    syscall
+
+    test rax, rax
+    jns %%symlink_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%symlink_done
+%%symlink_ok:
+    mov qword [rel _last_error], 0
+%%symlink_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Create a device node (character or block special file)
+; Args: rdi = path, rsi = mode (S_IFCHR/S_IFBLK | perms), rdx = dev (major<<8 | minor)
+; (all pre-loaded by codegen)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MKNOD 0
+    push rbx
+    push rcx
+
+    mov rax, SYS_MKNOD
+    syscall
+
+    test rax, rax
+    jns %%mknod_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mknod_done
+%%mknod_ok:
+    mov qword [rel _last_error], 0
+%%mknod_done:
+
+    pop rcx
+    pop rbx
+%endmacro
+
+; Mount a filesystem
+; Args (pre-loaded by codegen): rdi = source, rsi = target, rdx = fstype
+; (or NULL), r10 = mountflags, r8 = data/options (or NULL)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro MOUNT 0
+    push rbx
+    push rcx
+    push r9
+
+    mov rax, SYS_MOUNT
+    syscall
+
+    test rax, rax
+    jns %%mount_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%mount_done
+%%mount_ok:
+    mov qword [rel _last_error], 0
+%%mount_done:
+
+    pop r9
+    pop rcx
+    pop rbx
+%endmacro
+
+; Unmount a filesystem
+; Args (pre-loaded by codegen): rdi = target path, rsi = flags
+; (0 = normal, 2 = MNT_DETACH / lazy)
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro UMOUNT 0
+    push rbx
+    push rcx
+    push rdx
+
+    mov rax, SYS_UMOUNT2
+    syscall
+
+    test rax, rax
+    jns %%umount_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%umount_done
+%%umount_ok:
+    mov qword [rel _last_error], 0
+%%umount_done:
+
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Reboot / power off / halt the machine via reboot(2).
+; Arg: %1 = LINUX_REBOOT_CMD_* command constant.
+; Flushes filesystem buffers with sync(2) first so nothing in the page
+; cache is lost. Requires CAP_SYS_BOOT (root). On success POWER_OFF/
+; RESTART/HALT do not return; if the call fails (e.g. not privileged) it
+; returns -errno, which is recorded in _last_error so `On error` works.
+%macro REBOOT_CMD 1
+    ; sync() - no error path, returns void
+    mov rax, SYS_SYNC
+    syscall
+
+    mov rax, SYS_REBOOT
+    mov rdi, LINUX_REBOOT_MAGIC1
+    mov rsi, LINUX_REBOOT_MAGIC2
+    mov rdx, %1
+    xor r10, r10                    ; arg = NULL
+    syscall
+
+    ; Only reached on failure
+    neg rax
+    mov [rel _last_error], rax
+%endmacro
+
+; Switch the root filesystem (used during initramfs -> real root handoff)
+; Args (pre-loaded by codegen): rdi = new_root, rsi = put_old
+; Returns: 0 in rax on success, negative on error. Sets _last_error.
+%macro PIVOT_ROOT 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rax, SYS_PIVOT_ROOT
+    syscall
+
+    test rax, rax
+    jns %%pivot_root_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%pivot_root_done
+%%pivot_root_ok:
+    mov qword [rel _last_error], 0
+%%pivot_root_done:
+
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Replace the current process image
+; Args (pre-loaded by codegen): rdi = path, rsi = argv, rdx = envp
+; execve() only ever returns on failure (the process image is replaced on
+; success, so there is no "success" path to preserve registers for).
+; Returns: negative errno in rax (only reachable on error). Sets _last_error.
+%macro EXECVE 0
+    mov rax, SYS_EXECVE
+    syscall
+
+    ; Only reachable if execve failed
+    neg rax
+    mov [rel _last_error], rax
+%endmacro
+
+; Create a new process (fork(2))
+; Returns: rax = 0 in the child, the child's pid in the parent, negative
+; on error. This IS the expression's result (used directly in comparisons
+; like "if pid is less than 0"), so unlike the error-only macros above we
+; preserve the original value in rax while still setting _last_error.
+%macro FORK 0
+    mov rax, SYS_FORK
+    syscall
+
+    cmp rax, 0
+    jl %%fork_error
+    mov qword [rel _last_error], 0
+    jmp %%fork_done
+%%fork_error:
+    push rax
+    neg rax
+    mov [rel _last_error], rax
+    pop rax
+%%fork_done:
+%endmacro
+
+; Reap a child process (wait4(2)), discarding the exit-status details.
+; Input: rdi = pid to wait for (-1 = any child), pre-loaded by codegen.
+; Returns: rax = the reaped child's pid, or negative on error - this IS
+; the expression's result, preserved the same way as FORK above.
+%macro REAP_CHILD 0
+    xor rsi, rsi      ; status pointer = NULL (status details not decoded)
+    xor rdx, rdx      ; options = 0
+    xor r10, r10      ; rusage = NULL
+    mov rax, SYS_WAIT4
+    syscall
+
+    cmp rax, 0
+    jl %%reap_error
+    mov qword [rel _last_error], 0
+    jmp %%reap_done
+%%reap_error:
+    push rax
+    neg rax
+    mov [rel _last_error], rax
+    pop rax
+%%reap_done:
+%endmacro
+
+; Check file/path availability (boolean semantics for Vox's "is available")
+; Input: rax = path pointer
+; Returns: rax = 1 if the path exists/is available, 0 otherwise. Does not touch _last_error.
+%macro FILE_AVAILABLE 0
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+
+    mov rdi, rax                    ; path pointer
+    mov rax, SYS_ACCESS
+    mov rsi, F_OK
+    syscall
+
+    test rax, rax
+    setz al                         ; 1 if access() returned 0 (available)
+    movzx rax, al
+
     pop rdi
     pop rsi
     pop rdx
@@ -344,8 +693,8 @@
     push rsi
     push rdi
     
+    mov rdi, %1                     ; pathname (load BEFORE rax: %1 may BE rax)
     mov rax, SYS_UNLINK
-    mov rdi, %1                     ; pathname
     syscall
     
     pop rdi

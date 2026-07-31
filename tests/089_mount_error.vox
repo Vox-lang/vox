@@ -1,0 +1,2 @@
+Mount "nonexistent_source" at "/tmp/vox_nonexistent_mount_target_xyz" with type "totally_bogus_fstype".
+On error print "mount error detected as expected".

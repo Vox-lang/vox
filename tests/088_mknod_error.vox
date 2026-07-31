@@ -1,0 +1,7 @@
+Delete the file "/tmp/vox_test_mknod_fifo_error".
+
+Create a device node called "/tmp/vox_test_mknod_fifo_error" with type "p" major 0 minor 0.
+Create a device node called "/tmp/vox_test_mknod_fifo_error" with type "p" major 0 minor 0.
+On error print "mknod error detected as expected".
+
+Delete the file "/tmp/vox_test_mknod_fifo_error".

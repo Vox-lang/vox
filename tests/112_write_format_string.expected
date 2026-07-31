@@ -1,0 +1,3 @@
+write: hello world 42
+write hex: 0x002a
+file: world-42

@@ -371,8 +371,7 @@ _list_append:
     
     ; Allocate new memory using mmap
     push rbx
-    push rax                                ; save size
-    
+
     mov rdi, 0                              ; addr = NULL
     mov rsi, rax                            ; size
     mov rdx, 3                              ; PROT_READ | PROT_WRITE
@@ -381,47 +380,38 @@ _list_append:
     mov r9, 0                               ; offset = 0
     mov rax, 9                              ; sys_mmap
     syscall
-    
-    pop rcx                                 ; restore size (unused)
+
     pop rbx                                 ; restore old list ptr
-    
-    ; rax = new list pointer
+
+    ; Raw sys_mmap returns -errno in [-4095, -1] on failure (not MAP_FAILED)
+    cmp rax, -4096
+    jbe .mmap_ok
+    mov rdi, 1                              ; allocation failure: exit(1)
+    mov rax, 60                             ; sys_exit
+    syscall
+.mmap_ok:
     mov rdi, rax                            ; rdi = new list
-    
+
     ; Copy header
     mov qword [rdi + LIST_CAPACITY_OFFSET], r13     ; new capacity
     mov rcx, [rbx + LIST_LENGTH_OFFSET]
     mov qword [rdi + LIST_LENGTH_OFFSET], rcx       ; same length
     mov qword [rdi + LIST_ELEMSIZE_OFFSET], r14     ; same elem size
-    
-    ; Copy existing data
-    push rdi
-    push rsi
-    
-    lea rsi, [rbx + LIST_DATA_OFFSET]       ; source
-    lea rdi, [rdi + LIST_DATA_OFFSET]       ; dest (note: rdi was saved)
-    pop rdi                                  ; restore new list base
-    push rdi
+
+    ; Copy existing data (rdi = new list base, rbx = old list base)
+    ; NOTE: the old block is intentionally NOT munmap'd. Lists passed as
+    ; function parameters keep the caller's pointer to the old block when a
+    ; realloc happens inside the callee; freeing it here would turn that
+    ; stale read into a use-after-free. The leak is bounded (geometric, at
+    ; most ~1x the final list size) and reclaimed at process exit.
+    push rdi                                ; save new list base
     lea rdi, [rdi + LIST_DATA_OFFSET]       ; dest = new list data
     lea rsi, [rbx + LIST_DATA_OFFSET]       ; source = old list data
-    
     mov rcx, [rbx + LIST_LENGTH_OFFSET]
     imul rcx, r14                           ; bytes to copy
-    
-    ; Copy byte by byte
-    test rcx, rcx
-    jz .copy_done
-.copy_loop:
-    mov al, [rsi]
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec rcx
-    jnz .copy_loop
-    
-.copy_done:
+    rep movsb                               ; no-op when rcx = 0
     pop rdi                                 ; rdi = new list pointer
-    
+
     ; Now append the new element
     mov rcx, [rdi + LIST_LENGTH_OFFSET]
     mov rax, r14                            ; element size
@@ -441,6 +431,75 @@ _list_append:
     pop r12
     pop rdx
     pop rcx
+    pop rbx
+    ret
+
+; ============================================================================
+; LIST -> argv CONVERTER (for execve)
+; ============================================================================
+; _list_to_argv - Build a NULL-terminated C argv array from a Vox list.
+; Args: rdi = list pointer, rsi = path pointer (becomes argv[0])
+; Returns: rax = pointer to argv array [ path, elem0, elem1, ..., NULL ]
+;
+; The list stores one 8-byte pointer per element (string elements are
+; already NUL-terminated C-string pointers), so elements are copied
+; verbatim. The output array is sized exactly (length + 2) slots from a
+; single read of the list's length, and the copy loop is bounded by that
+; same length - so the argv array can never be overrun regardless of the
+; list's contents or capacity. On allocation failure the process exits(1),
+; matching the other list allocation sites.
+;
+_list_to_argv:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    mov rbx, rdi                            ; rbx = list pointer
+    mov r12, rsi                            ; r12 = path (argv[0])
+    mov r13, [rbx + LIST_LENGTH_OFFSET]     ; r13 = element count
+
+    ; Bytes needed: (length + 2) slots * 8  (path + elements + NULL)
+    lea r14, [r13 + 2]
+    shl r14, 3                              ; * 8
+
+    ; Allocate the argv array
+    mov rdi, 0                              ; addr = NULL
+    mov rsi, r14                            ; size
+    mov rdx, 3                              ; PROT_READ | PROT_WRITE
+    mov r10, 0x22                           ; MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1                              ; fd = -1
+    mov r9, 0                               ; offset = 0
+    mov rax, 9                              ; sys_mmap
+    syscall
+
+    ; Raw sys_mmap returns -errno in [-4095,-1] on failure
+    cmp rax, -4096
+    jbe .argv_ok
+    mov rdi, 1
+    mov rax, 60                             ; sys_exit
+    syscall
+.argv_ok:
+    ; rax = argv array base
+    mov [rax], r12                          ; argv[0] = path
+
+    ; Copy element pointers: argv[1 + i] = list.data[i]
+    xor rcx, rcx                            ; i = 0
+    lea rsi, [rbx + LIST_DATA_OFFSET]       ; source = list data
+.copy_loop:
+    cmp rcx, r13
+    jge .copy_done
+    mov rdx, [rsi + rcx*8]                  ; element pointer
+    mov [rax + rcx*8 + 8], rdx              ; argv[1 + i]
+    inc rcx
+    jmp .copy_loop
+.copy_done:
+    ; NULL terminator at argv[length + 1]
+    mov qword [rax + r13*8 + 8], 0
+
+    pop r14
+    pop r13
+    pop r12
     pop rbx
     ret
 

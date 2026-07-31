@@ -94,6 +94,10 @@ This makes Vox well-suited for static utilities, constrained environments, and s
 * Compile-time memory and resource tracking
 * Modular library of core macros with dependency inclusion
 * Extremely small statically linked executables
+* Filesystem, mount, and process-control operations (directories, device
+  nodes, symlinks, mount/unmount, `pivot_root`, `execve`, `fork`/`reap`,
+  `shutdown`/`reboot`/`halt`) - enough to write a working early-userspace
+  init entirely in Vox; see [examples/initramfs.vox](examples/initramfs.vox)
 
 ---
 
@@ -224,7 +228,7 @@ Vox is under active development. Planned work includes:
    Planned targets include Win64, AArch64, ARM64, MIPS, and RISC-V.
 
 5. **Expanded System Interfaces**
-   Higher-level abstractions for multithreading, file descriptor polling, filesystem operations, and system control.
+   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, basic process control (`fork`/`reap`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
 
 6. **Math and Numeric Optimization**
    Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.

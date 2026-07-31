@@ -607,34 +607,26 @@ impl Analyzer {
         // First pass: collect function definitions, global declarations, and flag schemas.
         let mut explicit_parse_seen = false;
 
+        // Definite declarations - including names declared in EVERY branch
+        // of an if/otherwise chain - behave as globals: they exist on all
+        // control-flow paths, so functions may reference them and code
+        // after the branch may use them. Names declared in only SOME
+        // branches stay out of this set; the guard tracking below owns
+        // those and reports cross-guard usage.
+        for (name, kind) in collect_definite_decls(&program.statements) {
+            self.global_variables.insert(name.clone());
+            match kind {
+                DefiniteDeclKind::Buffer => { self.buffer_variables.insert(name); }
+                DefiniteDeclKind::List => { self.list_variables.insert(name); }
+                DefiniteDeclKind::File => { self.file_variables.insert(name); }
+                DefiniteDeclKind::Plain => {}
+            }
+        }
+
         for stmt in &program.statements {
             match stmt {
                 Statement::FunctionDef { name, .. } => {
                     self.functions.insert(name.clone());
-                }
-                Statement::VarDecl { name, var_type, .. } => {
-                    self.global_variables.insert(name.clone());
-                    if let Some(Type::Buffer) = var_type {
-                        self.buffer_variables.insert(name.clone());
-                    }
-                    if let Some(Type::List(_)) = var_type {
-                        self.list_variables.insert(name.clone());
-                    }
-                }
-                Statement::BufferDecl { name, .. } => {
-                    self.global_variables.insert(name.clone());
-                    self.buffer_variables.insert(name.clone());
-                }
-                Statement::Allocate { name, .. }
-                | Statement::TimerDecl { name } => {
-                    self.global_variables.insert(name.clone());
-                }
-                Statement::FileOpen { name, .. } => {
-                    self.global_variables.insert(name.clone());
-                    self.file_variables.insert(name.clone());
-                }
-                Statement::GetTime { into } => {
-                    self.global_variables.insert(into.clone());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -1257,6 +1249,22 @@ impl Analyzer {
             
             Statement::VarDecl { name, var_type, value } => {
                 self.declare_variable_in_current_scope(name);
+                // Register the declared type in the type-specific sets,
+                // mirroring the top-level pre-pass. That pre-pass only
+                // walks program.statements and never descends into
+                // function bodies, so without this a `a buffer called "x"
+                // is "..."` INSIDE a function was never recorded as a
+                // buffer and property/byte access on it was rejected.
+                // (`a buffer called "x" is N bytes in size.` parses as
+                // BufferDecl - a different statement whose arm already
+                // registers - which is why only the initializer form
+                // failed.)
+                if let Some(Type::Buffer) = var_type {
+                    self.buffer_variables.insert(name.clone());
+                }
+                if let Some(Type::List(_)) = var_type {
+                    self.list_variables.insert(name.clone());
+                }
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
                     self.analyze_expr(v);
@@ -1424,9 +1432,23 @@ impl Analyzer {
                 self.in_function_scope = true;
                 self.block_depth = 0;
 
-                // Add function parameters to function scope.
-                for (param_name, _) in params {
+                // Add function parameters to function scope. Buffer/list/file
+                // typed parameters must also be recorded in their
+                // type-specific sets, exactly like a VarDecl/BufferDecl at
+                // top level would - otherwise `param's size`/`empty`/`full`
+                // (and other buffer/list/file-only properties) incorrectly
+                // report "requires a buffer, list, or file variable" for
+                // the parameter itself. This previously only appeared to
+                // work when a same-named top-level variable of the correct
+                // type happened to already exist elsewhere in the program.
+                for (param_name, param_type) in params {
                     self.variables.insert(param_name.clone());
+                    match param_type {
+                        Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
+                        Type::List(_) => { self.list_variables.insert(param_name.clone()); }
+                        Type::File => { self.file_variables.insert(param_name.clone()); }
+                        _ => {}
+                    }
                 }
                 for s in body {
                     self.analyze_statement(s);
@@ -1630,6 +1652,69 @@ impl Analyzer {
             
             Statement::FileDelete { path } => {
                 self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Rmdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mkdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Chdir { path } => {
+                self.analyze_expr(path);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mount { source, target, fstype, options } => {
+                self.analyze_expr(source);
+                self.analyze_expr(target);
+                self.analyze_expr(fstype);
+                if let Some(o) = options {
+                    self.analyze_expr(o);
+                }
+                self.deps.uses_io = true;
+            }
+
+            Statement::Unmount { target, .. } => {
+                self.analyze_expr(target);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Shutdown | Statement::Reboot | Statement::Halt => {
+                self.deps.uses_io = true;
+            }
+
+            Statement::PivotRoot { new_root, put_old } => {
+                self.analyze_expr(new_root);
+                self.analyze_expr(put_old);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Execute { path, args } => {
+                self.analyze_expr(path);
+                self.analyze_expr(args);
+                self.deps.uses_io = true;
+                // execve needs the process's real envp to properly inherit
+                // the environment (NULL would give the child an empty one) -
+                // this forces SAVE_ARGS to run and _envp to be captured.
+                self.deps.uses_args = true;
+            }
+
+            Statement::Symlink { target, linkpath } => {
+                self.analyze_expr(target);
+                self.analyze_expr(linkpath);
+                self.deps.uses_io = true;
+            }
+
+            Statement::Mknod { path, major, minor, .. } => {
+                self.analyze_expr(path);
+                self.analyze_expr(major);
+                self.analyze_expr(minor);
                 self.deps.uses_io = true;
             }
             

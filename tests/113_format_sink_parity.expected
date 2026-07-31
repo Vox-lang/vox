@@ -1,0 +1,4 @@
+print: 255 0x00ff 11111111 0o377
+buffer: 255 0x00ff 11111111 0o377
+write: 255 0x00ff 11111111 0o377
+count via buffer: 1

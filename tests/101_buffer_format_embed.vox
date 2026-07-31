@@ -1,0 +1,19 @@
+(Regression test: embedding a buffer variable directly inside a format
+ string, e.g. "{buf}", must print its actual byte content. The codegen
+ path for {var} inside a string literal loaded the buffer's raw struct
+ pointer (capacity/length/flags header) into rdi without adjusting to
+ the data area (+24, same offset _buffer_data applies) before printing.
+ Whenever capacity's low byte was 0 - true for any capacity that is a
+ multiple of 256, e.g. the 1024/4096 defaults - PRINT_CSTR hit that
+ zero byte immediately and printed nothing, even though the buffer's
+ own size/length fields and equality checks were completely correct.)
+
+a buffer called "greeting" is "hello".
+Print "embedded: {greeting}".
+
+a buffer called "roomy" is 4096 bytes in size.
+copy "sized buffer content" to roomy.
+Print "embedded sized buffer: {roomy}".
+
+(Multiple buffers embedded in the same format string)
+Print "both: {greeting} / {roomy}".

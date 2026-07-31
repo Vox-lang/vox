@@ -330,12 +330,41 @@ _print_octal_impl:
     push rdx
     push rsi
     push rdi
+    push r8
     
     mov rdi, %1                 ; value
     mov rsi, %2                 ; min width
     xor rdx, rdx                ; lowercase flag = 0
-    call _print_hex_zeropad_impl
+    xor r8, r8                  ; pad char = '0'
+    call _print_hex_padded_impl
     
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print hex (lowercase) with space-padding
+; Args: value, min_width
+%macro PRINT_HEX_LOWER_PADDED 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    xor rdx, rdx                ; lowercase flag = 0
+    mov r8, 1                   ; pad char = ' '
+    call _print_hex_padded_impl
+    
+    pop r8
     pop rdi
     pop rsi
     pop rdx
@@ -353,12 +382,41 @@ _print_octal_impl:
     push rdx
     push rsi
     push rdi
+    push r8
     
     mov rdi, %1                 ; value
     mov rsi, %2                 ; min width
     mov rdx, 1                  ; uppercase flag = 1
-    call _print_hex_zeropad_impl
+    xor r8, r8                  ; pad char = '0'
+    call _print_hex_padded_impl
     
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print hex (uppercase) with space-padding
+; Args: value, min_width
+%macro PRINT_HEX_UPPER_PADDED 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    mov rdx, 1                  ; uppercase flag = 1
+    mov r8, 1                   ; pad char = ' '
+    call _print_hex_padded_impl
+    
+    pop r8
     pop rdi
     pop rsi
     pop rdx
@@ -376,11 +434,39 @@ _print_octal_impl:
     push rdx
     push rsi
     push rdi
+    push r8
     
     mov rdi, %1                 ; value
     mov rsi, %2                 ; min width
-    call _print_binary_zeropad_impl
+    xor r8, r8                  ; pad char = '0'
+    call _print_binary_padded_impl
     
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print binary with space-padding
+; Args: value, min_width
+%macro PRINT_BINARY_PADDED 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    mov r8, 1                   ; pad char = ' '
+    call _print_binary_padded_impl
+    
+    pop r8
     pop rdi
     pop rsi
     pop rdx
@@ -398,11 +484,39 @@ _print_octal_impl:
     push rdx
     push rsi
     push rdi
+    push r8
     
     mov rdi, %1                 ; value
     mov rsi, %2                 ; min width
-    call _print_octal_zeropad_impl
+    xor r8, r8                  ; pad char = '0'
+    call _print_octal_padded_impl
     
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+%endmacro
+
+; Print octal with space-padding
+; Args: value, min_width
+%macro PRINT_OCTAL_PADDED 2
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    
+    mov rdi, %1                 ; value
+    mov rsi, %2                 ; min width
+    mov r8, 1                   ; pad char = ' '
+    call _print_octal_padded_impl
+    
+    pop r8
     pop rdi
     pop rsi
     pop rdx
@@ -572,7 +686,12 @@ _octal_to_buffer:
 
 ; Print hex with zero-padding
 ; Args: rdi = value, rsi = min width, rdx = uppercase flag
-_print_hex_zeropad_impl:
+; Print hex, padded to a minimum width with either '0' or ' '.
+; Args: rdi = value, rsi = min width, rdx = uppercase flag, r8 = pad
+; char flag (0 = '0', 1 = ' ') - shared by both the ZEROPAD and PADDED
+; macros below, mirroring how _print_int_padded_impl already does this
+; for decimal.
+_print_hex_padded_impl:
     push rbp
     mov rbp, rsp
     push r12
@@ -602,7 +721,7 @@ _print_hex_zeropad_impl:
     pop r15
     pop r14
     
-    ; Print leading zeros if needed
+    ; Print leading pad characters if needed
     mov rax, r12
     sub rax, r15                ; padding needed
     jle .print_digits
@@ -613,7 +732,13 @@ _print_hex_zeropad_impl:
     push rax
     push r14
     push r15
+    test r8, r8
+    jz .use_zero
+    mov byte [_format_buffer + 40], ' '
+    jmp .write_pad
+.use_zero:
     mov byte [_format_buffer + 40], '0'
+.write_pad:
     mov rax, 1
     mov rdi, 1
     lea rsi, [_format_buffer + 40]
@@ -642,7 +767,9 @@ _print_hex_zeropad_impl:
 
 ; Print binary with zero-padding
 ; Args: rdi = value, rsi = min width
-_print_binary_zeropad_impl:
+; Print binary, padded to a minimum width with either '0' or ' '.
+; Args: rdi = value, rsi = min width, r8 = pad char flag (0='0', 1=' ')
+_print_binary_padded_impl:
     push rbp
     mov rbp, rsp
     push r12
@@ -656,7 +783,7 @@ _print_binary_zeropad_impl:
     mov r13, rax                ; digit ptr
     mov r14, rcx                ; digit len
     
-    ; Print leading zeros if needed
+    ; Print leading pad characters if needed
     mov rax, r12
     sub rax, r14                ; padding needed
     jle .print_digits
@@ -667,7 +794,13 @@ _print_binary_zeropad_impl:
     push rax
     push r13
     push r14
+    test r8, r8
+    jz .use_zero
+    mov byte [_format_buffer + 40], ' '
+    jmp .write_pad
+.use_zero:
     mov byte [_format_buffer + 40], '0'
+.write_pad:
     mov rax, 1
     mov rdi, 1
     lea rsi, [_format_buffer + 40]
@@ -693,9 +826,9 @@ _print_binary_zeropad_impl:
     leave
     ret
 
-; Print octal with zero-padding
-; Args: rdi = value, rsi = min width
-_print_octal_zeropad_impl:
+; Print octal, padded to a minimum width with either '0' or ' '.
+; Args: rdi = value, rsi = min width, r8 = pad char flag (0='0', 1=' ')
+_print_octal_padded_impl:
     push rbp
     mov rbp, rsp
     push r12
@@ -722,7 +855,7 @@ _print_octal_zeropad_impl:
     pop r14
     pop r13
     
-    ; Print leading zeros if needed
+    ; Print leading pad characters if needed
     mov rax, r12
     sub rax, r14                ; padding needed
     jle .print_digits
@@ -733,7 +866,13 @@ _print_octal_zeropad_impl:
     push rax
     push r13
     push r14
+    test r8, r8
+    jz .use_zero
+    mov byte [_format_buffer + 40], ' '
+    jmp .write_pad
+.use_zero:
     mov byte [_format_buffer + 40], '0'
+.write_pad:
     mov rax, 1
     mov rdi, 1
     lea rsi, [_format_buffer + 40]

@@ -611,9 +611,9 @@ _alloc_buffer:
     xor r9, r9              ; offset = 0
     syscall
     
-    ; Check for error
-    cmp rax, -1
-    je .failed
+    ; Check for error (raw mmap returns -errno in [-4095,-1])
+    cmp rax, -4096
+    ja .failed
     
     ; Initialize buffer header (dynamic buffer)
     mov qword [rax + BUF_CAPACITY], INITIAL_BUF_CAP
@@ -674,9 +674,9 @@ _alloc_buffer_sized:
     xor r9, r9              ; offset = 0
     syscall
     
-    ; Check for error
-    cmp rax, -1
-    je .sized_failed
+    ; Check for error (raw mmap returns -errno in [-4095,-1])
+    cmp rax, -4096
+    ja .sized_failed
     
     ; Initialize buffer header (fixed size buffer)
     mov [rax + BUF_CAPACITY], r12
@@ -1455,6 +1455,32 @@ _buffer_append_formatted_int:
     jnz .fmt_octal_loop
 
 .fmt_digits_ready:
+    ; Hex and octal get the same "0x"/"0o" prefix Print emits: prefix
+    ; first, then padding, then digits, with width counting the digits
+    ; only - exactly mirroring the print-side formatters. Runs before
+    ; any _buffer_append_bytes call can clobber r10 (the base selector).
+    cmp r10, 1
+    je .fmt_prefix_hex
+    cmp r10, 3
+    je .fmt_prefix_octal
+    jmp .fmt_no_prefix
+
+.fmt_prefix_hex:
+    mov byte [rbp+2], 'x'
+    jmp .fmt_emit_prefix
+
+.fmt_prefix_octal:
+    mov byte [rbp+2], 'o'
+
+.fmt_emit_prefix:
+    mov byte [rbp+1], '0'
+    mov rdi, r12
+    lea rsi, [rbp+1]
+    mov rdx, 2
+    call _buffer_append_bytes
+    mov r12, rax
+
+.fmt_no_prefix:
     ; Left pad to width (if needed)
     mov rax, r14
     sub rax, r9
@@ -1614,14 +1640,7 @@ _realloc_buffer:
     
     lea rsi, [r12 + BUF_DATA]   ; source: old buffer data
     lea rdi, [rbx + BUF_DATA]   ; dest: new buffer data
-    ; Copy rcx bytes
-.copy_loop:
-    mov al, [rsi]
-    mov [rdi], al
-    inc rsi
-    inc rdi
-    dec rcx
-    jnz .copy_loop
+    rep movsb                   ; copy rcx bytes
     
 .skip_copy:
     ; Set new buffer length to copied amount

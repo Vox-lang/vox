@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.10**
+**Version 0.1.21**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -16,11 +16,17 @@ This document defines the syntax and semantics of Vox (sentence based code).
 6. [Control Flow](#control-flow)
 7. [Lists and Collections](#lists-and-collections)
 8. [Input/Output](#inputoutput)
-9. [Operators](#operators)
-10. [Keywords](#keywords)
-11. [Libraries and Imports](#libraries-and-imports)
-12. [Compiler Usage](#compiler-usage)
-13. [Grammar Summary](#grammar-summary)
+9. [File I/O](#file-io)
+10. [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
+11. [Time and Timers](#time-and-timers)
+12. [Command-Line Arguments](#command-line-arguments)
+13. [Environment Variables](#environment-variables)
+14. [Operators](#operators)
+15. [Keywords](#keywords)
+16. [Examples](#examples)
+17. [Libraries and Imports](#libraries-and-imports)
+18. [Compiler Usage](#compiler-usage)
+19. [Grammar Summary](#grammar-summary)
 
 ---
 
@@ -326,6 +332,36 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 - Variables declared inside a function are local to that function and are not available at top level.
 - Referencing an unknown variable inside a function is a compile-time error.
 
+### Parameter and Local Types (v0.1.16)
+
+Parameters may use any variable type, including `buffer`, `list`, and
+`file` - and a typed parameter supports the same properties and
+operations as a top-level variable of that type:
+
+```
+To "contains token" of a buffer called "hay" and a text called "devname".
+  a buffer called "needle" is " {devname}\n".
+  a number called "H" is hay's size.
+  a number called "b" is byte 1 of hay.
+  ...
+```
+
+Key points:
+
+- Buffer parameters support `'s size`/`'s empty`/`'s full` and byte
+  access; list parameters support `'s length`/element access; file
+  parameters support file properties.
+- Buffers declared **inside** a function body work with every
+  initializer form, including format strings (`is " {devname}\n"`).
+- A function call's declared return type is tracked through
+  assignment: reassigning an existing variable from a call
+  (`the label is "classify" of n.`) preserves the correct type.
+
+(All three of the above were fixed in v0.1.16 - in earlier versions,
+buffer-typed parameters and function-local buffer declarations with
+initializers were rejected by the analyzer, and reassignment from a
+function call silently corrupted the variable's tracked type.)
+
 ### Function Calls
 
 In expressions, use the function name followed by `of`, `to`, `with`, or `on` and arguments:
@@ -483,6 +519,48 @@ Convert values between types using the `as` or `in` keywords.
 | boolean | text | `true as text` | `"true"` |
 | text | boolean | `"true" as a boolean` | `true` |
 
+**Radix (Base) Conversions:**
+
+Text-to-number casting isn't limited to base 10. A radix word can be
+inserted right before `number` to parse in a different base:
+
+| Syntax | Base | Example | Result |
+|--------|------|---------|--------|
+| `as a number` | 10 (default) | `"42" as a number` | `42` |
+| `as a hex number` / `as a hexadecimal number` | 16 | `"ff" as a hex number` | `255` |
+| `as an octal number` | 8 | `"17" as an octal number` | `15` |
+| `as a binary number` | 2 | `"1010" as a binary number` | `10` |
+| `as a base N number` (spaced) | any 2-36 | `"z9a" as a base 36 number` | `45694` |
+| `as a baseN number` (fused) | any 2-36 | `"6543" as a base7 number` | `2334` |
+
+Any base from 2 through 36 is supported, not just the aliased ones
+(hex/octal/binary) - digits above 9 use letters `a`-`z` (case-
+insensitive), so base 36 is the practical maximum for a single-
+character-per-digit representation.
+
+```
+(Hex string to number)
+a text called "hexstr" is "3fa2c1e4".
+a number called "n" is hexstr as a hex number.
+
+(Arbitrary base, fused or spaced form - both work)
+a text called "s" is "6543".
+a number called "n2" is s as a base7 number.
+a number called "n3" is s as a base 7 number.
+
+(Negative numbers and uppercase hex digits both work)
+a text called "neg" is "-1a".
+a number called "n4" is neg as a hex number.   (-26)
+a text called "upper" is "FF".
+a number called "n5" is upper as a hex number. (255)
+```
+
+Like the base-10 case, parsing **stops at the first character invalid
+for that base** rather than raising an error - `"12g5" as a hex number`
+gives `18` (stops at `g`), and a string that's invalid from its very
+first character (e.g. `"abc" as a base5 number`, since `a`'s value of
+10 is too big for base 5) gives `0`.
+
 **Examples:**
 
 ```
@@ -536,6 +614,9 @@ Print the hour padded.  (prints "09")
 - Float to number **truncates** (does not round)
 - To round: add 0.5 before casting (`3.7 add 0.5 as a number` → `4`)
 - Text to number fails if text is not a valid number (sets error flag)
+- Text to number in a non-default base (`as a hex/octal/binary/base N
+  number`) stops parsing at the first character invalid for that base,
+  rather than failing outright - it does not set the error flag
 - Zero is `false`, any non-zero number is `true`
 - `in` keyword is preferred for unit/time conversions
 
@@ -944,7 +1025,7 @@ Print "Hello, {name}! You are {age} years old.".
 | `{var:x}` | Hexadecimal (lowercase) | `{255:x}` | `0xff` |
 | `{var:X}` | Hexadecimal (uppercase) | `{255:X}` | `0xFF` |
 | `{var:b}` | Binary | `{5:b}` | `101` |
-| `{var:o}` | Octal | `{8:o}` | `10` |
+| `{var:o}` | Octal | `{8:o}` | `0o10` |
 | `{var:04x}` | Padded hex | `{255:04x}` | `0x00ff` |
 
 #### Expressions in Format Strings
@@ -955,6 +1036,59 @@ a number called "y" is 3.
 Print "Sum: {x add y}".
 Print "Product: {x multiply y}".
 Print "Arguments: {arguments's count}".
+```
+
+#### Format Strings as Values (v0.1.17)
+
+Format strings are expressions, not just print arguments. Used as a
+value, a format string materializes into a fresh NUL-terminated string,
+so it works as a text initializer or assignment and survives being
+carried through lists (e.g. into an `Execute` argument list):
+
+```
+a buffer called "word" is 64 bytes in size.
+copy "hello" to word.
+
+a text called "tok" is "{word}".        (text from buffer contents)
+a text called "path" is "/bin/{tok}".   (text from another text)
+
+a list called "cmdargs" is [].
+append tok to cmdargs.
+Execute "/bin/echo" with arguments cmdargs.
+```
+
+Each evaluation allocates a new string; the source buffer can be
+cleared and reused without affecting texts already created from it.
+
+(Before v0.1.17, a format string outside `Print` compiled to a NULL
+pointer: it printed as empty and corrupted `execve` argv arrays.)
+
+#### Format Strings Everywhere (v0.1.21)
+
+Every statement that takes a string value accepts a format string:
+`write`, buffer `set`/`copy`/`append`, filesystem paths (`Create a
+directory called "{base}/{name}"`), `treating` clauses, and function
+arguments. All sinks share one name resolver, so special names like
+`{arguments's first}` and `{current time's hour}`, format specifiers,
+and the `0x`/`0o` hex/octal prefixes render identically whether the
+result is printed, written to a file, or built into a buffer.
+
+#### Declarations in Branches (v0.1.21)
+
+A variable (or file handle) declared in EVERY branch of an
+`if`/`otherwise` chain definitely exists afterwards: it can be used
+after the branch and from inside functions, exactly like a top-level
+declaration. A name declared in only SOME branches remains scoped to
+its condition, and cross-condition use is still a compile error.
+
+```
+if "output file" is empty then,
+  Open a file for writing called "output" at 1.
+Otherwise,
+  Open a file for writing called "output" at "output file".
+
+(output exists on every path - usable here and in functions)
+write "hello\n" to output.
 ```
 
 #### Escape Sequences
@@ -1364,11 +1498,24 @@ Close output.
 
 ### File Operations
 
-Check if a file exists:
+Check if a file (or any path) is available:
 
 ```
-If "data.txt" exists then,
+If "data.txt" is available then,
     print "File found.".
+```
+
+`is available` (compiles to `access(2)` with `F_OK`) is the correct, current
+form of this check. It works on any path expression - string literal, text
+variable, or buffer - and is not limited to plain files; see
+[Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
+for how it is used to poll for a device node.
+
+Negate with `is not available`:
+
+```
+While the root_device is not available,
+    Sleep for 100 milliseconds.
 ```
 
 Delete a file:
@@ -1474,6 +1621,174 @@ If condition is true then,
 | Forgot to free memory | Memory leak | Auto-freed on exit |
 | Double free | Undefined behavior | Tracked - can't happen |
 | Use after free | Undefined behavior | Not possible by design |
+
+---
+
+## Directories, Mounting, and Process Control
+
+These constructs were added for writing early-userspace/init-style programs
+in Vox - see [examples/initramfs.vox](examples/initramfs.vox) for a complete,
+working early-userspace init sequence exercising all of them together.
+
+### Directories
+
+```
+Create a directory called "/proc".
+Remove the directory called "/proc".
+Delete the directory "/proc".
+Change directory to "/newroot".
+```
+
+**Rules:**
+- `Create a directory called "<path>".` - `mkdir(2)`, mode `0755`. The article
+  (`a`) is optional; `called` is required.
+- `Remove the directory called "<path>".` / `Delete the directory "<path>".` -
+  `rmdir(2)`. Both `Remove` and `Delete` work; `the` and `called` are optional.
+- `Change directory to "<path>".` - `chdir(2)`.
+- All three set the error flag on failure - use `On error` to catch it.
+
+### Mounting Filesystems
+
+```
+Mount "proc" at "/proc" with type "proc".
+Mount "tmpfs" at "/dev/shm" with type "tmpfs" with options "size=64m".
+On error print "mount failed", exit 1.
+
+Unmount "/dev/shm".
+Unmount "/dev/shm" lazily.
+On error print "unmount failed".
+```
+
+**Rules:**
+- `Mount "<source>" at "<target>" with type "<fstype>" [with options "<options>"].`
+  lowers directly to `mount(2)`. `source`/`target`/`fstype`/`options` accept
+  string literals, text variables, or buffers (including format-string-built
+  buffers).
+- Moving/binding an already-mounted filesystem uses `fstype "none"` with
+  `options "move"` or `options "bind"` - Vox recognizes this pattern and
+  translates it into the correct `MS_MOVE`/`MS_BIND` mount flags:
+  ```
+  Mount "/proc" at "/newroot/proc" with type "none" with options "move".
+  ```
+- `Unmount "<target>".` - `umount2(2)`. `umount` is accepted as an alias for
+  `Unmount`. Append `lazily` for `MNT_DETACH` (detaches immediately and
+  releases the mount once nothing is using it any longer, instead of failing
+  with "device busy") - needed when unmounting a filesystem your own running
+  program was loaded from.
+- Both set the error flag on failure.
+
+### Device Nodes
+
+```
+Create a device node called "/dev/null" with type "c" major 1 minor 3.
+Create a device node called "/dev/loop0" with type "b" major 7 minor 0.
+```
+
+`mknod(2)`. `type` is `"c"` (character device) or `"b"` (block device);
+`major`/`minor` are the standard Linux device-driver identification numbers
+(see `man 4 null`/the kernel's `Documentation/admin-guide/devices.txt` for
+the registry of standard values). Sets the error flag on failure.
+
+### Symbolic Links
+
+```
+Create symbolic link from "/proc/self/fd" to "/dev/fd".
+```
+
+`symlink(2)`: `Create symbolic link from "<target>" to "<linkpath>".` Sets
+the error flag on failure.
+
+### Switching the Root Filesystem
+
+```
+Pivot root to "/newroot" with old root "/newroot/oldroot".
+```
+
+`pivot_root(2)`. `put_old` (the second path) must be a directory that
+already exists *inside* `new_root` - create it after mounting the new root,
+not before. After a successful pivot, the previous root filesystem is
+accessible at `put_old`'s path relative to the new root (here, `/oldroot`),
+and should typically be released with `Unmount "..." lazily` once your
+program has `chdir`'d away from it. Sets the error flag on failure.
+
+### Executing Programs
+
+```
+Execute "/bin/sh".
+Execute "/bin/echo" with arguments ["hello", "world"].
+
+a list called "cmdargs" is ["hello", "world"].
+Execute "/bin/echo" with arguments cmdargs.
+
+On error print "execve failed", exit 1.
+```
+
+`execve(2)` - replaces the current process image entirely. Three forms:
+
+- **No arguments**: `Execute "<path>".` synthesizes `argv = [path, NULL]`
+  (argc 1).
+- **Literal argument list**: `Execute "<path>" with arguments [...].` - argv
+  is built at compile time.
+- **List variable**: `Execute "<path>" with arguments <list>.` - argv is
+  built at runtime from the list's current length and contents, sized and
+  bounds-checked from that single length read so the argv array cannot be
+  overrun regardless of the list's contents.
+
+The environment is inherited from the calling process in all three forms.
+`execve` only ever returns on failure (there is no "success" path to return
+to - the process image is gone), so `On error` after `Execute` is the normal
+and only way to detect that it didn't work.
+
+### Process Control: fork and reap
+
+```
+Set pid to fork the process.
+If pid is 0 then,
+    (this branch runs in the child)
+    Execute "/bin/some-program".
+If pid is greater than 0 then,
+    (this branch runs in the parent - pid holds the child's real PID)
+    Set reaped to reap any child process.
+```
+
+These are **expressions**, not statements - use them anywhere an expression
+is valid (typically the right-hand side of `Set`/`a number called ... is`).
+
+- `fork the process` (the trailing `the process` is optional; bare `fork`
+  also works) - `fork(2)`. Returns `0` in the child, the child's PID in the
+  parent, or a negative value on error. Sets the error flag on failure.
+- `reap any child process` - `wait4(2)` with `pid = -1`, waiting for any
+  child. Returns the reaped child's PID, or a negative value on error.
+- `reap process <pid-expr>` / `reap child <pid-expr>` - `wait4(2)` for a
+  specific PID.
+
+Both set the error flag on failure (e.g. `On error` after `reap process 999999`
+catches `ECHILD` when the PID is not actually your child).
+
+### System Control: Shutdown, Reboot, Halt
+
+```
+Shutdown.
+On error print "shutdown failed - are you root?".
+
+Reboot.
+Halt.
+```
+
+`reboot(2)`, requiring `CAP_SYS_BOOT` (root). Each statement calls `sync(2)`
+first to flush filesystem buffers, then issues the matching command:
+
+| Statement | Aliases | Command |
+|-----------|---------|---------|
+| `Shutdown` | `Poweroff` | `LINUX_REBOOT_CMD_POWER_OFF` |
+| `Reboot` | `Restart` | `LINUX_REBOOT_CMD_RESTART` |
+| `Halt` | - | `LINUX_REBOOT_CMD_HALT` |
+
+**On success, none of these return** - the machine powers off/restarts/halts.
+On failure (not root, or no `CAP_SYS_BOOT`), the error flag is set instead of
+crashing or exiting, so `On error` safely catches the failure and execution
+continues - an unprivileged or accidental invocation can never bring down
+the machine.
 
 ---
 
@@ -1969,6 +2284,12 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Continue` | Skip to next iteration |
 | `Exit` | Terminate program with exit code |
 | `Append` | Add element to list |
+| `Create`, `Change`, `Remove`/`Delete` | Directories, device nodes, symlinks, chdir (see [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)) |
+| `Mount`, `Unmount`/`Umount` | Mount/unmount filesystems |
+| `Pivot` | `pivot_root` - switch the root filesystem |
+| `Execute` | `execve` - replace the process image |
+| `Shutdown`/`Poweroff`, `Reboot`/`Restart`, `Halt` | `reboot(2)` - power off/restart/halt the machine |
+| `fork`, `reap` | Process control expressions - `fork(2)`/`wait4(2)` |
 
 ### Connectors
 

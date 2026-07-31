@@ -1,0 +1,34 @@
+(Regression test: _buffer_clear only zeroes the buffer's first byte,
+not the whole allocation - a NUL-scanning number-parse would read
+straight through stale bytes left over from a previous longer value.)
+
+Create a buffer called buf.
+Set byte 1 of buf to '9'.
+Set byte 2 of buf to '9'.
+Set byte 3 of buf to '9'.
+Set byte 4 of buf to '9'.
+Set byte 5 of buf to '9'.
+Set byte 6 of buf to '9'.
+Set n1 to buf as a number.
+Print n1.
+
+clear buf.
+Set byte 1 of buf to '5'.
+Set n2 to buf as a number.
+Print n2.
+
+clear buf.
+Set byte 1 of buf to 'f'.
+Set byte 2 of buf to 'f'.
+Set byte 3 of buf to 'f'.
+Set byte 4 of buf to 'f'.
+Set byte 5 of buf to 'f'.
+Set byte 6 of buf to 'f'.
+Set n3 to buf as a hex number.
+Print n3.
+
+clear buf.
+Set byte 1 of buf to 'a'.
+Set byte 2 of buf to 'b'.
+Set n4 to buf as a hex number.
+Print n4.

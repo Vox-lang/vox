@@ -1,0 +1,39 @@
+(umount2(2) requires CAP_SYS_ADMIN/root, so this is NOT auto-run in CI -)
+(deliberately no .expected file, so test.sh skips it.)
+(Run manually with: sudo ./target/release/vox tests/manual_unmount.vox --run)
+(or without root: unshare -rm ./target/release/vox tests/manual_unmount.vox --run)
+
+Remove the directory called "/tmp/vox_test_unmount".
+Create a directory called "/tmp/vox_test_unmount".
+On error print "mkdir failed", exit 1.
+
+Mount "tmpfs" at "/tmp/vox_test_unmount" with type "tmpfs".
+On error print "tmpfs mount failed - are you root?", exit 1.
+
+(Prove the mount is live: create a file inside it)
+Open a file for writing called "marker" at "/tmp/vox_test_unmount/marker.txt".
+Write "on the mount\n" to marker.
+Close marker.
+
+If "/tmp/vox_test_unmount/marker.txt" is available then,
+    print "marker visible while mounted".
+
+Unmount "/tmp/vox_test_unmount".
+On error print "unmount failed", exit 1.
+
+(After unmount the marker must be gone - it lived on the tmpfs)
+If "/tmp/vox_test_unmount/marker.txt" is available then,
+    print "FAIL: marker still visible after unmount",
+    exit 1.
+Print "marker gone after unmount - unmount verified".
+
+(Lazy variant: mount again and detach)
+Mount "tmpfs" at "/tmp/vox_test_unmount" with type "tmpfs".
+On error print "second tmpfs mount failed", exit 1.
+Unmount "/tmp/vox_test_unmount" lazily.
+On error print "lazy unmount failed", exit 1.
+Print "lazy unmount succeeded".
+
+Remove the directory called "/tmp/vox_test_unmount".
+On error print "rmdir failed", exit 1.
+Print "cleanup complete".
