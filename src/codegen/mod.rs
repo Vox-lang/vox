@@ -1942,6 +1942,13 @@ impl CodeGenerator {
             result.push_str("default rel  ; Use RIP-relative addressing for PIC\n\n");
             // Shared libraries don't include coreasm - they're pure function exports
         } else {
+            // _list_print dispatches the MAP tag into _map_print, but list.asm
+            // is included before map.asm (map.asm calls _list_print), so it
+            // cannot test a define from map.asm. The compiler knows the final
+            // include set, so it declares the availability up front.
+            if self.uses_maps {
+                result.push_str("%define __MAP_ASM_AVAILABLE__\n");
+            }
             // Always needed: core
             result.push_str(&format!("%include \"coreasm/{}/core.asm\"\n", self.target_arch));
             // Conditional includes based on usage

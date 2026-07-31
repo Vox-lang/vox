@@ -40,6 +40,7 @@ section .text
 %define LIST_TAG_FLOAT          2
 %define LIST_TAG_BOOLEAN        3
 %define LIST_TAG_LIST           4
+%define LIST_TAG_MAP            5
 
 ; Guard tested by map.asm: _map_print's LIST-tag branch calls _list_print,
 ; so it assembles that branch only when list.asm has been included. list.asm
@@ -643,6 +644,10 @@ _list_print:
 %endif
     cmp r8, LIST_TAG_LIST
     je .lp_list
+%ifdef __MAP_ASM_AVAILABLE__
+    cmp r8, LIST_TAG_MAP
+    je .lp_map
+%endif
     ; Integer, boolean (as 1/0), and any unhandled tag print as a number.
     mov rdi, [r14]
     PRINT_INT rdi
@@ -668,6 +673,15 @@ _list_print:
     ; by _list_print, so the caller's iteration state survives the call.
     mov rdi, [r14]
     call _list_print
+    jmp .lp_next
+
+%ifdef __MAP_ASM_AVAILABLE__
+.lp_map:
+    ; Nested map: the slot holds a map pointer. _map_print shares _print_depth
+    ; with this routine, so a mixed map/list cycle stays within one budget.
+    mov rdi, [r14]
+    call _map_print
+%endif
     jmp .lp_next
 
 .lp_next:

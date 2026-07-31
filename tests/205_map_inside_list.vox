@@ -1,0 +1,22 @@
+(Stage 1e2 review — the list printer's MAP branch. map.asm dispatches the
+ LIST tag into _list_print, but list.asm had no matching MAP branch, so a
+ map stored in a list slot fell through to the integer path and printed as
+ a raw pointer. That also silently disabled the shared _print_depth budget
+ for a mixed map/list cycle: the recursion stopped at the untagged slot
+ instead of being bounded, so no error was flagged.)
+
+a map called "inner" is {}.
+set inner's "deep" to 5.
+a list called "holder" is [].
+append 1 to holder.
+append inner to holder.
+print holder.
+If element 2 of holder is a map, print "elem2 is map".
+Otherwise print "elem2 not map".
+
+a map called "c1" is {}.
+a list called "c2" is [].
+set c1's "to_list" to c2.
+append c1 to c2.
+print c1.
+on error print "mixed-cycle-flagged".
