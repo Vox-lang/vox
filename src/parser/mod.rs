@@ -3996,7 +3996,7 @@ impl Parser {
         // code (emitted after the epilogue `ret`), producing empty or
         // wrong output. Multi-statement bodies that do not end in a
         // top-level Return still terminate at the paragraph break below.
-        let mut body_ended_at_return =
+        let body_ended_at_return =
             matches!(body.last(), Some(Statement::Return { .. }));
         if body_ended_at_return {
             self.skip_noise();
@@ -4030,7 +4030,6 @@ impl Parser {
             // A top-level Return parsed as a body statement terminates the
             // body; consume its trailing period and stop.
             if is_return {
-                body_ended_at_return = true;
                 self.skip_noise();
                 if matches!(self.current(), Token::Period | Token::Comma) {
                     self.advance();
