@@ -1754,13 +1754,19 @@ impl CodeGenerator {
             // `prescan_expr_tag`, which recurses to the (boolean) operand.
             Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(TAG_BOOLEAN),
             Expr::StringLit(name) | Expr::Identifier(name)
-                if self.unprovable_scalars.contains(name) =>
+                if self.unprovable_scalars.contains(name)
+                    && self.variable_types.get(name) != Some(&VarType::List) =>
             {
                 // The pre-scan could not prove what this variable holds, so
                 // its declared type must not be turned into a slot tag. `None`
                 // writes the integer tag, which a reader renders as a number -
                 // wrong for a string, but never a wild dereference. Stage 1d's
                 // runtime tag propagation replaces the guess with the real tag.
+                //
+                // Lists are exempt: the hazard is a declared type claiming a
+                // pointer tag over bits that are not a pointer, and a list
+                // variable's slot always holds a list pointer. Suppressing
+                // TAG_LIST here would silently un-nest a nested list.
                 None
             }
             Expr::StringLit(name) | Expr::Identifier(name) => {
@@ -6551,6 +6557,26 @@ mod tests {
         assert!(
             asm.contains("movzx r11, byte [rbp-"),
             "the for-each variable's tag must be loaded from its shadow slot"
+        );
+    }
+
+    #[test]
+    fn unprovable_guard_never_suppresses_a_list_tag() {
+        // The unprovable-scalar guard must not reach list-typed names: a list
+        // variable's slot always holds a list pointer, so TAG_LIST is always
+        // truthful. Suppressing it would write the integer tag and print the
+        // nested list as a pointer instead of its contents.
+        let asm = compile_to_asm(
+            "a list called \"one\" is [1, 2].\n\
+             a list called \"two\" is [3].\n\
+             set two to one.\n\
+             a list called \"outer\" is [].\n\
+             append two to outer.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 4  ; element type tag"),
+            "appending a list must write TAG_LIST even when the pre-scan could \
+             not prove the alias's contents"
         );
     }
 
