@@ -787,10 +787,50 @@ Appending, `set element`, `element N of`, `first`/`last`, iteration, and
 `{...}` format interpolation all respect each element's actual type.
 Booleans print as `1`/`0`, matching homogeneous boolean lists.
 
-Current limitation: a value whose type is not statically knowable (for
-example a function result) appended to an otherwise homogeneous list does
-not yet widen it to mixed; see `docs/COLLECTIONS_ROADMAP.md` for the plan
-that closes this.
+The compiler earns the homogeneous fast path by **proof**, not assumption.
+A value whose type it cannot statically prove — for example the result of a
+function with an undeclared return type, or any other opaque expression —
+widens the list to mixed, so the element is always read back as what it
+is rather than silently reinterpreted:
+
+```
+To "five" with a number called "x". Return x add 1.
+a list called "items" is [].
+append "hello" to items.
+append "five" of 4 to items.
+print element 1 of items.   (prints: hello)
+print element 2 of items.   (prints: 5)
+```
+
+A function result whose return type **is** declared (e.g. `Return a text,
+"hi".`) is statically known, so it is tagged with that type at the write
+and widens the list only because its type differs from the other elements.
+
+Residual limitation: for a genuinely opaque value (no declared return
+type), the slot's own tag may still be a conservative `TAG_INTEGER` guess
+until runtime tag propagation arrives in stage 1d; the list still widens
+and reads dispatch on tags, so the value prints correctly when it really
+is a number. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+
+### Printing a List
+
+Printing a list variable directly renders its contents rather than its
+heap address:
+
+```
+a list called "nums" is [1, 2, 3].
+a list called "m" is [1, "two", 3.5, yes].
+print nums.               (prints: [1, 2, 3])
+print m.                  (prints: [1, "two", 3.5, 1])
+print "list: {nums}".     (prints: list: [1, 2, 3])
+```
+
+Elements are separated by `, ` and wrapped in `[` `]`. Each element
+renders exactly as it does when printed individually: text elements are
+quoted (so `["1"]` is distinguishable from `[1]`), booleans as `1`/`0`,
+floats and numbers as usual. Empty lists print `[]`. The same rendering
+appears inside `{...}` format interpolation. Nested lists are not yet
+rendered recursively; see `docs/COLLECTIONS_ROADMAP.md` for that work.
 
 ### List Properties
 

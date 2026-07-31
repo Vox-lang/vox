@@ -1,5 +1,10 @@
 ; io.asm - Input/Output macros for Vox Compiler
 
+; Guard tested by list.asm: _list_print uses PRINT_STR/PRINT_CSTR/PRINT_INT,
+; so it assembles its whole-list printer only when this file has been
+; included. list.asm is included after io.asm, so this define is visible.
+%define __IO_ASM_INCLUDED__
+
 section .data
     newline_char: db 10
     int_buffer: times 21 db 0

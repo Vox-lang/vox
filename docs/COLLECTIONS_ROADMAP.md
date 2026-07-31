@@ -73,16 +73,16 @@ layout change.
 
 ### Stages
 
-- **1a. Core mechanics** *(in progress)*. Tag region in every list
+- **1a. Core mechanics** *(done)*. Tag region in every list
   allocation; tag-aware `_list_append` (tag in `dl`, preserved across
   realloc); tagged literal stores; tag-carrying reads (for-each,
   `element N of`, `first`/`last`) into per-variable shadow tag slots;
   runtime dispatch in `print` and format interpolation; regression suite
   plus new mixed-list tests; `LANGUAGE.md` update.
-- **1b. Soundness flip.** Invert the inference default (see "How the
-  compiler decides" below): static becomes a proof, mixed becomes the safe
-  fallback. Closes the "runtime-typed append still corrupts" gap. Compiler
-  work only; the runtime layout already supports it.
+- **1b. Soundness flip** *(done)*. Invert the inference default (see "How
+  the compiler decides" below): static becomes a proof, mixed becomes the
+  safe fallback. Closes the "runtime-typed append still corrupts" gap.
+  Compiler work only; the runtime layout already supports it.
 - **1c. Type predicates.** `If item is a number, ...` / `is a text` /
   `is a boolean` compile to a tag comparison. This is the author-facing
   payoff that makes mixed lists usable rather than merely printable, and
@@ -102,10 +102,17 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
-Until 1b–1d land, in order of closure:
+Remaining after 1b, in order of closure:
 
-- Appends whose value type is statically unknowable (e.g. function
-  results) do not widen a list to mixed (closed by 1b).
+- ~~Appends whose value type is statically unknowable (e.g. function
+  results) do not widen a list to mixed~~ *(closed by 1b — an unprovable
+  write now widens the list to Mixed, and a declared-return function
+  result is tagged with its return type at the write).*
+- For a genuinely opaque value (no declared return type), the slot's own
+  tag may still be a conservative `TAG_INTEGER` guess; the list widens
+  and reads dispatch on tags, so the value prints correctly when it
+  really is a number, but a non-number opaque value can still mis-render
+  *(closed by 1d's runtime tag propagation)*.
 - Mixed elements passed as function arguments lose their tag; parameters
   are statically typed (closed by 1d).
 - Arithmetic/comparisons on a mixed element dispatch statically —

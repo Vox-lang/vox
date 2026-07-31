@@ -564,3 +564,119 @@ _list_to_argv:
     pop rbx
     ret
 
+; ============================================================================
+; WHOLE-LIST PRINTING
+; ============================================================================
+; _list_print - Render an entire list to stdout as [elem, elem, ...].
+; Args: rdi = list pointer
+;
+; Walks every slot, reads its type tag, and prints the element with the
+; matching primitive - the same dispatch the codegen uses for single
+; mixed elements, just driven in a loop. Homogeneous lists work without
+; special casing: their tag region is zero-filled (TAG_INTEGER) by mmap,
+; and string/float/bool homogeneous lists have their tags written by the
+; literal/append codegen, so every slot dispatches correctly.
+;
+; Text elements are wrapped in `"` so ["1"] is distinguishable from [1].
+; No escape handling: a text element containing `"` would render verbatim.
+; Nesting (tag 4+) is not handled here - reserved tags fall through to the
+; integer path; recursive printing arrives with stage 1e-1.
+;
+; Register discipline: preserves rbx/r12/r13/r14/r15 (pushed). The print
+; primitives all preserve callee-saved registers, so rbx (list ptr), r12
+; (index), r13 (length) and r14 (element address) survive every PRINT_*
+; call inside the loop. rax/rcx/rdx/rsi/rdi/r8-r11 are freely clobbered.
+;
+; Conditional assembly: the routine and its data are wrapped in
+; %ifdef __IO_ASM_INCLUDED__ because the body uses PRINT_STR/PRINT_CSTR/
+; PRINT_INT (defined in io.asm). A program that does no I/O never calls
+; _list_print, so omitting it is safe and avoids forcing io.asm into every
+; list-using program. The float-tag branch is further gated on
+; __FLOAT_ASM_INCLUDED__: a program with no floats can never produce a
+; float-tagged slot, so the branch is safe to omit. Both guards are
+; %define'd by their respective files, which are included before list.asm.
+%ifdef __IO_ASM_INCLUDED__
+section .data
+    _lp_lbrk:      db "["
+    _lp_lbrk_len:  equ $ - _lp_lbrk
+    _lp_rbrk:      db "]"
+    _lp_rbrk_len:  equ $ - _lp_rbrk
+    _lp_comma:     db ", "
+    _lp_comma_len: equ $ - _lp_comma
+    _lp_quote:     db '"'
+    _lp_quote_len: equ $ - _lp_quote
+
+section .text
+_list_print:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    mov rbx, rdi                        ; rbx = list pointer
+
+    ; Opening bracket
+    PRINT_STR _lp_lbrk, _lp_lbrk_len
+
+    mov r13, [rbx + LIST_LENGTH_OFFSET] ; r13 = length
+    test r13, r13
+    jz .lp_close                        ; empty list -> just print "]"
+
+    xor r12, r12                        ; r12 = 0-based index
+
+.lp_loop:
+    ; Separator before every element except the first
+    test r12, r12
+    jz .lp_first
+    PRINT_STR _lp_comma, _lp_comma_len
+.lp_first:
+    ; Element address = base + 24 + index * element_size
+    mov r14, [rbx + LIST_ELEMSIZE_OFFSET]
+    imul r14, r12
+    lea r14, [rbx + r14 + LIST_DATA_OFFSET]   ; r14 = &element
+
+    ; Tag address (macro clobbers only rcx; rbx/r12/r14 untouched)
+    LIST_TAG_ADDR rcx, rbx, r12
+    movzx r8, byte [rcx]                ; r8 = element's type tag
+
+    cmp r8, LIST_TAG_STRING
+    je .lp_str
+%ifdef __FLOAT_ASM_INCLUDED__
+    cmp r8, LIST_TAG_FLOAT
+    je .lp_flt
+%endif
+    ; LIST_TAG_INTEGER, LIST_TAG_BOOLEAN, and any reserved tag (or, in a
+    ; no-float build, LIST_TAG_FLOAT - impossible there): print as a
+    ; number. Booleans render as 1/0, matching homogeneous boolean lists.
+    mov rdi, [r14]
+    PRINT_INT rdi
+    jmp .lp_next
+
+.lp_str:
+    PRINT_STR _lp_quote, _lp_quote_len
+    mov rdi, [r14]                      ; C-string pointer
+    PRINT_CSTR rdi
+    PRINT_STR _lp_quote, _lp_quote_len
+    jmp .lp_next
+
+%ifdef __FLOAT_ASM_INCLUDED__
+.lp_flt:
+    movq xmm0, [r14]                   ; PRINT_FLOAT takes the value in xmm0
+    PRINT_FLOAT
+%endif
+
+.lp_next:
+    inc r12
+    cmp r12, r13
+    jl .lp_loop
+
+.lp_close:
+    PRINT_STR _lp_rbrk, _lp_rbrk_len
+
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+%endif
+

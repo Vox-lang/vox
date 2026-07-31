@@ -1,0 +1,14 @@
+(Stage 1b — inference soundness flip. A function with an UNDECLARED return
+ type (`Return x add 1.` — no `a number,` prefix) is genuinely opaque to
+ the compiler: its result is actually an integer, but the static default
+ is now "mixed is the default", so appending it widens the list to Mixed.
+ Reads dispatch on runtime tags; the string element proves dispatch is
+ live — a fast-path int list would print "hello"'s pointer, not "hello".
+ Acceptance criterion 3.)
+
+To "five" with a number called "x". Return x add 1.
+a list called "items" is [].
+append "hello" to items.
+append "five" of 4 to items.
+print element 1 of items.
+print element 2 of items.

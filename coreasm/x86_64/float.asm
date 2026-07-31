@@ -1,6 +1,13 @@
 ; float.asm - Floating point operations for Vox Compiler
 ; Uses SSE2 instructions (available on all x86-64 CPUs)
 
+; Guard tested by list.asm: _list_print's float-tag branch uses PRINT_FLOAT,
+; so that branch is assembled only when this file has been included. A
+; program with no floats (uses_floats == false) can never produce a
+; float-tagged list slot, so omitting the branch is safe. list.asm is
+; included after float.asm, so this define is visible.
+%define __FLOAT_ASM_INCLUDED__
+
 section .text
 
 ; Float arithmetic - operates on xmm0 and xmm1, result in xmm0

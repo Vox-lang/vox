@@ -84,6 +84,49 @@ const TAG_STRING: u8 = 1;
 const TAG_FLOAT: u8 = 2;
 const TAG_BOOLEAN: u8 = 3;
 
+/// Three-state result of statically classifying an expression into a list
+/// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
+/// certain. `Unknowable` means no static proof is possible — stage 1b widens
+/// the list to `Mixed` rather than optimistically guessing a type ("static is
+/// a proof; mixed is the default").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagInfo {
+    Known(u8),
+    Unknowable,
+}
+
+/// Map a known `VarType` to its list slot tag. Returns `None` for `Mixed`,
+/// `Unknown`, `List`, and anything without a single static tag: those need a
+/// runtime tag (stage 1d) or the `TAG_INTEGER` fallback at the append site.
+fn vartype_to_tag(vt: VarType) -> Option<u8> {
+    match vt {
+        VarType::Integer => Some(TAG_INTEGER),
+        VarType::Float => Some(TAG_FLOAT),
+        VarType::String | VarType::Buffer => Some(TAG_STRING),
+        VarType::Boolean => Some(TAG_BOOLEAN),
+        // Mixed/Unknown/List: no single static tag — runtime tag (1d) or fallback.
+        _ => None,
+    }
+}
+
+/// Map a declared `Type` to the list slot tag a value of that type would
+/// carry. Used to seed the pre-scan env from a variable's declared type
+/// (a static proof) when the initializer's own type can't be inferred — e.g.
+/// `a buffer called "b" is 4 bytes in size.` (the size expr is opaque, but
+/// the declared type `buffer` proves the slot tag is `TAG_STRING`). Returns
+/// `None` for non-scalar types (List/File/Time/Timer/Void/Unknown).
+fn type_to_tag(t: &Type) -> Option<u8> {
+    match t {
+        Type::Integer => Some(TAG_INTEGER),
+        Type::Float => Some(TAG_FLOAT),
+        Type::String => Some(TAG_STRING),
+        Type::Boolean => Some(TAG_BOOLEAN),
+        Type::Buffer => Some(TAG_STRING),
+        // List/File/Time/Timer/Void/Unknown: no scalar slot tag.
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum IntegerBase {
     Decimal,
@@ -1060,37 +1103,172 @@ impl CodeGenerator {
     }
     
     /// Static classification of an expression into a list slot tag, using
-    /// only what's knowable without emitting code. `env` maps scalar
-    /// variable names to their literal-derived tags (best effort).
-    fn prescan_expr_tag(e: &Expr, env: &HashMap<String, u8>) -> Option<u8> {
+    /// only what is provable without emitting code. `env` maps scalar
+    /// variable names to their inferred `TagInfo`; `list_seen_tags` records
+    /// the single proven element type of each homogeneous list, so reads of
+    /// `first`/`last`/`element N of` such a list are themselves provable.
+    ///
+    /// Sound by design: only literals, tracked scalars, functions with a
+    /// declared return type, casts, provable binary/unary ops, and reads of
+    /// homogeneous lists yield `Known`. Everything else is `Unknowable`, so
+    /// the join in `prescan_note_list_value` widens the list to `Mixed`
+    /// rather than guessing (stage 1b — "static is a proof; mixed is the
+    /// default").
+    fn prescan_expr_tag(
+        &self,
+        e: &Expr,
+        env: &HashMap<String, TagInfo>,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
         match e {
-            Expr::IntegerLit(_) => Some(TAG_INTEGER),
+            Expr::IntegerLit(_) => TagInfo::Known(TAG_INTEGER),
+            Expr::FloatLit(_) => TagInfo::Known(TAG_FLOAT),
+            Expr::BoolLit(_) => TagInfo::Known(TAG_BOOLEAN),
             Expr::StringLit(s) => {
                 // A quoted name can be a variable reference in Vox; if we
                 // tracked it as a scalar, use that. Otherwise it's a string.
-                env.get(s).copied().or(Some(TAG_STRING))
+                match env.get(s) {
+                    Some(info) => *info,
+                    None => TagInfo::Known(TAG_STRING),
+                }
             }
-            Expr::FloatLit(_) => Some(TAG_FLOAT),
-            Expr::BoolLit(_) => Some(TAG_BOOLEAN),
-            Expr::Identifier(name) => env.get(name).copied(),
-            _ => None,
+            Expr::Identifier(name) => match env.get(name) {
+                Some(info) => *info,
+                None => TagInfo::Unknowable,
+            },
+            // Function results and casts: their type comes from declared
+            // metadata (function_return_types / the cast target), not from
+            // operand variable_types, so infer_expr_type is sound here and
+            // agrees with the tag written at emit time.
+            Expr::FunctionCall { .. } | Expr::Cast { .. } => {
+                match self.infer_expr_type(e).and_then(vartype_to_tag) {
+                    Some(t) => TagInfo::Known(t),
+                    None => TagInfo::Unknowable,
+                }
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.prescan_expr_tag(operand, env, list_seen_tags)
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let lt = self.prescan_expr_tag(left, env, list_seen_tags);
+                let rt = self.prescan_expr_tag(right, env, list_seen_tags);
+                match (lt, rt) {
+                    (TagInfo::Unknowable, _) | (_, TagInfo::Unknowable) => {
+                        TagInfo::Unknowable
+                    }
+                    (TagInfo::Known(lt), TagInfo::Known(rt)) => {
+                        let arithmetic = matches!(
+                            op,
+                            BinaryOperator::Add | BinaryOperator::Subtract
+                            | BinaryOperator::Multiply | BinaryOperator::Divide
+                            | BinaryOperator::Modulo
+                        );
+                        if arithmetic && (lt == TAG_FLOAT || rt == TAG_FLOAT) {
+                            TagInfo::Known(TAG_FLOAT)
+                        } else {
+                            // Non-arithmetic ops (comparison/logical/bitwise)
+                            // yield 0/1 integers, matching infer_expr_type's
+                            // `_ => Some(VarType::Integer)` arm for them.
+                            TagInfo::Known(TAG_INTEGER)
+                        }
+                    }
+                }
+            }
+            Expr::PropertyAccess { object, property } => match property {
+                ObjectProperty::First | ObjectProperty::Last => {
+                    match list_seen_tags.get(object) {
+                        Some(t) => TagInfo::Known(*t),
+                        None => TagInfo::Unknowable,
+                    }
+                }
+                ObjectProperty::Size | ObjectProperty::Capacity => {
+                    TagInfo::Known(TAG_INTEGER)
+                }
+                _ => TagInfo::Unknowable,
+            },
+            Expr::ElementAccess { list, .. } => {
+                if let Expr::Identifier(name) = list.as_ref() {
+                    match list_seen_tags.get(name) {
+                        Some(t) => TagInfo::Known(*t),
+                        None => TagInfo::Unknowable,
+                    }
+                } else {
+                    TagInfo::Unknowable
+                }
+            }
+            _ => TagInfo::Unknowable,
+        }
+    }
+
+    /// Proven slot tag for a `For each <var> in <collection>` loop variable,
+    /// derived from the collection's element type. A range yields integers;
+    /// a list literal yields its (single) element tag; a homogeneous list
+    /// variable yields its recorded tag; `arguments` yields strings. Anything
+    /// else is `Unknowable`, so appending the loop variable widens rather
+    /// than guesses. Used to seed `env` before walking the loop body.
+    fn foreach_loop_var_tag(
+        &self,
+        collection: &Expr,
+        env: &HashMap<String, TagInfo>,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
+        match collection {
+            Expr::Range { .. } => TagInfo::Known(TAG_INTEGER),
+            Expr::ArgumentAll | Expr::ArgumentRaw => TagInfo::Known(TAG_STRING),
+            Expr::ListLit { elements } => {
+                if elements.is_empty() {
+                    return TagInfo::Unknowable;
+                }
+                let mut tags: Vec<u8> = Vec::new();
+                for e in elements {
+                    match self.prescan_expr_tag(e, env, list_seen_tags) {
+                        TagInfo::Known(t) => {
+                            if !tags.contains(&t) {
+                                tags.push(t);
+                            }
+                        }
+                        TagInfo::Unknowable => return TagInfo::Unknowable,
+                    }
+                }
+                if tags.len() == 1 {
+                    TagInfo::Known(tags[0])
+                } else {
+                    TagInfo::Unknowable
+                }
+            }
+            Expr::Identifier(name) | Expr::StringLit(name) => {
+                if self.mixed_lists.contains(name) {
+                    TagInfo::Unknowable
+                } else {
+                    list_seen_tags
+                        .get(name)
+                        .map(|t| TagInfo::Known(*t))
+                        .unwrap_or(TagInfo::Unknowable)
+                }
+            }
+            _ => TagInfo::Unknowable,
         }
     }
 
     /// Pre-scan pass: walk the whole program and decide, before any code is
     /// emitted, which lists are heterogeneous ("mixed"). A list is mixed
-    /// when there is positive evidence of two distinct element types: a
-    /// mixed list literal, or an append/element-set whose value's type
-    /// provably differs from the list's established element type.
+    /// when its homogeneity cannot be *proven* — i.e. some write is of an
+    /// `Unknowable` type, or two writes provably differ in type (a mixed
+    /// list literal, or an append/element-set whose value's tag conflicts
+    /// with the list's established element type).
     ///
-    /// Conservative by design: values whose type can't be determined
-    /// statically (e.g. function results) never mark a list mixed, so
-    /// every homogeneous list keeps today's static fast path. Aliasing a
-    /// mixed list (`a list called "b" is the a.`) propagates mixedness.
+    /// Stage 1b flipped the default: a value whose type can't be proven
+    /// (e.g. a function result without a declared return type) widens the
+    /// list to `Mixed` so elements are never silently reinterpreted. Lists
+    /// whose every write is provably one type keep the untagged fast path.
+    /// Aliasing a mixed list (`a list called "b" is the a.`) propagates
+    /// mixedness.
     fn prescan_mixed_lists(&mut self, statements: &[Statement]) {
         // Iterate to a fixed point so aliases and later evidence propagate
-        // regardless of declaration order (bounded: each pass can only add).
-        let mut env: HashMap<String, u8> = HashMap::new();
+        // regardless of declaration order. Termination: each pass only ever
+        // *adds* to `mixed_lists`, which is bounded by the number of list
+        // names, so the loop always converges.
+        let mut env: HashMap<String, TagInfo> = HashMap::new();
         let mut list_seen_tags: HashMap<String, u8> = HashMap::new();
         loop {
             let before = self.mixed_lists.len();
@@ -1103,14 +1281,18 @@ impl CodeGenerator {
         }
     }
 
+    /// Join a write's `TagInfo` into a list's running element-type record.
+    /// `Known(t)` conflicts with a different prior tag (or joins an
+    /// established one); `Unknowable` widens the list straight to `Mixed`
+    /// (the write's type can't be proven, so homogeneity can't be claimed).
     fn prescan_note_list_value(
         &mut self,
         list: &str,
-        tag: Option<u8>,
+        tag: TagInfo,
         list_seen_tags: &mut HashMap<String, u8>,
     ) {
-        if let Some(t) = tag {
-            match list_seen_tags.get(list) {
+        match tag {
+            TagInfo::Known(t) => match list_seen_tags.get(list) {
                 Some(prev) if *prev != t => {
                     self.mixed_lists.insert(list.to_string());
                 }
@@ -1118,6 +1300,9 @@ impl CodeGenerator {
                 None => {
                     list_seen_tags.insert(list.to_string(), t);
                 }
+            },
+            TagInfo::Unknowable => {
+                self.mixed_lists.insert(list.to_string());
             }
         }
     }
@@ -1125,23 +1310,33 @@ impl CodeGenerator {
     fn prescan_walk(
         &mut self,
         statements: &[Statement],
-        env: &mut HashMap<String, u8>,
+        env: &mut HashMap<String, TagInfo>,
         list_seen_tags: &mut HashMap<String, u8>,
     ) {
         for stmt in statements {
             match stmt {
-                Statement::VarDecl { name, value, .. } => {
+                Statement::VarDecl { name, value, var_type, .. } => {
+                    // A declared scalar type is a static proof of the slot tag
+                    // and seeds `env` even when the initializer is opaque (e.g.
+                    // `a buffer called "b" is 4 bytes in size.` — the size expr
+                    // is unknowable, but the declared `buffer` type proves the
+                    // tag is `TAG_STRING`, so appending it doesn't widen).
+                    let declared_tag = var_type.as_ref().and_then(type_to_tag);
                     match value {
                         Some(Expr::ListLit { elements }) => {
                             let mut tags: Vec<u8> = Vec::new();
+                            let mut unknowable = false;
                             for e in elements {
-                                if let Some(t) = Self::prescan_expr_tag(e, env) {
-                                    if !tags.contains(&t) {
-                                        tags.push(t);
+                                match self.prescan_expr_tag(e, env, list_seen_tags) {
+                                    TagInfo::Known(t) => {
+                                        if !tags.contains(&t) {
+                                            tags.push(t);
+                                        }
                                     }
+                                    TagInfo::Unknowable => unknowable = true,
                                 }
                             }
-                            if tags.len() > 1 {
+                            if unknowable || tags.len() > 1 {
                                 self.mixed_lists.insert(name.clone());
                             } else if let Some(t) = tags.first() {
                                 list_seen_tags.insert(name.clone(), *t);
@@ -1154,46 +1349,75 @@ impl CodeGenerator {
                                 self.mixed_lists.insert(name.clone());
                             } else if let Some(t) = list_seen_tags.get(src).copied() {
                                 list_seen_tags.insert(name.clone(), t);
-                            } else if let Some(t) = Self::prescan_expr_tag(
-                                value.as_ref().unwrap(),
-                                env,
-                            ) {
-                                env.insert(name.clone(), t);
+                            } else if let Some(t) = declared_tag {
+                                env.insert(name.clone(), TagInfo::Known(t));
+                            } else {
+                                // Scalar alias with no declared scalar type:
+                                // track its provability (Unknowable overwrites
+                                // a prior Known, so a later reassignment taints).
+                                let info = self.prescan_expr_tag(
+                                    value.as_ref().unwrap(),
+                                    env,
+                                    list_seen_tags,
+                                );
+                                env.insert(name.clone(), info);
                             }
                         }
                         Some(other) => {
-                            if let Some(t) = Self::prescan_expr_tag(other, env) {
-                                env.insert(name.clone(), t);
+                            if let Some(t) = declared_tag {
+                                env.insert(name.clone(), TagInfo::Known(t));
+                            } else {
+                                let info = self.prescan_expr_tag(other, env, list_seen_tags);
+                                env.insert(name.clone(), info);
                             }
                         }
-                        None => {}
+                        None => {
+                            if let Some(t) = declared_tag {
+                                env.insert(name.clone(), TagInfo::Known(t));
+                            }
+                        }
                     }
+                }
+                // A buffer (fixed-size `is N bytes in size` or `Create a
+                // buffer`) appends as a string-tagged slot, so record it as
+                // Known(TAG_STRING) — otherwise appending it would widen.
+                Statement::BufferDecl { name, .. } => {
+                    env.insert(name.clone(), TagInfo::Known(TAG_STRING));
                 }
                 Statement::Assignment { name, value } => {
                     if let Expr::ListLit { elements } = value {
                         let mut tags: Vec<u8> = Vec::new();
+                        let mut unknowable = false;
                         for e in elements {
-                            if let Some(t) = Self::prescan_expr_tag(e, env) {
-                                if !tags.contains(&t) {
-                                    tags.push(t);
+                            match self.prescan_expr_tag(e, env, list_seen_tags) {
+                                TagInfo::Known(t) => {
+                                    if !tags.contains(&t) {
+                                        tags.push(t);
+                                    }
                                 }
+                                TagInfo::Unknowable => unknowable = true,
                             }
                         }
-                        if tags.len() > 1 {
+                        if unknowable || tags.len() > 1 {
                             self.mixed_lists.insert(name.clone());
                         } else if let Some(t) = tags.first() {
-                            self.prescan_note_list_value(name, Some(*t), list_seen_tags);
+                            self.prescan_note_list_value(
+                                name,
+                                TagInfo::Known(*t),
+                                list_seen_tags,
+                            );
                         }
-                    } else if let Some(t) = Self::prescan_expr_tag(value, env) {
-                        env.insert(name.clone(), t);
+                    } else {
+                        let info = self.prescan_expr_tag(value, env, list_seen_tags);
+                        env.insert(name.clone(), info);
                     }
                 }
                 Statement::ListAppend { list, value } => {
-                    let tag = Self::prescan_expr_tag(value, env);
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
                     self.prescan_note_list_value(list, tag, list_seen_tags);
                 }
                 Statement::ElementSet { list, value, .. } => {
-                    let tag = Self::prescan_expr_tag(value, env);
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
                     self.prescan_note_list_value(list, tag, list_seen_tags);
                 }
                 Statement::If { then_block, else_if_blocks, else_block, .. } => {
@@ -1205,9 +1429,49 @@ impl CodeGenerator {
                         self.prescan_walk(block, env, list_seen_tags);
                     }
                 }
+                Statement::ForEach { variable, collection, body } => {
+                    // A provably-empty collection runs its body zero times, so
+                    // skip it — otherwise `append each x from [] to L` would
+                    // widen L even though nothing is appended.
+                    if let Expr::ListLit { elements } = collection {
+                        if elements.is_empty() {
+                            continue;
+                        }
+                    }
+                    // Seed the loop variable's proven tag from the collection
+                    // so appends of it inside the body don't widen (e.g.
+                    // `append each x from [10, 20, 30] to copied` keeps copied
+                    // homogeneous). Save/restore so a shadowing outer variable
+                    // isn't clobbered.
+                    let elem_tag =
+                        self.foreach_loop_var_tag(collection, env, list_seen_tags);
+                    let saved = env.insert(variable.clone(), elem_tag);
+                    self.prescan_walk(body, env, list_seen_tags);
+                    match saved {
+                        Some(prev) => {
+                            env.insert(variable.clone(), prev);
+                        }
+                        None => {
+                            env.remove(variable);
+                        }
+                    }
+                }
+                Statement::ForRange { variable, body, .. } => {
+                    // Range elements are integers; seed the loop variable so
+                    // `append each n from 1 to 5 to L` keeps L homogeneous.
+                    // Save/restore so a shadowing outer variable isn't clobbered.
+                    let saved = env.insert(variable.clone(), TagInfo::Known(TAG_INTEGER));
+                    self.prescan_walk(body, env, list_seen_tags);
+                    match saved {
+                        Some(prev) => {
+                            env.insert(variable.clone(), prev);
+                        }
+                        None => {
+                            env.remove(variable);
+                        }
+                    }
+                }
                 Statement::While { body, .. }
-                | Statement::ForRange { body, .. }
-                | Statement::ForEach { body, .. }
                 | Statement::Repeat { body, .. }
                 | Statement::FunctionDef { body, .. } => {
                     self.prescan_walk(body, env, list_seen_tags);
@@ -1272,7 +1536,12 @@ impl CodeGenerator {
 
     /// Best-effort static tag for a value being written into a list slot
     /// at emit time (richer than the pre-scan version: consults
-    /// variable_types). Returns None when only a runtime tag would do.
+    /// `variable_types`/`list_element_types`, which are populated by the
+    /// time code is emitted). Returns `None` when only a runtime tag would
+    /// do (a `Mixed` value's shadow-slot tag, or a genuinely opaque value
+    /// whose actual type can't be proven — the latter falls back to
+    /// `TAG_INTEGER` at the append site, with correct rendering deferred to
+    /// stage 1d's runtime tag propagation).
     fn emit_time_expr_tag(&self, e: &Expr) -> Option<u8> {
         match e {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
@@ -1292,20 +1561,36 @@ impl CodeGenerator {
                         {
                             Some(TAG_STRING) // a genuine string literal
                         } else {
+                            // An identifier not in variable_types and not a
+                            // genuine string literal. Every declared variable
+                            // is in variable_types during codegen, so this is
+                            // an edge (e.g. a global int mirror); defaulting to
+                            // the zero (integer) tag is the same runtime effect
+                            // as returning None (the append path writes 0).
                             Some(TAG_INTEGER)
                         }
                     }
                 }
             }
-            _ => Some(TAG_INTEGER),
+            // Function results, binary/unary ops, casts, and property/element
+            // reads: infer_expr_type resolves these from declared metadata and
+            // the populated variable_types/list_element_types, so the written
+            // tag matches the actual type. Mixed/Unknown/List map to None
+            // (runtime tag or the TAG_INTEGER fallback).
+            _ => self.infer_expr_type(e).and_then(vartype_to_tag),
         }
     }
 
     pub fn generate(&mut self, program: &Program) -> String {
+        // Collect function signatures BEFORE the pre-scan: prescan_expr_tag
+        // classifies FunctionCall results via function_return_types, so it
+        // must be populated for the pre-scan to prove (not widen) lists built
+        // from declared-return functions. Signature collection only reads
+        // FunctionDef.return_type from the AST, so this reorder is safe.
+        self.collect_function_signatures(program);
         self.prescan_mixed_lists(&program.statements);
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
-        self.collect_function_signatures(program);
 
         self.global_var_labels.clear();
         self.global_var_counter = 0;
@@ -3528,6 +3813,13 @@ impl CodeGenerator {
                                     self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
                                     self.emit_formatted_value(var_type, fmt_spec);
                                 }
+                            } else if var_type == Some(VarType::List) {
+                                // Whole-list interpolation: rdi holds the list
+                                // pointer; _list_print renders [elem, elem, ...].
+                                // Format specs on a list are not honored (out of
+                                // scope for stage 000 - the default rendering only).
+                                self.uses_lists = true;
+                                self.emit_indent("call _list_print");
                             } else {
                                 let fmt_spec = self.parse_format_spec(format.as_deref());
                                 self.emit_formatted_value(var_type, fmt_spec);
@@ -3595,6 +3887,12 @@ impl CodeGenerator {
                             self.emit_indent("PRINT_FLOAT");
                             self.uses_floats = true;
                         }
+                        Some(VarType::List) => {
+                            // String literal that is actually a list variable
+                            // reference - render the whole list.
+                            self.uses_lists = true;
+                            self.emit_indent("call _list_print");
+                        }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
                         }
@@ -3648,6 +3946,13 @@ impl CodeGenerator {
                             self.emit_indent("movq xmm0, rdi");
                             self.emit_indent("PRINT_FLOAT");
                             self.uses_floats = true;
+                        }
+                        Some(VarType::List) => {
+                            // Whole-list print: rdi holds the list pointer;
+                            // _list_print walks the slots and renders
+                            // [elem, elem, ...] with per-tag dispatch.
+                            self.uses_lists = true;
+                            self.emit_indent("call _list_print");
                         }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
@@ -5448,5 +5753,167 @@ impl CodeGenerator {
             Expr::Cast { target_type, .. } => *target_type == Type::Integer,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Codegen routing tests for whole-list printing (plan 000). These lock
+    //! the routing in at the compiler level - independent of the runtime -
+    //! so a regression in `generate_print` is caught without assembling.
+    use crate::analyzer::Analyzer;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use super::CodeGenerator;
+
+    /// Parse, analyze, and generate asm for a source snippet. Panics with a
+    /// clear message if parsing or analysis fails, so test failures point at
+    /// the snippet rather than at silently-empty output.
+    fn compile_to_asm(source: &str) -> String {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("unit_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new().with_source("unit_test.vox", source);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.generate(&program)
+    }
+
+    #[test]
+    fn whole_list_print_routes_to_list_print() {
+        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint xs.\n");
+        assert!(
+            asm.contains("call _list_print"),
+            "a whole-list print must route to _list_print, not PRINT_INT"
+        );
+        // Exactly one whole-list print in the source -> exactly one call.
+        assert_eq!(
+            asm.matches("call _list_print").count(),
+            1,
+            "expected exactly one `call _list_print`"
+        );
+    }
+
+    #[test]
+    fn list_format_interpolation_routes_to_list_print() {
+        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint \"xs: {xs}\".\n");
+        assert!(
+            asm.contains("call _list_print"),
+            "a {{list}} interpolation must route to _list_print"
+        );
+        assert_eq!(asm.matches("call _list_print").count(), 1);
+    }
+
+    #[test]
+    fn mixed_list_whole_print_routes_to_list_print() {
+        // A mixed list variable has variable_types == List (its element type
+        // is tracked separately in list_element_types), so the whole-list
+        // print must still take the _list_print branch - not the per-element
+        // Mixed dispatch, which would print a single pointer.
+        let asm = compile_to_asm("a list called \"m\" is [1, \"two\", 3.5].\nprint m.\n");
+        assert!(asm.contains("call _list_print"));
+        assert_eq!(asm.matches("call _list_print").count(), 1);
+    }
+
+    #[test]
+    fn non_list_print_does_not_route_to_list_print() {
+        let asm = compile_to_asm("a number called \"n\" is 5.\nprint n.\n");
+        assert!(
+            !asm.contains("call _list_print"),
+            "a non-list print must not route to _list_print"
+        );
+    }
+
+    #[test]
+    fn multiple_list_prints_each_route_to_list_print() {
+        // Two whole-list prints (one direct, one interpolated) -> two calls.
+        let asm = compile_to_asm(
+            "a list called \"xs\" is [1, 2, 3].\nprint xs.\nprint \"xs: {xs}\".\n",
+        );
+        assert_eq!(asm.matches("call _list_print").count(), 2);
+    }
+
+    // ---- Stage 1b: inference soundness flip (plan 010) ----
+    //
+    // These lock in the three-state pre-scan: a list whose every write is
+    // provable keeps the untagged fast path; an unprovable write widens to
+    // Mixed so reads dispatch on runtime tags.
+
+    #[test]
+    fn homogeneous_int_list_keeps_fast_path() {
+        // Acceptance criterion 1: a list built only from integer literals
+        // emits no tag writes and no runtime-tag dispatch.
+        let asm =
+            compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint element 1 of xs.\n");
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous int list must not emit mixed-dispatch labels"
+        );
+        assert!(
+            !asm.contains("movzx r11, byte"),
+            "a homogeneous int list read must not load a runtime tag into r11"
+        );
+    }
+
+    #[test]
+    fn mixed_list_emits_dispatch() {
+        // Contrast: a genuinely mixed list DOES dispatch on tags.
+        let asm =
+            compile_to_asm("a list called \"m\" is [1, \"two\"].\nprint element 1 of m.\n");
+        assert!(
+            asm.contains("mixp_"),
+            "a mixed list read must emit mixed-dispatch labels"
+        );
+    }
+
+    #[test]
+    fn declared_text_function_append_tagged_string() {
+        // Acceptance criterion 2: a function result of declared text type
+        // appended alongside an integer is tagged STRING (not the old
+        // TAG_INTEGER guess), and the list widens to Mixed.
+        let asm = compile_to_asm(
+            "To \"greet\" with a number called \"x\".\n  Return a text, \"hi\".\n\
+             a list called \"items\" is [].\n\
+             append 1 to items.\n\
+             append \"greet\" of 0 to items.\n\
+             print element 1 of items.\n\
+             print element 2 of items.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "the text-returning function result must be written with TAG_STRING (1)"
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "the list widened to Mixed (int + text function result)"
+        );
+    }
+
+    #[test]
+    fn undeclared_return_function_append_widens() {
+        // Acceptance criterion 3: a function with an undeclared return type
+        // (`Return x add 1.` — no `a number,` prefix) is genuinely opaque to
+        // the compiler, so appending its result widens the list to Mixed and
+        // reads dispatch on tags (the flip from 1a's optimistic default).
+        let asm = compile_to_asm(
+            "To \"five\" with a number called \"x\".\n  Return x add 1.\n\
+             a list called \"items\" is [].\n\
+             append \"hello\" to items.\n\
+             append \"five\" of 4 to items.\n\
+             print element 1 of items.\n\
+             print element 2 of items.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "an unknowable (undeclared-return) append must widen the list to Mixed"
+        );
     }
 }

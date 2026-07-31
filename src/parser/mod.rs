@@ -3528,8 +3528,12 @@ impl Parser {
             return self.wrap_in_loop_expansion(variable, collection, append_stmt);
         }
         
-        // Parse just the value (literal, identifier, or simple expression)
-        // We need to be careful not to consume 'to' which is the separator
+        // Parse just the value (literal, identifier, function call, or simple
+        // expression). We must be careful not to consume 'to', which is the
+        // append separator. A quoted name followed by of/with/on is a function
+        // call (`append "f" of x to items`); `to` is NOT a call trigger here,
+        // unlike the general expression parser, so that `append "s" to items`
+        // stays an append of the literal string "s".
         let value = match self.current().clone() {
             Token::IntegerLiteral(n) => {
                 self.advance();
@@ -3541,7 +3545,33 @@ impl Parser {
             }
             Token::StringLiteral(s) => {
                 self.advance();
-                self.string_value_expr(s)
+                self.skip_noise();
+                // A format string can't be a function name - resolve it first.
+                let resolved = self.string_value_expr(s.clone());
+                if matches!(resolved, Expr::FormatString { .. }) {
+                    resolved
+                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
+                    self.advance();
+                    self.skip_noise();
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.parse_expression()?);
+                        self.skip_noise();
+                        if *self.current() == Token::Comma {
+                            // Comma belongs to the enclosing sentence.
+                            break;
+                        }
+                        if *self.current() == Token::And {
+                            self.advance();
+                            self.skip_noise();
+                        } else {
+                            break;
+                        }
+                    }
+                    Expr::FunctionCall { name: s, args }
+                } else {
+                    resolved
+                }
             }
             Token::True => {
                 self.advance();
