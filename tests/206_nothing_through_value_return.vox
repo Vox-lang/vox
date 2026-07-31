@@ -1,0 +1,25 @@
+(Stage 1e3 review — `nothing` through a `value` RETURN and a `value` local.
+ Test 188 covers a value parameter carrying nothing; the return path is a
+ different route (tag 6 loaded into r11 by emit_load_value_tag's static arm,
+ read back by the caller), and reading the result must dispatch on that tag
+ rather than on the call's static type.)
+
+To "echo" with a value called "v". Return a value, v.
+
+print "echo" of nothing.
+If "echo" of nothing is nothing, print "return round-trip ok".
+Otherwise print "return round-trip LOST".
+
+a value called "slot" is "echo" of nothing.
+print slot.
+If slot is nothing, print "local ok".
+Otherwise print "local LOST".
+
+set slot to 5.
+If slot is nothing, print "retag LOST".
+Otherwise print "retag ok".
+
+a list called "L" is [].
+append "echo" of nothing to L.
+append 0 to L.
+print L.
