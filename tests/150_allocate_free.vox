@@ -1,0 +1,4 @@
+(Free must accept a raw pointer from Allocate, not just buffers and lists)
+Allocate 100 for scratch.
+Free scratch.
+Print "done".

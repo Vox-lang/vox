@@ -568,6 +568,10 @@ pub struct Analyzer {
     list_variables: HashSet<String>,
     file_variables: HashSet<String>,
     timer_variables: HashSet<String>,
+    /// Variables holding a raw heap pointer from `Allocate`. They are not
+    /// buffers (no length/capacity header), but `Free` must accept them -
+    /// that is the whole point of Allocate.
+    allocated_variables: HashSet<String>,
     /// Declared/inferred scalar category (Integer/Float/String/Boolean) for
     /// non-buffer, non-list, non-file, non-timer variables. Vox is dynamically
     /// typed - a variable's runtime category is whatever its last assignment
@@ -607,6 +611,7 @@ impl Analyzer {
             list_variables: HashSet::new(),
             file_variables: HashSet::new(),
             timer_variables: HashSet::new(),
+            allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
             loop_depth: 0,
@@ -1059,6 +1064,7 @@ impl Analyzer {
             && !self.is_list_variable(name)
             && !self.file_variables.contains(name)
             && !self.timer_variables.contains(name)
+            && !self.allocated_variables.contains(name)
     }
 
     /// Resolve a named reference (an `Identifier` or a quoted-name `StringLit`)
@@ -1636,6 +1642,12 @@ impl Analyzer {
 
             Statement::ForEach { variable, collection, body } => {
                 self.variables.insert(variable.clone());
+                // The element category is unknown (lists may be mixed), so a
+                // label left over from a previous use of this name - e.g. a
+                // text variable reused as the loop variable over a numeric
+                // list - must not linger and falsely reject arithmetic on the
+                // loop variable inside the body.
+                self.scalar_types.remove(variable);
                 self.analyze_expr(collection);
                 self.loop_depth += 1;
                 for s in body {
@@ -1672,14 +1684,21 @@ impl Analyzer {
             Statement::Allocate { name, size } => {
                 self.deps.uses_heap = true;
                 self.variables.insert(name.clone());
+                self.allocated_variables.insert(name.clone());
+                // The variable now holds a raw pointer, not its previous
+                // scalar value - drop any stale number/text label.
+                self.scalar_types.remove(name);
                 self.analyze_expr(size);
             }
-            
+
             Statement::Free { name } => {
                 self.deps.uses_heap = true;
                 if !self.is_variable_available(name) {
                     self.push_error(format!("Freeing unknown variable: {}", name), Some(name));
-                } else if !self.is_buffer_variable(name) && !self.is_list_variable(name) {
+                } else if !self.is_buffer_variable(name)
+                    && !self.is_list_variable(name)
+                    && !self.allocated_variables.contains(name.as_str())
+                {
                     self.push_error(
                         format!("Free requires a buffer or list: {}", name),
                         Some(name),
@@ -2149,6 +2168,8 @@ impl Analyzer {
             
             Statement::GetTime { into } => {
                 self.variables.insert(into.clone());
+                // The variable now holds a unix timestamp.
+                self.scalar_types.insert(into.clone(), Type::Integer);
             }
         }
     }
@@ -2199,6 +2220,13 @@ impl Analyzer {
                     let is_list = self.is_list_variable(object);
                     let is_file = self.file_variables.contains(object.as_str());
                     let is_scalar = self.is_scalar_variable(object);
+                    // A text variable is "scalar" (its slot holds a raw
+                    // 64-bit value), but that value is a string pointer -
+                    // number/time properties on it read the pointer as a
+                    // number and yield garbage. Only reject when the label
+                    // is positively String; unknown stays allowed.
+                    let is_text =
+                        matches!(self.scalar_types.get(object.as_str()), Some(Type::String));
                     match property {
                         ObjectProperty::Size | ObjectProperty::Empty | ObjectProperty::Full => {
                             if !is_buf && !is_list && !is_file {
@@ -2245,7 +2273,7 @@ impl Analyzer {
                         ObjectProperty::Even | ObjectProperty::Odd |
                         ObjectProperty::Positive | ObjectProperty::Negative |
                         ObjectProperty::Zero => {
-                            if !is_scalar {
+                            if !is_scalar || is_text {
                                 self.push_error(
                                     format!(
                                         "Property '{}' requires a number variable: {}",
@@ -2269,7 +2297,7 @@ impl Analyzer {
                         ObjectProperty::Second | ObjectProperty::Day |
                         ObjectProperty::Month | ObjectProperty::Year |
                         ObjectProperty::Unix => {
-                            if !is_scalar {
+                            if !is_scalar || is_text {
                                 self.push_error(
                                     format!(
                                         "Property '{}' requires a time value (number): {}",
