@@ -18,6 +18,13 @@ pub struct CodeGenerator {
     // static element type. Homogeneous lists never enter this set and keep
     // the statically-typed fast path unchanged.
     mixed_lists: std::collections::HashSet<String>,
+    // Scalar variables whose stored value the pre-scan could not prove a type
+    // for (e.g. `a text called "s" is element 3 of <mixed list>.`). Their
+    // declared type states the author's intent, not what the slot actually
+    // holds, so `emit_time_expr_tag` must not claim a tag for them - a
+    // TAG_STRING written over a non-pointer makes a tag-dispatching reader
+    // dereference an arbitrary integer. See `emit_time_expr_tag`.
+    unprovable_scalars: std::collections::HashSet<String>,
     // Stack slot ([rbp - offset]) holding the runtime type tag for each
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
@@ -171,6 +178,7 @@ impl CodeGenerator {
             global_constants: HashMap::new(),
             list_element_types: HashMap::new(),
             mixed_lists: std::collections::HashSet::new(),
+            unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
             file_writable: HashMap::new(),
             stack_offset: 0,
@@ -1176,27 +1184,44 @@ impl CodeGenerator {
             }
             Expr::PropertyAccess { object, property } => match property {
                 ObjectProperty::First | ObjectProperty::Last => {
-                    match list_seen_tags.get(object) {
-                        Some(t) => TagInfo::Known(*t),
-                        None => TagInfo::Unknowable,
-                    }
+                    self.prescan_list_read_tag(object, list_seen_tags)
                 }
                 ObjectProperty::Size | ObjectProperty::Capacity => {
                     TagInfo::Known(TAG_INTEGER)
                 }
                 _ => TagInfo::Unknowable,
             },
-            Expr::ElementAccess { list, .. } => {
-                if let Expr::Identifier(name) = list.as_ref() {
-                    match list_seen_tags.get(name) {
-                        Some(t) => TagInfo::Known(*t),
-                        None => TagInfo::Unknowable,
-                    }
-                } else {
-                    TagInfo::Unknowable
+            Expr::ElementAccess { list, .. } => match list.as_ref() {
+                Expr::Identifier(name) | Expr::StringLit(name) => {
+                    self.prescan_list_read_tag(name, list_seen_tags)
                 }
-            }
+                _ => TagInfo::Unknowable,
+            },
             _ => TagInfo::Unknowable,
+        }
+    }
+
+    /// Proven slot tag for reading one element out of `name` (`element N of`,
+    /// `first`, `last`). `list_seen_tags` records the first element tag proven
+    /// for a list and is deliberately never retracted, so it alone is NOT a
+    /// proof of homogeneity: a list that starts `[1, 2]` and is later appended
+    /// a text still has `Known(TAG_INTEGER)` recorded. Consulting
+    /// `mixed_lists` is what makes the read sound — a widened list yields
+    /// `Unknowable`, so whatever receives the element widens too rather than
+    /// reinterpreting a string pointer as a number. The fixed-point loop in
+    /// `prescan_mixed_lists` guarantees the widening is visible here even when
+    /// the read appears earlier in the program than the write that widens.
+    fn prescan_list_read_tag(
+        &self,
+        name: &str,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
+        if self.mixed_lists.contains(name) {
+            return TagInfo::Unknowable;
+        }
+        match list_seen_tags.get(name) {
+            Some(t) => TagInfo::Known(*t),
+            None => TagInfo::Unknowable,
         }
     }
 
@@ -1237,14 +1262,7 @@ impl CodeGenerator {
                 }
             }
             Expr::Identifier(name) | Expr::StringLit(name) => {
-                if self.mixed_lists.contains(name) {
-                    TagInfo::Unknowable
-                } else {
-                    list_seen_tags
-                        .get(name)
-                        .map(|t| TagInfo::Known(*t))
-                        .unwrap_or(TagInfo::Unknowable)
-                }
+                self.prescan_list_read_tag(name, list_seen_tags)
             }
             _ => TagInfo::Unknowable,
         }
@@ -1276,6 +1294,15 @@ impl CodeGenerator {
             list_seen_tags.clear();
             self.prescan_walk(statements, &mut env, &mut list_seen_tags);
             if self.mixed_lists.len() == before {
+                // Converged. `env` now holds the final verdict per scalar;
+                // carry the unprovable ones into codegen so emit-time tag
+                // selection agrees with the pre-scan instead of trusting a
+                // declared type that the initializer never established.
+                self.unprovable_scalars = env
+                    .iter()
+                    .filter(|(_, info)| matches!(info, TagInfo::Unknowable))
+                    .map(|(name, _)| name.clone())
+                    .collect();
                 break;
             }
         }
@@ -1364,14 +1391,23 @@ impl CodeGenerator {
                             }
                         }
                         Some(other) => {
-                            if let Some(t) = declared_tag {
-                                env.insert(name.clone(), TagInfo::Known(t));
-                            } else {
-                                let info = self.prescan_expr_tag(other, env, list_seen_tags);
-                                env.insert(name.clone(), info);
-                            }
+                            // The initializer decides, not the declaration: a
+                            // declared type is the author's intent, while the
+                            // tag must describe the bits that actually land in
+                            // the slot. `a text called "s" is element 3 of m.`
+                            // (m mixed) stores whatever element 3 holds, which
+                            // may not be a string pointer - trusting `text`
+                            // here would write TAG_STRING over an integer and
+                            // make a tag-dispatching reader dereference it.
+                            // (`a buffer called "b" is 4 bytes in size.` does
+                            // not reach this arm; it parses to BufferDecl,
+                            // handled below.)
+                            let info = self.prescan_expr_tag(other, env, list_seen_tags);
+                            env.insert(name.clone(), info);
                         }
                         None => {
+                            // No initializer: nothing foreign has been stored,
+                            // so the declared type does prove the slot's tag.
                             if let Some(t) = declared_tag {
                                 env.insert(name.clone(), TagInfo::Known(t));
                             }
@@ -1547,6 +1583,16 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
             Expr::FloatLit(_) => Some(TAG_FLOAT),
             Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            Expr::StringLit(name) | Expr::Identifier(name)
+                if self.unprovable_scalars.contains(name) =>
+            {
+                // The pre-scan could not prove what this variable holds, so
+                // its declared type must not be turned into a slot tag. `None`
+                // writes the integer tag, which a reader renders as a number -
+                // wrong for a string, but never a wild dereference. Stage 1d's
+                // runtime tag propagation replaces the guess with the real tag.
+                None
+            }
             Expr::StringLit(name) | Expr::Identifier(name) => {
                 match self.variable_types.get(name) {
                     Some(VarType::Integer) => Some(TAG_INTEGER),
@@ -5894,6 +5940,61 @@ mod tests {
         assert!(
             asm.contains("mixp_"),
             "the list widened to Mixed (int + text function result)"
+        );
+    }
+
+    #[test]
+    fn read_of_widened_list_does_not_prove_a_type() {
+        // `list_seen_tags` records the FIRST tag proven for a list and is
+        // never retracted, so a list that starts homogeneous and is later
+        // appended a different type still has its original tag recorded.
+        // Reading an element out of it must consult `mixed_lists` and yield
+        // Unknowable - otherwise the destination stays on the fast path while
+        // holding a value of the wrong type.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, 2].\n\
+             append \"hi\" to m.\n\
+             a list called \"out\" is [0, 0].\n\
+             set element 1 of out to element 3 of m.\n\
+             print element 1 of out.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "reading an element of a widened list must widen the destination"
+        );
+    }
+
+    #[test]
+    fn declared_type_does_not_forge_a_string_tag() {
+        // A declared type is the author's intent, not a proof about the bits
+        // that land in the slot. Tagging an unprovable value TAG_STRING makes
+        // the tag-dispatching printer dereference whatever integer is there.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [\"a\", \"b\"].\n\
+             append 42 to m.\n\
+             a text called \"s\" is element 3 of m.\n\
+             a list called \"out\" is [].\n\
+             append s to out.\n",
+        );
+        assert!(
+            !asm.contains("mov edx, 1  ; element type tag"),
+            "an unprovable value must not be written with TAG_STRING"
+        );
+    }
+
+    #[test]
+    fn declared_type_still_tags_a_provable_string() {
+        // Contrast with the above: when the initializer IS provable, the
+        // string tag must still be written, or homogeneous text lists would
+        // print pointers.
+        let asm = compile_to_asm(
+            "a text called \"s\" is \"hello\".\n\
+             a list called \"out\" is [].\n\
+             append s to out.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "a provably-text value must still be written with TAG_STRING"
         );
     }
 
