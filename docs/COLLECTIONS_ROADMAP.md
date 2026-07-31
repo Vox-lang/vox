@@ -97,6 +97,9 @@ layout change.
 
 Sequencing: 1a → 1b → (1c ∥ 1d) → 1e.
 
+Per-stage implementation plans live in [`docs/plans/`](plans/README.md),
+one file per stage, following the project plan template.
+
 ### Known limitations to burn down (tracked, not hidden)
 
 Until 1b–1d land, in order of closure:
