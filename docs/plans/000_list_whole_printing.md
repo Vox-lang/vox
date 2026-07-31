@@ -85,10 +85,10 @@ dependencies.
 ---
 
 ## Success Criteria
-- [ ] Feature works as described in expected behavior
-- [ ] All tests pass (currently 138 passing, 6 skipped)
-- [ ] Code reviewed and approved
-- [ ] Documentation updated
+- [x] Feature works as described in expected behavior
+- [x] All tests pass (currently 138 passing, 6 skipped)
+- [x] Code reviewed and approved
+- [x] Documentation updated
 
 ---
 
@@ -109,16 +109,16 @@ dependencies.
 ---
 
 ## Tasks
-- [ ] Write `_list_print` in `coreasm/x86_64/list.asm` (header read, loop,
+- [x] Write `_list_print` in `coreasm/x86_64/list.asm` (header read, loop,
       tag dispatch, separators, brackets, quoting for tag 1)
-- [ ] Route list-typed variables in `generate_print` to `_list_print`
-- [ ] Route list-typed variables in format-string interpolation
-- [ ] Confirm `uses_lists`/`uses_floats`/`uses_io` include flags are set
+- [x] Route list-typed variables in `generate_print` to `_list_print`
+- [x] Route list-typed variables in format-string interpolation
+- [x] Confirm `uses_lists`/`uses_floats`/`uses_io` include flags are set
       so the routine is linked only when needed
-- [ ] Add test: homogeneous int / text / float / bool list printing
-- [ ] Add test: mixed list printing, empty list printing, interpolation
-- [ ] Update `LANGUAGE.md` list section
-- [ ] Run `./test.sh` and `cargo test --release`; confirm no regressions
+- [x] Add test: homogeneous int / text / float / bool list printing
+- [x] Add test: mixed list printing, empty list printing, interpolation
+- [x] Update `LANGUAGE.md` list section
+- [x] Run `./test.sh` and `cargo test --release`; confirm no regressions
 
 ---
 

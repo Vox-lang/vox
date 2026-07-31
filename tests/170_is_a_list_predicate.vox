@@ -1,0 +1,9 @@
+(The `is a list` type predicate - plan 040 stage 1e1. Iterating a mixed
+ list, each element is classified: a nested list element matches `is a
+ list` (runtime tag 4), a scalar element does not.)
+
+for each item in [1, [2, 3], "x"]
+  if item is a list
+    print "L"
+  otherwise
+    print "s"

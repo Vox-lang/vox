@@ -1,0 +1,12 @@
+(Stage 1e2 - `is a map` predicate. A static map variable folds to true;
+ a list is not a map; and a runtime-tagged value (a mixed-list element)
+ is classified by its tag. Acceptance: the four lines below.)
+
+a map called "m" is {"a": 1}.
+a list called "xs" is [1, 2].
+if m is a map, print "m is a map".
+if xs is a map, print "xs is a map".
+if xs is not a map, print "xs is not a map".
+for each item in [{"a": 1}, 2]
+  if item is a map, print "item is a map".
+  otherwise print "item is not a map".

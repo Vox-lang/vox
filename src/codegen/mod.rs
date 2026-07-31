@@ -18,6 +18,13 @@ pub struct CodeGenerator {
     // static element type. Homogeneous lists never enter this set and keep
     // the statically-typed fast path unchanged.
     mixed_lists: std::collections::HashSet<String>,
+    // Scalar variables whose stored value the pre-scan could not prove a type
+    // for (e.g. `a text called "s" is element 3 of <mixed list>.`). Their
+    // declared type states the author's intent, not what the slot actually
+    // holds, so `emit_time_expr_tag` must not claim a tag for them - a
+    // TAG_STRING written over a non-pointer makes a tag-dispatching reader
+    // dereference an arbitrary integer. See `emit_time_expr_tag`.
+    unprovable_scalars: std::collections::HashSet<String>,
     // Stack slot ([rbp - offset]) holding the runtime type tag for each
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
@@ -36,6 +43,11 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    // Set when codegen emits any map runtime call (_map_new/_map_insert/
+    // _map_lookup/_map_keys/_map_values/_map_print) or a map-tagged dispatch.
+    // Gates `%include "coreasm/<arch>/map.asm"`. _map_keys/_map_values also
+    // set uses_lists (they return a list struct).
+    uses_maps: bool,
     // Set when codegen itself emits a call to _str_eq (string/buffer
     // equality comparisons). Distinct from program.uses_strings, which the
     // analyzer computes from string literals/format strings and may miss
@@ -46,6 +58,15 @@ pub struct CodeGenerator {
     // infer_expr_type() can report a FunctionCall's real type instead of
     // silently defaulting to Integer (see collect_function_signatures).
     function_return_types: std::collections::HashMap<String, VarType>,
+    // Declared parameter types of each user function, in declaration order.
+    // A `value` parameter occupies TWO argument words (payload, tag) in the
+    // SysV stream; a scalar parameter occupies one. Both caller and callee
+    // derive the word layout from this same vector so they agree.
+    function_param_types: std::collections::HashMap<String, Vec<Type>>,
+    // Return type of the function currently being codegen'd (None at top
+    // level). When it is `Type::Value`, the `Return` path must leave the
+    // value's runtime tag in r11 for the caller to consume.
+    current_function_return_type: Option<Type>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -71,6 +92,7 @@ enum VarType {
     String,      // Raw string pointer (from lists, etc.)
     Buffer,      // Dynamic buffer struct (has header)
     List,        // List struct [length, elem0, elem1, ...]
+    Map,         // Map struct (tag 5); key/value collection
     Boolean,
     Mixed,       // Runtime-tagged value from a heterogeneous list; the
                  // actual type is dispatched via a per-slot tag byte
@@ -83,6 +105,84 @@ const TAG_INTEGER: u8 = 0;
 const TAG_STRING: u8 = 1;
 const TAG_FLOAT: u8 = 2;
 const TAG_BOOLEAN: u8 = 3;
+const TAG_LIST: u8 = 4;
+const TAG_MAP: u8 = 5;
+const TAG_NOTHING: u8 = 6;
+
+/// Three-state result of statically classifying an expression into a list
+/// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
+/// certain. `Unknowable` means no static proof is possible — stage 1b widens
+/// the list to `Mixed` rather than optimistically guessing a type ("static is
+/// a proof; mixed is the default").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagInfo {
+    Known(u8),
+    Unknowable,
+}
+
+/// Map a known `VarType` to its list slot tag. Returns `None` for `Mixed`
+/// and `Unknown` (and anything without a single static tag): those need a
+/// runtime tag (stage 1d) or the `TAG_INTEGER` fallback at the append site.
+/// A `List` value in a slot is provably tag 4 (stage 1e1 activated the
+/// reserved LIST tag for nested lists).
+fn vartype_to_tag(vt: VarType) -> Option<u8> {
+    match vt {
+        VarType::Integer => Some(TAG_INTEGER),
+        VarType::Float => Some(TAG_FLOAT),
+        VarType::String | VarType::Buffer => Some(TAG_STRING),
+        VarType::Boolean => Some(TAG_BOOLEAN),
+        VarType::List => Some(TAG_LIST),
+        VarType::Map => Some(TAG_MAP),
+        // Mixed/Unknown: no single static tag — runtime tag (1d) or fallback.
+        _ => None,
+    }
+}
+
+/// Map a declared `Type` to the list slot tag a value of that type would
+/// carry. Used to seed the pre-scan env from a variable's declared type
+/// (a static proof) when the initializer's own type can't be inferred — e.g.
+/// `a buffer called "b" is 4 bytes in size.` (the size expr is opaque, but
+/// the declared type `buffer` proves the slot tag is `TAG_STRING`). Returns
+/// `None` for non-scalar, non-list types (File/Time/Timer/Void/Unknown). A
+/// `List` value carries tag 4 (stage 1e1) — this arm is load-bearing for the
+/// `is a list` predicate, whose codegen does
+/// `type_to_tag(type_noun).expect("type predicate noun is scalar")`.
+fn type_to_tag(t: &Type) -> Option<u8> {
+    match t {
+        Type::Integer => Some(TAG_INTEGER),
+        Type::Float => Some(TAG_FLOAT),
+        Type::String => Some(TAG_STRING),
+        Type::Boolean => Some(TAG_BOOLEAN),
+        Type::Buffer => Some(TAG_STRING),
+        Type::List(_) => Some(TAG_LIST),
+        Type::Map(_) => Some(TAG_MAP),
+        // File/Time/Timer/Void/Unknown: no scalar slot tag.
+        _ => None,
+    }
+}
+
+/// Where a value's runtime type tag lives once the value has been emitted.
+/// See `CodeGenerator::runtime_tag_source`.
+enum RuntimeTagSource {
+    /// A mixed-list read left the slot's tag byte in r11. Must be consumed
+    /// immediately - any call or syscall clobbers r11.
+    R11,
+    /// A Mixed variable's tag, at this rbp offset.
+    ShadowSlot(i64),
+}
+
+/// Author-facing name for a type-predicate noun, for asm comments.
+fn type_noun_name(t: &Type) -> &'static str {
+    match t {
+        Type::Integer => "number",
+        Type::Float => "decimal",
+        Type::String => "text",
+        Type::Boolean => "boolean",
+        Type::List(_) => "list",
+        Type::Map(_) => "map",
+        _ => "type",
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum IntegerBase {
@@ -128,6 +228,7 @@ impl CodeGenerator {
             global_constants: HashMap::new(),
             list_element_types: HashMap::new(),
             mixed_lists: std::collections::HashSet::new(),
+            unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
             file_writable: HashMap::new(),
             stack_offset: 0,
@@ -142,8 +243,11 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            uses_maps: false,
             uses_strings: false,
             function_return_types: std::collections::HashMap::new(),
+            function_param_types: std::collections::HashMap::new(),
+            current_function_return_type: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -236,7 +340,7 @@ impl CodeGenerator {
         self.uses_buffers = true;
         let label = self.add_string(text);
         self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
-        self.emit_indent(&format!("lea rsi, [{}]", label));
+        self.emit_indent(&format!("lea rsi, [rel {}]", label));
         self.emit_indent(&format!("mov rdx, {}_len", label));
         self.emit_indent("call _buffer_append_bytes");
         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
@@ -417,7 +521,7 @@ impl CodeGenerator {
             match part {
                 FormatPart::Literal(s) => {
                     let label = self.add_string(s);
-                    self.emit_indent(&format!("lea rsi, [{}]", label));
+                    self.emit_indent(&format!("lea rsi, [rel {}]", label));
                     self.emit_indent(&format!("mov rdx, {}_len", label));
                     self.emit_indent("call _buffer_append_bytes");
                 }
@@ -429,14 +533,14 @@ impl CodeGenerator {
                         }
                         FormatPartValue::Literal(s) => {
                             let label = self.add_string(&s);
-                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
                             self.emit_indent("call _buffer_append_bytes");
                         }
                         FormatPartValue::Unknown => {
                             let placeholder = format!("{{{}}}", name);
                             let label = self.add_string(&placeholder);
-                            self.emit_indent(&format!("lea rsi, [{}]", label));
+                            self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
                             self.emit_indent("call _buffer_append_bytes");
                         }
@@ -525,7 +629,7 @@ impl CodeGenerator {
                 } else if let Some(label) = dst_global {
                     let lit_label = self.add_string(s);
                     self.emit_indent(&format!("mov rdi, [rel {}]", label));
-                    self.emit_indent(&format!("lea rsi, [{}]", lit_label));
+                    self.emit_indent(&format!("lea rsi, [rel {}]", lit_label));
                     self.emit_indent(&format!("mov rdx, {}_len", lit_label));
                     self.emit_indent("call _buffer_append_bytes");
                     self.emit_indent(&format!("mov [rel {}], rax", label));
@@ -570,24 +674,44 @@ impl CodeGenerator {
     fn emit_function_call(&mut self, name: &str, args: &[Expr]) {
         let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 
-        // Evaluate/push all args right-to-left (so arg0 ends up deepest)
-        for arg in args.iter().rev() {
-            self.generate_expr(arg);
+        // A `value` parameter occupies TWO argument words (payload, tag) in the
+        // SysV stream; a scalar parameter occupies one. We push words
+        // right-to-left so word 0 (param 0 payload) ends on top (first pop).
+        // When the callee's signature is unknown (e.g. an extern/builtin),
+        // assume every parameter is scalar — preserving the original ABI for
+        // statically-typed calls (criterion 6).
+        let param_types = self.function_param_types.get(name).cloned().unwrap_or_default();
+        let is_value_param = |i: usize| -> bool {
+            param_types.get(i) == Some(&Type::Value)
+        };
+        // Number of argument words a given arg contributes.
+        let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
+        let total_words: usize = (0..args.len()).map(word_count).sum();
+
+        // Evaluate/push all arg words right-to-left. For a `value` param the
+        // tag word is pushed BEFORE the payload word, so the payload lands on
+        // top (lower word index) — matching how the callee reads them.
+        for i in (0..args.len()).rev() {
+            self.generate_expr(&args[i]); // rax = payload
+            if is_value_param(i) {
+                self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
+                self.emit_indent("push r11  ; value param tag word");
+            }
             self.emit_indent("push rax");
         }
 
-        // Pop first 6 args into registers (arg0 -> rdi, arg1 -> rsi, ...)
-        let reg_count = args.len().min(param_regs.len());
-        for reg in param_regs.iter().take(reg_count) {
+        // Pop the first 6 argument WORDS into registers (word 0 -> rdi, ...).
+        let reg_words = total_words.min(param_regs.len());
+        for reg in param_regs.iter().take(reg_words) {
             self.emit_indent(&format!("pop {}", reg));
         }
 
-        // Remaining args (7th+) stay on the stack.
-        let stack_arg_count = args.len().saturating_sub(param_regs.len());
-        let stack_arg_bytes = stack_arg_count * 8;
+        // Remaining words (7th+) stay on the stack.
+        let stack_words = total_words.saturating_sub(param_regs.len());
+        let stack_word_bytes = stack_words * 8;
 
         // Align stack before call (SysV: 16B-aligned at call instruction).
-        let needs_pad = !stack_arg_count.is_multiple_of(2);
+        let needs_pad = !stack_words.is_multiple_of(2);
         if needs_pad {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
@@ -595,8 +719,10 @@ impl CodeGenerator {
         let func_label = name.replace(' ', "_");
         self.emit_indent(&format!("call {}", func_label));
 
-        // Clean up stack args + pad (caller cleanup in SysV)
-        let cleanup = stack_arg_bytes + if needs_pad { 8 } else { 0 };
+        // Clean up stack words + pad (caller cleanup in SysV). The return tag
+        // for a `value`-returning function rides in r11; `add rsp` does not
+        // clobber it, so a caller that consumes the result sees r11=tag.
+        let cleanup = stack_word_bytes + if needs_pad { 8 } else { 0 };
         if cleanup > 0 {
             self.emit_indent(&format!("add rsp, {}", cleanup));
         }
@@ -676,8 +802,9 @@ impl CodeGenerator {
     // was unaffected, which is what made this easy to miss.
     fn collect_function_signatures(&mut self, program: &Program) {
         self.function_return_types.clear();
+        self.function_param_types.clear();
         for stmt in &program.statements {
-            if let Statement::FunctionDef { name, return_type, .. } = stmt {
+            if let Statement::FunctionDef { name, params, return_type, .. } = stmt {
                 let vt = match return_type {
                     Type::Integer => VarType::Integer,
                     Type::Float => VarType::Float,
@@ -685,9 +812,15 @@ impl CodeGenerator {
                     Type::Boolean => VarType::Boolean,
                     Type::Buffer => VarType::Buffer,
                     Type::List(_) => VarType::List,
+                    // A `value` return is dynamic: the runtime tag travels
+                    // back in r11 alongside the payload in rax, so the result
+                    // is a Mixed-typed value (no static tag).
+                    Type::Value => VarType::Mixed,
                     _ => VarType::Unknown,
                 };
                 self.function_return_types.insert(name.clone(), vt);
+                self.function_param_types
+                    .insert(name.clone(), params.iter().map(|(_, t)| t.clone()).collect());
             }
         }
     }
@@ -1060,37 +1193,203 @@ impl CodeGenerator {
     }
     
     /// Static classification of an expression into a list slot tag, using
-    /// only what's knowable without emitting code. `env` maps scalar
-    /// variable names to their literal-derived tags (best effort).
-    fn prescan_expr_tag(e: &Expr, env: &HashMap<String, u8>) -> Option<u8> {
+    /// only what is provable without emitting code. `env` maps scalar
+    /// variable names to their inferred `TagInfo`; `list_seen_tags` records
+    /// the single proven element type of each homogeneous list, so reads of
+    /// `first`/`last`/`element N of` such a list are themselves provable.
+    ///
+    /// Sound by design: only literals, tracked scalars, functions with a
+    /// declared return type, casts, provable binary/unary ops, and reads of
+    /// homogeneous lists yield `Known`. Everything else is `Unknowable`, so
+    /// the join in `prescan_note_list_value` widens the list to `Mixed`
+    /// rather than guessing (stage 1b — "static is a proof; mixed is the
+    /// default").
+    fn prescan_expr_tag(
+        &self,
+        e: &Expr,
+        env: &HashMap<String, TagInfo>,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
         match e {
-            Expr::IntegerLit(_) => Some(TAG_INTEGER),
+            Expr::IntegerLit(_) => TagInfo::Known(TAG_INTEGER),
+            Expr::FloatLit(_) => TagInfo::Known(TAG_FLOAT),
+            Expr::BoolLit(_) => TagInfo::Known(TAG_BOOLEAN),
+            // The nothing/null literal is tag 6 (stage 1e3).
+            Expr::NothingLit => TagInfo::Known(TAG_NOTHING),
+            // A list value in a slot is tag 4 (stage 1e1). This makes a
+            // homogeneous list-of-lists `[[1,2],[3,4]]` prove a single tag
+            // (4) and stay non-mixed, while a mixed `[1, [2,3], "four"]` still
+            // widens (tags {0, 4, 1}).
+            Expr::ListLit { .. } => TagInfo::Known(TAG_LIST),
+            // A map value in a slot is tag 5 (stage 1e2).
+            Expr::MapLit { .. } => TagInfo::Known(TAG_MAP),
+            // A type predicate yields a boolean, so appending its result to a
+            // list does not widen the list (stage 1c).
+            Expr::TypeCheck { .. } => TagInfo::Known(TAG_BOOLEAN),
             Expr::StringLit(s) => {
                 // A quoted name can be a variable reference in Vox; if we
                 // tracked it as a scalar, use that. Otherwise it's a string.
-                env.get(s).copied().or(Some(TAG_STRING))
+                match env.get(s) {
+                    Some(info) => *info,
+                    None => TagInfo::Known(TAG_STRING),
+                }
             }
-            Expr::FloatLit(_) => Some(TAG_FLOAT),
-            Expr::BoolLit(_) => Some(TAG_BOOLEAN),
-            Expr::Identifier(name) => env.get(name).copied(),
-            _ => None,
+            Expr::Identifier(name) => match env.get(name) {
+                Some(info) => *info,
+                None => TagInfo::Unknowable,
+            },
+            // Function results and casts: their type comes from declared
+            // metadata (function_return_types / the cast target), not from
+            // operand variable_types, so infer_expr_type is sound here and
+            // agrees with the tag written at emit time.
+            Expr::FunctionCall { .. } | Expr::Cast { .. } => {
+                match self.infer_expr_type(e).and_then(vartype_to_tag) {
+                    Some(t) => TagInfo::Known(t),
+                    None => TagInfo::Unknowable,
+                }
+            }
+            Expr::UnaryOp { op, operand } => {
+                // Logical negation is always a boolean, regardless of the
+                // operand's type (`not 5` is a boolean), so tag it TAG_BOOLEAN
+                // and keep `prescan_expr_tag` consistent with
+                // `emit_time_expr_tag`. Other unary ops (e.g. arithmetic
+                // negation) keep the operand's tag.
+                if matches!(op, UnaryOperator::Not) {
+                    TagInfo::Known(TAG_BOOLEAN)
+                } else {
+                    self.prescan_expr_tag(operand, env, list_seen_tags)
+                }
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let lt = self.prescan_expr_tag(left, env, list_seen_tags);
+                let rt = self.prescan_expr_tag(right, env, list_seen_tags);
+                match (lt, rt) {
+                    (TagInfo::Unknowable, _) | (_, TagInfo::Unknowable) => {
+                        TagInfo::Unknowable
+                    }
+                    (TagInfo::Known(lt), TagInfo::Known(rt)) => {
+                        let arithmetic = matches!(
+                            op,
+                            BinaryOperator::Add | BinaryOperator::Subtract
+                            | BinaryOperator::Multiply | BinaryOperator::Divide
+                            | BinaryOperator::Modulo
+                        );
+                        if arithmetic && (lt == TAG_FLOAT || rt == TAG_FLOAT) {
+                            TagInfo::Known(TAG_FLOAT)
+                        } else {
+                            // Non-arithmetic ops (comparison/logical/bitwise)
+                            // yield 0/1 integers, matching infer_expr_type's
+                            // `_ => Some(VarType::Integer)` arm for them.
+                            TagInfo::Known(TAG_INTEGER)
+                        }
+                    }
+                }
+            }
+            Expr::PropertyAccess { object, property } => match property {
+                ObjectProperty::First | ObjectProperty::Last => {
+                    self.prescan_list_read_tag(object, list_seen_tags)
+                }
+                ObjectProperty::Size | ObjectProperty::Capacity => {
+                    TagInfo::Known(TAG_INTEGER)
+                }
+                _ => TagInfo::Unknowable,
+            },
+            Expr::ElementAccess { list, .. } => match list.as_ref() {
+                Expr::Identifier(name) | Expr::StringLit(name) => {
+                    self.prescan_list_read_tag(name, list_seen_tags)
+                }
+                _ => TagInfo::Unknowable,
+            },
+            _ => TagInfo::Unknowable,
+        }
+    }
+
+    /// Proven slot tag for reading one element out of `name` (`element N of`,
+    /// `first`, `last`). `list_seen_tags` records the first element tag proven
+    /// for a list and is deliberately never retracted, so it alone is NOT a
+    /// proof of homogeneity: a list that starts `[1, 2]` and is later appended
+    /// a text still has `Known(TAG_INTEGER)` recorded. Consulting
+    /// `mixed_lists` is what makes the read sound — a widened list yields
+    /// `Unknowable`, so whatever receives the element widens too rather than
+    /// reinterpreting a string pointer as a number. The fixed-point loop in
+    /// `prescan_mixed_lists` guarantees the widening is visible here even when
+    /// the read appears earlier in the program than the write that widens.
+    fn prescan_list_read_tag(
+        &self,
+        name: &str,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
+        if self.mixed_lists.contains(name) {
+            return TagInfo::Unknowable;
+        }
+        match list_seen_tags.get(name) {
+            Some(t) => TagInfo::Known(*t),
+            None => TagInfo::Unknowable,
+        }
+    }
+
+    /// Proven slot tag for a `For each <var> in <collection>` loop variable,
+    /// derived from the collection's element type. A range yields integers;
+    /// a list literal yields its (single) element tag; a homogeneous list
+    /// variable yields its recorded tag; `arguments` yields strings. Anything
+    /// else is `Unknowable`, so appending the loop variable widens rather
+    /// than guesses. Used to seed `env` before walking the loop body.
+    fn foreach_loop_var_tag(
+        &self,
+        collection: &Expr,
+        env: &HashMap<String, TagInfo>,
+        list_seen_tags: &HashMap<String, u8>,
+    ) -> TagInfo {
+        match collection {
+            Expr::Range { .. } => TagInfo::Known(TAG_INTEGER),
+            Expr::ArgumentAll | Expr::ArgumentRaw => TagInfo::Known(TAG_STRING),
+            Expr::ListLit { elements } => {
+                if elements.is_empty() {
+                    return TagInfo::Unknowable;
+                }
+                let mut tags: Vec<u8> = Vec::new();
+                for e in elements {
+                    match self.prescan_expr_tag(e, env, list_seen_tags) {
+                        TagInfo::Known(t) => {
+                            if !tags.contains(&t) {
+                                tags.push(t);
+                            }
+                        }
+                        TagInfo::Unknowable => return TagInfo::Unknowable,
+                    }
+                }
+                if tags.len() == 1 {
+                    TagInfo::Known(tags[0])
+                } else {
+                    TagInfo::Unknowable
+                }
+            }
+            Expr::Identifier(name) | Expr::StringLit(name) => {
+                self.prescan_list_read_tag(name, list_seen_tags)
+            }
+            _ => TagInfo::Unknowable,
         }
     }
 
     /// Pre-scan pass: walk the whole program and decide, before any code is
     /// emitted, which lists are heterogeneous ("mixed"). A list is mixed
-    /// when there is positive evidence of two distinct element types: a
-    /// mixed list literal, or an append/element-set whose value's type
-    /// provably differs from the list's established element type.
+    /// when its homogeneity cannot be *proven* — i.e. some write is of an
+    /// `Unknowable` type, or two writes provably differ in type (a mixed
+    /// list literal, or an append/element-set whose value's tag conflicts
+    /// with the list's established element type).
     ///
-    /// Conservative by design: values whose type can't be determined
-    /// statically (e.g. function results) never mark a list mixed, so
-    /// every homogeneous list keeps today's static fast path. Aliasing a
-    /// mixed list (`a list called "b" is the a.`) propagates mixedness.
+    /// Stage 1b flipped the default: a value whose type can't be proven
+    /// (e.g. a function result without a declared return type) widens the
+    /// list to `Mixed` so elements are never silently reinterpreted. Lists
+    /// whose every write is provably one type keep the untagged fast path.
+    /// Aliasing a mixed list (`a list called "b" is the a.`) propagates
+    /// mixedness.
     fn prescan_mixed_lists(&mut self, statements: &[Statement]) {
         // Iterate to a fixed point so aliases and later evidence propagate
-        // regardless of declaration order (bounded: each pass can only add).
-        let mut env: HashMap<String, u8> = HashMap::new();
+        // regardless of declaration order. Termination: each pass only ever
+        // *adds* to `mixed_lists`, which is bounded by the number of list
+        // names, so the loop always converges.
+        let mut env: HashMap<String, TagInfo> = HashMap::new();
         let mut list_seen_tags: HashMap<String, u8> = HashMap::new();
         loop {
             let before = self.mixed_lists.len();
@@ -1098,19 +1397,32 @@ impl CodeGenerator {
             list_seen_tags.clear();
             self.prescan_walk(statements, &mut env, &mut list_seen_tags);
             if self.mixed_lists.len() == before {
+                // Converged. `env` now holds the final verdict per scalar;
+                // carry the unprovable ones into codegen so emit-time tag
+                // selection agrees with the pre-scan instead of trusting a
+                // declared type that the initializer never established.
+                self.unprovable_scalars = env
+                    .iter()
+                    .filter(|(_, info)| matches!(info, TagInfo::Unknowable))
+                    .map(|(name, _)| name.clone())
+                    .collect();
                 break;
             }
         }
     }
 
+    /// Join a write's `TagInfo` into a list's running element-type record.
+    /// `Known(t)` conflicts with a different prior tag (or joins an
+    /// established one); `Unknowable` widens the list straight to `Mixed`
+    /// (the write's type can't be proven, so homogeneity can't be claimed).
     fn prescan_note_list_value(
         &mut self,
         list: &str,
-        tag: Option<u8>,
+        tag: TagInfo,
         list_seen_tags: &mut HashMap<String, u8>,
     ) {
-        if let Some(t) = tag {
-            match list_seen_tags.get(list) {
+        match tag {
+            TagInfo::Known(t) => match list_seen_tags.get(list) {
                 Some(prev) if *prev != t => {
                     self.mixed_lists.insert(list.to_string());
                 }
@@ -1118,6 +1430,9 @@ impl CodeGenerator {
                 None => {
                     list_seen_tags.insert(list.to_string(), t);
                 }
+            },
+            TagInfo::Unknowable => {
+                self.mixed_lists.insert(list.to_string());
             }
         }
     }
@@ -1125,23 +1440,37 @@ impl CodeGenerator {
     fn prescan_walk(
         &mut self,
         statements: &[Statement],
-        env: &mut HashMap<String, u8>,
+        env: &mut HashMap<String, TagInfo>,
         list_seen_tags: &mut HashMap<String, u8>,
     ) {
         for stmt in statements {
             match stmt {
-                Statement::VarDecl { name, value, .. } => {
+                Statement::VarDecl { name, value, var_type, .. } => {
+                    // A declared scalar type is a static proof of the slot tag
+                    // and seeds `env` even when the initializer is opaque (e.g.
+                    // `a buffer called "b" is 4 bytes in size.` — the size expr
+                    // is unknowable, but the declared `buffer` type proves the
+                    // tag is `TAG_STRING`, so appending it doesn't widen).
+                    let declared_tag = var_type.as_ref().and_then(type_to_tag);
                     match value {
                         Some(Expr::ListLit { elements }) => {
                             let mut tags: Vec<u8> = Vec::new();
+                            let mut unknowable = false;
                             for e in elements {
-                                if let Some(t) = Self::prescan_expr_tag(e, env) {
-                                    if !tags.contains(&t) {
-                                        tags.push(t);
+                                match self.prescan_expr_tag(e, env, list_seen_tags) {
+                                    TagInfo::Known(t) => {
+                                        if !tags.contains(&t) {
+                                            tags.push(t);
+                                        }
                                     }
+                                    TagInfo::Unknowable => unknowable = true,
                                 }
                             }
-                            if tags.len() > 1 {
+                            // A list holding `nothing` is treated as mixed even
+                            // when every element is nothing: the fast path
+                            // reads a slot without its tag, and a nothing slot
+                            // read that way is indistinguishable from 0.
+                            if unknowable || tags.len() > 1 || tags.contains(&TAG_NOTHING) {
                                 self.mixed_lists.insert(name.clone());
                             } else if let Some(t) = tags.first() {
                                 list_seen_tags.insert(name.clone(), *t);
@@ -1154,46 +1483,84 @@ impl CodeGenerator {
                                 self.mixed_lists.insert(name.clone());
                             } else if let Some(t) = list_seen_tags.get(src).copied() {
                                 list_seen_tags.insert(name.clone(), t);
-                            } else if let Some(t) = Self::prescan_expr_tag(
-                                value.as_ref().unwrap(),
-                                env,
-                            ) {
-                                env.insert(name.clone(), t);
+                            } else if let Some(t) = declared_tag {
+                                env.insert(name.clone(), TagInfo::Known(t));
+                            } else {
+                                // Scalar alias with no declared scalar type:
+                                // track its provability (Unknowable overwrites
+                                // a prior Known, so a later reassignment taints).
+                                let info = self.prescan_expr_tag(
+                                    value.as_ref().unwrap(),
+                                    env,
+                                    list_seen_tags,
+                                );
+                                env.insert(name.clone(), info);
                             }
                         }
                         Some(other) => {
-                            if let Some(t) = Self::prescan_expr_tag(other, env) {
-                                env.insert(name.clone(), t);
+                            // The initializer decides, not the declaration: a
+                            // declared type is the author's intent, while the
+                            // tag must describe the bits that actually land in
+                            // the slot. `a text called "s" is element 3 of m.`
+                            // (m mixed) stores whatever element 3 holds, which
+                            // may not be a string pointer - trusting `text`
+                            // here would write TAG_STRING over an integer and
+                            // make a tag-dispatching reader dereference it.
+                            // (`a buffer called "b" is 4 bytes in size.` does
+                            // not reach this arm; it parses to BufferDecl,
+                            // handled below.)
+                            let info = self.prescan_expr_tag(other, env, list_seen_tags);
+                            env.insert(name.clone(), info);
+                        }
+                        None => {
+                            // No initializer: nothing foreign has been stored,
+                            // so the declared type does prove the slot's tag.
+                            if let Some(t) = declared_tag {
+                                env.insert(name.clone(), TagInfo::Known(t));
                             }
                         }
-                        None => {}
                     }
+                }
+                // A buffer (fixed-size `is N bytes in size` or `Create a
+                // buffer`) appends as a string-tagged slot, so record it as
+                // Known(TAG_STRING) — otherwise appending it would widen.
+                Statement::BufferDecl { name, .. } => {
+                    env.insert(name.clone(), TagInfo::Known(TAG_STRING));
                 }
                 Statement::Assignment { name, value } => {
                     if let Expr::ListLit { elements } = value {
                         let mut tags: Vec<u8> = Vec::new();
+                        let mut unknowable = false;
                         for e in elements {
-                            if let Some(t) = Self::prescan_expr_tag(e, env) {
-                                if !tags.contains(&t) {
-                                    tags.push(t);
+                            match self.prescan_expr_tag(e, env, list_seen_tags) {
+                                TagInfo::Known(t) => {
+                                    if !tags.contains(&t) {
+                                        tags.push(t);
+                                    }
                                 }
+                                TagInfo::Unknowable => unknowable = true,
                             }
                         }
-                        if tags.len() > 1 {
+                        if unknowable || tags.len() > 1 || tags.contains(&TAG_NOTHING) {
                             self.mixed_lists.insert(name.clone());
                         } else if let Some(t) = tags.first() {
-                            self.prescan_note_list_value(name, Some(*t), list_seen_tags);
+                            self.prescan_note_list_value(
+                                name,
+                                TagInfo::Known(*t),
+                                list_seen_tags,
+                            );
                         }
-                    } else if let Some(t) = Self::prescan_expr_tag(value, env) {
-                        env.insert(name.clone(), t);
+                    } else {
+                        let info = self.prescan_expr_tag(value, env, list_seen_tags);
+                        env.insert(name.clone(), info);
                     }
                 }
                 Statement::ListAppend { list, value } => {
-                    let tag = Self::prescan_expr_tag(value, env);
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
                     self.prescan_note_list_value(list, tag, list_seen_tags);
                 }
                 Statement::ElementSet { list, value, .. } => {
-                    let tag = Self::prescan_expr_tag(value, env);
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
                     self.prescan_note_list_value(list, tag, list_seen_tags);
                 }
                 Statement::If { then_block, else_if_blocks, else_block, .. } => {
@@ -1205,9 +1572,49 @@ impl CodeGenerator {
                         self.prescan_walk(block, env, list_seen_tags);
                     }
                 }
+                Statement::ForEach { variable, collection, body } => {
+                    // A provably-empty collection runs its body zero times, so
+                    // skip it — otherwise `append each x from [] to L` would
+                    // widen L even though nothing is appended.
+                    if let Expr::ListLit { elements } = collection {
+                        if elements.is_empty() {
+                            continue;
+                        }
+                    }
+                    // Seed the loop variable's proven tag from the collection
+                    // so appends of it inside the body don't widen (e.g.
+                    // `append each x from [10, 20, 30] to copied` keeps copied
+                    // homogeneous). Save/restore so a shadowing outer variable
+                    // isn't clobbered.
+                    let elem_tag =
+                        self.foreach_loop_var_tag(collection, env, list_seen_tags);
+                    let saved = env.insert(variable.clone(), elem_tag);
+                    self.prescan_walk(body, env, list_seen_tags);
+                    match saved {
+                        Some(prev) => {
+                            env.insert(variable.clone(), prev);
+                        }
+                        None => {
+                            env.remove(variable);
+                        }
+                    }
+                }
+                Statement::ForRange { variable, body, .. } => {
+                    // Range elements are integers; seed the loop variable so
+                    // `append each n from 1 to 5 to L` keeps L homogeneous.
+                    // Save/restore so a shadowing outer variable isn't clobbered.
+                    let saved = env.insert(variable.clone(), TagInfo::Known(TAG_INTEGER));
+                    self.prescan_walk(body, env, list_seen_tags);
+                    match saved {
+                        Some(prev) => {
+                            env.insert(variable.clone(), prev);
+                        }
+                        None => {
+                            env.remove(variable);
+                        }
+                    }
+                }
                 Statement::While { body, .. }
-                | Statement::ForRange { body, .. }
-                | Statement::ForEach { body, .. }
                 | Statement::Repeat { body, .. }
                 | Statement::FunctionDef { body, .. } => {
                     self.prescan_walk(body, env, list_seen_tags);
@@ -1221,15 +1628,32 @@ impl CodeGenerator {
     }
 
     /// Emit a print of the value in rdi dispatched on the runtime tag held
-    /// in `tag_reg` (a full 64-bit register holding 0..=3).
+    /// in `tag_reg` (a full 64-bit register holding 0..=6).
     fn emit_mixed_print_dispatch(&mut self, tag_reg: &str) {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
+        let list_label = self.new_label("mixp_list");
+        let map_label = self.new_label("mixp_map");
+        let nothing_label = self.new_label("mixp_nothing");
         let done_label = self.new_label("mixp_done");
         self.emit_indent(&format!("cmp {}, {}  ; string tag?", tag_reg, TAG_STRING));
         self.emit_indent(&format!("je {}", str_label));
         self.emit_indent(&format!("cmp {}, {}  ; float tag?", tag_reg, TAG_FLOAT));
         self.emit_indent(&format!("je {}", flt_label));
+        // A list element (tag 4): rdi already holds the child list pointer, so
+        // recurse into `_list_print` (stage 1e1). The tag in `tag_reg` has
+        // already been consumed by the comparisons above, so `_list_print`
+        // clobbering r11/rax/etc. is safe.
+        self.emit_indent(&format!("cmp {}, {}  ; list tag?", tag_reg, TAG_LIST));
+        self.emit_indent(&format!("je {}", list_label));
+        // A map element (tag 5, stage 1e2): rdi holds the child map pointer;
+        // recurse into `_map_print`.
+        self.emit_indent(&format!("cmp {}, {}  ; map tag?", tag_reg, TAG_MAP));
+        self.emit_indent(&format!("je {}", map_label));
+        // A nothing/null element (tag 6, stage 1e3): payload is 0 (unused),
+        // so print the literal word `nothing` regardless of rdi.
+        self.emit_indent(&format!("cmp {}, {}  ; nothing tag?", tag_reg, TAG_NOTHING));
+        self.emit_indent(&format!("je {}", nothing_label));
         // Integer and boolean both print as numbers (matches homogeneous
         // boolean lists, which print 1/0 today).
         self.emit_indent("PRINT_INT rdi");
@@ -1241,24 +1665,154 @@ impl CodeGenerator {
         self.emit_indent("movq xmm0, rdi");
         self.emit_indent("PRINT_FLOAT");
         self.uses_floats = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", list_label));
+        self.emit_indent("call _list_print  ; rdi = child list pointer");
+        self.uses_lists = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", map_label));
+        self.emit_indent("call _map_print  ; rdi = child map pointer");
+        self.uses_maps = true;
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", nothing_label));
+        let nothing_str = self.add_string("nothing");
+        self.emit_indent(&format!("PRINT_STR {}, {}_len", nothing_str, nothing_str));
         self.emit(&format!("{}:", done_label));
     }
 
-    /// Whether a list-valued expression refers to a list the pre-scan
-    /// proved heterogeneous (element reads must carry the runtime tag).
+    /// Whether a list-valued expression refers to a list whose elements are
+    /// runtime-tagged (element reads must carry the runtime tag). A named
+    /// mixed list is the base case; a read (element/first/last) from a mixed
+    /// list yields a runtime-tagged value, so indexing it again is again a
+    /// runtime-tagged read (chained access, stage 1e1); and a list literal is
+    /// mixed iff its elements span more than one distinct tag (or any element
+    /// is itself runtime-tagged).
     fn list_expr_is_mixed(&self, e: &Expr) -> bool {
         match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
                 self.mixed_lists.contains(name)
                     || self.list_element_types.get(name) == Some(&VarType::Mixed)
             }
+            // Chained read: a read from a mixed list yields a runtime-tagged
+            // value, so indexing that result is again a runtime-tagged read.
+            // (PropertyAccess `first`/`last` takes a bare variable name, so
+            // it cannot chain; it is handled by the name arm above.)
+            Expr::ElementAccess { list, .. } => self.list_expr_is_mixed(list),
+            // A list literal is mixed iff its elements span >1 distinct tag,
+            // or any element is itself runtime-tagged (no static tag).
+            Expr::ListLit { elements } => {
+                let mut tags: Vec<u8> = Vec::new();
+                for el in elements {
+                    match self.emit_time_expr_tag(el) {
+                        Some(t) => {
+                            if !tags.contains(&t) {
+                                tags.push(t);
+                            }
+                        }
+                        None => return true,
+                    }
+                }
+                tags.len() > 1
+            }
             _ => false,
         }
     }
 
+    /// Where the runtime type tag of `e` can be found immediately after
+    /// `generate_expr(e)` has run, or `None` when `e` carries no tag at all.
+    ///
+    /// A Mixed *variable* keeps its tag in a shadow stack slot, which survives
+    /// anything. Everything else that has a tag leaves it in r11 (see
+    /// `expr_leaves_tag_in_r11`), where it is only valid until the next call or
+    /// syscall. For any other expression r11 holds an unrelated value, so
+    /// comparing against it reads garbage - callers must fall back to a static
+    /// answer instead.
+    fn runtime_tag_source(&self, e: &Expr) -> Option<RuntimeTagSource> {
+        if let Some(off) = self.mixed_element_tag_slot(e) {
+            return Some(RuntimeTagSource::ShadowSlot(off));
+        }
+        if self.expr_leaves_tag_in_r11(e) {
+            return Some(RuntimeTagSource::R11);
+        }
+        None
+    }
+
+    /// Operators that compute a number from their operands, so a `nothing`
+    /// operand is meaningless. Comparisons and logical and/or are excluded:
+    /// they are valid across types, and `is nothing` is itself an equality.
+    /// Mirrors `Analyzer::is_arithmetic_op`.
+    fn is_arithmetic_operator(&self, op: &BinaryOperator) -> bool {
+        matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo
+                | BinaryOperator::BitAnd
+                | BinaryOperator::BitOr
+                | BinaryOperator::BitXor
+                | BinaryOperator::ShiftLeft
+                | BinaryOperator::ShiftRight
+        )
+    }
+
+    /// Flag an arithmetic operand that turned out to hold `nothing`.
+    ///
+    /// Emitted only for operands whose tag is dynamic - a mixed-list or map
+    /// read, a `value`, a for-each variable. A statically-typed operand cannot
+    /// be nothing, so homogeneous arithmetic emits nothing extra and keeps its
+    /// fast path. A literal `nothing` never reaches here: the analyzer rejects
+    /// it outright.
+    ///
+    /// Must follow `generate_expr(e)` immediately, while r11 still holds the
+    /// operand's tag. Touches only r11 and the flags, never rax, so the
+    /// operand's value survives.
+    fn emit_nothing_operand_check(&mut self, e: &Expr) {
+        // Provably nothing (e.g. an element of a homogeneous `[nothing]`
+        // list): no test needed, the operand is always nothing. The analyzer
+        // cannot see this one - it has no element-type tracking - so the flag
+        // is set here rather than reported as a compile error.
+        if self.emit_time_expr_tag(e) == Some(TAG_NOTHING) {
+            self.emit_indent(
+                "mov qword [rel _last_error], 1  ; nothing in arithmetic (static)",
+            );
+            return;
+        }
+        let Some(src) = self.runtime_tag_source(e) else {
+            return;
+        };
+        if let RuntimeTagSource::ShadowSlot(off) = src {
+            self.emit_indent(&format!(
+                "movzx r11, byte [rbp-{}]  ; operand tag (shadow slot)", off
+            ));
+        }
+        let ok = self.new_label("arith_not_nothing");
+        self.emit_indent(&format!("cmp r11, {}  ; nothing operand?", TAG_NOTHING));
+        self.emit_indent(&format!("jne {}", ok));
+        self.emit_indent("mov qword [rel _last_error], 1  ; nothing in arithmetic");
+        self.emit(&format!("{}:", ok));
+    }
+
+    /// Static tag for a *type predicate* operand. Identical to
+    /// `emit_time_expr_tag` except that it still trusts a variable's declared
+    /// type for an unprovable scalar: a predicate only reads a tag, it never
+    /// writes one, so an over-confident answer here cannot produce the wild
+    /// dereference `unprovable_scalars` guards against. Stage 1d gives these
+    /// values real runtime tags and makes the answer exact.
+    fn predicate_static_tag(&self, e: &Expr) -> Option<u8> {
+        if let Expr::StringLit(name) | Expr::Identifier(name) = e {
+            if self.unprovable_scalars.contains(name) {
+                return self.variable_types.get(name).cloned().and_then(vartype_to_tag);
+            }
+        }
+        self.emit_time_expr_tag(e)
+    }
+
     /// If `e` is a reference to a Mixed-typed variable with a shadow tag
     /// slot, return that slot's rbp offset.
-    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {        match e {
+    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {
+        match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
                 if self.variable_types.get(name) == Some(&VarType::Mixed) {
                     self.mixed_tag_slots.get(name).copied()
@@ -1272,18 +1826,56 @@ impl CodeGenerator {
 
     /// Best-effort static tag for a value being written into a list slot
     /// at emit time (richer than the pre-scan version: consults
-    /// variable_types). Returns None when only a runtime tag would do.
+    /// `variable_types`/`list_element_types`, which are populated by the
+    /// time code is emitted). Returns `None` when only a runtime tag would
+    /// do (a `Mixed` value's shadow-slot tag, or a genuinely opaque value
+    /// whose actual type can't be proven — the latter falls back to
+    /// `TAG_INTEGER` at the append site, with correct rendering deferred to
+    /// stage 1d's runtime tag propagation).
     fn emit_time_expr_tag(&self, e: &Expr) -> Option<u8> {
         match e {
             Expr::IntegerLit(_) => Some(TAG_INTEGER),
             Expr::FloatLit(_) => Some(TAG_FLOAT),
             Expr::BoolLit(_) => Some(TAG_BOOLEAN),
+            // The nothing/null literal is tag 6 (stage 1e3).
+            Expr::NothingLit => Some(TAG_NOTHING),
+            // A list literal value in a slot is tag 4 (stage 1e1). This is the
+            // tag written to a nested-list element's slot at emit time.
+            Expr::ListLit { .. } => Some(TAG_LIST),
+            // A map literal value in a slot is tag 5 (stage 1e2).
+            Expr::MapLit { .. } => Some(TAG_MAP),
+            // A type predicate result is a boolean (stage 1c).
+            Expr::TypeCheck { .. } => Some(TAG_BOOLEAN),
+            // Logical negation is always a boolean. `infer_expr_type` maps
+            // `Not` to `Integer` (codegen treats booleans as 0/1), which would
+            // mis-tag a negated predicate — or any `not <expr>` list element —
+            // as `TAG_INTEGER`. Tag it `TAG_BOOLEAN` explicitly so it matches
+            // `prescan_expr_tag`, which recurses to the (boolean) operand.
+            Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(TAG_BOOLEAN),
+            Expr::StringLit(name) | Expr::Identifier(name)
+                if self.unprovable_scalars.contains(name)
+                    && self.variable_types.get(name) != Some(&VarType::List) =>
+            {
+                // The pre-scan could not prove what this variable holds, so
+                // its declared type must not be turned into a slot tag. `None`
+                // writes the integer tag, which a reader renders as a number -
+                // wrong for a string, but never a wild dereference. Stage 1d's
+                // runtime tag propagation replaces the guess with the real tag.
+                //
+                // Lists are exempt: the hazard is a declared type claiming a
+                // pointer tag over bits that are not a pointer, and a list
+                // variable's slot always holds a list pointer. Suppressing
+                // TAG_LIST here would silently un-nest a nested list.
+                None
+            }
             Expr::StringLit(name) | Expr::Identifier(name) => {
                 match self.variable_types.get(name) {
                     Some(VarType::Integer) => Some(TAG_INTEGER),
                     Some(VarType::Float) => Some(TAG_FLOAT),
                     Some(VarType::Boolean) => Some(TAG_BOOLEAN),
                     Some(VarType::String) | Some(VarType::Buffer) => Some(TAG_STRING),
+                    Some(VarType::List) => Some(TAG_LIST),
+                    Some(VarType::Map) => Some(TAG_MAP),
                     Some(VarType::Mixed) => None, // runtime tag in shadow slot
                     _ => {
                         if matches!(e, Expr::StringLit(_))
@@ -1292,20 +1884,102 @@ impl CodeGenerator {
                         {
                             Some(TAG_STRING) // a genuine string literal
                         } else {
+                            // An identifier not in variable_types and not a
+                            // genuine string literal. Every declared variable
+                            // is in variable_types during codegen, so this is
+                            // an edge (e.g. a global int mirror); defaulting to
+                            // the zero (integer) tag is the same runtime effect
+                            // as returning None (the append path writes 0).
                             Some(TAG_INTEGER)
                         }
                     }
                 }
             }
-            _ => Some(TAG_INTEGER),
+            // Function results, binary/unary ops, casts, and property/element
+            // reads: infer_expr_type resolves these from declared metadata and
+            // the populated variable_types/list_element_types, so the written
+            // tag matches the actual type. Mixed/Unknown map to None (runtime
+            // tag or the TAG_INTEGER fallback); List maps to TAG_LIST via
+            // vartype_to_tag.
+            _ => self.infer_expr_type(e).and_then(vartype_to_tag),
+        }
+    }
+
+    /// Load the runtime type tag of `expr` into r11, the single source of
+    /// truth used by value-parameter passing, value returns, and (via the
+    /// 1c predicates) type checks. Three cases, in priority order:
+    ///
+    /// 1. **Static tag** (`emit_time_expr_tag` returns `Some`): literals,
+    ///    statically-typed variables, homogeneous-list element reads, and
+    ///    scalar-returning function calls → `mov r11, <tag>`.
+    /// 2. **Shadow tag slot** (`mixed_element_tag_slot` returns `Some`): a
+    ///    `Mixed` *identifier* — a value parameter, a for-each variable over a
+    ///    mixed list, or a declared `value` local — keeps its tag in a shadow
+    ///    stack slot → `movzx r11, byte [rbp-<off>]`.
+    /// 3. **Already in r11** (both return `None`): a freshly-read mixed-list
+    ///    element (ElementAccess/First/Last leaves the slot's tag in r11) and a
+    ///    value-returning function call (the callee leaves r11=tag; `call` and
+    ///    `FUNC_EPILOGUE`/`_dec_call_depth` do not clobber r11). No emit needed.
+    ///
+    /// Register discipline: callers consume r11 immediately — between this
+    /// load and the consumer there must be no `call`/syscall that clobbers r11.
+    /// The inbound/return paths below respect this; if a future clobbering
+    /// helper is inserted between the load and the consumer, spill r11 to a
+    /// shadow slot first.
+    fn emit_load_value_tag(&mut self, expr: &Expr) {
+        match self.emit_time_expr_tag(expr) {
+            Some(t) => self.emit_indent(&format!("mov r11, {}  ; value tag (static)", t)),
+            None => match self.mixed_element_tag_slot(expr) {
+                Some(off) => self
+                    .emit_indent(&format!("movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off)),
+                None => {
+                    // r11 already holds the tag: a fresh mixed element read or a
+                    // value-returning function call left it there. Nothing to do.
+                }
+            },
+        }
+    }
+
+    /// Whether `generate_expr(expr)` leaves the value's runtime tag in r11, so a
+    /// consumer can read the tag from r11 without an explicit load. True for:
+    /// - a value-returning function call (the callee leaves r11=tag; `call`
+    ///   and the epilogue do not clobber it), and
+    /// - a freshly-read mixed-list element (`ElementAccess`, or `First`/`Last`
+    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11.
+    /// Homogeneous reads never reach this question: `emit_time_expr_tag`
+    /// returns their static tag (`Some`), so the caller never falls through to
+    /// the no-slot path that consults this predicate.
+    fn expr_leaves_tag_in_r11(&self, e: &Expr) -> bool {
+        match e {
+            Expr::FunctionCall { name, .. } => {
+                self.function_return_types.get(name) == Some(&VarType::Mixed)
+            }
+            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
+                self.list_expr_is_mixed(list)
+            }
+            // A map key read: `_map_lookup` leaves the value in rax and its
+            // runtime tag in r11 (stage 1e2), mirroring a mixed-list element.
+            Expr::MapAccess { .. } => true,
+            Expr::PropertyAccess { object, property }
+                if matches!(property, ObjectProperty::First | ObjectProperty::Last) =>
+            {
+                self.mixed_lists.contains(object)
+                    || self.list_element_types.get(object) == Some(&VarType::Mixed)
+            }
+            _ => false,
         }
     }
 
     pub fn generate(&mut self, program: &Program) -> String {
+        // Collect function signatures BEFORE the pre-scan: prescan_expr_tag
+        // classifies FunctionCall results via function_return_types, so it
+        // must be populated for the pre-scan to prove (not widen) lists built
+        // from declared-return functions. Signature collection only reads
+        // FunctionDef.return_type from the AST, so this reorder is safe.
+        self.collect_function_signatures(program);
         self.prescan_mixed_lists(&program.statements);
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
-        self.collect_function_signatures(program);
 
         self.global_var_labels.clear();
         self.global_var_counter = 0;
@@ -1345,8 +2019,17 @@ impl CodeGenerator {
         } else {
             // Always needed: core
             result.push_str(&format!("%include \"coreasm/{}/core.asm\"\n", self.target_arch));
+            // map.asm is included AFTER list.asm (it calls _list_print), so
+            // its `__MAP_ASM_INCLUDED__` guard is not yet visible when
+            // list.asm is assembled. Pre-define it here when maps are used so
+            // list.asm's map-element print branch can call `_map_print`.
+            if self.uses_maps {
+                result.push_str("%define __MAP_ASM_INCLUDED__\n");
+            }
             // Conditional includes based on usage
-            if self.uses_io {
+            // map.asm depends on io.asm (PRINT macros), string.asm (_str_eq),
+            // and list.asm (_list_print), so uses_maps forces all three on.
+            if self.uses_io || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/io.asm\"\n", self.target_arch));
             }
             if self.uses_files {
@@ -1364,7 +2047,7 @@ impl CodeGenerator {
             if program.uses_heap {
                 result.push_str(&format!("%include \"coreasm/{}/heap.asm\"\n", self.target_arch));
             }
-            if program.uses_strings || self.uses_strings {
+            if program.uses_strings || self.uses_strings || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/string.asm\"\n", self.target_arch));
             }
             if program.uses_args {
@@ -1379,8 +2062,11 @@ impl CodeGenerator {
             if self.uses_funcs {
                 result.push_str(&format!("%include \"coreasm/{}/funcs.asm\"\n", self.target_arch));
             }
-            if self.uses_lists {
+            if self.uses_lists || self.uses_maps {
                 result.push_str(&format!("%include \"coreasm/{}/list.asm\"\n", self.target_arch));
+            }
+            if self.uses_maps {
+                result.push_str(&format!("%include \"coreasm/{}/map.asm\"\n", self.target_arch));
             }
         }
         result.push('\n');
@@ -1473,15 +2159,30 @@ impl CodeGenerator {
                         Type::Boolean => VarType::Boolean,
                         Type::Buffer => VarType::Buffer,
                         Type::List(_) => VarType::List,
+                        Type::Map(_) => VarType::Map,
+                        // A declared `value` local is a Mixed-typed scalar
+                        // carrying its runtime tag in a shadow slot, exactly
+                        // like a value parameter / for-each variable.
+                        Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
                     self.variable_types.insert(name.clone(), vt);
+                    if matches!(t, Type::Value) && !self.mixed_tag_slots.contains_key(name) {
+                        let tag_slot = self.alloc_var(&format!("{}_mixtag", name));
+                        self.mixed_tag_slots.insert(name.clone(), tag_slot);
+                    }
                 }
                 
                 if let Some(val) = value {
                     // Track list type and element type for lists
                     if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
+                        // A nested map-literal element makes this a list-of-maps;
+                        // the element type is Map so a for-each loop var prints
+                        // via `_map_print` (stage 1e2).
+                        if let Some(Expr::MapLit { .. }) = elements.first() {
+                            self.list_element_types.insert(name.clone(), VarType::Map);
+                        }
                         if self.mixed_lists.contains(name) {
                             // Pre-scan proved this list heterogeneous:
                             // element reads dispatch on runtime tags.
@@ -1494,6 +2195,11 @@ impl CodeGenerator {
                                 Expr::IntegerLit(_) => VarType::Integer,
                                 Expr::FloatLit(_) => VarType::Float,
                                 Expr::BoolLit(_) => VarType::Boolean,
+                                // A nested list literal element means this is
+                                // a list-of-lists; the element type is List
+                                // (stage 1e1), so a for-each loop var prints
+                                // via `_list_print`.
+                                Expr::ListLit { .. } => VarType::List,
                                 _ => VarType::Unknown,
                             };
                             self.list_element_types.insert(name.clone(), elem_type);
@@ -1536,6 +2242,24 @@ impl CodeGenerator {
                                 self.list_element_types.insert(name.clone(), et);
                             }
                         }
+                        // Read-back from a parent list — `a list called
+                        // "inner" is element 2 of nested.` / `... is nested's
+                        // first.` The child list's elements are runtime-tagged
+                        // (the parent may be mixed), so a for-each over `inner`
+                        // must dispatch on each element's tag rather than
+                        // assume a single static type; the tag-4 branch then
+                        // renders nested lists. This is correct for both
+                        // homogeneous and mixed inner lists (a homogeneous
+                        // inner's uniform tags dispatch to the same printer).
+                        let reads_element = matches!(val, Expr::ElementAccess { .. })
+                            || matches!(
+                                val,
+                                Expr::PropertyAccess { property, .. }
+                                    if matches!(property, ObjectProperty::First | ObjectProperty::Last)
+                            );
+                        if matches!(var_type, Some(Type::List(_))) && reads_element {
+                            self.list_element_types.insert(name.clone(), VarType::Mixed);
+                        }
                     }
                     
                     // Special handling for buffer initialization/assignment with text/format/buffer source
@@ -1569,6 +2293,15 @@ impl CodeGenerator {
                     } else {
                         self.generate_expr(val);
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        // A declared `value` local stores its runtime tag in the
+                        // shadow slot alongside the payload.
+                        if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                            self.emit_load_value_tag(val);
+                            self.emit_indent(&format!(
+                                "mov [rbp-{}], r11b  ; value local tag",
+                                tag_slot
+                            ));
+                        }
                     }
                 } else {
                     // No initial value - initialize based on type
@@ -1636,13 +2369,21 @@ impl CodeGenerator {
             
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
-                    if self.variable_types.get(name) != Some(&VarType::Buffer) {
+                    // A `value` local (declared `a value called "r"`) keeps its
+                    // Mixed type across reassignment — overwriting it with the
+                    // assigned value's static type would drop the shadow-tag
+                    // discipline and mis-classify later reads.
+                    let is_value_local = self.mixed_tag_slots.contains_key(name);
+                    if self.variable_types.get(name) != Some(&VarType::Buffer)
+                        && !is_value_local
+                    {
                         if let Some(vt) = self.infer_expr_type(value) {
                             match vt {
                                 VarType::Float => {
                                     self.variable_types.insert(name.clone(), VarType::Float);
                                 }
-                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List | VarType::Mixed => {
+                                VarType::Integer | VarType::Boolean | VarType::String | VarType::List
+                                | VarType::Map | VarType::Mixed => {
                                     self.variable_types.insert(name.clone(), vt);
                                 }
                                 VarType::Buffer | VarType::Unknown => {}
@@ -1665,6 +2406,15 @@ impl CodeGenerator {
                     } else {
                         self.generate_expr(value);
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        // Reassigning a `value` local must update its shadow tag
+                        // slot too, or the runtime tag would go stale.
+                        if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                            self.emit_load_value_tag(value);
+                            self.emit_indent(&format!(
+                                "mov [rbp-{}], r11b  ; value local tag",
+                                tag_slot
+                            ));
+                        }
                     }
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
@@ -1866,7 +2616,15 @@ impl CodeGenerator {
             
             Statement::Return { value } => {
                 if let Some(v) = value {
-                    self.generate_expr(v); // should leave return value in RAX
+                    self.generate_expr(v); // leaves return payload in RAX
+                    // A `value` return carries its runtime tag in r11 for the
+                    // caller. Load it AFTER generate_expr (which leaves r11=tag
+                    // for fresh reads / value-returning calls, or nothing for a
+                    // Mixed identifier). `_dec_call_depth` and `FUNC_EPILOGUE`
+                    // (leave; ret) do not clobber r11, so no spill is needed.
+                    if self.current_function_return_type == Some(Type::Value) {
+                        self.emit_load_value_tag(v);
+                    }
                 }
                 if self.in_function_codegen {
                     self.emit_indent("push rax  ; save return value");
@@ -1882,7 +2640,7 @@ impl CodeGenerator {
                 self.emit_function_call(name, args);
             }
                         
-            Statement::FunctionDef { name, params, body, .. } => {
+            Statement::FunctionDef { name, params, body, return_type, .. } => {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
@@ -1899,6 +2657,7 @@ impl CodeGenerator {
                 let saved_stack = self.stack_offset;
                 let saved_loop_stack = std::mem::take(&mut self.loop_stack);
                 let saved_in_function_codegen = self.in_function_codegen;
+                let saved_return_type = self.current_function_return_type.clone();
 
                 // Fresh function-local state
                 self.output = String::new();
@@ -1906,16 +2665,26 @@ impl CodeGenerator {
                 self.stack_offset = 0;
                 self.loop_stack = Vec::new();
                 self.in_function_codegen = true;
+                // Remember this function's declared return type so the `Return`
+                // path knows to leave a `value` result's tag in r11.
+                self.current_function_return_type = Some(return_type.clone());
 
                 // ------------------------------------------------------------
                 // PASS 1: Allocate stack slots for params, then generate body
                 // into a temporary buffer to discover the true frame size.
                 // ------------------------------------------------------------
 
+                // A `value` parameter occupies two argument words (payload, tag).
+                // The payload lives in the param's own slot; the tag lives in a
+                // shadow `{name}_mixtag` slot, exactly like a for-each variable
+                // over a mixed list, so the 1c predicates/print/append/forward
+                // machinery all work on it unchanged.
+                let word_count = |t: &Type| if matches!(t, Type::Value) { 2 } else { 1 };
+                let total_words: usize = params.iter().map(|(_, t)| word_count(t)).sum();
+
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
                 for (param_name, param_type) in params.iter() {
-                    self.alloc_var(param_name);
                     let var_type = match param_type {
                         Type::Integer => VarType::Integer,
                         Type::Float => VarType::Float,
@@ -1923,9 +2692,17 @@ impl CodeGenerator {
                         Type::Boolean => VarType::Boolean,
                         Type::List(_) => VarType::List,
                         Type::Buffer => VarType::Buffer,
+                        // A `value` parameter is a Mixed-typed scalar carrying
+                        // its runtime tag in a shadow slot.
+                        Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
+                    self.alloc_var(param_name);
                     self.variable_types.insert(param_name.clone(), var_type);
+                    if matches!(param_type, Type::Value) {
+                        let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
+                        self.mixed_tag_slots.insert(param_name.clone(), tag_slot);
+                    }
                 }
 
                 // Generate body into a temp buffer (this will call alloc_var for locals too)
@@ -1960,31 +2737,68 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", func_label));
                 self.emit_indent(&format!("FUNC_PROLOGUE {}", frame_size));
-                // Recursion depth guard - save param regs, check depth, restore
-                let num_params = params.len().min(6);
-                for i in 0..num_params {
-                    self.emit_indent(&format!("push {}  ; save param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                // Recursion depth guard - save the first 6 argument WORDS
+                // (not 6 params: a `value` param contributes two words), check
+                // depth, restore. `_check_call_depth` touches only rax, so the
+                // saved words are intact.
+                let reg_words = total_words.min(6);
+                for i in 0..reg_words {
+                    self.emit_indent(&format!("push {}  ; save arg word", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
                 }
                 self.emit_indent("call _check_call_depth");
-                for i in (0..num_params).rev() {
-                    self.emit_indent(&format!("pop {}  ; restore param reg", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
+                for i in (0..reg_words).rev() {
+                    self.emit_indent(&format!("pop {}  ; restore arg word", ["rdi", "rsi", "rdx", "rcx", "r8", "r9"][i]));
                 }
 
-                // Store parameters after frame is allocated
+                // Store parameters after frame is allocated. Walk params in
+                // order, tracking the running argument-word index: a scalar
+                // param consumes one word, a `value` param consumes two
+                // (payload at `word_index`, tag at `word_index + 1`).
                 let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-                for (i, (param_name, _)) in params.iter().enumerate() {
-                    if let Some(offset) = self.get_var(param_name) {
-                        if i < param_regs.len() {
-                            self.emit_indent(&format!("mov [rbp-{}], {}", offset, param_regs[i]));
+                // The caller inserts an 8-byte alignment pad below the stack
+                // args when their count is odd, so the first stack arg lives at
+                // [rbp + 16 + pad_offset], not [rbp + 16]. Both sides derive the
+                // pad from the same word count, so they agree.
+                let stack_words = total_words.saturating_sub(param_regs.len());
+                let pad_offset: usize = if stack_words.is_multiple_of(2) { 0 } else { 8 };
+                let mut word_index = 0usize;
+                for (param_name, param_type) in params.iter() {
+                    let payload_off = self.get_var(param_name);
+                    let tag_off = self.mixed_tag_slots.get(param_name).copied();
+                    let is_value = matches!(param_type, Type::Value);
+
+                    // Read argument word `w` into rax: from a register if w < 6,
+                    // else from the stack at [rbp + 16 + pad_offset + (w-6)*8].
+                    let read_word = |w: usize| {
+                        if w < param_regs.len() {
+                            format!("mov rax, {}", param_regs[w])
                         } else {
-                            // SysV x86_64: 7th arg is at [rbp+16], then +8 each.
-                            // +8  = return address
-                            // +0  = saved rbp
-                            // so stack args start at +16
-                            let stack_arg_off = 16 + (i - param_regs.len()) * 8;
-                            self.emit_indent(&format!("mov rax, [rbp+{}]", stack_arg_off));
-                            self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                            let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
+                            format!("mov rax, [rbp+{}]", stack_arg_off)
                         }
+                    };
+
+                    if let Some(offset) = payload_off {
+                        // Payload word.
+                        self.emit_indent(&read_word(word_index));
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
+                        if is_value {
+                            // Tag word (stored as a byte into the shadow slot).
+                            if let Some(tag_slot) = tag_off {
+                                self.emit_indent(&read_word(word_index + 1));
+                                self.emit_indent(&format!(
+                                    "mov [rbp-{}], al  ; param value tag",
+                                    tag_slot
+                                ));
+                            }
+                            word_index += 2;
+                        } else {
+                            word_index += 1;
+                        }
+                    } else if is_value {
+                        word_index += 2;
+                    } else {
+                        word_index += 1;
                     }
                 }
 
@@ -2001,6 +2815,7 @@ impl CodeGenerator {
                 self.stack_offset = saved_stack;
                 self.loop_stack = saved_loop_stack;
                 self.in_function_codegen = saved_in_function_codegen;
+                self.current_function_return_type = saved_return_type;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -2069,6 +2884,22 @@ impl CodeGenerator {
                 let elem_type = if let Expr::Identifier(list_name) = collection {
                     // Get element type from list_element_types, not variable_types
                     self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
+                } else if let Expr::PropertyAccess { object, property } = collection {
+                    // `map's keys` yields a list of text pointers; `map's
+                    // values` yields a mixed-tagged list (each value carries
+                    // its own runtime tag). (stage 1e2)
+                    match property {
+                        ObjectProperty::Keys => VarType::String,
+                        ObjectProperty::Values => VarType::Mixed,
+                        // `first`/`last` of a list-of-maps -> each is a map.
+                        ObjectProperty::First | ObjectProperty::Last => {
+                            match self.list_element_types.get(object) {
+                                Some(VarType::Map) => VarType::Map,
+                                _ => VarType::Unknown,
+                            }
+                        }
+                        _ => VarType::Unknown,
+                    }
                 } else if let Expr::ListLit { elements } = collection {
                     // Inline literal: classify every element, not just the
                     // first - two distinct types means Mixed.
@@ -2093,6 +2924,10 @@ impl CodeGenerator {
                             Expr::IntegerLit(_) => VarType::Integer,
                             Expr::BoolLit(_) => VarType::Boolean,
                             Expr::FloatLit(_) => VarType::Float,
+                            // Homogeneous list-of-lists literal: each element
+                            // is a list (tag 4), so the loop var is a List and
+                            // prints via `_list_print` (stage 1e1).
+                            Expr::ListLit { .. } => VarType::List,
                             _ => VarType::Unknown,
                         }
                     } else {
@@ -2351,7 +3186,53 @@ impl CodeGenerator {
 
                 self.emit(&format!("{}:", done_label));
             }
-            
+
+            // Set map's "<key>" to value: insert or replace. _map_insert may
+            // reallocate on growth, so the returned pointer is stored back
+            // into the map variable's slot (mirroring ListAppend's store-back
+            // — forgetting this corrupts the var after the first growth).
+            // (stage 1e2, tag 5)
+            Statement::MapSet { map, key, value } => {
+                self.uses_maps = true;
+                self.emit_indent("; Set map's key to value (insert/replace)");
+                // map pointer -> stack
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("push rax  ; save map pointer");
+                // key -> stack (literal text; never a variable reference)
+                self.generate_text_key(key);
+                self.emit_indent("push rax  ; save key pointer");
+                // value -> rdx
+                self.generate_expr(value);
+                self.emit_indent("mov rdx, rax  ; value");
+                // tag -> rcx (forward runtime tag for mixed sources)
+                match self.emit_time_expr_tag(value) {
+                    Some(tag) => {
+                        self.emit_indent(&format!("mov ecx, {}  ; value type tag", tag));
+                    }
+                    None => {
+                        if let Some(slot) = self.mixed_element_tag_slot(value) {
+                            self.emit_indent(&format!(
+                                "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
+                                slot
+                            ));
+                        } else if self.expr_leaves_tag_in_r11(value) {
+                            self.emit_indent("mov ecx, r11d  ; forward runtime tag from r11");
+                        } else {
+                            self.emit_indent("xor ecx, ecx  ; default integer tag");
+                        }
+                    }
+                }
+                self.emit_indent("pop rsi  ; key pointer");
+                self.emit_indent("pop rdi  ; map pointer");
+                self.emit_indent("call _map_insert");
+                // Store the (possibly reallocated) map pointer back.
+                if let Some(offset) = self.get_var(map) {
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new map ptr", offset));
+                } else if let Some(label) = self.global_var_label(map).cloned() {
+                    self.emit_indent(&format!("mov [rel {}], rax  ; store new map ptr", label));
+                }
+            }
+
             Statement::ListAppend { list, value } => {
                 if self.variable_types.get(list) == Some(&VarType::Buffer) {
                     let dst_local = self.get_var(list);
@@ -2385,6 +3266,12 @@ impl CodeGenerator {
                         Expr::IntegerLit(_) => VarType::Integer,
                         Expr::FloatLit(_) => VarType::Float,
                         Expr::BoolLit(_) => VarType::Boolean,
+                        // A type predicate result (and its negation) is a
+                        // boolean element, mirroring `BoolLit` so a for-each
+                        // variable over a list of predicate results is typed
+                        // Boolean and `is a boolean` recognises it (stage 1c).
+                        Expr::TypeCheck { .. } => VarType::Boolean,
+                        Expr::UnaryOp { op: UnaryOperator::Not, .. } => VarType::Boolean,
                         Expr::Identifier(name) => {
                             // Buffer variables produce string elements when appended
                             match self.variable_types.get(name) {
@@ -2456,6 +3343,12 @@ impl CodeGenerator {
                                     "movzx edx, byte [rbp-{}]  ; runtime tag of mixed source",
                                     slot
                                 ));
+                            } else if self.expr_leaves_tag_in_r11(value) {
+                                // A freshly-read mixed element or a value-returning
+                                // function call left its tag in r11 — forward it
+                                // instead of dropping it (which previously mis-
+                                // tagged appended mixed elements as integers).
+                                self.emit_indent("mov edx, r11d  ; forward runtime tag from r11");
                             } else {
                                 self.emit_indent("xor edx, edx  ; default integer tag");
                             }
@@ -2566,7 +3459,7 @@ impl CodeGenerator {
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
-                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                        self.emit_indent(&format!("lea rdi, [rel {}]", label));
                     }
                     _ => {
                         self.generate_cstr_expr(path);
@@ -3038,7 +3931,7 @@ impl CodeGenerator {
                         match path {
                             Expr::StringLit(s) => {
                                 let label = self.add_string(s);
-                                self.emit_indent(&format!("lea rax, [{}]", label));
+                                self.emit_indent(&format!("lea rax, [rel {}]", label));
                             }
                             _ => self.generate_cstr_expr(path),
                         }
@@ -3131,7 +4024,7 @@ impl CodeGenerator {
                 match path {
                     Expr::StringLit(s) => {
                         let label = self.add_string(s);
-                        self.emit_indent(&format!("lea rdi, [{}]", label));
+                        self.emit_indent(&format!("lea rdi, [rel {}]", label));
                     }
                     _ => {
                         self.generate_cstr_expr(path);
@@ -3528,6 +4421,19 @@ impl CodeGenerator {
                                     self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
                                     self.emit_formatted_value(var_type, fmt_spec);
                                 }
+                            } else if var_type == Some(VarType::List) {
+                                // Whole-list interpolation: rdi holds the list
+                                // pointer; _list_print renders [elem, elem, ...].
+                                // Format specs on a list are not honored (out of
+                                // scope for stage 000 - the default rendering only).
+                                self.uses_lists = true;
+                                self.emit_indent("call _list_print");
+                            } else if var_type == Some(VarType::Map) {
+                                // Whole-map interpolation: rdi holds the map
+                                // pointer; _map_print renders {"k": v, ...}.
+                                // (stage 1e2)
+                                self.uses_maps = true;
+                                self.emit_indent("call _map_print");
                             } else {
                                 let fmt_spec = self.parse_format_spec(format.as_deref());
                                 self.emit_formatted_value(var_type, fmt_spec);
@@ -3537,7 +4443,17 @@ impl CodeGenerator {
                             let expr_type = self.infer_expr_type(expr);
                             let fmt_spec = self.parse_format_spec(format.as_deref());
 
-                            if expr_type == Some(VarType::Buffer) {
+                            // A bare `nothing` literal interpolated into a
+                            // format string renders `nothing` (it would else
+                            // infer as Integer and print `0`). A `value`/
+                            // mixed expression that *holds* nothing is
+                            // already handled by the mixed dispatch below
+                            // via VarType::Mixed; this is only for the literal
+                            // itself. (stage 1e3)
+                            if matches!(expr.as_ref(), Expr::NothingLit) {
+                                let label = self.add_string("nothing");
+                                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                            } else if expr_type == Some(VarType::Buffer) {
                                 // For buffer expressions: generate the struct pointer,
                                 // not the data-area pointer - PRINT_BUF reads its own
                                 // length from the struct, so it needs the base pointer.
@@ -3551,6 +4467,13 @@ impl CodeGenerator {
                                     self.emit_indent("add rdi, 24  ; buffer data area");
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
+                            } else if expr_type == Some(VarType::Map) {
+                                // Map expression interpolation: rdi holds the map
+                                // pointer; _map_print renders it. (stage 1e2)
+                                self.generate_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                self.uses_maps = true;
+                                self.emit_indent("call _map_print");
                             } else {
                                 // Non-buffer: generate_cstr_expr adds +24 for buffer
                                 // (irrelevant here), then falls through to normal path.
@@ -3595,6 +4518,18 @@ impl CodeGenerator {
                             self.emit_indent("PRINT_FLOAT");
                             self.uses_floats = true;
                         }
+                        Some(VarType::List) => {
+                            // String literal that is actually a list variable
+                            // reference - render the whole list.
+                            self.uses_lists = true;
+                            self.emit_indent("call _list_print");
+                        }
+                        Some(VarType::Map) => {
+                            // String literal that is actually a map variable
+                            // reference - render the whole map. (stage 1e2)
+                            self.uses_maps = true;
+                            self.emit_indent("call _map_print");
+                        }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
                         }
@@ -3617,6 +4552,16 @@ impl CodeGenerator {
                 self.emit_indent(&format!("FLOAT_LOAD {}", label));
                 self.emit_indent("PRINT_FLOAT");
                 self.uses_floats = true;
+            }
+
+            // `print nothing.` — the literal null (stage 1e3, tag 6). It
+            // would otherwise fall to the catch-all (infer_expr_type maps it
+            // to Integer) and print `0`, so handle it explicitly. Inside a
+            // list/map slot or a `value`, the mixed print dispatch already
+            // renders `nothing`; this arm is for a bare literal argument.
+            Expr::NothingLit => {
+                let label = self.add_string("nothing");
+                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
             }
             
             Expr::Identifier(name) => {
@@ -3649,6 +4594,21 @@ impl CodeGenerator {
                             self.emit_indent("PRINT_FLOAT");
                             self.uses_floats = true;
                         }
+                        Some(VarType::List) => {
+                            // Whole-list print: rdi holds the list pointer;
+                            // _list_print walks the slots and renders
+                            // [elem, elem, ...] with per-tag dispatch.
+                            self.uses_lists = true;
+                            self.emit_indent("call _list_print");
+                        }
+                        Some(VarType::Map) => {
+                            // Whole-map print: rdi holds the map pointer;
+                            // _map_print walks the entries and renders
+                            // {"key": value, ...} with per-tag dispatch.
+                            // (stage 1e2)
+                            self.uses_maps = true;
+                            self.emit_indent("call _map_print");
+                        }
                         _ => {
                             self.emit_indent("PRINT_INT rdi");
                         }
@@ -3660,22 +4620,61 @@ impl CodeGenerator {
             }
             
             Expr::ElementAccess { list, .. } => {
-                // Get the list's element type for proper printing
+                // Get the list's element type for proper printing. For a
+                // named list this is the recorded element type; for a list
+                // literal it is the literal's homogeneous element type (or
+                // Mixed if the literal is heterogeneous); for any other
+                // mixed list expression (e.g. a chained `element 2 of
+                // element 2 of deep`) the elements are runtime-tagged, so
+                // `generate_expr` left the slot's tag in r11 and we dispatch
+                // on it (stage 1e1).
                 let elem_type = if let Expr::Identifier(name) = list.as_ref() {
                     self.list_element_types.get(name).cloned()
+                } else if let Expr::ListLit { elements } = list.as_ref() {
+                    if self.list_expr_is_mixed(list) {
+                        Some(VarType::Mixed)
+                    } else if let Some(first) = elements.first() {
+                        match first {
+                            Expr::IntegerLit(_) => Some(VarType::Integer),
+                            Expr::FloatLit(_) => Some(VarType::Float),
+                            Expr::StringLit(_) => Some(VarType::String),
+                            Expr::BoolLit(_) => Some(VarType::Boolean),
+                            Expr::ListLit { .. } => Some(VarType::List),
+                            Expr::MapLit { .. } => Some(VarType::Map),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else if self.list_expr_is_mixed(list) {
+                    Some(VarType::Mixed)
                 } else {
                     None
                 };
-                
+
                 self.generate_expr(value);
                 self.emit_indent("mov rdi, rax");
-                
+
                 match elem_type {
                     Some(VarType::Mixed) => {
                         // generate_expr left the slot's type tag in r11
                         // (captured immediately - nothing can clobber it
                         // between the element load and this dispatch).
                         self.emit_mixed_print_dispatch("r11");
+                    }
+                    Some(VarType::List) => {
+                        // A homogeneous list-of-lists: rdi already holds the
+                        // child list pointer, so recurse into `_list_print`
+                        // (stage 1e1).
+                        self.emit_indent("call _list_print");
+                        self.uses_lists = true;
+                    }
+                    Some(VarType::Map) => {
+                        // A homogeneous list-of-maps: rdi already holds the
+                        // child map pointer, so recurse into `_map_print`
+                        // (stage 1e2).
+                        self.emit_indent("call _map_print");
+                        self.uses_maps = true;
                     }
                     Some(VarType::String) => {
                         self.emit_indent("PRINT_CSTR rdi");
@@ -3691,20 +4690,31 @@ impl CodeGenerator {
                 }
             }
             
+            Expr::MapAccess { .. } => {
+                // A map value read leaves its runtime tag in r11 (mirroring
+                // ElementAccess), so dispatch on it immediately. The map's
+                // value may be any tagged type (stage 1e2).
+                self.generate_expr(value);
+                self.emit_indent("mov rdi, rax");
+                self.uses_maps = true;
+                self.emit_mixed_print_dispatch("r11");
+            }
+
             _ => {
                 let is_float = self.is_float_expr(value);
                 let expr_type = self.infer_expr_type(value);
-                // `mixed's first` / `mixed's last`: the property read leaves
-                // the slot's type tag in r11 - dispatch on it immediately.
-                let mixed_property = matches!(
-                    value,
-                    Expr::PropertyAccess { object, property }
-                        if matches!(property, ObjectProperty::First | ObjectProperty::Last)
-                            && (self.mixed_lists.contains(object)
-                                || self.list_element_types.get(object) == Some(&VarType::Mixed))
-                );
+                // A value carrying a runtime tag - `mixed's first`/`last`, a
+                // mixed element read, or a `value`-returning call - must be
+                // rendered by that tag, not by its static type. The tag is only
+                // valid until the next call or syscall, so capture it here.
+                let tag_source = self.runtime_tag_source(value);
                 self.generate_expr(value);
-                if mixed_property {
+                if let Some(src) = tag_source {
+                    if let RuntimeTagSource::ShadowSlot(off) = src {
+                        self.emit_indent(&format!(
+                            "movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off
+                        ));
+                    }
                     self.emit_indent("mov rdi, rax");
                     self.emit_mixed_print_dispatch("r11");
                 } else if is_float {
@@ -3715,6 +4725,17 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     if matches!(expr_type, Some(VarType::String)) {
                         self.emit_indent("PRINT_CSTR rdi");
+                    } else if matches!(expr_type, Some(VarType::List)) {
+                        // A bare list literal, or `first`/`last` of a
+                        // homogeneous list-of-lists: rdi holds a list pointer,
+                        // so recurse into `_list_print` (stage 1e1).
+                        self.emit_indent("call _list_print");
+                        self.uses_lists = true;
+                    } else if matches!(expr_type, Some(VarType::Map)) {
+                        // A bare map literal: rdi holds a map pointer, so
+                        // recurse into `_map_print` (stage 1e2).
+                        self.emit_indent("call _map_print");
+                        self.uses_maps = true;
                     } else {
                         self.emit_indent("PRINT_INT rdi");
                     }
@@ -3759,6 +4780,23 @@ impl CodeGenerator {
         }
     }
 
+    /// Materialize a map key expression as a NUL-terminated text pointer in
+    /// `rax`. A quoted key (`"name"`) is ALWAYS the literal text, even when a
+    /// variable with that name exists — otherwise the key would silently
+    /// become the variable's value (e.g. `{"inner": ...}` colliding with a
+    /// later `a map called "inner"` stored the variable's pointer as the key
+    /// and crashed `_map_print`'s C-string read). A non-literal key (a bare
+    /// variable holding text) is evaluated normally. (stage 1e2)
+    fn generate_text_key(&mut self, key: &Expr) {
+        match key {
+            Expr::StringLit(s) => {
+                let label = self.add_string(s);
+                self.emit_indent(&format!("lea rax, [rel {}]  ; literal map key", label));
+            }
+            _ => self.generate_expr(key),
+        }
+    }
+
     /// True when comparing this expression with `==`/`!=` needs byte-content
     /// comparison (_str_eq) rather than a raw pointer `cmp`. Text variables,
     /// string literals, and buffers all qualify - two equal-content strings
@@ -3768,6 +4806,12 @@ impl CodeGenerator {
     /// `some_variable is "literal"`.
     fn is_stringy_expr(&self, expr: &Expr) -> bool {
         matches!(self.infer_expr_type(expr), Some(VarType::String) | Some(VarType::Buffer))
+    }
+
+    /// True if `expr` is a `nothing`/`null`/`nil` literal (stage 1e3, tag 6).
+    /// Used by the nothing-equality guard in `generate_condition`.
+    fn is_nothing_expr(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::NothingLit)
     }
 
     fn generate_expr(&mut self, expr: &Expr) {
@@ -3788,13 +4832,21 @@ impl CodeGenerator {
             Expr::BoolLit(b) => {
                 self.emit_indent(&format!("mov rax, {}", if *b { 1 } else { 0 }));
             }
+
+            // The nothing/null literal (stage 1e3, tag 6). The payload is 0;
+            // the tag is written by callers via `emit_time_expr_tag`
+            // (returns `Some(TAG_NOTHING)`) at every store/forward site, so
+            // here we only materialize the payload.
+            Expr::NothingLit => {
+                self.emit_indent("xor rax, rax  ; nothing literal, payload 0 (tag 6 set by caller)");
+            }
             
             Expr::StringLit(s) => {
                 // Check if this string literal is actually a variable reference
                 if self.emit_load_named_var_into_rax(s) {
                 } else {
                     let label = self.add_string(s);
-                    self.emit_indent(&format!("lea rax, [{}]", label));
+                    self.emit_indent(&format!("lea rax, [rel {}]", label));
                 }
             }
             
@@ -3806,8 +4858,58 @@ impl CodeGenerator {
             Expr::BinaryOp { left, op, right } => {
                 // Use has_float_operands for instruction selection (includes comparisons)
                 let has_floats = self.has_float_operands(left) || self.has_float_operands(right);
-                
-                if has_floats {
+
+                // `x is nothing` / `x is not nothing` in expression position
+                // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
+                // the float/stringy/integer paths or `0 is nothing` would
+                // compare payloads and be true. Mirrors the condition-position
+                // guard in `generate_condition`.
+                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && (self.is_nothing_expr(left) || self.is_nothing_expr(right))
+                {
+                    let equal = matches!(op, BinaryOperator::Equal);
+                    if self.is_nothing_expr(left) && self.is_nothing_expr(right) {
+                        self.emit_indent(&format!("mov rax, {}  ; nothing is nothing", if equal { 1 } else { 0 }));
+                    } else {
+                        let value = if self.is_nothing_expr(left) { right } else { left };
+                        match self.emit_time_expr_tag(value) {
+                            Some(t) => {
+                                let holds = if equal { t == TAG_NOTHING } else { t != TAG_NOTHING };
+                                self.emit_indent(&format!(
+                                    "mov rax, {}  ; is {}nothing folded (static tag {})",
+                                    if holds { 1 } else { 0 }, if equal { "" } else { "not " }, t
+                                ));
+                            }
+                            None => {
+                                self.generate_expr(value);
+                                match self.runtime_tag_source(value) {
+                                    Some(src) => {
+                                        if let RuntimeTagSource::ShadowSlot(off) = src {
+                                            self.emit_indent(&format!(
+                                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                                off
+                                            ));
+                                        }
+                                        self.emit_indent("xor rax, rax");
+                                        self.emit_indent(&format!(
+                                            "cmp r11, {}  ; is nothing?", TAG_NOTHING
+                                        ));
+                                        self.emit_indent(if equal { "sete al" } else { "setne al" });
+                                        self.emit_indent("movzx rax, al");
+                                    }
+                                    // No tag anywhere and r11 holds unrelated
+                                    // data (a call or syscall clobbers it), so
+                                    // the value cannot be nothing as far as the
+                                    // compiler can tell - answer statically.
+                                    None => self.emit_indent(&format!(
+                                        "mov rax, {}  ; is {}nothing: operand carries no tag",
+                                        u8::from(!equal), if equal { "" } else { "not " }
+                                    )),
+                                }
+                            }
+                        }
+                    }
+                } else if has_floats {
                     self.uses_floats = true;
                     // Float operations using coreasm macros
                     // Convert int operands to float if needed
@@ -3919,9 +5021,16 @@ impl CodeGenerator {
                 } else {
                     // Integer operations
                     self.uses_ints = true;
+                    let arith = self.is_arithmetic_operator(op);
                     self.generate_expr(right);
+                    if arith {
+                        self.emit_nothing_operand_check(right);
+                    }
                     self.emit_indent("push rax");
                     self.generate_expr(left);
+                    if arith {
+                        self.emit_nothing_operand_check(left);
+                    }
                     self.emit_indent("pop rbx");
 
                     match op {
@@ -4062,6 +5171,53 @@ impl CodeGenerator {
                 }
             }
 
+            // Runtime type predicate (stage 1c): `item is a text` etc.
+            // Folds to a constant when the operand's tag is statically
+            // provable (via emit_time_expr_tag, which also handles the
+            // BoolLit-is-boolean case correctly); otherwise reads the
+            // slot's runtime tag (r11 for a fresh element read, the
+            // variable's shadow tag slot for a Mixed identifier) and
+            // compares it against the target noun's tag.
+            Expr::TypeCheck { value, type_noun } => {
+                let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
+                let noun = type_noun_name(type_noun);
+                match self.predicate_static_tag(value) {
+                    Some(t) => {
+                        self.emit_indent(&format!(
+                            "mov rax, {}  ; is a {} folded (static tag {})",
+                            u8::from(t == target), noun, t
+                        ));
+                    }
+                    None => {
+                        self.generate_expr(value);
+                        match self.runtime_tag_source(value) {
+                            Some(src) => {
+                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                        off
+                                    ));
+                                }
+                                self.emit_indent("xor rax, rax");
+                                self.emit_indent(&format!(
+                                    "cmp r11, {}  ; is a {}?", target, noun
+                                ));
+                                self.emit_indent("sete al");
+                                self.emit_indent("movzx rax, al");
+                            }
+                            // No tag exists for this value and r11 holds
+                            // something unrelated. Such a value is stored with
+                            // the integer tag everywhere else, so answer
+                            // consistently instead of comparing garbage.
+                            None => self.emit_indent(&format!(
+                                "mov rax, {}  ; is a {}: no runtime tag, treated as number",
+                                u8::from(target == TAG_INTEGER), noun
+                            )),
+                        }
+                    }
+                }
+            }
+
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
                 self.generate_cstr_expr(path);
@@ -4155,7 +5311,66 @@ impl CodeGenerator {
                 
                 self.emit_indent("pop rax  ; list pointer in rax");
             }
-            
+
+            // Map literal: {"key": value, ...}. Build via _map_new then one
+            // _map_insert per pair. _map_insert may reallocate on growth, so
+            // each call's returned pointer is pushed and becomes the next
+            // call's map operand; the final pointer is left in rax. Keys are
+            // text (validated by the analyzer); values carry their runtime
+            // tag in rcx via the same forwarding pattern as ListAppend.
+            // (stage 1e2, tag 5)
+            Expr::MapLit { pairs } => {
+                self.uses_maps = true;
+                self.emit_indent(&format!(
+                    "; Map literal with {} pair(s)",
+                    pairs.len()
+                ));
+                let hint = std::cmp::max(pairs.len(), 8);
+                self.emit_indent(&format!("mov rdi, {}  ; capacity hint", hint));
+                self.emit_indent("call _map_new");
+                self.emit_indent("push rax  ; save map pointer");
+
+                for (key, value) in pairs {
+                    // key -> rsi (text pointer). A quoted key is always the
+                    // literal text (never a variable reference), so a key
+                    // spelling that collides with a variable name still maps
+                    // to the literal string.
+                    self.generate_text_key(key);
+                    self.emit_indent("push rax  ; save key pointer");
+                    // value -> rdx
+                    self.generate_expr(value);
+                    self.emit_indent("mov rdx, rax  ; value");
+                    // tag -> rcx (forward runtime tag for mixed sources)
+                    match self.emit_time_expr_tag(value) {
+                        Some(tag) => {
+                            self.emit_indent(&format!(
+                                "mov ecx, {}  ; value type tag",
+                                tag
+                            ));
+                        }
+                        None => {
+                            if let Some(slot) = self.mixed_element_tag_slot(value) {
+                                self.emit_indent(&format!(
+                                    "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
+                                    slot
+                                ));
+                            } else if self.expr_leaves_tag_in_r11(value) {
+                                self.emit_indent(
+                                    "mov ecx, r11d  ; forward runtime tag from r11",
+                                );
+                            } else {
+                                self.emit_indent("xor ecx, ecx  ; default integer tag");
+                            }
+                        }
+                    }
+                    self.emit_indent("pop rsi  ; key pointer");
+                    self.emit_indent("pop rdi  ; map pointer");
+                    self.emit_indent("call _map_insert");
+                    self.emit_indent("push rax  ; save (possibly reallocated) map pointer");
+                }
+                self.emit_indent("pop rax  ; final map pointer in rax");
+            }
+
             // ListAccess: 0-indexed access (internal use)
             // MEMORY SAFETY: Always bounds-check before access
             // List structure: [capacity:8][length:8][elem_size:8][data...]
@@ -4237,6 +5452,8 @@ impl CodeGenerator {
                                 self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
                             } else if var_type == VarType::List {
                                 self.emit_indent("mov rax, [rax + 8]  ; list length at offset 8");
+                            } else if var_type == VarType::Map {
+                                self.emit_indent("mov rax, [rax + 8]  ; map length (live entries)");
                             } else {
                                 // For files, call _file_size
                                 self.emit_indent("mov rdi, rax");
@@ -4249,12 +5466,31 @@ impl CodeGenerator {
                         ObjectProperty::Empty => {
                             if var_type == VarType::List {
                                 self.emit_indent("mov rax, [rax + 8]  ; get list length (offset 8)");
+                            } else if var_type == VarType::Map {
+                                self.emit_indent("mov rax, [rax + 8]  ; get map length (offset 8)");
                             } else {
                                 self.emit_indent("mov rax, [rax + 8]  ; get buffer size");
                             }
                             self.emit_indent("test rax, rax");
                             self.emit_indent("setz al");
                             self.emit_indent("movzx rax, al  ; 1 if empty, 0 otherwise");
+                        }
+                        // Map properties: keys/values yield a fresh list of
+                        // the map's keys (text pointers) or values (with their
+                        // runtime tags), in insertion order. Building a list
+                        // forces the list runtime on, so set both flags.
+                        // (stage 1e2, tag 5)
+                        ObjectProperty::Keys => {
+                            self.uses_maps = true;
+                            self.uses_lists = true;
+                            self.emit_indent("mov rdi, rax  ; map pointer");
+                            self.emit_indent("call _map_keys  ; -> rax = list of key texts");
+                        }
+                        ObjectProperty::Values => {
+                            self.uses_maps = true;
+                            self.uses_lists = true;
+                            self.emit_indent("mov rdi, rax  ; map pointer");
+                            self.emit_indent("call _map_values  ; -> rax = list of values (tagged)");
                         }
                         ObjectProperty::Full => {
                             if var_type == VarType::List {
@@ -5063,11 +6299,11 @@ impl CodeGenerator {
                                 let done_label = self.new_label("cast_bool_done");
                                 self.emit_indent("test rax, rax");
                                 self.emit_indent(&format!("jnz {}", true_branch));
-                                self.emit_indent(&format!("lea rsi, [{}]", false_label));
+                                self.emit_indent(&format!("lea rsi, [rel {}]", false_label));
                                 self.emit_indent(&format!("mov rdx, {}_len", false_label));
                                 self.emit_indent(&format!("jmp {}", done_label));
                                 self.emit(&format!("{}:", true_branch));
-                                self.emit_indent(&format!("lea rsi, [{}]", true_label));
+                                self.emit_indent(&format!("lea rsi, [rel {}]", true_label));
                                 self.emit_indent(&format!("mov rdx, {}_len", true_label));
                                 self.emit(&format!("{}:", done_label));
                                 self.emit_indent("call _buffer_append_bytes");
@@ -5204,7 +6440,26 @@ impl CodeGenerator {
                 
                 self.emit(&format!("{}:", done_label));
             }
-            
+
+            // Map key access: person's "name". Loads the map variable, looks
+            // up the key, and returns the value in rax with its runtime tag in
+            // r11 (mirroring ElementAccess). A miss sets _last_error and
+            // yields rax=0/r11=0. (stage 1e2, tag 5)
+            Expr::MapAccess { map, key } => {
+                self.uses_maps = true;
+                self.emit_indent("; Map key access (lookup)");
+                // map pointer -> rax, save on stack
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("push rax  ; save map pointer");
+                // key -> rsi (literal text; never a variable reference)
+                self.generate_text_key(key);
+                self.emit_indent("mov rsi, rax  ; key pointer");
+                self.emit_indent("pop rdi  ; map pointer");
+                self.emit_indent("call _map_lookup");
+                // rax = value, r11 = tag (set by _map_lookup); on miss
+                // _map_lookup sets _last_error=1, rax=0, r11=0.
+            }
+
             // Format string in expression context (e.g. a text initializer
             // or a function argument): materialize it into a fresh dynamic
             // buffer and yield a pointer to the data area - a NUL-terminated
@@ -5267,6 +6522,53 @@ impl CodeGenerator {
                 }
             }
 
+            // Runtime type predicate (stage 1c) — branch form: jump to
+            // false_label when the predicate is false. Folds statically; a
+            // statically-true predicate falls through (no jump), a
+            // statically-false one jumps straight to false_label.
+            Expr::TypeCheck { value, type_noun } => {
+                let target = type_to_tag(type_noun).expect("type predicate noun is scalar");
+                let noun = type_noun_name(type_noun);
+                match self.predicate_static_tag(value) {
+                    Some(t) => {
+                        if t != target {
+                            self.emit_indent(&format!(
+                                "jmp {}  ; is a {} statically false (static tag {})",
+                                false_label, noun, t
+                            ));
+                        }
+                        // t == target: statically true -> fall through to then.
+                    }
+                    None => {
+                        self.generate_expr(value);
+                        match self.runtime_tag_source(value) {
+                            Some(src) => {
+                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                        off
+                                    ));
+                                }
+                                self.emit_indent(&format!(
+                                    "cmp r11, {}  ; is a {}?", target, noun
+                                ));
+                                self.emit_indent(&format!(
+                                    "jne {}  ; not a {}", false_label, noun
+                                ));
+                            }
+                            // No tag to compare (see the value form above).
+                            None if target != TAG_INTEGER => {
+                                self.emit_indent(&format!(
+                                    "jmp {}  ; is a {}: no runtime tag, treated as number",
+                                    false_label, noun
+                                ));
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+
             Expr::FileAvailable { path } => {
                 self.uses_files = true;
                 self.generate_cstr_expr(path);
@@ -5288,6 +6590,74 @@ impl CodeGenerator {
                         self.emit_indent(&format!("jnz {}", true_label));
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
+                    }
+                    // `x is nothing` / `x is not nothing` (stage 1e3): tag-6
+                    // equality. Two values are equal-as-nothing iff BOTH have
+                    // runtime tag 6 (payloads are ignored). This guard MUST
+                    // precede the stringy and numeric equality arms: without
+                    // it, `0 is nothing` would fall into the numeric arm
+                    // (`cmp rax, rbx` on payloads) and wrongly be true, since
+                    // nothing's payload is 0. Modelled on the `TypeCheck`
+                    // runtime path (~line 4940): generate the non-nothing
+                    // side, load its tag into r11 (shadow slot for a Mixed
+                    // identifier, else r11 already holds it from an element
+                    // read / `_map_lookup` / `value` call), and compare to 6.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.is_nothing_expr(left) || self.is_nothing_expr(right) =>
+                    {
+                        let equal = matches!(op, BinaryOperator::Equal);
+                        if self.is_nothing_expr(left) && self.is_nothing_expr(right) {
+                            // `nothing is nothing`: tag 6 == tag 6.
+                            if !equal {
+                                self.emit_indent(&format!("jmp {}  ; nothing is not nothing -> false", false_label));
+                            }
+                        } else {
+                            let value = if self.is_nothing_expr(left) { right } else { left };
+                            match self.emit_time_expr_tag(value) {
+                                Some(t) => {
+                                    // Folded: equal iff the static tag is 6.
+                                    let holds = if equal { t == TAG_NOTHING } else { t != TAG_NOTHING };
+                                    if !holds {
+                                        self.emit_indent(&format!(
+                                            "jmp {}  ; is {}nothing folded (static tag {})",
+                                            false_label, if equal { "not " } else { "" }, t
+                                        ));
+                                    }
+                                }
+                                None => {
+                                    self.generate_expr(value);
+                                    match self.runtime_tag_source(value) {
+                                        Some(src) => {
+                                            if let RuntimeTagSource::ShadowSlot(off) = src {
+                                                self.emit_indent(&format!(
+                                                    "movzx r11, byte [rbp-{}]  ; load mixed element tag",
+                                                    off
+                                                ));
+                                            }
+                                            self.emit_indent("xor rax, rax");
+                                            self.emit_indent(&format!(
+                                                "cmp r11, {}  ; is nothing?", TAG_NOTHING
+                                            ));
+                                            self.emit_indent(
+                                                if equal { "sete al" } else { "setne al" },
+                                            );
+                                            self.emit_indent("movzx rax, al");
+                                            self.emit_indent("test rax, rax");
+                                            self.emit_indent(&format!("jz {}", false_label));
+                                        }
+                                        // No tag anywhere and r11 holds
+                                        // unrelated data, so the operand cannot
+                                        // be shown to be nothing - decide
+                                        // statically rather than read garbage.
+                                        None if equal => self.emit_indent(&format!(
+                                            "jmp {}  ; is nothing: operand carries no tag",
+                                            false_label
+                                        )),
+                                        None => {}
+                                    }
+                                }
+                            }
+                        }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual
                         if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
@@ -5377,6 +6747,18 @@ impl CodeGenerator {
             Expr::FloatLit(_) => Some(VarType::Float),
             Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
+            // A list literal is a list value (stage 1e1). This feeds the
+            // emit_time_expr_tag catch-all so a nested-list element's slot
+            // gets tag 4, and lets a bare `print <list-literal>` route to
+            // `_list_print`.
+            Expr::ListLit { .. } => Some(VarType::List),
+            // A map literal is a map value (stage 1e2). Lets a bare
+            // `print <map-literal>` route to `_map_print` and a map element's
+            // slot get tag 5.
+            Expr::MapLit { .. } => Some(VarType::Map),
+            // A type predicate is boolean-valued; codegen treats booleans as
+            // integers (0/1), matching BoolLit above (stage 1c).
+            Expr::TypeCheck { .. } => Some(VarType::Integer),
             Expr::ArgumentCount => Some(VarType::Integer),
             Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst
             | Expr::ArgumentSecond | Expr::ArgumentLast => Some(VarType::String),
@@ -5398,6 +6780,8 @@ impl CodeGenerator {
                             Some(VarType::Integer)
                         }
                     }
+                    // A map's keys/values yield a list (stage 1e2).
+                    ObjectProperty::Keys | ObjectProperty::Values => Some(VarType::List),
                     ObjectProperty::Size | ObjectProperty::Capacity => Some(VarType::Integer),
                     _ => Some(VarType::Integer),
                 }
@@ -5410,6 +6794,11 @@ impl CodeGenerator {
                     Some(VarType::Integer)
                 }
             }
+            // A map key read yields a runtime-tagged value (the value's type
+            // depends on the key); `_map_lookup` leaves its tag in r11, so the
+            // Mixed/value-ABI machinery handles it. Returning None marks it
+            // unknowable, matching ElementAccess on a mixed list. (stage 1e2)
+            Expr::MapAccess { .. } => None,
             Expr::BinaryOp { left, op, right } => match op {
                 BinaryOperator::Add | BinaryOperator::Subtract | 
                 BinaryOperator::Multiply | BinaryOperator::Divide |
@@ -5448,5 +6837,964 @@ impl CodeGenerator {
             Expr::Cast { target_type, .. } => *target_type == Type::Integer,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Codegen routing tests for whole-list printing (plan 000). These lock
+    //! the routing in at the compiler level - independent of the runtime -
+    //! so a regression in `generate_print` is caught without assembling.
+    use crate::analyzer::Analyzer;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use super::CodeGenerator;
+
+    /// Parse, analyze, and generate asm for a source snippet. Panics with a
+    /// clear message if parsing or analysis fails, so test failures point at
+    /// the snippet rather than at silently-empty output.
+    fn compile_to_asm(source: &str) -> String {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("unit_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new().with_source("unit_test.vox", source);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.generate(&program)
+    }
+
+    #[test]
+    fn whole_list_print_routes_to_list_print() {
+        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint xs.\n");
+        assert!(
+            asm.contains("call _list_print"),
+            "a whole-list print must route to _list_print, not PRINT_INT"
+        );
+        // Exactly one whole-list print in the source -> exactly one call.
+        assert_eq!(
+            asm.matches("call _list_print").count(),
+            1,
+            "expected exactly one `call _list_print`"
+        );
+    }
+
+    #[test]
+    fn list_format_interpolation_routes_to_list_print() {
+        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint \"xs: {xs}\".\n");
+        assert!(
+            asm.contains("call _list_print"),
+            "a {{list}} interpolation must route to _list_print"
+        );
+        assert_eq!(asm.matches("call _list_print").count(), 1);
+    }
+
+    #[test]
+    fn mixed_list_whole_print_routes_to_list_print() {
+        // A mixed list variable has variable_types == List (its element type
+        // is tracked separately in list_element_types), so the whole-list
+        // print must still take the _list_print branch - not the per-element
+        // Mixed dispatch, which would print a single pointer.
+        let asm = compile_to_asm("a list called \"m\" is [1, \"two\", 3.5].\nprint m.\n");
+        assert!(asm.contains("call _list_print"));
+        assert_eq!(asm.matches("call _list_print").count(), 1);
+    }
+
+    #[test]
+    fn non_list_print_does_not_route_to_list_print() {
+        let asm = compile_to_asm("a number called \"n\" is 5.\nprint n.\n");
+        assert!(
+            !asm.contains("call _list_print"),
+            "a non-list print must not route to _list_print"
+        );
+    }
+
+    #[test]
+    fn multiple_list_prints_each_route_to_list_print() {
+        // Two whole-list prints (one direct, one interpolated) -> two calls.
+        let asm = compile_to_asm(
+            "a list called \"xs\" is [1, 2, 3].\nprint xs.\nprint \"xs: {xs}\".\n",
+        );
+        assert_eq!(asm.matches("call _list_print").count(), 2);
+    }
+
+    // ---- Stage 1b: inference soundness flip (plan 010) ----
+    //
+    // These lock in the three-state pre-scan: a list whose every write is
+    // provable keeps the untagged fast path; an unprovable write widens to
+    // Mixed so reads dispatch on runtime tags.
+
+    #[test]
+    fn homogeneous_int_list_keeps_fast_path() {
+        // Acceptance criterion 1: a list built only from integer literals
+        // emits no tag writes and no runtime-tag dispatch.
+        let asm =
+            compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint element 1 of xs.\n");
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous int list must not emit mixed-dispatch labels"
+        );
+        assert!(
+            !asm.contains("movzx r11, byte"),
+            "a homogeneous int list read must not load a runtime tag into r11"
+        );
+    }
+
+    #[test]
+    fn mixed_list_emits_dispatch() {
+        // Contrast: a genuinely mixed list DOES dispatch on tags.
+        let asm =
+            compile_to_asm("a list called \"m\" is [1, \"two\"].\nprint element 1 of m.\n");
+        assert!(
+            asm.contains("mixp_"),
+            "a mixed list read must emit mixed-dispatch labels"
+        );
+    }
+
+    #[test]
+    fn declared_text_function_append_tagged_string() {
+        // Acceptance criterion 2: a function result of declared text type
+        // appended alongside an integer is tagged STRING (not the old
+        // TAG_INTEGER guess), and the list widens to Mixed.
+        let asm = compile_to_asm(
+            "To \"greet\" with a number called \"x\".\n  Return a text, \"hi\".\n\
+             a list called \"items\" is [].\n\
+             append 1 to items.\n\
+             append \"greet\" of 0 to items.\n\
+             print element 1 of items.\n\
+             print element 2 of items.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "the text-returning function result must be written with TAG_STRING (1)"
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "the list widened to Mixed (int + text function result)"
+        );
+    }
+
+    #[test]
+    fn read_of_widened_list_does_not_prove_a_type() {
+        // `list_seen_tags` records the FIRST tag proven for a list and is
+        // never retracted, so a list that starts homogeneous and is later
+        // appended a different type still has its original tag recorded.
+        // Reading an element out of it must consult `mixed_lists` and yield
+        // Unknowable - otherwise the destination stays on the fast path while
+        // holding a value of the wrong type.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, 2].\n\
+             append \"hi\" to m.\n\
+             a list called \"out\" is [0, 0].\n\
+             set element 1 of out to element 3 of m.\n\
+             print element 1 of out.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "reading an element of a widened list must widen the destination"
+        );
+    }
+
+    #[test]
+    fn declared_type_does_not_forge_a_string_tag() {
+        // A declared type is the author's intent, not a proof about the bits
+        // that land in the slot. Tagging an unprovable value TAG_STRING makes
+        // the tag-dispatching printer dereference whatever integer is there.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [\"a\", \"b\"].\n\
+             append 42 to m.\n\
+             a text called \"s\" is element 3 of m.\n\
+             a list called \"out\" is [].\n\
+             append s to out.\n",
+        );
+        assert!(
+            !asm.contains("mov edx, 1  ; element type tag"),
+            "an unprovable value must not be written with TAG_STRING"
+        );
+    }
+
+    #[test]
+    fn declared_type_still_tags_a_provable_string() {
+        // Contrast with the above: when the initializer IS provable, the
+        // string tag must still be written, or homogeneous text lists would
+        // print pointers.
+        let asm = compile_to_asm(
+            "a text called \"s\" is \"hello\".\n\
+             a list called \"out\" is [].\n\
+             append s to out.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "a provably-text value must still be written with TAG_STRING"
+        );
+    }
+
+    #[test]
+    fn undeclared_return_function_append_widens() {
+        // Acceptance criterion 3: a function with an undeclared return type
+        // (`Return x add 1.` — no `a number,` prefix) is genuinely opaque to
+        // the compiler, so appending its result widens the list to Mixed and
+        // reads dispatch on tags (the flip from 1a's optimistic default).
+        let asm = compile_to_asm(
+            "To \"five\" with a number called \"x\".\n  Return x add 1.\n\
+             a list called \"items\" is [].\n\
+             append \"hello\" to items.\n\
+             append \"five\" of 4 to items.\n\
+             print element 1 of items.\n\
+             print element 2 of items.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "an unknowable (undeclared-return) append must widen the list to Mixed"
+        );
+    }
+
+    // ---- Stage 1c: runtime type predicates (plan 020) ----
+    //
+    // Lock in the two codegen paths: a mixed operand emits a runtime tag
+    // compare against r11; a statically-typed operand folds to a constant
+    // with no runtime compare.
+
+    #[test]
+    fn type_predicate_mixed_emits_runtime_compare() {
+        // A for-each over a mixed list binds a Mixed loop variable, whose
+        // tag lives in its shadow slot. `item is a text` must load that tag
+        // and compare it against TAG_STRING (1) at runtime.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, \"x\"].\n\
+             For each item in m, if item is a text, print item.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 1"),
+            "a mixed-element type predicate must compare the runtime tag against TAG_STRING"
+        );
+        assert!(
+            asm.contains("movzx r11, byte [rbp-"),
+            "the for-each variable's tag must be loaded from its shadow slot"
+        );
+    }
+
+    #[test]
+    fn unprovable_guard_never_suppresses_a_list_tag() {
+        // The unprovable-scalar guard must not reach list-typed names: a list
+        // variable's slot always holds a list pointer, so TAG_LIST is always
+        // truthful. Suppressing it would write the integer tag and print the
+        // nested list as a pointer instead of its contents.
+        let asm = compile_to_asm(
+            "a list called \"one\" is [1, 2].\n\
+             a list called \"two\" is [3].\n\
+             set two to one.\n\
+             a list called \"outer\" is [].\n\
+             append two to outer.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 4  ; element type tag"),
+            "appending a list must write TAG_LIST even when the pre-scan could \
+             not prove the alias's contents"
+        );
+    }
+
+    #[test]
+    fn type_predicate_never_compares_an_unset_r11() {
+        // r11 carries a runtime tag only straight out of a mixed-list read.
+        // An opaque function result has no tag anywhere, and the `call` that
+        // produced it has already clobbered r11 - comparing against it would
+        // read garbage. The predicate must answer statically instead.
+        let asm = compile_to_asm(
+            "To \"opaque\" with a number called \"n\".\n  Return n add 1.\n\
+             if \"opaque\" of 4 is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11,"),
+            "a tagless operand must not be compared against r11"
+        );
+    }
+
+    #[test]
+    fn type_predicate_on_unprovable_scalar_uses_declared_type() {
+        // `unprovable_scalars` stops a declared type from being written as a
+        // slot tag (it would forge a pointer), but a predicate only reads a
+        // tag. It must still fold on the declared type rather than fall
+        // through to a runtime compare against an unset r11.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [\"a\", \"b\"].\n\
+             append 42 to m.\n\
+             a text called \"s\" is element 3 of m.\n\
+             print \"sep\".\n\
+             if s is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11,"),
+            "an unprovable scalar predicate must fold, not compare a stale r11"
+        );
+    }
+
+    #[test]
+    fn type_predicate_static_folds() {
+        // A declared `a number called "x"` is statically integer, so
+        // `x is a number` folds to true (no runtime compare) and `x is a
+        // text` folds to false (a static-false jump, no cmp r11).
+        let asm_true = compile_to_asm(
+            "a number called \"x\" is 5.\nif x is a number, print \"n\".\n",
+        );
+        assert!(
+            !asm_true.contains("cmp r11,"),
+            "a statically-true predicate must fold (no runtime tag compare)"
+        );
+
+        let asm_false = compile_to_asm(
+            "a number called \"x\" is 5.\nif x is a text, print \"t\".\n",
+        );
+        assert!(
+            !asm_false.contains("cmp r11,"),
+            "a statically-false predicate must fold (no runtime tag compare)"
+        );
+        assert!(
+            asm_false.contains("statically false"),
+            "a statically-false predicate must emit a fold-time jump to the false label"
+        );
+    }
+
+    #[test]
+    fn type_predicate_result_appends_tagged_boolean() {
+        // Appending a predicate result (`append item is a number to flags`)
+        // must tag the slot TAG_BOOLEAN (3) — not TAG_INTEGER — so the list
+        // is a homogeneous boolean list (no mixed widening) and a later
+        // `is a boolean` recognises its elements. Covers the TypeCheck arms
+        // of prescan_expr_tag / emit_time_expr_tag and the append
+        // element-type classifier reached only via `append <value> is a ...`.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, 2, 3].\n\
+             a list called \"flags\" is [].\n\
+             For each item in m, append item is a number to flags.\n\
+             For each f in flags, if f is a boolean, print \"B\".\n",
+        );
+        // The append stores tag 3 (TAG_BOOLEAN), not 0 (TAG_INTEGER).
+        assert!(
+            asm.contains("mov edx, 3"),
+            "an appended predicate result must be tagged TAG_BOOLEAN (edx=3)"
+        );
+        // The list of predicate results stays homogeneous (no mixed widening
+        // from the predicate appends), so it must not use the mixed print
+        // dispatch.
+        assert!(
+            !asm.contains("mixp_"),
+            "a list of predicate results must not widen to mixed"
+        );
+        // `f is a boolean` on the boolean-typed for-each variable folds true
+        // (no runtime tag compare for f).
+    }
+
+    // ---- Stage 1d: dynamic `value` type across function boundaries (plan 030)
+    //
+    // A `value` parameter/return carries its runtime type tag through the
+    // calling convention. These lock the ABI in at the asm level, independent
+    // of the runtime: inbound (2 words per value param), outbound (tag in r11,
+    // no spill), the 7-word straddle (reg/stack pad), and the append tag
+    // forwarding for a value-returning call.
+
+    #[test]
+    fn value_param_carries_tag_inbound() {
+        // Acceptance 1: a value parameter gets a shadow tag slot in the callee,
+        // and the caller pushes a 2nd (tag) word for it. Inside the callee, a
+        // predicate classifies by comparing the loaded tag to TAG_INTEGER (0).
+        let asm = compile_to_asm(
+            "To \"describe\" with a value called \"v\".\n\
+             If v is a number, print \"N\". Otherwise print \"T\".\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             For each item in m, \"describe\" of item.\n",
+        );
+        // Caller pushes the value param's tag word (payload pushed after, on top).
+        assert!(
+            asm.contains("value param tag word"),
+            "a value param must push a 2nd (tag) word at the call site"
+        );
+        // Callee stores the inbound tag byte to the value's shadow slot.
+        assert!(
+            asm.contains("param value tag"),
+            "the callee must store the inbound value tag byte to a shadow slot"
+        );
+        // The predicate inside the callee compares the loaded tag to TAG_INTEGER.
+        assert!(
+            asm.contains("cmp r11, 0"),
+            "the `v is a number` predicate must compare the loaded tag to 0"
+        );
+    }
+
+    #[test]
+    fn value_return_leaves_tag_in_r11() {
+        // Acceptance 2: a value-returning function loads its result's tag into
+        // r11 on the return path, and — because FUNC_EPILOGUE (`leave; ret`)
+        // and `_dec_call_depth` clobber neither r11 nor the saved words — no
+        // r11 spill is needed across the return.
+        let asm = compile_to_asm(
+            "To \"id\" with a value called \"v\". Return a value, v.\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             a list called \"out\" is [].\n\
+             For each item in m, append \"id\" of item to out.\n",
+        );
+        // The return path loads the tag from the shadow slot, then the existing
+        // `push rax / call _dec_call_depth / pop rax` epilogue. (This sequence
+        // is distinct from the call-site tag load, which is followed by
+        // `push r11  ; value param tag word`.)
+        assert!(
+            asm.contains("value tag (shadow slot)\n    push rax  ; save return value"),
+            "the return path must load the value tag into r11 before the epilogue"
+        );
+        // No r11 spill: r11 is never pushed/popped around the return. r11 is not
+        // a param register, so it is never saved in the prologue either.
+        assert!(
+            !asm.contains("pop r11"),
+            "the value return tag rides in r11 across leave;ret with no spill"
+        );
+    }
+
+    #[test]
+    fn value_param_two_words_in_call() {
+        // Acceptance 3: a value param occupies 2 argument words (payload, tag).
+        // With 5 scalar params + 1 value param = 7 words, 6 fill the registers
+        // and the 7th spills to the stack; an odd stack-word count needs the
+        // alignment pad (`sub rsp, 8`), cleaned up by `add rsp, 16` (1 word + pad).
+        let asm = compile_to_asm(
+            "To \"f\" with a number called \"a\" and a number called \"b\" and \
+             a number called \"c\" and a number called \"d\" and a number called \
+             \"e\" and a value called \"v\".\n\
+             If v is a text, print \"T\". Otherwise print \"N\".\n\
+             \"f\" of 1 and 2 and 3 and 4 and 5 and \"hi\".\n",
+        );
+        // The value arg pushes a tag word then its payload (2 words for 1 param).
+        assert!(
+            asm.contains("value param tag word"),
+            "a value argument must push a tag word in addition to its payload"
+        );
+        // 7 words total: 6 register words (popped into rdi..r9) + 1 stack word.
+        assert!(
+            asm.contains("pop r9") && asm.contains("pop rdi"),
+            "the 6 register words must be popped into rdi..r9"
+        );
+        // Odd stack-word count (1) needs an alignment pad before the call.
+        assert!(
+            asm.contains("align stack before call"),
+            "a 7-word call (1 stack word) must pad the stack before the call"
+        );
+        // Cleanup releases the 1 stack word + the 8-byte pad = 16 bytes.
+        assert!(
+            asm.contains("add rsp, 16"),
+            "cleanup must release the stack word plus the alignment pad"
+        );
+    }
+
+    #[test]
+    fn append_fresh_mixed_element_keeps_tag() {
+        // Plan 3f regression: appending a freshly-produced mixed value (here a
+        // value-returning function call, whose tag is left in r11 by the callee)
+        // must forward that tag into the list slot, not zero it. Previously the
+        // append None-branch did `xor edx, edx`, dropping the tag.
+        let asm = compile_to_asm(
+            "To \"id\" with a value called \"v\". Return a value, v.\n\
+             a list called \"m\" is [1, \"two\"].\n\
+             a list called \"out\" is [].\n\
+             For each item in m, append \"id\" of item to out.\n",
+        );
+        // The append forwards the runtime tag from r11 into the slot.
+        assert!(
+            asm.contains("mov edx, r11d"),
+            "appending a value-returning call must forward its tag from r11"
+        );
+        // The append must not zero the tag for a value-returning source.
+        assert!(
+            !asm.contains("xor edx, edx"),
+            "the value-append must not zero the tag (the 3f latent-bug fix)"
+        );
+    }
+
+    /// A nested list literal element's slot carries tag 4 (LIST), and a read
+    /// of that element from the mixed parent dispatches on the runtime tag
+    /// with a tag-4 branch that recurses into `_list_print` (plan 040 §1/§5).
+    #[test]
+    fn nested_list_literal_tags_slot_4() {
+        let asm = compile_to_asm(
+            "a list called \"nested\" is [1, [2, 3], \"four\"].\n\
+             print element 2 of nested.\n",
+        );
+        // The nested element is index 1 -> "slot 2"; its slot tag is 4.
+        assert!(
+            asm.contains("4  ; slot 2 type tag"),
+            "a nested list literal element's slot must carry tag 4 (LIST)"
+        );
+        // Reading element 2 of a mixed list uses the runtime-tag dispatch.
+        assert!(
+            asm.contains("mixp_"),
+            "a mixed-list element read must use the mixed print dispatch"
+        );
+        assert!(
+            asm.contains("cmp r11, 4"),
+            "the mixed dispatch must branch on tag 4 (LIST)"
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "the tag-4 branch must recurse into _list_print"
+        );
+    }
+
+    /// A homogeneous list-of-lists literal `[[1,2],[3,4]]` does NOT widen to
+    /// mixed (all elements are tag 4), and a for-each loop var over it is
+    /// typed `List` and prints via `_list_print`, not `PRINT_INT` (plan 040 §3).
+    #[test]
+    fn homogeneous_list_of_lists_not_mixed() {
+        let asm = compile_to_asm(
+            "a list called \"lol\" is [[1, 2], [3, 4]].\n\
+             for each row in lol, print row.\n",
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous list-of-lists must not widen to mixed"
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "a list-typed for-each loop var must print via _list_print"
+        );
+    }
+
+    /// `is a list` compiles to a runtime `cmp r11, 4` on a mixed element,
+    /// and folds statically on a statically-typed list variable (plan 040
+    /// §1/§6). In condition context a statically-true predicate falls through
+    /// and a statically-false one jumps to the else branch with a comment
+    /// naming the folded tag, so the false case is the observable evidence.
+    #[test]
+    fn is_a_list_predicate_compiles_to_cmp_4() {
+        // Runtime path: a mixed-list element read leaves its tag in r11.
+        let asm = compile_to_asm(
+            "a list called \"m\" is [1, [2, 3], \"x\"].\n\
+             if element 2 of m is a list, print \"L\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 4"),
+            "`is a list` on a mixed element must compare the runtime tag to 4"
+        );
+
+        // Static fold: a declared list variable provably carries tag 4, so
+        // `is a number` (tag 0) is statically false and jumps to the else
+        // branch with a comment naming the folded static tag.
+        let asm = compile_to_asm(
+            "a list called \"xs\" is [1, 2, 3].\n\
+             if xs is a number\n\
+               print \"yes\"\n\
+             otherwise\n\
+               print \"no\".\n",
+        );
+        assert!(
+            asm.contains("is a number statically false (static tag 4)"),
+            "a static list (tag 4) must fold `is a number` to false"
+        );
+        assert!(
+            !asm.contains("cmp r11, 4"),
+            "a static list must not emit a runtime tag compare"
+        );
+    }
+
+    /// Appending a list-typed value forwards tag 4 into the slot, not the
+    /// integer default (plan 040 §1).
+    #[test]
+    fn append_list_value_forwards_tag_4() {
+        let asm = compile_to_asm(
+            "a list called \"inner\" is [9, 8].\n\
+             a list called \"outer\" is [].\n\
+             append inner to outer.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 4  ; element type tag"),
+            "appending a list value must forward tag 4 (LIST)"
+        );
+        assert!(
+            !asm.contains("xor edx, edx"),
+            "appending a list value must not fall back to the integer tag"
+        );
+    }
+
+    /// The recursive `_list_print` runtime has a depth guard (limit 64) that
+    /// sets `_last_error` instead of overflowing the stack on a cycle, and a
+    /// tag-4 branch that recurses (plan 040 §7). This locks the runtime asm
+    /// in at the source level (independent of assembling/linking).
+    #[test]
+    fn list_print_has_depth_guard() {
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        assert!(
+            list_asm.contains("%define LIST_TAG_LIST           4"),
+            "_list_print must define the LIST tag constant"
+        );
+        assert!(
+            list_asm.contains("cmp qword [rel _print_depth], 64"),
+            "_list_print must cap recursion at depth 64 (shared _print_depth, stage 1e2)"
+        );
+        assert!(
+            list_asm.contains("mov qword [rel _last_error], 1"),
+            "the depth-guard path must set the error flag"
+        );
+        assert!(
+            list_asm.contains("je .lp_list") && list_asm.contains("call _list_print"),
+            "_list_print must recurse on the LIST tag"
+        );
+    }
+
+    // ---- Stage 1e2: maps (tag 5) ----
+    // These lock the map codegen routing in at the compiler level so a
+    // regression is caught without assembling/linking (plan 050).
+
+    #[test]
+    fn map_literal_emits_map_insert() {
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\n");
+        assert!(
+            asm.contains("call _map_new"),
+            "a map literal must allocate via _map_new"
+        );
+        // One insert per pair.
+        assert_eq!(
+            asm.matches("call _map_insert").count(),
+            2,
+            "expected one _map_insert per pair"
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/map.asm\""),
+            "map usage must include map.asm"
+        );
+    }
+
+    #[test]
+    fn map_literal_empty_emits_map_new() {
+        let asm = compile_to_asm("a map called \"m\" is {}.\nprint m.\n");
+        assert!(
+            asm.contains("call _map_new"),
+            "an empty map literal must still allocate via _map_new"
+        );
+        // No pairs -> no inserts.
+        assert_eq!(
+            asm.matches("call _map_insert").count(),
+            0,
+            "an empty map literal must not insert anything"
+        );
+        assert!(
+            asm.contains("call _map_print"),
+            "printing a map must route to _map_print"
+        );
+    }
+
+    #[test]
+    fn is_a_map_compiles_to_cmp_5() {
+        // Runtime predicate on a value holding a map: the element's tag
+        // travels in r11, so `is a map` compiles to `cmp r11, 5`. Mirrors the
+        // `is a list` test (170) - iterate a mixed list so each item is a
+        // runtime-tagged value.
+        let asm = compile_to_asm(
+            "for each item in [{\"a\": 1}, 2]\n  if item is a map, print \"M\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 5"),
+            "`is a map` on a runtime-tagged value must compare against tag 5"
+        );
+    }
+
+    #[test]
+    fn is_a_map_folds_on_static_map() {
+        // A statically-typed map variable is known to be a map at compile
+        // time, so `is a map` folds to constant true and emits NO runtime
+        // `cmp r11, 5` - the taken-branch print runs unconditionally.
+        let asm = compile_to_asm(
+            "a map called \"m\" is {\"a\": 1}.\nif m is a map, print \"yes\".\n",
+        );
+        assert!(
+            !asm.contains("cmp r11, 5"),
+            "`is a map` on a static map variable must fold (no runtime cmp)"
+        );
+        assert!(
+            asm.contains("PRINT_STR") || asm.contains("PRINT_CSTR"),
+            "the folded-true branch's print must still be emitted"
+        );
+    }
+
+    #[test]
+    fn map_access_emits_map_lookup_and_sets_r11() {
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's \"a\".\n");
+        assert!(
+            asm.contains("call _map_lookup"),
+            "map key access must call _map_lookup"
+        );
+        // The looked-up value's tag travels in r11 and is dispatched on.
+        assert!(
+            asm.contains("cmp r11, 1"),
+            "map access print must dispatch on the r11 tag"
+        );
+    }
+
+    #[test]
+    fn map_missing_key_emits_last_error_path() {
+        // _map_lookup sets _last_error on a miss; the codegen doesn't need a
+        // special path (the runtime owns the flag), but the lookup must be
+        // emitted and the error flag must be observable.
+        let asm = compile_to_asm(
+            "a map called \"m\" is {\"a\": 1}.\nprint m's \"nope\".\non error print \"miss\".\n",
+        );
+        assert!(asm.contains("call _map_lookup"));
+        // The on-error handler reads _last_error.
+        assert!(
+            asm.contains("_last_error"),
+            "the on-error handler must reference _last_error"
+        );
+    }
+
+    #[test]
+    fn map_print_dispatch_tag_5() {
+        // Mixed dispatch (used when a map is read into a value slot and
+        // printed) must branch on tag 5 to _map_print. A `value` parameter
+        // carries the map with its tag in a shadow slot, and `print v`
+        // dispatches on it.
+        let asm = compile_to_asm(
+            "To \"show\" with a value called \"v\".\n  print v.\n\na map called \"m\" is {\"a\": 1}.\n\"show\" of m.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 5") && asm.contains("call _map_print"),
+            "mixed print dispatch must branch on tag 5 to _map_print"
+        );
+    }
+
+    #[test]
+    fn map_asm_has_fnv_constants() {
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            map_asm.contains("0xcbf29ce484222325"),
+            "map.asm must define the FNV-1a 64-bit offset basis"
+        );
+        assert!(
+            map_asm.contains("0x100000001b3"),
+            "map.asm must define the FNV-1a 64-bit prime"
+        );
+    }
+
+    #[test]
+    fn map_print_depth_guard_shared() {
+        // The recursion-depth counter was renamed from _list_print_depth to a
+        // shared _print_depth so a mixed map/list tree is cycle-safe under
+        // one 64-deep budget. Both printers must reference the shared name.
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            !list_asm.contains("_list_print_depth"),
+            "list.asm must no longer reference the old _list_print_depth"
+        );
+        assert!(
+            list_asm.contains("_print_depth"),
+            "list.asm must reference the shared _print_depth"
+        );
+        assert!(
+            map_asm.contains("_print_depth"),
+            "map.asm must reference the shared _print_depth"
+        );
+    }
+
+    #[test]
+    fn homogeneous_map_values_dont_widen() {
+        // A whole-map print routes straight to _map_print (which reads each
+        // entry's stored tag); it must NOT emit the mixp_ dispatch for the
+        // whole-map print itself.
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\nprint m.\n");
+        assert!(
+            asm.contains("call _map_print"),
+            "whole-map print must route to _map_print"
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a homogeneous whole-map print must not emit mixp_ dispatch"
+        );
+    }
+
+    #[test]
+    fn keys_values_sets_uses_lists() {
+        // `map's keys`/`values` build a fresh list, so both list.asm and
+        // map.asm must be included.
+        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's keys.\n");
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/map.asm\""),
+            "keys/values must include map.asm"
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/list.asm\""),
+            "keys/values must also include list.asm (they build a list)"
+        );
+        assert!(
+            asm.contains("call _map_keys"),
+            "map's keys must call _map_keys"
+        );
+    }
+
+    // ---- Stage 1e3: nothing/null (tag 6) ----
+    // These lock the null feature in at the compiler level, independent of
+    // the runtime: the literal threads tag 6 through the tag oracles, the
+    // `is nothing` equality routes to a tag-6 compare (NOT the numeric
+    // payload compare, so `0 is nothing` is false), the mixed print
+    // dispatch has a nothing arm, and the recursive printers carry a
+    // nothing label. The `nothing`/`null`/`nil` spellings are reserved.
+
+    #[test]
+    fn nothing_lit_emits_tag_6() {
+        // A nothing literal inside a mixed list literal threads tag 6 via
+        // prescan_expr_tag / emit_time_expr_tag: the element payload is 0
+        // (`xor rax, rax`) and its slot tag byte is written as 6.
+        let asm = compile_to_asm("a list called \"xs\" is [1, nothing, 2].\n");
+        assert!(
+            asm.contains("xor rax, rax  ; nothing literal, payload 0"),
+            "a nothing literal must emit payload 0 with the nothing-literal comment"
+        );
+        assert!(
+            asm.contains(", 6  ; slot 2 type tag"),
+            "the nothing list element's slot must carry tag 6 (TAG_NOTHING)"
+        );
+    }
+
+    #[test]
+    fn is_nothing_emits_tag_compare() {
+        // `is nothing` is the equality route. On a runtime-tagged `value`
+        // parameter it must compare the loaded tag against 6 — NOT fall
+        // through to the numeric `cmp rax, rbx` payload compare (which
+        // would make `0 is nothing` true, since a nothing payload is 0).
+        let asm = compile_to_asm(
+            "To \"check\" with a value called \"v\".\n\
+             If v is nothing, print \"y\".\n\
+             \"check\" of nothing.\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 6"),
+            "`is nothing` on a value must compare the runtime tag against 6"
+        );
+        assert!(
+            !asm.contains("cmp rax, rbx"),
+            "`is nothing` must NOT use the numeric payload compare (0 is nothing must be false)"
+        );
+        // The static fold: `0 is nothing` is statically false (tag 0) and
+        // jumps to the else branch with a comment naming the folded tag.
+        let asm_fold = compile_to_asm("a number called \"n\" is 0.\nif n is nothing, print \"bug\".\n");
+        assert!(
+            asm_fold.contains("is not nothing folded (static tag 0)"),
+            "a static integer (tag 0) must fold `is nothing` to false"
+        );
+        assert!(
+            !asm_fold.contains("cmp r11, 6"),
+            "a statically-folded `is nothing` must not emit a runtime tag compare"
+        );
+    }
+
+    #[test]
+    fn print_dispatch_has_nothing_arm() {
+        // Printing a `value` that holds nothing dispatches on the runtime
+        // tag and must branch on tag 6 to a nothing arm that prints the
+        // `nothing` rodata string (mirrors the map/list dispatch arms).
+        let asm = compile_to_asm(
+            "To \"show\" with a value called \"v\".\n  print v.\n\n\
+             a map called \"m\" is {\"k\": nothing}.\n\"show\" of m's \"k\".\n",
+        );
+        assert!(
+            asm.contains("cmp r11, 6") && asm.contains("mixp_nothing"),
+            "mixed print dispatch must branch on tag 6 to a nothing arm"
+        );
+        // A bare `print nothing.` routes through the explicit NothingLit
+        // print arm (a `nothing` rodata string + PRINT_STR), not PRINT_INT.
+        let asm_lit = compile_to_asm("print nothing.\n");
+        assert!(
+            asm_lit.contains("db 'nothing'") || asm_lit.contains("db \"nothing\""),
+            "`print nothing.` must materialize a `nothing` rodata string"
+        );
+        assert!(
+            !asm_lit.contains("PRINT_INT"),
+            "`print nothing.` must not fall through to PRINT_INT"
+        );
+    }
+
+    #[test]
+    fn list_and_map_print_have_nothing_arms() {
+        // The recursive printers must carry a nothing dispatch arm + label
+        // so a nothing slot inside a list or map prints as `nothing` (and
+        // closes the pre-existing LIST_TAG_MAP gap in list.asm).
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        assert!(
+            list_asm.contains("%define LIST_TAG_NOTHING        6"),
+            "list.asm must define LIST_TAG_NOTHING (6)"
+        );
+        assert!(
+            list_asm.contains("cmp r8, LIST_TAG_NOTHING") && list_asm.contains(".lp_nothing:"),
+            "_list_print must dispatch the nothing tag to a .lp_nothing label"
+        );
+        assert!(
+            list_asm.contains("%define LIST_TAG_MAP            5")
+                && list_asm.contains(".lp_map:"),
+            "_list_print must also carry the map (tag 5) arm closed in 1e3"
+        );
+
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        assert!(
+            map_asm.contains("%define MAP_TAG_NOTHING        6"),
+            "map.asm must define MAP_TAG_NOTHING (6)"
+        );
+        assert!(
+            map_asm.contains("cmp r8, MAP_TAG_NOTHING") && map_asm.contains(".mp_nothing:"),
+            "_map_print must dispatch the nothing tag to a .mp_nothing label"
+        );
+    }
+
+    #[test]
+    fn nothing_keyword_reserved() {
+        // The three null spellings lex to Token::Nothing and reserve via
+        // as_keyword / string_is_keyword; `empty` stays its own keyword
+        // (the size-emptiness property), so the split is clean.
+        use crate::lexer::{Lexer, Token};
+        let toks: Vec<Token> = Lexer::new("nothing null nil empty")
+            .tokenize()
+            .into_iter()
+            .map(|ti| ti.token)
+            .filter(|t| !matches!(t, Token::EOF))
+            .collect();
+        assert_eq!(toks.len(), 4, "the four words must each produce one token");
+        assert!(toks.iter().all(|t| matches!(t, Token::Nothing | Token::Empty)),
+            "nothing/null/nil -> Token::Nothing; empty -> Token::Empty");
+        assert_eq!(toks[0], Token::Nothing);
+        assert_eq!(toks[1], Token::Nothing);
+        assert_eq!(toks[2], Token::Nothing);
+        assert_eq!(toks[3], Token::Empty);
+        // as_keyword reserves the word (drives check_not_keyword).
+        assert_eq!(Token::Nothing.as_keyword(), Some("nothing"));
+        assert_eq!(Token::Empty.as_keyword(), Some("empty"));
+        // string_is_keyword catches the quoted-name form too.
+        assert_eq!(Token::string_is_keyword("nothing"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("null"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("nil"), Some("nothing"));
+        assert_eq!(Token::string_is_keyword("empty"), Some("empty"));
+
+        // Using `nothing` as a variable name is rejected at parse time
+        // (both the bare and quoted forms), proving the word is reserved.
+        use crate::parser::Parser;
+        fn parse_snippet(src: &str) -> Result<(), String> {
+            let toks = Lexer::new(src).tokenize();
+            match Parser::new(toks).parse() {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        let bare = parse_snippet("a number called nothing is 1.");
+        assert!(bare.is_err(), "bare `nothing` as a name must be rejected");
+        assert!(
+            bare.unwrap_err().to_lowercase().contains("reserved"),
+            "the error must call `nothing` a reserved keyword"
+        );
+        let quoted = parse_snippet("a number called \"nothing\" is 1.");
+        assert!(quoted.is_err(), "quoted \"nothing\" as a name must be rejected");
+        assert!(
+            quoted.unwrap_err().to_lowercase().contains("reserved"),
+            "the quoted-form error must call `nothing` a reserved keyword"
+        );
     }
 }

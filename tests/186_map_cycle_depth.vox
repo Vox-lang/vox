@@ -1,0 +1,10 @@
+(Stage 1e2 - cycle/depth safety. Inserting a map into itself makes a
+ cycle; printing it recurses to the shared 64-deep _print_depth budget,
+ prints a "..." truncation marker, sets the error flag, and unwinds
+ safely (no stack overflow). The `on error` handler observes the flag.
+ Acceptance: 64 nested levels, then ..., then truncated.)
+
+a map called "m" is {"a": 1}.
+set m's "self" to m.
+print m.
+on error print "truncated".

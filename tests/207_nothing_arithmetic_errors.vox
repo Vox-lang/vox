@@ -1,0 +1,28 @@
+(Stage 1e3 semantics — `nothing` is not 0. A literal `nothing` operand is a
+ compile error (tests/compile_fail/054); an operand that only turns out to
+ hold nothing at runtime cannot be caught statically, so it sets the error
+ flag instead. Both routes exist because the payload of nothing IS 0, so
+ unchecked arithmetic silently produces a plausible wrong number - `total
+ add missing` would just return `total`.
+
+ This mirrors the choice already made for a missing map key in 1e2: that
+ sets the error flag rather than quietly becoming nothing.)
+
+a map called "m" is {"present": 4, "absent": nothing}.
+a number called "good" is m's "present" add 1.
+print good.
+on error print "BUG: present key flagged".
+
+a number called "bad" is m's "absent" add 1.
+print bad.
+on error print "nothing operand flagged".
+
+a list called "L" is [nothing].
+a number called "fromlist" is element 1 of L add 1.
+print fromlist.
+on error print "nothing element flagged".
+
+(Comparisons are not arithmetic, so `is nothing` still works and does not
+ itself raise the flag.)
+If m's "absent" is nothing, print "still comparable".
+Otherwise print "BUG: not comparable".

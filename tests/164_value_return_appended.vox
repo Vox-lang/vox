@@ -1,0 +1,14 @@
+(Stage 1d — a function returning `a value` carries its runtime tag back in
+ r11; appending such a result to a list forwards the tag, so a later
+ predicate on the appended slot classifies it correctly. Acceptance 2.)
+
+To "passthrough" with a value called "v". Return a value, v.
+
+a list called "m" is [1, "two", 3.5].
+a list called "out" is [].
+For each item in m,
+  append "passthrough" of item to out.
+For each o in out,
+  if o is a number, print "N",
+  otherwise if o is a text, print "T",
+  otherwise print "D".

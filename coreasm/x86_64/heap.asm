@@ -34,15 +34,15 @@ section .text
     ja %%alloc_failed
     
     push rax
-    mov rcx, [alloc_count]
+    mov rcx, [rel alloc_count]
     cmp rcx, 256
     jge %%skip_track
     
-    lea rdi, [alloc_table]
+    lea rdi, [rel alloc_table]
     mov [rdi + rcx * 8], rax
-    lea rdi, [alloc_sizes]
+    lea rdi, [rel alloc_sizes]
     mov [rdi + rcx * 8], rsi
-    inc qword [alloc_count]
+    inc qword [rel alloc_count]
     
 %%skip_track:
     pop rax
@@ -75,11 +75,11 @@ section .text
     
     mov rdi, %1
     
-    mov rcx, [alloc_count]
+    mov rcx, [rel alloc_count]
     test rcx, rcx
     jz %%free_done
     
-    lea r8, [alloc_table]
+    lea r8, [rel alloc_table]
     xor rbx, rbx
     
 %%find_loop:
@@ -93,20 +93,20 @@ section .text
     jmp %%find_loop
     
 %%found_alloc:
-    lea rsi, [alloc_sizes]
+    lea rsi, [rel alloc_sizes]
     mov rsi, [rsi + rbx * 8]
     
     mov rax, 11
     syscall
     
-    dec qword [alloc_count]
-    mov rcx, [alloc_count]
+    dec qword [rel alloc_count]
+    mov rcx, [rel alloc_count]
     
-    lea r8, [alloc_table]
+    lea r8, [rel alloc_table]
     mov rax, [r8 + rcx * 8]
     mov [r8 + rbx * 8], rax
     
-    lea r8, [alloc_sizes]
+    lea r8, [rel alloc_sizes]
     mov rax, [r8 + rcx * 8]
     mov [r8 + rbx * 8], rax
     

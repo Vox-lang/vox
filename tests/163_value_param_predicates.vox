@@ -1,0 +1,14 @@
+(Stage 1d — a mixed element passed to a function taking `a value`
+ retains its runtime tag, so the stage-1c predicates inside the callee
+ classify each element correctly. The function is void and prints inside,
+ so this isolates value-parameter tag propagation from return-type tracking.
+ Acceptance criterion 1.)
+
+To "describe" with a value called "item".
+  If item is a text, print "a text".
+  Otherwise if item is a decimal, print "a decimal".
+  Otherwise print "a number".
+
+a list called "m" is [1, "two", 3.5].
+For each item in m,
+  "describe" of item.

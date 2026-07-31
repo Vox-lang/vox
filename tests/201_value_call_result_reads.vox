@@ -1,0 +1,16 @@
+(Stage 1d — a `value`-returning call brings its tag back in r11, so reading
+ the result directly must dispatch on that tag rather than on the call's
+ static type. Printing one used to render the raw payload (a string pointer
+ or IEEE bits as an integer) and a predicate on one always answered
+ "number", because neither consulted the returned tag.)
+
+To "echo" with a value called "v". Return a value, v.
+
+a list called "m" is [1, "two", 3.5].
+For each item in m,
+  print "echo" of item.
+
+For each item in m,
+  If "echo" of item is a text, print "T".
+  Otherwise if "echo" of item is a decimal, print "D".
+  Otherwise print "N".

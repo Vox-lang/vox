@@ -58,8 +58,8 @@ Tag values (must match `LIST_TAG_*` in `coreasm/*/list.asm`):
 | 1 | string | NUL-terminated C-string pointer |
 | 2 | float | IEEE 754 double bit pattern |
 | 3 | boolean | 0 or 1 |
-| 4 | list *(reserved)* | child list pointer — future nesting |
-| 5 | map *(reserved)* | future JSON objects |
+| 4 | list | child list pointer — nesting (stage 1e1) |
+| 5 | map | map struct pointer — key/value collection (stage 1e2) |
 | 6 | null *(reserved)* | future JSON null |
 
 All list allocations come from `mmap`, which zero-fills, so untouched tag
@@ -67,33 +67,68 @@ regions read as "integer" and cost nothing. Because `mmap` rounds to page
 granularity, the extra bytes are effectively free. Homogeneous lists never
 read or write tags and keep the statically-typed fast path bit-for-bit.
 
-Tags 4–6 are reserved now, while the layout is young, so nested JSON
-arrays/objects later slot into the existing representation without a
-layout change.
+Tags 4–6 were reserved early, while the layout was young, so nested JSON
+arrays/objects slot into the existing representation without a layout
+change. Tag 4 (list) is **active** as of stage 1e1: a list slot may
+hold a child list pointer, `_list_print` recurses on it, and `is a list`
+recognises it. Tag 5 (map) is **active** as of stage 1e2: a list slot (or
+a `value` payload) may hold a map struct pointer, `_map_print` recurses
+on it, and `is a map` recognises it; tag 6 remains reserved for null.
 
 ### Stages
 
-- **1a. Core mechanics** *(in progress)*. Tag region in every list
+- **1a. Core mechanics** *(done)*. Tag region in every list
   allocation; tag-aware `_list_append` (tag in `dl`, preserved across
   realloc); tagged literal stores; tag-carrying reads (for-each,
   `element N of`, `first`/`last`) into per-variable shadow tag slots;
   runtime dispatch in `print` and format interpolation; regression suite
   plus new mixed-list tests; `LANGUAGE.md` update.
-- **1b. Soundness flip.** Invert the inference default (see "How the
-  compiler decides" below): static becomes a proof, mixed becomes the safe
-  fallback. Closes the "runtime-typed append still corrupts" gap. Compiler
-  work only; the runtime layout already supports it.
-- **1c. Type predicates.** `If item is a number, ...` / `is a text` /
-  `is a boolean` compile to a tag comparison. This is the author-facing
-  payoff that makes mixed lists usable rather than merely printable, and
-  it reads as a natural Vox sentence.
-- **1d. Crossing function boundaries.** A declared dynamic parameter and
-  return type (working name: `value`) whose tag travels alongside the
-  payload in the internal ABI. Largest sub-project in the track;
-  prerequisite for writing a JSON parser in Vox functions.
+- **1b. Soundness flip** *(done)*. Invert the inference default (see "How
+  the compiler decides" below): static becomes a proof, mixed becomes the
+  safe fallback. Closes the "runtime-typed append still corrupts" gap.
+  Compiler work only; the runtime layout already supports it.
+- **1c. Type predicates.** *(done).* `If item is a number, ...` / `is a
+  text` / `is a decimal` / `is a boolean` compile to a tag comparison (and
+  fold to a compile-time constant when the operand is statically typed, so
+  the sentence is legal on any value). This is the author-facing payoff that
+  makes mixed lists usable rather than merely printable, and it reads as a
+  natural Vox sentence. Negation `is not a …` reuses the existing
+  `UnaryOp(Not)` path.
+- **1d. Crossing function boundaries.** *(done).* A declared dynamic
+  parameter and return type (name **`value`**) whose tag travels alongside
+  the payload in the internal ABI. Largest sub-project in the track;
+  prerequisite for writing a JSON parser in Vox functions. See
+  [`docs/abi_value.md`](abi_value.md) for the ABI and `LANGUAGE.md` for the
+  author-facing syntax.
 - **1e. Nesting and JSON groundwork.** Lists inside lists (tag 4),
   recursive printing, maps (tag 5), null (tag 6), then the JSON/YAML
   parser as the capstone.
+  - **1e1. Nested lists** *(done)*. Tag 4 activated: a list element may be
+    a list; `_list_print` recurses with a depth-64 cycle guard that sets
+    the error flag instead of overflowing the stack; `element N of` /
+    `first` / `last` / iteration yield a usable child list; `is a list`
+    predicate (folds on a static list, runtime `cmp` on a mixed element);
+    homogeneous list-of-lists keeps the non-mixed fast path. See
+    `LANGUAGE.md` (Nested Lists) and [`docs/plans/040_stage_1e1_nested_lists.md`](plans/040_stage_1e1_nested_lists.md).
+  - **1e2. Maps** *(done)*. Tag 5 activated for key/value collections
+    (JSON objects). A new `coreasm/x86_64/map.asm` runtime stores entries
+    in an insertion-ordered array alongside an FNV-1a hash table (linear
+    probing over power-of-two capacity, grow at load ≤ 1/2, allocate-copy-
+    do-not-free-old-block like `_list_append`) for O(1) lookup. Map
+    literals `{"k": v}`, `map's "k"` access, `set map's "k" to v`
+    insert/replace (store-back on realloc), `map's keys`/`values` (fresh
+    lists, insertion-ordered), `map's length`/`empty`, `for each key in
+    … keys` / `for each v in … values`, `is a map` (folds on a static map,
+    runtime `cmp r11, 5` on a mixed value), recursive `_map_print`
+    (`{"k": v, …}`) sharing one 64-deep `_print_depth` budget with
+    `_list_print` so a mixed map/list tree is cycle-safe, and `value`-ABI
+    carriage (a map rides a `value` as payload + tag 5). Missing-key
+    lookup sets `_last_error` (observed via `on error`), not a null
+    return. Non-text keys and map deletion are out of scope (deferred to
+    the JSON-parser stage). See `LANGUAGE.md` (Maps) and
+    [`docs/plans/050_stage_1e2_maps_and_null.md`](plans/050_stage_1e2_maps_and_null.md).
+  - **1e3. Null and the JSON/YAML parser** *(pending)*. Tag 6 for null;
+    then a JSON/YAML parser written in Vox functions as the track capstone.
 
 Sequencing: 1a → 1b → (1c ∥ 1d) → 1e.
 
@@ -102,15 +137,45 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
-Until 1b–1d land, in order of closure:
+Remaining after 1c, in order of closure:
 
-- Appends whose value type is statically unknowable (e.g. function
-  results) do not widen a list to mixed (closed by 1b).
-- Mixed elements passed as function arguments lose their tag; parameters
-  are statically typed (closed by 1d).
-- Arithmetic/comparisons on a mixed element dispatch statically —
-  `item add 1` where `item` holds a string is still wrong (closed by 1c
-  idioms plus 1b defaults; full closure alongside 1d).
+- ~~Appends whose value type is statically unknowable (e.g. function
+  results) do not widen a list to mixed~~ *(closed by 1b — an unprovable
+  write now widens the list to Mixed, and a declared-return function
+  result is tagged with its return type at the write).*
+- ~~Mixed lists are readable but not programmable: an author cannot
+  branch on an element's type~~ *(closed by 1c — `If item is a
+  number/text/decimal/boolean` reads the per-slot tag and branches on it,
+  folding when the operand is statically typed).*
+- ~~For a genuinely opaque value (no declared return type), the slot's own
+  tag may still be a conservative `TAG_INTEGER` guess; the list widens
+  and reads dispatch on tags, so the value prints correctly when it
+  really is a number, but a non-number opaque value can still mis-render~~
+  *(closed by 1d — a `value` return carries its real runtime tag out of
+  the callee, so a value-returning function's result is tagged correctly
+  when appended, not guessed).*
+- ~~Mixed elements passed as function arguments lose their tag; parameters
+  are statically typed~~ *(closed by 1d — a `value` parameter carries its
+  tag into the callee as a second argument word, so predicates inside the
+  callee classify each element correctly).*
+- Arithmetic/comparisons on a mixed element still dispatch statically:
+  `item add 1` where `item` holds a string is still wrong *unless the
+  author guards it first* (`if item is a number, … item add 1 …`). 1c
+  supplies the guard idiom. **1d adds the static rejection**: bare
+  arithmetic on a `value` (unguarded) is a compile error pointing the
+  author at the predicate idiom. Full flow-sensitive dispatch-on-tag
+  (guarded arithmetic that narrows the type inside the branch) remains
+  future work.
+- **Nested-list limitations (documented by 1e1).** An extracted child
+  (`a list called "inner" is element 2 of nested.`) is a *reference* to
+  the child list, not a copy: if the parent is later grown past a
+  reallocation, a child extracted before it may dangle. Extract after the
+  parent finishes growing, or copy element-by-element. And the
+  *expression* form of format interpolation (`print "{element 2 of
+  nested}"`) has no runtime-tag dispatch, so a nested list does not
+  render there — use the *variable* form (`print "{nested}"`) or a plain
+  `print element 2 of nested.` Flow-sensitive narrowing after `if item is
+  a list` (using `item` as a list inside the branch) is also future work.
 
 ## Track 2 — Matrix / tensor (the ML and numerics track)
 
@@ -222,6 +287,6 @@ is exactly what Vox's no-resident-runtime, compile-to-plain-NASM identity
 defines itself against; and Python has spent fifteen years growing type
 hints to claw back static guarantees. Vox's position is **dynamic at the
 data boundary, static in the core**: tagged values live inside containers
-(lists now, maps later), scalars and arithmetic stay statically typed, and
+(lists and maps), scalars and arithmetic stay statically typed, and
 extraction from the dynamic world is either implicitly dispatched
 (printing) or explicitly checked (`If item is a number, ...`).

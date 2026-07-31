@@ -1,0 +1,7 @@
+(Stage 1e2 - map key access. person's "name" yields the stored value with
+ its runtime tag, so a text prints as text and a number as a number.
+ Acceptance: Ada then 36.)
+
+a map called "person" is {"name": "Ada", "age": 36}.
+print person's "name".
+print person's "age".

@@ -6,10 +6,12 @@ pub enum Type {
     String,
     Boolean,
     List(Box<Type>),
+    Map(Box<Type>), // key/value collection (tag 5); inner type is the value type, keys are always text
     Buffer,
     File,
     Time,
     Timer,
+    Value,
     Void,
     Unknown,
 }
@@ -34,6 +36,10 @@ pub enum Expr {
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),
+    // The nothing/null literal (stage 1e3, tag 6). Unit variant: the
+    // payload is always 0 and the tag is always TAG_NOTHING (6), so it
+    // carries no data. Spelled `nothing`, `null`, or `nil` in source.
+    NothingLit,
     Identifier(String),
     
     BinaryOp {
@@ -57,7 +63,15 @@ pub enum Expr {
         value: Box<Expr>,
         property: Property,
     },
-    
+
+    // Runtime type predicate: `item is a text` / `is a number` / etc.
+    // `type_noun` is constrained by the parser to Integer/Float/String/Boolean.
+    // Negation (`is not a text`) wraps this in `UnaryOp { Not, .. }`.
+    TypeCheck {
+        value: Box<Expr>,
+        type_noun: Type,
+    },
+
     FunctionCall {
         name: String,
         args: Vec<Expr>,
@@ -66,7 +80,13 @@ pub enum Expr {
     ListLit {
         elements: Vec<Expr>,
     },
-    
+
+    // Map literal: {"key": value, ...}. Each pair is (key_expr, value_expr);
+    // keys must be text. JSON-object syntax (stage 1e2, tag 5).
+    MapLit {
+        pairs: Vec<(Expr, Expr)>,
+    },
+
     #[allow(dead_code)]
     ListAccess {
         list: Box<Expr>,
@@ -78,7 +98,16 @@ pub enum Expr {
         object: String,
         property: ObjectProperty,
     },
-    
+
+    // Map key access: person's "name". `map` is the variable name (like
+    // PropertyAccess.object); `key` is an expression that evaluates to a
+    // text value (usually a StringLit). Tag of the found value travels in
+    // r11 at codegen, mirroring ElementAccess. (stage 1e2, tag 5)
+    MapAccess {
+        map: String,
+        key: Box<Expr>,
+    },
+
     // The last error value
     #[allow(dead_code)]
     LastError,
@@ -221,6 +250,10 @@ pub enum ObjectProperty {
     // List properties
     First,     // list's first item
     Last,      // list's last item
+
+    // Map properties (stage 1e2)
+    Keys,      // map's keys   -> a list of key texts (insertion order)
+    Values,    // map's values -> a list of values with their tags (insertion order)
     
     // Number properties
     Absolute,  // number's absolute value
@@ -364,6 +397,15 @@ pub enum Statement {
     ElementSet {
         list: String,
         index: Expr,
+        value: Expr,
+    },
+
+    // Set map's "<key>" to value: insert or replace. The map may reallocate
+    // on growth; codegen stores the returned pointer back into the variable
+    // (mirroring ListAppend). (stage 1e2, tag 5)
+    MapSet {
+        map: String,
+        key: Expr,
         value: Expr,
     },
     
@@ -569,6 +611,7 @@ pub enum DefiniteDeclKind {
     Plain,
     Buffer,
     List,
+    Map,
     File,
 }
 
@@ -591,6 +634,7 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
                 let kind = match var_type {
                     Some(Type::Buffer) => DefiniteDeclKind::Buffer,
                     Some(Type::List(_)) => DefiniteDeclKind::List,
+                    Some(Type::Map(_)) => DefiniteDeclKind::Map,
                     _ => DefiniteDeclKind::Plain,
                 };
                 out.insert(name.clone(), kind);

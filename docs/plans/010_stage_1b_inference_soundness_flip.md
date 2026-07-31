@@ -98,12 +98,12 @@ Stage 1a (merged). Function signature collection already exists in
 ---
 
 ## Success Criteria
-- [ ] Feature works as described in expected behavior
-- [ ] All tests pass
-- [ ] No performance regression for homogeneous lists (verify emitted
+- [x] Feature works as described in expected behavior
+- [x] All tests pass
+- [x] No performance regression for homogeneous lists (verify emitted
       assembly for an all-integer list is unchanged)
 - [ ] Code reviewed and approved
-- [ ] Documentation updated
+- [x] Documentation updated
 
 ---
 
@@ -126,20 +126,20 @@ Stage 1a (merged). Function signature collection already exists in
 ---
 
 ## Tasks
-- [ ] Introduce a three-state tag classification (`Known` / `Unknowable`)
+- [x] Introduce a three-state tag classification (`Known` / `Unknowable`)
       replacing `Option<u8>` in the pre-scan
-- [ ] Widen to `Mixed` on `Unknowable` in `prescan_note_list_value` and
+- [x] Widen to `Mixed` on `Unknowable` in `prescan_note_list_value` and
       the list-literal path
-- [ ] Broaden `infer_expr_type` / `emit_time_expr_tag` to cover function
+- [x] Broaden `infer_expr_type` / `emit_time_expr_tag` to cover function
       calls with declared return types, property accesses, and binary ops
       with known operand types
-- [ ] Audit remaining `unwrap_or(TAG_INTEGER)` fallbacks; document each
+- [x] Audit remaining `unwrap_or(TAG_INTEGER)` fallbacks; document each
       surviving one with why it is safe
-- [ ] Add test: function-result append into an otherwise integer list
-- [ ] Add test: homogeneous fast path unchanged (assembly snapshot or a
+- [x] Add test: function-result append into an otherwise integer list
+- [x] Add test: homogeneous fast path unchanged (assembly snapshot or a
       `--emit-asm` diff check)
-- [ ] Update `docs/COLLECTIONS_ROADMAP.md` and `LANGUAGE.md`
-- [ ] Run `./test.sh` and `cargo test --release`
+- [x] Update `docs/COLLECTIONS_ROADMAP.md` and `LANGUAGE.md`
+- [x] Run `./test.sh` and `cargo test --release`
 
 ---
 

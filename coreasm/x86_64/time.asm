@@ -692,7 +692,7 @@ section .text
 %%year_not_leap:
     ; Iterate through months
     xor rcx, rcx                    ; month counter (0-based)
-    lea rsi, [_days_in_month]
+    lea rsi, [rel _days_in_month]
     
 %%month_loop:
     xor rax, rax

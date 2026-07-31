@@ -169,7 +169,7 @@ section .text
     
     mov rax, 1                  ; sys_write
     mov rdi, 2                  ; stderr
-    lea rsi, [_err_bounds_msg]
+    lea rsi, [rel _err_bounds_msg]
     mov rdx, _err_bounds_len
     syscall
     

@@ -59,7 +59,7 @@ _register_fd:
     cmp rcx, MAX_FDS
     jge .table_full
     
-    mov rax, [fd_table + rcx*8]
+    mov rax, [abs fd_table + rcx*8]
     test rax, rax
     jz .found_slot
     
@@ -67,8 +67,8 @@ _register_fd:
     jmp .find_slot
     
 .found_slot:
-    mov [fd_table + rcx*8], rdi
-    inc qword [fd_count]
+    mov [abs fd_table + rcx*8], rdi
+    inc qword [rel fd_count]
     
 .table_full:
     pop rcx
@@ -87,11 +87,11 @@ _get_readahead_slot:
     cmp rcx, READAHEAD_SLOTS
     jge .slot_done_scan
 
-    movzx eax, byte [ra_used + rcx]
+    movzx eax, byte [abs ra_used + rcx]
     test eax, eax
     jz .slot_is_free
 
-    mov rax, [ra_fd + rcx*8]
+    mov rax, [abs ra_fd + rcx*8]
     cmp rax, rdi
     je .slot_found_existing
 
@@ -116,10 +116,10 @@ _get_readahead_slot:
     je .slot_none
 
     mov rcx, rdx
-    mov byte [ra_used + rcx], 1
-    mov [ra_fd + rcx*8], rdi
-    mov qword [ra_pos + rcx*8], 0
-    mov qword [ra_filled + rcx*8], 0
+    mov byte [abs ra_used + rcx], 1
+    mov [abs ra_fd + rcx*8], rdi
+    mov qword [abs ra_pos + rcx*8], 0
+    mov qword [abs ra_filled + rcx*8], 0
     mov rax, rcx
     ret
 
@@ -137,18 +137,18 @@ _flush_readahead_fd:
     cmp rcx, READAHEAD_SLOTS
     jge .flush_done
 
-    movzx eax, byte [ra_used + rcx]
+    movzx eax, byte [abs ra_used + rcx]
     test eax, eax
     jz .flush_next
 
-    mov rax, [ra_fd + rcx*8]
+    mov rax, [abs ra_fd + rcx*8]
     cmp rax, rdi
     jne .flush_next
 
-    mov byte [ra_used + rcx], 0
-    mov qword [ra_fd + rcx*8], 0
-    mov qword [ra_pos + rcx*8], 0
-    mov qword [ra_filled + rcx*8], 0
+    mov byte [abs ra_used + rcx], 0
+    mov qword [abs ra_fd + rcx*8], 0
+    mov qword [abs ra_pos + rcx*8], 0
+    mov qword [abs ra_filled + rcx*8], 0
 
 .flush_next:
     inc rcx
@@ -187,12 +187,12 @@ _read_line_into_buffer:
 
     ; Slot-backed mode setup
     mov rbx, rax
-    lea r8, [ra_pos + rbx*8]      ; &ra_pos[slot]
-    lea r9, [ra_filled + rbx*8]   ; &ra_filled[slot]
+    lea r8, [abs ra_pos + rbx*8]      ; &ra_pos[slot]
+    lea r9, [abs ra_filled + rbx*8]   ; &ra_filled[slot]
 
     mov rax, rbx
     imul rax, READAHEAD_BUF_SIZE
-    lea r10, [ra_data + rax]      ; slot data pointer
+    lea r10, [abs ra_data + rax]      ; slot data pointer
 
 .line_loop_slot:
     ; Ensure at least 1 byte of data capacity remains
@@ -216,11 +216,11 @@ _read_line_into_buffer:
     mov r13, rax
 
     ; _grow_buffer may clobber caller-saved registers; rebuild slot pointers.
-    lea r8, [ra_pos + rbx*8]
-    lea r9, [ra_filled + rbx*8]
+    lea r8, [abs ra_pos + rbx*8]
+    lea r9, [abs ra_filled + rbx*8]
     mov rax, rbx
     imul rax, READAHEAD_BUF_SIZE
-    lea r10, [ra_data + rax]
+    lea r10, [abs ra_data + rax]
 
     jmp .line_loop_slot
 
@@ -531,7 +531,7 @@ _unregister_fd:
     cmp rcx, MAX_FDS
     jge .not_found
     
-    mov rax, [fd_table + rcx*8]
+    mov rax, [abs fd_table + rcx*8]
     cmp rax, rdi
     je .found_fd
     
@@ -539,8 +539,8 @@ _unregister_fd:
     jmp .find_fd
     
 .found_fd:
-    mov qword [fd_table + rcx*8], 0
-    dec qword [fd_count]
+    mov qword [abs fd_table + rcx*8], 0
+    dec qword [rel fd_count]
     
 .not_found:
     pop rcx
@@ -560,7 +560,7 @@ _cleanup_fds:
     cmp r12, MAX_FDS
     jge .done
     
-    mov rdi, [fd_table + r12*8]
+    mov rdi, [abs fd_table + r12*8]
     test rdi, rdi
     jz .next
     
@@ -572,14 +572,14 @@ _cleanup_fds:
     mov rax, 3          ; SYS_CLOSE
     syscall
     
-    mov qword [fd_table + r12*8], 0
+    mov qword [abs fd_table + r12*8], 0
     
 .next:
     inc r12
     jmp .close_loop
     
 .done:
-    mov qword [fd_count], 0
+    mov qword [rel fd_count], 0
     pop r13
     pop r12
     pop rbx
@@ -719,7 +719,7 @@ _register_buffer:
     cmp rcx, MAX_BUFFERS
     jge .table_full
     
-    mov rax, [buf_table + rcx*8]
+    mov rax, [abs buf_table + rcx*8]
     test rax, rax
     jz .found_slot
     
@@ -727,8 +727,8 @@ _register_buffer:
     jmp .find_slot
     
 .found_slot:
-    mov [buf_table + rcx*8], rdi
-    inc qword [buf_count]
+    mov [abs buf_table + rcx*8], rdi
+    inc qword [rel buf_count]
     
 .table_full:
     pop rcx
@@ -747,7 +747,7 @@ _unregister_buffer:
     cmp rcx, MAX_BUFFERS
     jge .not_found_unreg
     
-    mov rax, [buf_table + rcx*8]
+    mov rax, [abs buf_table + rcx*8]
     cmp rax, rdi
     je .found_unreg
     
@@ -755,8 +755,8 @@ _unregister_buffer:
     jmp .find_unreg
     
 .found_unreg:
-    mov qword [buf_table + rcx*8], 0
-    dec qword [buf_count]
+    mov qword [abs buf_table + rcx*8], 0
+    dec qword [rel buf_count]
     
 .not_found_unreg:
     pop rcx
@@ -777,7 +777,7 @@ _free_buffer:
     cmp rcx, MAX_BUFFERS
     jge .not_found
     
-    mov rax, [buf_table + rcx*8]
+    mov rax, [abs buf_table + rcx*8]
     cmp rax, rdi
     je .found_buf
     
@@ -785,8 +785,8 @@ _free_buffer:
     jmp .find_buf
     
 .found_buf:
-    mov qword [buf_table + rcx*8], 0
-    dec qword [buf_count]
+    mov qword [abs buf_table + rcx*8], 0
+    dec qword [rel buf_count]
     
     ; munmap the buffer
     mov rsi, [rdi + BUF_CAPACITY]
@@ -814,7 +814,7 @@ _cleanup_buffers:
     cmp r12, MAX_BUFFERS
     jge .done
     
-    mov rdi, [buf_table + r12*8]
+    mov rdi, [abs buf_table + r12*8]
     test rdi, rdi
     jz .next
     
@@ -827,14 +827,14 @@ _cleanup_buffers:
     mov rax, 11             ; SYS_MUNMAP
     syscall
     
-    mov qword [buf_table + r12*8], 0
+    mov qword [abs buf_table + r12*8], 0
     
 .next:
     inc r12
     jmp .free_loop
     
 .done:
-    mov qword [buf_count], 0
+    mov qword [rel buf_count], 0
     pop r14
     pop r13
     pop r12
@@ -904,13 +904,13 @@ _grow_buffer:
 .find_entry:
     cmp rcx, MAX_BUFFERS
     jge .no_entry
-    mov rax, [buf_table + rcx*8]
+    mov rax, [abs buf_table + rcx*8]
     cmp rax, r12
     je .update_entry
     inc rcx
     jmp .find_entry
 .update_entry:
-    mov [buf_table + rcx*8], rbx
+    mov [abs buf_table + rcx*8], rbx
 .no_entry:
     
     ; Free old buffer (+1 for null terminator)

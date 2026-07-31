@@ -116,17 +116,17 @@ Stage 1a (merged). Benefits from 1b but does not require it.
 ---
 
 ## Tasks
-- [ ] Decide and document the exact sentence forms accepted (including
+- [x] Decide and document the exact sentence forms accepted (including
       negation: `is not a text`)
-- [ ] Add the AST variant and parse rule
-- [ ] Analyzer validation with a helpful error message
-- [ ] Codegen: runtime tag compare for mixed operands
-- [ ] Codegen: constant folding for statically-typed operands
-- [ ] Add tests: each type noun; negation; folding; post-realloc elements;
+- [x] Add the AST variant and parse rule
+- [x] Analyzer validation with a helpful error message
+- [x] Codegen: runtime tag compare for mixed operands
+- [x] Codegen: constant folding for statically-typed operands
+- [x] Add tests: each type noun; negation; folding; post-realloc elements;
       predicate inside a nested `If`/`otherwise` chain
-- [ ] Update `LANGUAGE.md` (new subsection under Lists and Collections)
+- [x] Update `LANGUAGE.md` (new subsection under Lists and Collections)
       and mark 1c done in `docs/COLLECTIONS_ROADMAP.md`
-- [ ] Run `./test.sh` and `cargo test --release`
+- [x] Run `./test.sh` and `cargo test --release`
 
 ---
 
@@ -140,3 +140,14 @@ Stage 1a (merged). Benefits from 1b but does not require it.
 - Consider a companion sentence in a later stage for safe extraction
   (e.g. `treat item as a number` returning a checked value); note it in
   the roadmap rather than building it here.
+- **Scope added during implementation:** a predicate result is a boolean
+  value, so `append <value> is a <noun> to <list>` (and `is not a`) is now
+  accepted by `parse_append` (via a shared `parse_type_noun_after_article`
+  helper) and tagged `TAG_BOOLEAN` at the store. This made the
+  `TypeCheck` arms of `prescan_expr_tag` / `emit_time_expr_tag` and the
+  append element-type classifier reachable (otherwise dead code) and fixed a
+  latent asymmetry: `UnaryOp { Not, .. }` is now tagged `TAG_BOOLEAN` in
+  both passes (a negation is always boolean), so `[not x]` and appended
+  negated predicates classify and tag consistently. Covered by integration
+  test `162_predicate_tagged_boolean` and the
+  `type_predicate_result_appends_tagged_boolean` unit test.

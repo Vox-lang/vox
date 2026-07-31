@@ -566,6 +566,7 @@ pub struct Analyzer {
     flag_variables: HashSet<String>,
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
+    map_variables: HashSet<String>,
     file_variables: HashSet<String>,
     timer_variables: HashSet<String>,
     /// Variables holding a raw heap pointer from `Allocate`. They are not
@@ -581,6 +582,11 @@ pub struct Analyzer {
     /// numeric one, which the buffer/list/flag sets alone cannot do.
     scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
+    /// Names declared as the dynamic `value` type (value parameters and `a
+    /// value called "x"` locals). A bare `value` is not usable in arithmetic
+    /// without an explicit type check (stage 1c predicate); the arithmetic
+    /// operand check uses this set to reject unguarded use with a clear error.
+    value_typed_names: HashSet<String>,
     loop_depth: usize,
 }
 
@@ -609,11 +615,13 @@ impl Analyzer {
             flag_variables: HashSet::new(),
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
+            map_variables: HashSet::new(),
             file_variables: HashSet::new(),
             timer_variables: HashSet::new(),
             allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
+            value_typed_names: HashSet::new(),
             loop_depth: 0,
         }
     }
@@ -638,6 +646,7 @@ impl Analyzer {
             match kind {
                 DefiniteDeclKind::Buffer => { self.buffer_variables.insert(name); }
                 DefiniteDeclKind::List => { self.list_variables.insert(name); }
+                DefiniteDeclKind::Map => { self.map_variables.insert(name); }
                 DefiniteDeclKind::File => { self.file_variables.insert(name); }
                 DefiniteDeclKind::Plain => {}
             }
@@ -782,8 +791,13 @@ impl Analyzer {
             Expr::UnaryOp { operand, .. } => self.expr_uses_flag(operand),
             Expr::Range { start, end, .. } => self.expr_uses_flag(start).or_else(|| self.expr_uses_flag(end)),
             Expr::PropertyCheck { value, .. } => self.expr_uses_flag(value),
+            Expr::TypeCheck { value, .. } => self.expr_uses_flag(value),
             Expr::FunctionCall { args, .. } => args.iter().find_map(|a| self.expr_uses_flag(a)),
             Expr::ListLit { elements } => elements.iter().find_map(|e| self.expr_uses_flag(e)),
+            Expr::MapLit { pairs } => pairs.iter().find_map(|(k, v)| {
+                self.expr_uses_flag(k).or_else(|| self.expr_uses_flag(v))
+            }),
+            Expr::MapAccess { key, .. } => self.expr_uses_flag(key),
             Expr::ListAccess { list, index } => self.expr_uses_flag(list).or_else(|| self.expr_uses_flag(index)),
             Expr::ByteAccess { buffer, index } => self.expr_uses_flag(buffer).or_else(|| self.expr_uses_flag(index)),
             Expr::ElementAccess { list, index } => self.expr_uses_flag(list).or_else(|| self.expr_uses_flag(index)),
@@ -829,6 +843,7 @@ impl Analyzer {
             Statement::Allocate { size, .. } => self.expr_uses_flag(size),
             Statement::ByteSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
             Statement::ElementSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
+            Statement::MapSet { key, value, .. } => self.expr_uses_flag(key).or_else(|| self.expr_uses_flag(value)),
             Statement::ListAppend { value, .. } => self.expr_uses_flag(value),
             Statement::FileOpen { path, .. } => self.expr_uses_flag(path),
             Statement::FileWrite { value, .. } => self.expr_uses_flag(value),
@@ -1055,6 +1070,10 @@ impl Analyzer {
         self.list_variables.contains(name)
     }
 
+    fn is_map_variable(&self, name: &str) -> bool {
+        self.map_variables.contains(name)
+    }
+
     /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
     /// flag, or a unix timestamp) rather than a pointer or handle. Number
     /// and time properties read the raw slot, so applying them to a
@@ -1062,6 +1081,7 @@ impl Analyzer {
     fn is_scalar_variable(&self, name: &str) -> bool {
         !self.is_buffer_variable(name)
             && !self.is_list_variable(name)
+            && !self.is_map_variable(name)
             && !self.file_variables.contains(name)
             && !self.timer_variables.contains(name)
             && !self.allocated_variables.contains(name)
@@ -1078,6 +1098,8 @@ impl Analyzer {
             Some(Type::Buffer)
         } else if self.is_list_variable(name) {
             Some(Type::List(Box::new(Type::Unknown)))
+        } else if self.is_map_variable(name) {
+            Some(Type::Map(Box::new(Type::Unknown)))
         } else if self.file_variables.contains(name) {
             Some(Type::File)
         } else if self.timer_variables.contains(name) {
@@ -1106,10 +1128,22 @@ impl Analyzer {
             Expr::StringLit(s) => {
                 // A quoted name may reference a variable; otherwise this is a
                 // bare text literal, which is not valid in arithmetic.
-                self.named_value_type(s).or(Some(Type::String))
+                if self.value_typed_names.contains(s) {
+                    Some(Type::Value)
+                } else {
+                    self.named_value_type(s).or(Some(Type::String))
+                }
             }
             Expr::FormatString { .. } => Some(Type::String),
-            Expr::Identifier(name) => self.named_value_type(name),
+            Expr::Identifier(name) => {
+                // A `value`-typed name is dynamic: reject it from arithmetic
+                // until the author checks its type with a predicate (stage 1c).
+                if self.value_typed_names.contains(name) {
+                    Some(Type::Value)
+                } else {
+                    self.named_value_type(name)
+                }
+            }
             Expr::Cast { target_type, .. } => Some(target_type.clone()),
             Expr::DurationCast { .. } => Some(Type::Integer),
             Expr::UnaryOp { op, operand } => match op {
@@ -1163,6 +1197,22 @@ impl Analyzer {
     /// and is accepted because `arithmetic_operand_type` resolves it to a
     /// numeric type.
     fn check_arithmetic_operand(&mut self, expr: &Expr) {
+        // `nothing` has no numeric value. It is not a `Type` (tag 6 exists
+        // only at runtime), so it is matched here rather than through
+        // `arithmetic_operand_type`. Unchecked it compiles to its payload, 0,
+        // so `total add missing` silently yields `total` - a wrong number that
+        // looks right, which is the failure this whole track exists to stop.
+        // Operands that only turn out to be nothing at runtime cannot be
+        // caught here; those set the error flag instead (see
+        // `emit_nothing_operand_check` in codegen).
+        if matches!(expr, Expr::NothingLit) {
+            self.push_error(
+                "Cannot use nothing in arithmetic; check it with 'is nothing' first."
+                    .to_string(),
+                None,
+            );
+            return;
+        }
         let Some(ty) = self.arithmetic_operand_type(expr) else {
             return;
         };
@@ -1177,8 +1227,13 @@ impl Analyzer {
                 label
             ),
             Type::List(_) => format!("Cannot use list {} in arithmetic.", label),
+            Type::Map(_) => format!("Cannot use map {} in arithmetic.", label),
             Type::File => format!("Cannot use file {} in arithmetic.", label),
             Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            Type::Value => format!(
+                "Cannot use a value {} in arithmetic; check its type with 'is a number'/'is a text' first.",
+                label
+            ),
             _ => return,
         };
         self.push_error(msg, None);
@@ -1256,13 +1311,16 @@ impl Analyzer {
             | Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
             | Expr::EnvironmentVariableAt { .. } => Some(Type::String),
             Expr::BoolLit(_) | Expr::ArgumentEmpty | Expr::EnvironmentVariableEmpty | Expr::EnvironmentVariableExists { .. }
-            | Expr::PropertyCheck { .. } => Some(Type::Boolean),
+            | Expr::PropertyCheck { .. } | Expr::TypeCheck { .. } => Some(Type::Boolean),
             Expr::ListLit { .. } | Expr::ArgumentAll | Expr::ArgumentRaw => Some(Type::List(Box::new(Type::Unknown))),
+            Expr::MapLit { .. } => Some(Type::Map(Box::new(Type::Unknown))),
             Expr::Identifier(name) => {
                 if self.is_buffer_variable(name) {
                     Some(Type::Buffer)
                 } else if self.is_list_variable(name) {
                     Some(Type::List(Box::new(Type::Unknown)))
+                } else if self.is_map_variable(name) {
+                    Some(Type::Map(Box::new(Type::Unknown)))
                 } else if self.flag_variables.contains(name) {
                     Some(Type::Boolean)
                 } else {
@@ -1313,6 +1371,7 @@ impl Analyzer {
                 | (Type::Time, Type::Time)
                 | (Type::Timer, Type::Timer)
                 | (Type::List(_), Type::List(_))
+                | (Type::Map(_), Type::Map(_))
         )
     }
 
@@ -1323,10 +1382,12 @@ impl Analyzer {
             Type::String => "text",
             Type::Boolean => "boolean",
             Type::List(_) => "list",
+            Type::Map(_) => "map",
             Type::Buffer => "buffer",
             Type::File => "file",
             Type::Time => "time",
             Type::Timer => "timer",
+            Type::Value => "value",
             Type::Void => "void",
             Type::Unknown => "unknown",
         }
@@ -1393,7 +1454,8 @@ impl Analyzer {
             | Expr::BoolLit(_)
             | Expr::ListLit { .. }
             | Expr::Range { .. }
-            | Expr::PropertyCheck { .. } => {
+            | Expr::PropertyCheck { .. }
+            | Expr::TypeCheck { .. } => {
                 self.push_error(OPEN_PATH_GUIDANCE.to_string(), None);
             }
             Expr::Cast { target_type, .. } => {
@@ -1455,6 +1517,15 @@ impl Analyzer {
                 }
                 if let Some(Type::List(_)) = var_type {
                     self.list_variables.insert(name.clone());
+                }
+                if let Some(Type::Map(_)) = var_type {
+                    self.map_variables.insert(name.clone());
+                }
+                if let Some(Type::Value) = var_type {
+                    // A declared `a value called "x"` is dynamic, like a value
+                    // parameter: bare arithmetic on it is rejected until the
+                    // author checks its type with a predicate.
+                    self.value_typed_names.insert(name.clone());
                 }
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
@@ -1557,6 +1628,7 @@ impl Analyzer {
                 // text label that would falsely reject valid arithmetic.
                 if !self.is_buffer_variable(name)
                     && !self.is_list_variable(name)
+                    && !self.is_map_variable(name)
                     && !self.file_variables.contains(name.as_str())
                     && !self.timer_variables.contains(name.as_str())
                 {
@@ -1733,6 +1805,19 @@ impl Analyzer {
                 let saved_guards = self.active_guards.clone();
                 let saved_block_depth = self.block_depth;
                 let saved_in_function_scope = self.in_function_scope;
+                // Type labels are scoped like the variables themselves: a
+                // parameter (or body-local declaration) named like a
+                // top-level variable must not relabel it for the code after
+                // the function - a text parameter "x" would otherwise make
+                // top-level arithmetic on a number "x" a false error.
+                let saved_scalar_types = self.scalar_types.clone();
+                let saved_buffer_variables = self.buffer_variables.clone();
+                let saved_list_variables = self.list_variables.clone();
+                let saved_map_variables = self.map_variables.clone();
+                let saved_file_variables = self.file_variables.clone();
+                let saved_timer_variables = self.timer_variables.clone();
+                let saved_allocated_variables = self.allocated_variables.clone();
+                let saved_value_typed_names = self.value_typed_names.clone();
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -1753,9 +1838,17 @@ impl Analyzer {
                     match param_type {
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
+                        Type::Map(_) => { self.map_variables.insert(param_name.clone()); }
                         Type::File => { self.file_variables.insert(param_name.clone()); }
                         Type::Integer | Type::Float | Type::String | Type::Boolean => {
                             self.scalar_types.insert(param_name.clone(), param_type.clone());
+                        }
+                        Type::Value => {
+                            // A `value` parameter is dynamic: it carries a
+                            // runtime tag but is not statically a number/text,
+                            // so bare arithmetic on it must be rejected (the
+                            // author guards with a stage-1c predicate first).
+                            self.value_typed_names.insert(param_name.clone());
                         }
                         _ => {}
                     }
@@ -1767,6 +1860,14 @@ impl Analyzer {
                 self.block_depth = saved_block_depth;
                 self.active_guards = saved_guards;
                 self.in_function_scope = saved_in_function_scope;
+                self.scalar_types = saved_scalar_types;
+                self.buffer_variables = saved_buffer_variables;
+                self.list_variables = saved_list_variables;
+                self.map_variables = saved_map_variables;
+                self.file_variables = saved_file_variables;
+                self.timer_variables = saved_timer_variables;
+                self.allocated_variables = saved_allocated_variables;
+                self.value_typed_names = saved_value_typed_names;
                 self.apply_env(&saved_env);
             }
             
@@ -1775,6 +1876,7 @@ impl Analyzer {
                     self.push_unknown_variable(name);
                 } else if self.is_buffer_variable(name)
                     || self.is_list_variable(name)
+                    || self.is_map_variable(name)
                     || self.file_variables.contains(name.as_str())
                     || self.flag_variables.contains(name.as_str())
                     || self.timer_variables.contains(name.as_str())
@@ -1845,6 +1947,32 @@ impl Analyzer {
                     self.push_error(
                         format!("Element set target must be a list: {}", list),
                         Some(list),
+                    );
+                }
+            }
+
+            // Set <map>'s "<key>" to <value>: insert or replace. The map may
+            // reallocate on growth; codegen stores the returned pointer back
+            // into the variable (mirroring ListAppend). Keys are text.
+            Statement::MapSet { map, key, value } => {
+                self.track_identifier(map);
+                self.analyze_expr(key);
+                self.analyze_expr(value);
+
+                if !self.is_variable_available(map) {
+                    self.push_error(format!("Unknown map: {}", map), Some(map));
+                } else if !self.is_map_variable(map) {
+                    self.push_error(
+                        format!("Map set target must be a map: {}", map),
+                        Some(map),
+                    );
+                }
+                if let Some(Type::String) = self.infer_simple_expr_type(key) {
+                    // ok: text key
+                } else {
+                    self.push_error(
+                        "Map keys must be text".to_string(),
+                        Some(map),
                     );
                 }
             }
@@ -2206,7 +2334,13 @@ impl Analyzer {
             Expr::PropertyCheck { value, .. } => {
                 self.analyze_expr(value);
             }
-            
+
+            // Runtime type predicate (stage 1c). The type noun was validated
+            // by the parser, so the analyzer only needs to recurse into the
+            // operand.
+            Expr::TypeCheck { value, .. } => {
+                self.analyze_expr(value);
+            }
             Expr::PropertyAccess { object, property } => {
                 // _current_time is a synthetic object for "current time's X" - not a user variable
                 if object == "_current_time" {
@@ -2218,6 +2352,7 @@ impl Analyzer {
                 } else {
                     let is_buf = self.is_buffer_variable(object);
                     let is_list = self.is_list_variable(object);
+                    let is_map = self.is_map_variable(object);
                     let is_file = self.file_variables.contains(object.as_str());
                     let is_scalar = self.is_scalar_variable(object);
                     // A text variable is "scalar" (its slot holds a raw
@@ -2228,16 +2363,32 @@ impl Analyzer {
                     let is_text =
                         matches!(self.scalar_types.get(object.as_str()), Some(Type::String));
                     match property {
-                        ObjectProperty::Size | ObjectProperty::Empty | ObjectProperty::Full => {
-                            if !is_buf && !is_list && !is_file {
+                        ObjectProperty::Size | ObjectProperty::Empty => {
+                            if !is_buf && !is_list && !is_map && !is_file {
                                 self.push_error(
-                                    format!("Property '{}' requires a buffer, list, or file variable: {}", 
+                                    format!("Property '{}' requires a buffer, list, map, or file variable: {}",
                                         match property {
                                             ObjectProperty::Size => "size",
                                             ObjectProperty::Empty => "empty",
-                                            ObjectProperty::Full => "full",
                                             _ => "unknown",
                                         }, object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Full => {
+                            if !is_buf && !is_list && !is_file {
+                                self.push_error(
+                                    format!("Property 'full' requires a buffer, list, or file variable: {}", object),
+                                    Some(object),
+                                );
+                            }
+                        }
+                        ObjectProperty::Keys | ObjectProperty::Values => {
+                            if !is_map {
+                                self.push_error(
+                                    format!("Property '{}' requires a map variable: {}",
+                                        if matches!(property, ObjectProperty::Keys) { "keys" } else { "values" }, object),
                                     Some(object),
                                 );
                             }
@@ -2253,7 +2404,7 @@ impl Analyzer {
                         ObjectProperty::First | ObjectProperty::Last => {
                             if !is_list {
                                 self.push_error(
-                                    format!("Property '{}' requires a list variable: {}", 
+                                    format!("Property '{}' requires a list variable: {}",
                                         if matches!(property, ObjectProperty::First) { "first" } else { "last" }, object),
                                     Some(object),
                                 );
@@ -2413,6 +2564,43 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 for elem in elements {
                     self.analyze_expr(elem);
+                }
+            }
+
+            // Map literal {"k": v, ...}. Keys must be text; values are
+            // analyzed (and may themselves be lists/maps -> uses_heap).
+            Expr::MapLit { pairs } => {
+                self.deps.uses_heap = true;
+                for (key, value) in pairs {
+                    self.analyze_expr(key);
+                    self.analyze_expr(value);
+                    if self.infer_simple_expr_type(key) != Some(Type::String) {
+                        self.push_error(
+                            "Map keys must be text".to_string(),
+                            None,
+                        );
+                    }
+                }
+            }
+
+            // Map key access: person's "name". The map operand must be a
+            // map variable and the key must be text.
+            Expr::MapAccess { map, key } => {
+                self.track_identifier(map);
+                self.analyze_expr(key);
+                if !self.is_variable_available(map) {
+                    self.push_error(format!("Unknown map: {}", map), Some(map));
+                } else if !self.is_map_variable(map) {
+                    self.push_error(
+                        format!("Map access target must be a map: {}", map),
+                        Some(map),
+                    );
+                }
+                if self.infer_simple_expr_type(key) != Some(Type::String) {
+                    self.push_error(
+                        "Map keys must be text".to_string(),
+                        Some(map),
+                    );
                 }
             }
             

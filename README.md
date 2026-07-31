@@ -1,8 +1,8 @@
 # Vox
 
-![Open issues](https://img.shields.io/github/issues/eng-c/ec?style=flat-square)
-![Repo size](https://img.shields.io/github/repo-size/eng-c/ec?style=flat-square)
-![Last commit](https://img.shields.io/github/last-commit/eng-c/ec?style=flat-square)
+![Open issues](https://img.shields.io/github/issues/Vox-lang/vox?style=flat-square)
+![Repo size](https://img.shields.io/github/repo-size/Vox-lang/vox?style=flat-square)
+![Last commit](https://img.shields.io/github/last-commit/Vox-lang/vox?style=flat-square)
 ![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)
 
 **Vox** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly — without a **resident runtime system**, virtual machine, or standard library.
@@ -49,8 +49,11 @@ Instead, memory is accessed through compiler-managed buffers, which encapsulate 
 
 ### Dynamic and Fixed Buffers
 
-- Buffers grow dynamically as needed, with their size tracked explicitly.
-- Fixed-size buffers can be declared and resized in a controlled manner.
+- Dynamic buffers grow as needed when appended to, with their size tracked
+  explicitly.
+- Fixed-size buffers are declared with a capacity and do **not** grow. A
+  write past the end is refused rather than reallocating (see below), so a
+  declared bound stays a bound.
 - All buffer operations are lowered to predictable, explicit assembly.
 
 ### Bounds-Checked Access
@@ -94,6 +97,13 @@ This makes Vox well-suited for static utilities, constrained environments, and s
 * Compile-time memory and resource tracking
 * Modular library of core macros with dependency inclusion
 * Extremely small statically linked executables
+* Structured data: lists, key/value maps, and arbitrary nesting of the two.
+  Elements carry a runtime type tag, so a collection may hold mixed types
+  and still read back as what it is; `is a text` / `is a number` predicates
+  branch on that tag, and homogeneous collections keep a fully static fast
+  path with no tag checks emitted
+* An explicit dynamic `value` type for carrying "whatever this slot holds"
+  across function boundaries, and a `nothing` value distinct from `0`
 * Filesystem, mount, and process-control operations (directories, device
   nodes, symlinks, mount/unmount, `pivot_root`, `execve`, `fork`/`reap`,
   `shutdown`/`reboot`/`halt`) - enough to write a working early-userspace
@@ -144,7 +154,7 @@ This program compiles to native assembly and produces a working executable witho
 ## Architecture
 
 ```
-Source (.en)
+Source (.vox)
    ↓
 Lexer → Parser → Analyzer → CodeGen → Assembly (.asm)
                          ↓
@@ -203,10 +213,10 @@ sudo make uninstall
 
 ```sh
 # Compile and run
-vox example.en --run
+vox example.vox --run
 
 # Compile only
-vox example.en
+vox example.vox
 ```
 
 ---
@@ -233,13 +243,19 @@ Vox is under active development. Planned work includes:
 6. **Math and Numeric Optimization**
    Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.
 
+7. **Structured Data and Serialization**
+   Lists, maps, nesting, and `nothing` are implemented — the pieces a JSON/YAML value needs. Remaining: the parser and emitter themselves, plus matrices and tuples. See [docs/COLLECTIONS_ROADMAP.md](docs/COLLECTIONS_ROADMAP.md).
+
 ---
 
 ## Non-Goals
 
 * Free-form natural language interpretation
 * JIT compilation or runtime reflection
-* Dynamic typing or implicit control flow
+* *Implicit* dynamic typing or implicit control flow. Types are static by
+  default; the dynamic `value` type is an opt-in, declared escape hatch,
+  and the compiler refuses to use one in arithmetic until you have checked
+  what it holds
 * Hiding system behavior behind opaque abstractions
 * Language-level runtime systems or background memory management
 

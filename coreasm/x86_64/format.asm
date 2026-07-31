@@ -71,7 +71,7 @@ _print_hex_impl:
     mov r13, rsi                ; uppercase flag
     
     ; Build hex string backwards
-    lea rdi, [_format_buffer + 20]
+    lea rdi, [rel _format_buffer + 20]
     mov byte [rdi], 0           ; null terminator
     
     mov rax, r12
@@ -96,10 +96,10 @@ _print_hex_impl:
     ; Select correct hex char table
     test r13, r13
     jz .use_lower
-    lea rbx, [_hex_chars_upper]
+    lea rbx, [rel _hex_chars_upper]
     jmp .get_char
 .use_lower:
-    lea rbx, [_hex_chars_lower]
+    lea rbx, [rel _hex_chars_lower]
 .get_char:
     mov cl, [rbx + rcx]
     dec rdi
@@ -116,7 +116,7 @@ _print_hex_impl:
     
 .print_result:
     ; Count length
-    lea rsi, [_format_buffer + 20]
+    lea rsi, [rel _format_buffer + 20]
     sub rsi, rdi                ; length
     mov rdx, rsi
     mov rsi, rdi                ; string pointer
@@ -159,7 +159,7 @@ _print_binary_impl:
     mov r12, rdi                ; value
     
     ; Build binary string backwards
-    lea rdi, [_format_buffer + 65]
+    lea rdi, [rel _format_buffer + 65]
     mov byte [rdi], 0           ; null terminator
     
     mov rax, r12
@@ -186,7 +186,7 @@ _print_binary_impl:
     
 .print_result:
     ; Count length
-    lea rsi, [_format_buffer + 65]
+    lea rsi, [rel _format_buffer + 65]
     sub rsi, rdi
     mov rdx, rsi
     mov rsi, rdi
@@ -227,7 +227,7 @@ _print_octal_impl:
     
     mov r12, rdi
     
-    lea rdi, [_format_buffer + 30]
+    lea rdi, [rel _format_buffer + 30]
     mov byte [rdi], 0
     
     mov rax, r12
@@ -258,7 +258,7 @@ _print_octal_impl:
     mov byte [rdi], '0'
     
 .print_result:
-    lea rsi, [_format_buffer + 30]
+    lea rsi, [rel _format_buffer + 30]
     sub rsi, rdi
     mov rdx, rsi
     mov rsi, rdi
@@ -538,7 +538,7 @@ _hex_to_buffer:
     mov r13, rsi                ; uppercase flag
     
     ; Build hex string backwards
-    lea rdi, [_format_buffer + 20]
+    lea rdi, [rel _format_buffer + 20]
     mov byte [rdi], 0           ; null terminator
     xor rcx, rcx                ; digit count
     
@@ -563,10 +563,10 @@ _hex_to_buffer:
     ; Select correct hex char table
     test r13, r13
     jz .use_lower
-    lea rbx, [_hex_chars_upper]
+    lea rbx, [rel _hex_chars_upper]
     jmp .get_char
 .use_lower:
-    lea rbx, [_hex_chars_lower]
+    lea rbx, [rel _hex_chars_lower]
 .get_char:
     mov cl, [rbx + rcx]
     dec rdi
@@ -597,7 +597,7 @@ _binary_to_buffer:
     mov r12, rdi                ; value
     
     ; Build binary string backwards
-    lea rdi, [_format_buffer + 65]
+    lea rdi, [rel _format_buffer + 65]
     mov byte [rdi], 0           ; null terminator
     xor rcx, rcx                ; digit count
     
@@ -646,7 +646,7 @@ _octal_to_buffer:
     mov r12, rdi                ; value
     
     ; Build octal string backwards
-    lea rdi, [_format_buffer + 32]
+    lea rdi, [rel _format_buffer + 32]
     mov byte [rdi], 0           ; null terminator
     xor rcx, rcx                ; digit count
     
@@ -709,13 +709,13 @@ _print_hex_padded_impl:
     mov r15, rcx                ; digit len
     
     ; Print "0x" prefix
-    mov byte [_format_buffer + 40], '0'
-    mov byte [_format_buffer + 41], 'x'
+    mov byte [rel _format_buffer + 40], '0'
+    mov byte [rel _format_buffer + 41], 'x'
     push r14
     push r15
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 40]
+    lea rsi, [rel _format_buffer + 40]
     mov rdx, 2
     syscall
     pop r15
@@ -734,14 +734,14 @@ _print_hex_padded_impl:
     push r15
     test r8, r8
     jz .use_zero
-    mov byte [_format_buffer + 40], ' '
+    mov byte [rel _format_buffer + 40], ' '
     jmp .write_pad
 .use_zero:
-    mov byte [_format_buffer + 40], '0'
+    mov byte [rel _format_buffer + 40], '0'
 .write_pad:
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 40]
+    lea rsi, [rel _format_buffer + 40]
     mov rdx, 1
     syscall
     pop r15
@@ -796,14 +796,14 @@ _print_binary_padded_impl:
     push r14
     test r8, r8
     jz .use_zero
-    mov byte [_format_buffer + 40], ' '
+    mov byte [rel _format_buffer + 40], ' '
     jmp .write_pad
 .use_zero:
-    mov byte [_format_buffer + 40], '0'
+    mov byte [rel _format_buffer + 40], '0'
 .write_pad:
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 40]
+    lea rsi, [rel _format_buffer + 40]
     mov rdx, 1
     syscall
     pop r14
@@ -843,13 +843,13 @@ _print_octal_padded_impl:
     mov r14, rcx                ; digit len
     
     ; Print "0o" prefix
-    mov byte [_format_buffer + 40], '0'
-    mov byte [_format_buffer + 41], 'o'
+    mov byte [rel _format_buffer + 40], '0'
+    mov byte [rel _format_buffer + 41], 'o'
     push r13
     push r14
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 40]
+    lea rsi, [rel _format_buffer + 40]
     mov rdx, 2
     syscall
     pop r14
@@ -868,14 +868,14 @@ _print_octal_padded_impl:
     push r14
     test r8, r8
     jz .use_zero
-    mov byte [_format_buffer + 40], ' '
+    mov byte [rel _format_buffer + 40], ' '
     jmp .write_pad
 .use_zero:
-    mov byte [_format_buffer + 40], '0'
+    mov byte [rel _format_buffer + 40], '0'
 .write_pad:
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 40]
+    lea rsi, [rel _format_buffer + 40]
     mov rdx, 1
     syscall
     pop r14
@@ -913,7 +913,7 @@ _print_int_padded_impl:
     mov r14, rdx                ; zero-pad flag
     
     ; Convert number to string first
-    lea rdi, [_format_buffer + 30]
+    lea rdi, [rel _format_buffer + 30]
     mov byte [rdi], 0
     
     mov rax, r12
@@ -977,10 +977,10 @@ _print_int_padded_impl:
     cmp byte [r15], '-'
     jne .pad_loop
     push rax
-    mov byte [_format_buffer + 32], '-'
+    mov byte [rel _format_buffer + 32], '-'
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 32]
+    lea rsi, [rel _format_buffer + 32]
     mov rdx, 1
     syscall
     pop rax
@@ -1001,10 +1001,10 @@ _print_int_padded_impl:
     jz .print_result
 
     push rax
-    mov byte [_format_buffer + 32], r9b
+    mov byte [rel _format_buffer + 32], r9b
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer + 32]
+    lea rsi, [rel _format_buffer + 32]
     mov rdx, 1
     syscall
     pop rax
@@ -1051,11 +1051,11 @@ _print_float_precision:
     jns .positive
 
     ; Print minus sign
-    mov byte [_format_buffer], '-'
+    mov byte [rel _format_buffer], '-'
     push rax
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer]
+    lea rsi, [rel _format_buffer]
     mov rdx, 1
     syscall
     pop rax
@@ -1079,7 +1079,7 @@ _print_float_precision:
 
     ; Multiply by 10^precision
     mov r14, r12                ; counter
-    movsd xmm1, [_ten_const]
+    movsd xmm1, [rel _ten_const]
 .mul_loop:
     test r14, r14
     jz .round_frac
@@ -1089,7 +1089,7 @@ _print_float_precision:
 
 .round_frac:
     ; Round and convert to integer
-    addsd xmm0, [_half_const]
+    addsd xmm0, [rel _half_const]
     cvttsd2si r14, xmm0         ; r14 = rounded fractional integer
 
     ; Compute threshold = 10^precision
@@ -1117,11 +1117,11 @@ _print_float_precision:
     pop r12
 
     ; Print decimal point
-    mov byte [_format_buffer], '.'
+    mov byte [rel _format_buffer], '.'
     push rax
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer]
+    lea rsi, [rel _format_buffer]
     mov rdx, 1
     syscall
     pop rax
@@ -1155,13 +1155,13 @@ _print_float_precision:
 .zero_loop:
     test r14, r14
     jz .print_value
-    mov byte [_format_buffer], '0'
+    mov byte [rel _format_buffer], '0'
     push rcx
     push r14
     push r15
     mov rax, 1
     mov rdi, 1
-    lea rsi, [_format_buffer]
+    lea rsi, [rel _format_buffer]
     mov rdx, 1
     syscall
     pop r15

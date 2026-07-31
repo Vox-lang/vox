@@ -1154,7 +1154,28 @@ impl Parser {
             let value = self.parse_expression()?;
             return Ok(Statement::ElementSet { list, index, value });
         }
-        
+
+        // Handle "Set <map>'s \"<key>\" to <value>" (map insert/replace).
+        // The target `<map>'s \"<key>\"` parses as an Expr::MapAccess, so we
+        // tentatively parse a primary and commit only if it is a MapAccess
+        // followed by `to`. Otherwise we restore position and let the
+        // generic declaration/assignment path below handle it (e.g.
+        // `Set x to 5.`). (stage 1e2, tag 5)
+        if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+            let saved = self.pos;
+            let target = self.parse_primary();
+            if let Ok(Expr::MapAccess { map, key }) = target {
+                self.skip_noise();
+                if *self.current() == Token::To {
+                    self.advance();
+                    self.skip_noise();
+                    let value = self.parse_expression()?;
+                    return Ok(Statement::MapSet { map, key: *key, value });
+                }
+            }
+            self.pos = saved;
+        }
+
         // Handle "the/a/an <type> called <name>" pattern
         if matches!(self.current(), Token::The | Token::A | Token::An) {
             self.advance();
@@ -1413,8 +1434,16 @@ impl Parser {
             Token::Float => { self.advance(); Some(Type::Float) }
             Token::Text => { self.advance(); Some(Type::String) }
             Token::Boolean => { self.advance(); Some(Type::Boolean) }
+            // `value` is not a reserved keyword, so it only denotes the dynamic
+            // type when it sits in a type position - here, directly before
+            // `called`. `a value is 5.` still declares a variable named value.
+            Token::Identifier(n) if n == "value" && *self.peek(1) == Token::Called => {
+                self.advance();
+                Some(Type::Value)
+            }
             Token::List => { self.advance(); Some(Type::List(Box::new(Type::Unknown))) }
-            Token::Buffer => { 
+            Token::Map => { self.advance(); Some(Type::Map(Box::new(Type::Unknown))) }
+            Token::Buffer => {
                 self.advance();
                 self.skip_noise();
                 
@@ -3528,9 +3557,13 @@ impl Parser {
             return self.wrap_in_loop_expansion(variable, collection, append_stmt);
         }
         
-        // Parse just the value (literal, identifier, or simple expression)
-        // We need to be careful not to consume 'to' which is the separator
-        let value = match self.current().clone() {
+        // Parse just the value (literal, identifier, function call, or simple
+        // expression). We must be careful not to consume 'to', which is the
+        // append separator. A quoted name followed by of/with/on is a function
+        // call (`append "f" of x to items`); `to` is NOT a call trigger here,
+        // unlike the general expression parser, so that `append "s" to items`
+        // stays an append of the literal string "s".
+        let mut value = match self.current().clone() {
             Token::IntegerLiteral(n) => {
                 self.advance();
                 Expr::IntegerLit(n)
@@ -3541,7 +3574,33 @@ impl Parser {
             }
             Token::StringLiteral(s) => {
                 self.advance();
-                self.string_value_expr(s)
+                self.skip_noise();
+                // A format string can't be a function name - resolve it first.
+                let resolved = self.string_value_expr(s.clone());
+                if matches!(resolved, Expr::FormatString { .. }) {
+                    resolved
+                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
+                    self.advance();
+                    self.skip_noise();
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.parse_expression()?);
+                        self.skip_noise();
+                        if *self.current() == Token::Comma {
+                            // Comma belongs to the enclosing sentence.
+                            break;
+                        }
+                        if *self.current() == Token::And {
+                            self.advance();
+                            self.skip_noise();
+                        } else {
+                            break;
+                        }
+                    }
+                    Expr::FunctionCall { name: s, args }
+                } else {
+                    resolved
+                }
             }
             Token::True => {
                 self.advance();
@@ -3569,7 +3628,38 @@ impl Parser {
         };
         
         self.skip_noise();
-        
+
+        // Stage 1c: a type predicate as the append value, e.g.
+        // `append item is a number to flags` or `append item is not a text
+        // to flags`. The article `a`/`an` and the noun are keywords, and
+        // `to` (the append separator) is not one of them, so this cannot
+        // accidentally swallow the separator — `append "s" to items`
+        // (current token `to`, not `is`) skips this branch unchanged.
+        if matches!(self.current(), Token::Is | Token::Are) {
+            self.advance();
+            self.skip_noise();
+            let negated = *self.current() == Token::Not;
+            if negated {
+                self.advance();
+                self.skip_noise();
+            }
+            if !matches!(self.current(), Token::A | Token::An) {
+                return Err(self.err(
+                    "Expected 'a'/'an' and a type noun after 'is' in append value"
+                ));
+            }
+            let type_noun = self.parse_type_noun_after_article()?;
+            let check = Expr::TypeCheck {
+                value: Box::new(value),
+                type_noun,
+            };
+            value = if negated {
+                Expr::UnaryOp { op: UnaryOperator::Not, operand: Box::new(check) }
+            } else {
+                check
+            };
+        }
+
         // Expect "to"
         if *self.current() != Token::To {
             return Err(self.err("Expected 'to' after value in append statement"));
@@ -3915,6 +4005,11 @@ impl Parser {
                         Token::File => { self.advance(); Type::File }
                         Token::Buffer => { self.advance(); Type::Buffer }
                         Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
+                        Token::Map => { self.advance(); Type::Map(Box::new(Type::Unknown)) }
+                        // `value` is not a reserved keyword (it stays a usable
+                        // identifier everywhere else); in a parameter type
+                        // position it denotes the dynamic `value` type.
+                        Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
                         _ => Type::Unknown,
                     };
                     
@@ -3969,12 +4064,15 @@ impl Parser {
                 self.skip_noise();
             }
             
-            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File) {
+            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File)
+                || matches!(self.current(), Token::Identifier(ref n) if n == "value")
+            {
                 return_type = match self.current() {
                     Token::Number => { self.advance(); Type::Integer }
                     Token::Text => { self.advance(); Type::String }
                     Token::Boolean => { self.advance(); Type::Boolean }
                     Token::File => { self.advance(); Type::File }
+                    Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
                     _ => Type::Void,
                 };
                 self.skip_noise();
@@ -4245,6 +4343,33 @@ impl Parser {
         false
     }
     
+    /// Parse the type-noun part of `is a/an <noun>` (stage 1c). Assumes the
+    /// current token is `A` or `An`; consumes the article and the noun and
+    /// returns the corresponding `Type`. Type-noun tokens map to `Type` the
+    /// same way the Cast parser does (see `parse_postfix`, ~line 4571).
+    /// Shared by `parse_comparison` (`if item is a text`) and `parse_append`
+    /// (`append item is a number to flags`).
+    fn parse_type_noun_after_article(&mut self) -> Result<Type, Box<CompileError>> {
+        // current is A or An
+        self.advance();
+        self.skip_noise();
+        match self.current() {
+            Token::Number | Token::Int => { self.advance(); Ok(Type::Integer) }
+            Token::Text => { self.advance(); Ok(Type::String) }
+            Token::Boolean => { self.advance(); Ok(Type::Boolean) }
+            Token::Float => { self.advance(); Ok(Type::Float) }
+            // `is a list` type predicate (stage 1e1): a list value carries
+            // tag 4, so this folds/compares against TAG_LIST.
+            Token::List => { self.advance(); Ok(Type::List(Box::new(Type::Unknown))) }
+            // `is a map` type predicate (stage 1e2): a map value carries
+            // tag 5, so this folds/compares against TAG_MAP.
+            Token::Map => { self.advance(); Ok(Type::Map(Box::new(Type::Unknown))) }
+            _ => Err(self.err(
+                "Expected a type noun (number, text, decimal, boolean, list, or map) after 'is a'"
+            )),
+        }
+    }
+
     fn parse_comparison(&mut self) -> Result<Expr, Box<CompileError>> {
         let left = self.parse_expression()?;
         self.skip_noise();
@@ -4373,7 +4498,31 @@ impl Parser {
                     Ok(check)
                 };
             }
-            
+
+            // "is a <type-noun>" / "is an <type-noun>" — runtime type
+            // predicate (stage 1c). The article disambiguates this from a
+            // bare `is <expr>` equality; `a`/`an` are keywords, never a valid
+            // expression primary, so there is no ambiguity with equality.
+            // Negation (`is not a text`) reuses the `negated` flag above and
+            // wraps in `UnaryOp { Not, .. }`, exactly like `is not empty`.
+            // Type-noun tokens map to `Type` the same way the Cast parser
+            // does (see `parse_postfix`, ~line 4571).
+            if matches!(self.current(), Token::A | Token::An) {
+                let type_noun = self.parse_type_noun_after_article()?;
+                let check = Expr::TypeCheck {
+                    value: Box::new(left),
+                    type_noun,
+                };
+                return if negated {
+                    Ok(Expr::UnaryOp {
+                        op: UnaryOperator::Not,
+                        operand: Box::new(check),
+                    })
+                } else {
+                    Ok(check)
+                };
+            }
+
             if *self.current() == Token::Greater || *self.current() == Token::Less {
                 let is_greater = *self.current() == Token::Greater;
                 self.advance();
@@ -4792,10 +4941,51 @@ impl Parser {
             Token::OpenBrace => {
                 self.advance();
                 self.skip_noise();
-                let expr = self.parse_expression()?;
+                // Disambiguate a map literal from a grouping {expr}:
+                //   {}                -> empty map
+                //   {k: v, ...}       -> map literal (a colon follows the
+                //                        first expression)
+                //   {expr}            -> grouping (existing behaviour)
+                // Parse the first expression, then branch on whether a colon
+                // follows. This lets a non-text key (e.g. {1: "x"}) reach the
+                // analyzer's "Map keys must be text" check rather than being
+                // rejected as a malformed grouping. (stage 1e2)
+                if *self.current() == Token::CloseBrace {
+                    self.advance();
+                    return Ok(Expr::MapLit { pairs: vec![] });
+                }
+                let first = self.parse_expression()?;
                 self.skip_noise();
+                if *self.current() == Token::Colon {
+                    let mut pairs = Vec::new();
+                    self.advance(); // consume colon
+                    self.skip_noise();
+                    let first_value = self.parse_expression()?;
+                    pairs.push((first, first_value));
+                    loop {
+                        self.skip_noise();
+                        if *self.current() != Token::Comma {
+                            break;
+                        }
+                        self.advance();
+                        self.skip_noise();
+                        // tolerate a trailing comma before the close brace
+                        if *self.current() == Token::CloseBrace {
+                            break;
+                        }
+                        let key = self.parse_expression()?;
+                        self.skip_noise();
+                        self.expect(&Token::Colon);
+                        self.skip_noise();
+                        let value = self.parse_expression()?;
+                        pairs.push((key, value));
+                    }
+                    self.expect(&Token::CloseBrace);
+                    return Ok(Expr::MapLit { pairs });
+                }
+                // grouping
                 self.expect(&Token::CloseBrace);
-                Ok(expr)
+                Ok(first)
             }
             Token::Byte => {
                 // byte N of buffer
@@ -4889,6 +5079,9 @@ impl Parser {
                                 Token::Capacity => ObjectProperty::Capacity,
                                 Token::Empty => ObjectProperty::Empty,
                                 Token::Full => ObjectProperty::Full,
+                                // Map properties
+                                Token::Keys => ObjectProperty::Keys,
+                                Token::Values => ObjectProperty::Values,
                                 // Time properties
                                 Token::Hour => ObjectProperty::Hour,
                                 Token::Minute => ObjectProperty::Minute,
@@ -4901,6 +5094,18 @@ impl Parser {
                                 Token::Duration => ObjectProperty::Duration,
                                 Token::Elapsed => ObjectProperty::Elapsed,
                                 Token::Running => ObjectProperty::Running,
+                                // Map key access on a quoted variable: "person"'s "name"
+                                // (text key). A quoted key with `{...}` interpolation
+                                // materializes a fresh text. (stage 1e2)
+                                Token::StringLiteral(k) => {
+                                    let k = k.clone();
+                                    self.advance();
+                                    self.skip_noise();
+                                    return Ok(Expr::MapAccess {
+                                        map: s,
+                                        key: Box::new(self.string_value_expr(k)),
+                                    });
+                                }
                                 // Handle single-quoted multi-word property names and 'start'
                                 Token::Identifier(ref prop_name) => {
                                     match prop_name.to_lowercase().as_str() {
@@ -4981,6 +5186,16 @@ impl Parser {
             Token::False => {
                 self.advance();
                 Ok(Expr::BoolLit(false))
+            }
+            // The nothing/null literal (stage 1e3, tag 6). `nothing`/`null`/
+            // `nil` all lex to `Token::Nothing`. As a bare primary it yields
+            // `NothingLit`; in `x is nothing` it falls through
+            // `parse_comparison` (the property/article/greater-less/equals
+            // guards all skip `Nothing`) to the bare-`is` equality arm,
+            // building `BinaryOp{Equal|NotEqual, x, NothingLit}`.
+            Token::Nothing => {
+                self.advance();
+                Ok(Expr::NothingLit)
             }
             // Handle "current time" expression
             Token::Current => {
@@ -5222,6 +5437,20 @@ impl Parser {
                                 }
                             }
                             
+                            // Map key access: person's "name" (text-literal key).
+                            // Keys are text in stage 1e2; a quoted key with
+                            // `{...}` interpolation materializes a fresh text
+                            // (so `m's "key{i}"` builds a dynamic key). An
+                            // unquoted identifier here is a property name.
+                            if let Token::StringLiteral(k) = self.current().clone() {
+                                self.advance();
+                                self.skip_noise();
+                                return Ok(Expr::MapAccess {
+                                    map: name,
+                                    key: Box::new(self.string_value_expr(k)),
+                                });
+                            }
+
                             // Parse property name for other objects
                             let property = match self.current() {
                                 // Buffer properties
@@ -5241,6 +5470,10 @@ impl Parser {
                                 // List properties
                                 Token::First => ObjectProperty::First,
                                 Token::Last => ObjectProperty::Last,
+
+                                // Map properties
+                                Token::Keys => ObjectProperty::Keys,
+                                Token::Values => ObjectProperty::Values,
 
                                 // Number properties
                                 Token::Absolute => ObjectProperty::Absolute,

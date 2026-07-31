@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.21**
+**Version 0.1.23**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -250,6 +250,7 @@ If the loop variable equals `<match>`, it's replaced with `<replacement>` for th
 | String | `text` | Text strings |
 | Boolean | `boolean` | `true` or `false` |
 | List | `list` | Collection of items |
+| Map | `map` | Key/value collection (JSON object; text keys) |
 | Buffer | `buffer` | Memory block for I/O (dynamic or fixed-size) |
 | File | `file` | File descriptor handle (auto-cleaned) |
 | Time | `time` | Date/time value (unix timestamp with components) |
@@ -268,6 +269,7 @@ a number called "x" is 5.
 a text called "name" is "Alice".
 a boolean called "flag" is true.
 a list called "numbers" is [1, 2, 3].
+a map called "person" is {"name": "Alice", "age": 30}.
 ```
 
 ### Declaration with Set/Create
@@ -334,9 +336,13 @@ To "check divisibility" of a number called "divisor" and a number called "divide
 
 ### Parameter and Local Types (v0.1.16)
 
-Parameters may use any variable type, including `buffer`, `list`, and
-`file` - and a typed parameter supports the same properties and
-operations as a top-level variable of that type:
+Parameters may use any variable type, including `buffer`, `list`, `map`,
+and `file` - and a typed parameter supports the same properties and
+operations as a top-level variable of that type. A parameter (or return
+type) may also be `value`, the dynamic type whose runtime tag travels with
+its payload across the call (a map rides this as payload + tag 5); see
+[Dynamic Values (`value`)](#dynamic-values-value)
+below.
 
 ```
 To "contains token" of a buffer called "hay" and a text called "devname".
@@ -787,10 +793,398 @@ Appending, `set element`, `element N of`, `first`/`last`, iteration, and
 `{...}` format interpolation all respect each element's actual type.
 Booleans print as `1`/`0`, matching homogeneous boolean lists.
 
-Current limitation: a value whose type is not statically knowable (for
-example a function result) appended to an otherwise homogeneous list does
-not yet widen it to mixed; see `docs/COLLECTIONS_ROADMAP.md` for the plan
-that closes this.
+The compiler earns the homogeneous fast path by **proof**, not assumption.
+A value whose type it cannot statically prove — for example the result of a
+function with an undeclared return type, or any other opaque expression —
+widens the list to mixed, so the element is always read back as what it
+is rather than silently reinterpreted:
+
+```
+To "five" with a number called "x". Return x add 1.
+a list called "items" is [].
+append "hello" to items.
+append "five" of 4 to items.
+print element 1 of items.   (prints: hello)
+print element 2 of items.   (prints: 5)
+```
+
+A function result whose return type **is** declared (e.g. `Return a text,
+"hi".`) is statically known, so it is tagged with that type at the write
+and widens the list only because its type differs from the other elements.
+
+Residual limitation: for a genuinely opaque value (no declared return
+type), the slot's own tag may still be a conservative `TAG_INTEGER` guess
+until runtime tag propagation arrives in stage 1d; the list still widens
+and reads dispatch on tags, so the value prints correctly when it really
+is a number. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+
+### Nested Lists
+
+A list element may itself be a list. A nested list prints recursively with
+brackets, and the same per-slot tag machinery tracks it — a list value in
+a slot carries the list tag (4), so a mixed list like `[1, [2, 3], "four"]`
+prints exactly as written, and a homogeneous list-of-lists like
+`[[1, 2], [3, 4]]` keeps the statically-typed fast path (it is not mixed):
+
+```
+a list called "nested" is [1, [2, 3], "four"].
+print nested.                       (prints: [1, [2, 3], "four"])
+print element 2 of nested.          (prints: [2, 3])
+
+a list called "deep" is [1, [2, [3, 4]], 5].
+print element 2 of element 2 of deep.   (prints: [3, 4])
+```
+
+`element N of`, `first`/`last`, iteration, and whole-list print all yield
+a usable child list, so an extracted child behaves as a list — its
+`length`, its own `element N of`, and a `For each` over it all work:
+
+```
+a list called "inner" is element 2 of [1, [2, 3], "four"].
+print inner's length.        (prints: 2)
+For each y in inner, print y.   (prints: 2, then 3)
+```
+
+The `is a list` predicate recognises a nested-list element (runtime tag 4)
+and folds to true on a statically-typed list variable, like the other
+predicates:
+
+```
+For each item in [1, [2, 3], "x"],
+  if item is a list, print "L", otherwise print "s".
+(prints: s, L, s)
+```
+
+Printing is recursive and **cycle-safe**: a list that contains itself
+(for example `a list called "x" is []. append x to x.`) would recurse
+forever, so printing is capped at a depth of 64. When the limit is hit
+the over-deep subtree prints as `...`, the error flag is set, and printing
+unwinds safely instead of overflowing the stack. Use `on error` to react:
+
+```
+a list called "x" is [].
+append x to x.
+print x.
+on error print "cyclic".    (prints: [[...]] then cyclic)
+```
+
+Two limitations remain for this stage. Extracting a child with `element N
+of` yields a *reference* to the child list, not a copy: if the parent is
+later grown by appending enough elements to force a reallocation, a child
+extracted before that reallocation may point at freed memory. Extract a
+child after the parent has finished growing, or copy it element-by-element.
+And the *expression* form of format interpolation — `print "{element 2 of
+nested}"` — has no runtime-tag dispatch, so a nested list does not render
+there; use the *variable* form `print "{nested}"` (or `print element 2 of
+nested.`) instead. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+
+### Maps
+
+A map is a key/value collection — a JSON object. Keys are text; values may
+be any type (number, text, decimal, boolean, list, or another map). A map
+literal uses braces with `"key": value` pairs, and an empty map is `{}`:
+
+```
+a map called "person" is {"name": "Ada", "age": 36}.
+a map called "empty" is {}.
+print person.            (prints: {"name": "Ada", "age": 36})
+print empty.             (prints: {})
+```
+
+Read a value by key with `map's "key"` (the key is a text literal; a
+quoted key with `{...}` interpolation builds a dynamic key). The value
+carries its runtime tag, so a text prints as text and a number as a
+number:
+
+```
+print person's "name".   (prints: Ada)
+print person's "age".    (prints: 36)
+```
+
+Insert or replace an entry with `Set map's "key" to value` (mirroring
+`Set element N of list to …`). The map may reallocate on growth, so the
+returned pointer is stored back into the variable automatically:
+
+```
+set person's "age" to 37.
+print person's "age".    (prints: 37)
+print person's length.   (prints: 2 — replace, not insert)
+```
+
+The properties `length` (live entry count) and `empty` (true when zero
+entries) work as for lists. `keys` and `values` each yield a fresh list,
+in insertion order, for iteration:
+
+```
+for each key in person's keys, print key.   (prints: name, then age)
+for each v in person's values, print v.     (prints: Ada, then 37)
+```
+
+A missing key does not crash: the lookup yields 0 and sets the error
+flag, so an `on error` handler can react. Note this is deliberately *not*
+the same as a key that holds [`nothing`](#nothing-the-absent-value) — "no
+such key" stays distinguishable from "the key is set to nothing":
+
+```
+print person's "nope".    (prints: 0)
+on error print "missing". (prints: missing)
+```
+
+A map value may be a list or another map, and printing is recursive:
+`_map_print` renders `{"key": value, …}` and shares the same 64-deep
+`_print_depth` budget as `_list_print`, so a mixed map/list tree is
+cycle-safe. A self-referential map (`set m's "self" to m.`) prints 64
+levels deep, then `...`, sets the error flag, and unwinds safely.
+
+The `is a map` predicate recognises a map (runtime tag 5): it folds to
+true on a statically-typed map variable and compares the tag at run time
+on a mixed value. A map also rides the `value` ABI (see Values): a map
+passed to a `value` parameter or returned from a `value` function carries
+its tag (5) alongside the payload, so it round-trips through functions
+intact.
+
+A map may also be an element of a list (`[{"a": 1}, {"b": 2}]`) — the
+slot carries the map tag (5) and a `For each` over such a list types the
+loop variable as a map. Two limitations remain for this stage: keys are
+text only (a non-text key is rejected with "Map keys must be text"), and
+there is no entry deletion. See `docs/COLLECTIONS_ROADMAP.md`.
+
+### Type Predicates
+
+You can ask what type a value actually holds and branch on it. The
+predicate `is a <type-noun>` compares the value's runtime type tag, so it
+works on a mixed-list element whose type is only known at run time:
+
+```
+a list called "m" is [1, "two", 3.5, yes].
+For each item in m,
+  if item is a text, print "text: {item}",
+  otherwise if item is a decimal, print "decimal: {item}",
+  otherwise if item is a boolean, print "boolean: {item}",
+  otherwise print "number: {item}".
+(prints: number: 1 / text: two / decimal: 3.5 / boolean: 1)
+```
+
+The type nouns are `number`, `text`, `decimal`, `boolean`, `list`, and
+`map`. The declaration synonyms also work (`integer`→number, `string`→text,
+`float`/`real`→decimal, `bool`→boolean, `dictionary`→map). Negate with
+`is not a`:
+
+```
+if item is not a number, print "not a number".
+```
+
+`is a boolean` and `is a number` are distinct even though both print as
+numbers: a boolean carries tag 3, a number tag 0, and the predicate reads
+that tag. On a **statically-typed** value the predicate folds at compile
+time — `if x is a number` for a declared `a number called "x"` costs
+nothing and is always true — so the sentence is legal on any value, not
+just mixed ones.
+
+This is the guard idiom that makes mixed lists programmable: arithmetic on
+a mixed element still dispatches statically, so guard it yourself before
+operating — `if item is a number, … item add 1 …`. (Automatic guarding is
+a later decision; see the roadmap.) To *convert* a value rather than test
+it, use the cast expression `<value> as a <type>` — e.g. `item as a number`
+or `item as a float` (see Type Casting).
+
+A predicate result is itself a boolean value, so you can store one in a
+list — `append item is a number to flags` — and each stored slot carries
+the boolean tag, so a later `is a boolean` recognises it.
+
+### Dynamic Values (`value`)
+
+A mixed-list element keeps its tag while it stays in the list, but the
+moment you pass it to a function the tag used to be lost — parameters are
+statically typed, so a mixed element passed `as a number` was reinterpreted
+and one passed `as a text` was dereferenced as a pointer. The `value` type
+fixes this: it is a declared dynamic type that carries its runtime tag
+*alongside* its payload across the call, so a single function can accept
+"whatever this slot holds" and ask `is a ...` inside to find out which.
+
+Declare a `value` parameter with `with a value called "x"`, return one
+with `Return a value, <expr>`, and a `value` local with
+`a value called "r"`:
+
+```
+To "describe" with a value called "item".
+  If item is a number, print "number".
+  Otherwise if item is a text, print "text".
+  Otherwise print "decimal".
+
+a list called "m" is [1, "two", 3.5].
+For each item in m,
+  "describe" of item.
+(prints: number / text / decimal)
+```
+
+Inside the callee, `item` is a `value` (a tagged slot): the `is a ...`
+predicates read its tag, printing dispatches on it, and you can forward it
+or append it back into a list with the tag preserved. A function returning
+`a value` carries its tag back out, so this round-trips:
+
+```
+To "echo" with a value called "v". Return a value, v.
+
+a list called "data" is [1, "two", 3.5].
+a list called "out" is [].
+For each item in data,
+  append "echo" of item to out.
+```
+
+After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
+— the value return brought each tag back out, and the append forwarded it.
+
+**`value` is not a reserved word.** It is recognized only where a type is
+expected: a parameter type, a return type, or directly before `called` in
+`a value called "x"`. Everywhere else it is an ordinary identifier, so
+`a value is 5.` still declares a variable named `value`.
+
+A `value` local keeps its tag through reassignment, so `set r to 7.`
+retags it as a number:
+
+```
+To "echo" with a value called "v". Return a value, v.
+
+a value called "r" is "echo" of "hello".
+print r.                      (prints: hello)
+set r to 7.
+If r is a number, print "now a number".
+```
+
+**A `value` is not usable in arithmetic without checking its type first.**
+Because a `value` might hold a string or a decimal, the compiler rejects
+bare arithmetic on it and points you at the predicate idiom:
+
+```
+To "bump" with a value called "v". Return a number, v add 1.
+(compile error: Cannot use a value v in arithmetic; check its type with
+ 'is a number'/'is a text' first.)
+```
+
+Guard it first — `if v is a number, … v add 1 …` — or cast it with
+`v as a number` (see Type Casting). (Full flow-sensitive dispatch — where a
+guard narrows the type *inside* the branch so `v add 1` just works — is a
+later decision; see the roadmap.)
+
+**Recursion with `value` works.** A `value` parameter threads its tag
+through every frame, so a recursive walker over mixed data classifies
+correctly at any depth. `value` parameters compose: a `value` passed
+straight to another `value` function round-trips its tag.
+
+**One limitation to know.** A *conditional* `value` return — using the
+"factorial pattern" of `If ... return a value, <expr>. Otherwise ...` inside
+a function whose `To` line has no `Return` — does not track the return
+type, so the value would print as a number. Use the single-expression
+`Return a value, <expr>.` form on the `To` line for `value` returns.
+Conditional `value` *parameters* (the factorial pattern with a void return)
+work fine. The internal ABI that carries the tag is documented in
+`docs/abi_value.md`; the roadmap context is in
+`docs/COLLECTIONS_ROADMAP.md` (stage 1d).
+
+### Nothing (the absent value)
+
+`nothing` is the value that means "no value here" — the equivalent of null
+in other languages. It can sit in a list slot, a map value, or a `value`
+parameter or return, and it prints as the word `nothing`:
+
+```
+a list called "L" is [1, nothing, "x"].
+print L.
+(prints: [1, nothing, "x"])
+
+a map called "m" is {"found": 4, "absent": nothing}.
+print m.
+(prints: {"found": 4, "absent": nothing})
+```
+
+`null` and `nil` are accepted spellings of the same literal; all three
+produce the identical value. `nothing` is a reserved word, so it cannot be
+used as a variable name.
+
+**Test for it with `is nothing`**, which is an equality (like `is true`),
+not a type predicate — there is no `is a nothing`:
+
+```
+If m's "absent" is nothing, print "no value stored".
+If m's "found" is not nothing, print "has a value".
+```
+
+**`nothing` is not zero.** This is the distinction that matters most:
+
+```
+If 0 is nothing, print "never printed".
+```
+
+`0 is nothing` is **false**, and `nothing is 0` is false too. They are
+different values, and `is nothing` compares the runtime type tag rather
+than the stored number, so the two never collide.
+
+**A missing map key is an error, not `nothing`.** Reading a key that was
+never set sets the error flag; it does not silently hand back `nothing`.
+So "the key is absent" and "the key holds nothing" stay distinguishable:
+
+```
+a map called "m" is {"k": nothing}.
+If m's "k" is nothing, print "k is present and holds nothing".
+a number called "x" is m's "never_set".
+on error print "never_set is absent".
+```
+
+**Arithmetic on `nothing` is refused, not treated as 0.** Writing it
+literally is a compile error:
+
+```
+a number called "n" is nothing add 1.
+(compile error: Cannot use nothing in arithmetic; check it with
+ 'is nothing' first.)
+```
+
+When a value only turns out to be `nothing` at run time — read out of a
+map or a mixed list — the compiler cannot catch it, so the operation sets
+the error flag instead:
+
+```
+a map called "m" is {"absent": nothing}.
+a number called "bad" is m's "absent" add 1.
+on error print "cannot do arithmetic on nothing".
+```
+
+The reason for both is that the stored payload of `nothing` really is 0.
+Left unchecked, `total add missing_field` would quietly evaluate to
+`total` — a wrong answer that looks completely plausible. Guard with a
+predicate first, exactly as you would for a mixed element:
+
+```
+If m's "absent" is not nothing, set total to total add m's "absent".
+```
+
+Comparisons are not arithmetic, so `is nothing`, `is not nothing`, and
+ordinary equality keep working on a `nothing` without raising the flag.
+
+### Printing a List
+
+Printing a list variable directly renders its contents rather than its
+heap address:
+
+```
+a list called "nums" is [1, 2, 3].
+a list called "m" is [1, "two", 3.5, yes].
+print nums.               (prints: [1, 2, 3])
+print m.                  (prints: [1, "two", 3.5, 1])
+print "list: {nums}".     (prints: list: [1, 2, 3])
+```
+
+Elements are separated by `, ` and wrapped in `[` `]`. Each element
+renders exactly as it does when printed individually: text elements are
+quoted (so `["1"]` is distinguishable from `[1]`), booleans as `1`/`0`,
+floats and numbers as usual. Empty lists print `[]`. A nested list
+element renders recursively with the same rules (see Nested Lists above),
+so `[1, [2, 3], "four"]` prints with inner brackets intact. A map element
+(or a whole map) renders as `{"key": value, …}` via `_map_print` (see Maps
+above). The same rendering appears inside the *variable* form of `{...}`
+format interpolation (`print "{xs}"`); the *expression* form (`print
+"{element 2 of xs}"`) does not dispatch on a nested element's runtime tag.
 
 ### List Properties
 

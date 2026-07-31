@@ -1,0 +1,9 @@
+(Stage 1e3 - nothing rides in a mixed list slot (tag 6) and prints in
+ place; a later `is nothing` test on that slot classifies it by its
+ stored tag, while a non-nothing slot does not. Acceptance: the print
+ line and the two predicate lines.)
+
+a list called "xs" is [1, nothing, 2].
+print xs.
+if element 2 of xs is nothing, print "element 2 is nothing".
+if element 1 of xs is not nothing, print "element 1 is not nothing".

@@ -1,0 +1,7 @@
+(Stage 1e2 - missing key sets the error flag (not a crash or garbage).
+ A lookup miss yields 0 and sets _last_error, so an `on error` handler
+ observes it. Acceptance: 0 then missing.)
+
+a map called "person" is {"name": "Ada"}.
+print person's "nope".
+on error print "missing".

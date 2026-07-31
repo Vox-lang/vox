@@ -1,0 +1,14 @@
+(Stage 1e3 - `is nothing` is the equality route (like `is true` / `is
+ false`), NOT a type predicate. Critical correctness: `0 is nothing` MUST
+ be false, because a nothing payload is 0 and a bare numeric compare
+ would wrongly match. `nothing is nothing` is true. A `value` carrying
+ nothing (passed as an argument) is nothing. Acceptance: the four lines.)
+
+if nothing is nothing, print "nothing is nothing".
+if 0 is nothing, print "0 is nothing (BUG)".
+if 0 is not nothing, print "0 is not nothing".
+
+To "check" with a value called "v".
+  if v is nothing, print "v is nothing".
+
+"check" of nothing.

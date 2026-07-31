@@ -1,0 +1,18 @@
+(A nested list appended to a parent keeps tag 4 across a realloc - plan
+ 040 stage 1e1 acceptance 4. The parent starts empty (capacity 8) and
+ receives ten appends, forcing the data region to grow; the appended
+ child list must still render as a list afterwards.)
+
+a list called "acc" is [].
+a list called "child" is [9, 8].
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+append child to acc.
+print acc.

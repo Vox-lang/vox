@@ -1,0 +1,52 @@
+(Example: map.vox — key/value collections (stage 1e2, tag 5).
+
+A map is a JSON-style object: text keys, any-typed values, insertion-
+ordered. Literals use {"key": value, ...}; `map's "key"` reads a value;
+`set map's "key" to value` inserts or replaces; `map's keys`/`values`
+yield fresh lists for iteration; `map's length`/`empty` report the live
+entry count; `is a map` classifies at runtime. Missing keys set the
+error flag (observable via `on error`) rather than crashing.
+
+This example builds a small record, mutates it, iterates its keys and
+values, nests a list and another map, and round-trips the map through a
+`value` parameter to show the tag survives the call.)
+
+To "show" with a value called "v".
+  print v.
+
+a map called "person" is {"name": "Ada", "age": 36, "city": "London"}.
+
+print "record:"
+print person.
+
+print "name is:"
+print person's "name".
+
+set person's "age" to 37.
+print "after birthday:"
+print person's "age".
+print person's length.
+
+print "keys:"
+for each key in person's keys
+  print key.
+
+print "values:"
+for each v in person's values
+  print v.
+
+a map called "nested" is {"tags": ["a", "b"], "meta": {"id": 1}}.
+print "nested:"
+print nested.
+a list called "taglist" is nested's "tags".
+print "tags:"
+print taglist.
+a map called "meta" is nested's "meta".
+print "meta id:"
+print meta's "id".
+
+print "round-trip through a value param:"
+"show" of person.
+
+print person's "nope".
+on error print "looked up a missing key".

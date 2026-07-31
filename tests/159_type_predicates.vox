@@ -1,0 +1,12 @@
+(Stage 1c — runtime type predicates. A mixed list iterated with an
+ if/otherwise-if chain classifies each element by its per-slot type tag.
+ Booleans (tag 3) must be distinguishable from numbers (tag 0) even though
+ both print as numbers; `is a decimal` matches the float tag (2).
+ Acceptance criteria 1, 2, and 5.)
+
+a list called "m" is [1, "two", 3.5, yes].
+For each item in m,
+  if item is a text, print "text: {item}",
+  otherwise if item is a decimal, print "decimal: {item}",
+  otherwise if item is a boolean, print "boolean: {item}",
+  otherwise print "number: {item}".

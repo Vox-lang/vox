@@ -1,0 +1,16 @@
+(Stage 1b safety. Reading an element out of a list that widened to Mixed
+ yields a value whose type the compiler cannot prove. A declared type on
+ the receiving variable states the author's intent, not what the slot
+ holds, so it must not be turned into a slot tag: writing TAG_STRING over
+ the integer 42 made the tag-dispatching printer treat 42 as a C-string
+ pointer and dereference it - a segfault, which no valid Vox program may
+ do. The pre-scan marks such values unprovable and the write falls back to
+ the integer tag, which renders as a number and never dereferences.)
+
+a list called "m" is ["a", "b"].
+append 42 to m.
+a text called "s" is element 3 of m.
+a list called "out" is [].
+append s to out.
+print m.
+print out.

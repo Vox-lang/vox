@@ -1,0 +1,17 @@
+(Stage 1c — a predicate result appended to a list is tagged TAG_BOOLEAN,
+ not TAG_INTEGER, so a later `is a boolean` recognises it. Each element of
+ `flags` is itself a type predicate result; if any were mis-tagged as a
+ number, `f is a boolean` would fold false and print "N". Exercises the
+ TypeCheck arms of prescan_expr_tag / emit_time_expr_tag and the append
+ element-type classifier, reached via
+ `append <value> is a <noun> to <list>`, plus the negation path
+ `is not a <noun>` via UnaryOp(Not, TypeCheck).)
+
+a list called "m" is [1, "two", 3].
+a list called "flags" is [].
+For each item in m,
+  append item is a number to flags,
+  append item is not a text to flags.
+For each f in flags,
+  if f is a boolean, print "B",
+  otherwise print "N".

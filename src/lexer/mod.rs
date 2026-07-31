@@ -27,17 +27,21 @@ pub enum Token {
     From, To, Between, In, Of, On, The, A, An, All, Treating,
     
     // Types
-    Number, Float, Int, Text, Boolean, List, True, False,
+    Number, Float, Int, Text, Boolean, List, Map, True, False,
     
     // File I/O Types and Keywords
     Buffer, File, Bytes, Size, Into, Reading, Writing, Appending, Standard, Input,
     
     // Properties
     Even, Odd, Positive, Negative, Zero, Empty,
+    // The nothing/null literal (stage 1e3, tag 6). Distinct from the
+    // `empty` *property* predicate: `nothing`/`null`/`nil` are value
+    // literals, `empty` tests a collection's size.
+    Nothing,
     
     // Property Access
     Apostrophe, Capacity, Descriptor, Modified, Accessed, Permissions,
-    Readable, Writable, Full, First, Last, Absolute, Sign,
+    Readable, Writable, Full, First, Last, Keys, Values, Absolute, Sign,
     
     // Error Handling
     Error, Auto, Enable, Disable,
@@ -175,7 +179,8 @@ impl Token {
             "positive" => Some("positive"),
             "negative" => Some("negative"),
             "zero" => Some("zero"),
-            "empty" | "nothing" | "null" | "nil" => Some("empty"),
+            "empty" => Some("empty"),
+            "nothing" | "null" | "nil" => Some("nothing"),
             "capacity" => Some("capacity"),
             "descriptor" | "fd" => Some("descriptor"),
             "modified" => Some("modified"),
@@ -313,6 +318,7 @@ impl Token {
             Token::Text => Some("text"),
             Token::Boolean => Some("boolean"),
             Token::List => Some("list"),
+            Token::Map => Some("map"),
             Token::True => Some("true"),
             Token::False => Some("false"),
             // File I/O Types and Keywords
@@ -333,6 +339,7 @@ impl Token {
             Token::Negative => Some("negative"),
             Token::Zero => Some("zero"),
             Token::Empty => Some("empty"),
+            Token::Nothing => Some("nothing"),
             // Property Access
             Token::Apostrophe => None, // punctuation
             Token::Capacity => Some("capacity"),
@@ -345,6 +352,8 @@ impl Token {
             Token::Full => Some("full"),
             Token::First => Some("first"),
             Token::Last => Some("last"),
+            Token::Keys => Some("keys"),
+            Token::Values => Some("values"),
             Token::Absolute => Some("absolute"),
             Token::Sign => Some("sign"),
             // Error Handling
@@ -780,6 +789,7 @@ impl<'a> Lexer<'a> {
             "text" | "string" | "message" => Token::Text,
             "boolean" | "bool" => Token::Boolean,
             "list" | "array" | "collection" => Token::List,
+            "map" | "dictionary" => Token::Map,
             "true" | "yes" => Token::True,
             "false" | "no" => Token::False,
             "even" => Token::Even,
@@ -787,7 +797,8 @@ impl<'a> Lexer<'a> {
             "positive" => Token::Positive,
             "negative" => Token::Negative,
             "zero" => Token::Zero,
-            "empty" | "nothing" | "null" | "nil" => Token::Empty,
+            "empty" => Token::Empty,
+            "nothing" | "null" | "nil" => Token::Nothing,
             // File I/O keywords
             "open" | "opened" => Token::Open,
             "read" => Token::Read,
@@ -821,6 +832,8 @@ impl<'a> Lexer<'a> {
             "full" => Token::Full,
             "first" => Token::First,
             "last" => Token::Last,
+            "keys" => Token::Keys,
+            "values" => Token::Values,
             "absolute" | "abs" => Token::Absolute,
             "sign" => Token::Sign,
             // Library system

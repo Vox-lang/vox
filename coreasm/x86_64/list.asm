@@ -39,6 +39,14 @@ section .text
 %define LIST_TAG_STRING         1
 %define LIST_TAG_FLOAT          2
 %define LIST_TAG_BOOLEAN        3
+%define LIST_TAG_LIST           4
+%define LIST_TAG_MAP            5
+%define LIST_TAG_NOTHING        6
+
+; Guard tested by map.asm: _map_print's LIST-tag branch calls _list_print,
+; so it assembles that branch only when list.asm has been included. list.asm
+; is included before map.asm, so this define is visible. (stage 1e2)
+%define __LIST_ASM_INCLUDED__
 
 ; Compute the address of the tag byte for a 0-based index.
 ; Args: %1 = destination register, %2 = list base register, %3 = 0-based
@@ -267,7 +275,7 @@ section .text
     
     mov rax, 1                      ; sys_write
     mov rdi, 2                      ; stderr
-    lea rsi, [_err_list_bounds_msg]
+    lea rsi, [rel _err_list_bounds_msg]
     mov rdx, _err_list_bounds_len
     syscall
     
@@ -563,4 +571,155 @@ _list_to_argv:
     pop r12
     pop rbx
     ret
+
+; ============================================================================
+; WHOLE-LIST PRINTING
+; ============================================================================
+; _list_print - Render a list as [elem, elem, ...].
+; Args:      rdi = list pointer
+; Clobbers:  rax, rcx, rdx, rsi, rdi, r8-r11. Preserves rbx, r12-r14.
+; Per slot: dispatch on the tag byte; strings are quoted; unhandled tags
+; print as integers. Requires io.asm (PRINT_*); float branch requires
+; float.asm - hence the %ifdef guards.
+%ifdef __IO_ASM_INCLUDED__
+section .data
+    _lp_lbrk:      db "["
+    _lp_lbrk_len:  equ $ - _lp_lbrk
+    _lp_rbrk:      db "]"
+    _lp_rbrk_len:  equ $ - _lp_rbrk
+    _lp_comma:     db ", "
+    _lp_comma_len: equ $ - _lp_comma
+    _lp_quote:     db '"'
+    _lp_quote_len: equ $ - _lp_quote
+    ; Truncation marker printed when the nesting depth limit is hit (a
+    ; cyclic structure would otherwise recurse forever).
+    _lp_trunc:     db "..."
+    _lp_trunc_len: equ $ - _lp_trunc
+    ; Rendered for a nothing/null element (stage 1e3, tag 6).
+    _lp_nothing:   db "nothing"
+    _lp_nothing_len: equ $ - _lp_nothing
+    ; The recursion-depth counter (_print_depth) lives in core.asm so it is
+    ; shared with _map_print (one budget for a mixed map/list tree).
+
+section .text
+_list_print:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    ; Depth guard (stage 1e1): cap recursion at 64 levels so a cyclic list
+    ; (e.g. `append x to x`) terminates instead of overflowing the stack.
+    ; On overflow, set the error flag, print a truncation marker, and return.
+    inc qword [rel _print_depth]
+    cmp qword [rel _print_depth], 64
+    jg .lp_depth
+
+    mov rbx, rdi                        ; rbx = list pointer
+
+    ; Opening bracket
+    PRINT_STR _lp_lbrk, _lp_lbrk_len
+
+    mov r13, [rbx + LIST_LENGTH_OFFSET] ; r13 = length
+    test r13, r13
+    jz .lp_close                        ; empty list -> just print "]"
+
+    xor r12, r12                        ; r12 = 0-based index
+
+.lp_loop:
+    ; Separator before every element except the first
+    test r12, r12
+    jz .lp_first
+    PRINT_STR _lp_comma, _lp_comma_len
+.lp_first:
+    ; Element address = base + 24 + index * element_size
+    mov r14, [rbx + LIST_ELEMSIZE_OFFSET]
+    imul r14, r12
+    lea r14, [rbx + r14 + LIST_DATA_OFFSET]   ; r14 = &element
+
+    LIST_TAG_ADDR rcx, rbx, r12
+    movzx r8, byte [rcx]                ; r8 = element's type tag
+
+    cmp r8, LIST_TAG_STRING
+    je .lp_str
+%ifdef __FLOAT_ASM_INCLUDED__
+    cmp r8, LIST_TAG_FLOAT
+    je .lp_flt
+%endif
+    cmp r8, LIST_TAG_LIST
+    je .lp_list
+%ifdef __MAP_ASM_INCLUDED__
+    cmp r8, LIST_TAG_MAP
+    je .lp_map
+%endif
+    cmp r8, LIST_TAG_NOTHING
+    je .lp_nothing
+    ; Integer, boolean (as 1/0), and any unhandled tag print as a number.
+    mov rdi, [r14]
+    PRINT_INT rdi
+    jmp .lp_next
+
+.lp_str:
+    PRINT_STR _lp_quote, _lp_quote_len
+    mov rdi, [r14]                      ; C-string pointer
+    PRINT_CSTR rdi
+    PRINT_STR _lp_quote, _lp_quote_len
+    jmp .lp_next
+
+%ifdef __FLOAT_ASM_INCLUDED__
+.lp_flt:
+    movq xmm0, [r14]                   ; PRINT_FLOAT takes the value in xmm0
+    PRINT_FLOAT
+    jmp .lp_next
+%endif
+
+.lp_list:
+    ; Nested list (stage 1e1): the slot holds a child list pointer. Recurse
+    ; with rdi = child pointer. rbx/r12/r13/r14 are callee-saved and restored
+    ; by _list_print, so the caller's iteration state survives the call.
+    mov rdi, [r14]
+    call _list_print
+    jmp .lp_next
+
+%ifdef __MAP_ASM_INCLUDED__
+.lp_map:
+    ; Nested map: the slot holds a map pointer. _map_print shares _print_depth
+    ; with this routine, so a mixed map/list cycle stays within one budget.
+    mov rdi, [r14]
+    call _map_print
+    jmp .lp_next
+%endif
+
+.lp_nothing:
+    ; Tag 6: payload unused, print the literal word.
+    PRINT_STR _lp_nothing, _lp_nothing_len
+    jmp .lp_next
+
+.lp_next:
+    inc r12
+    cmp r12, r13
+    jl .lp_loop
+
+.lp_close:
+    PRINT_STR _lp_rbrk, _lp_rbrk_len
+
+    dec qword [rel _print_depth]
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+.lp_depth:
+    ; Depth limit exceeded (stage 1e1): signal the error and print a
+    ; truncation marker in place of the over-deep subtree, then unwind.
+    mov qword [rel _last_error], 1
+    PRINT_STR _lp_trunc, _lp_trunc_len
+    dec qword [rel _print_depth]
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+%endif
 

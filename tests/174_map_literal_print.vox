@@ -1,0 +1,6 @@
+(Stage 1e2 - map literal print. A map literal renders as a JSON object
+ with quoted keys and per-value type dispatch. Acceptance: print renders
+ {"name": "Ada", "age": 36}.)
+
+a map called "person" is {"name": "Ada", "age": 36}.
+print person.
