@@ -1795,6 +1795,22 @@ impl Analyzer {
             }
             
             Statement::FunctionDef { name, params, body, .. } => {
+                // A leading underscore is the runtime's namespace (see
+                // docs/SYMBOL_MANGLING.md). A function name emits a label
+                // verbatim, so `To "_str_eq" ...` redefines a coreasm symbol
+                // and the author gets NASM's "label `_str_eq' inconsistently
+                // redefined" - an assembler diagnostic about a symbol they
+                // never wrote. Reject it here, in their terms.
+                if name.starts_with('_') {
+                    self.push_error(
+                        format!(
+                            "Function name '{}' starts with '_', which is reserved for \
+                             the Vox runtime; choose a name without the leading underscore.",
+                            name
+                        ),
+                        Some(name),
+                    );
+                }
                 self.functions.insert(name.clone());
                 self.function_param_counts.insert(name.clone(), params.len());
                 self.deps.uses_funcs = true; // Track that functions are used

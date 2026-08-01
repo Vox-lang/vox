@@ -117,49 +117,57 @@ objects, retiring that trade-off permanently.
 
 ## Technical Approach
 
-> **⚠ 2026-08-01: Phases 0 and 1 below are superseded and must not be
-> implemented as written.** They say to give every `.so` its own copy of
-> coreasm. That compiles, links, and then silently forks the runtime's
-> global state — see "Runtime placement" immediately below, which has to be
-> decided before any of this work starts. Phase 2's test coverage and the
-> `-dynamic-linker` fix stand regardless.
+> **2026-08-01: architecture decided — see below.** The phases were written
+> before runtime placement was settled and are annotated accordingly.
 
-### Runtime placement — decide this first
+### Decided architecture
 
-The runtime keeps mutable global state: `_last_error`, `_call_depth`,
-`_print_depth` (`core.asm`), the fd/buffer/read-ahead tables
-(`resource.asm`), the allocation tables (`heap.asm`), and the map key
-arena (`map.asm`). A private copy per `.so` forks all of it, and the
-resource leak is the *least* of it:
+**A `see` of a `.vox` file is a source include.** The referenced file's
+statements are spliced in where the `see` appears, before compilation —
+no runtime involvement at all. This already works (`process_includes` in
+`src/main.rs`, recursive, with cycle protection via the `included` set); it
+is only gated on the `.en` extension while the tree uses `.vox`, so
+`see "./lib.vox".` is silently not inlined today and the author gets
+"Unknown function". Fixing the gate is the whole task.
 
-- **`_last_error` forks.** A library sets its flag; `on error` in the main
-  program reads its own, still zero. The language's error handling stops
-  working across the boundary, silently.
-- **`_call_depth` forks.** The 10 000 guard is per-module, so recursion
-  bouncing across the boundary reaches a true depth of 10 000 × modules
-  before anything trips. This is the mechanism M1 relies on to make deep
-  recursion predictable.
-- **`_print_depth` forks.** The 64-deep cycle budget breaks — and
-  `core.asm`'s own comment already gives this exact argument for why the
-  counter lives there rather than in `list.asm`/`map.asm`.
+**A `see` of a `.so` produces a standalone library.** The shared object is
+self-contained and usable from C, Rust, or any other host — not only from
+Vox — and cleans up its own resources on exit regardless of who loaded it.
+It therefore contains its own copy of coreasm.
 
-Four options were weighed (see the discussion recorded in
-`docs/COLLECTIONS_ROADMAP.md`'s successor or ask the maintainer): runtime
-in the executable exported via `--export-dynamic`; a full runtime per
-library with orchestrated cleanup; a hybrid sharing only the three
-coordination qwords; or a shared `libvox.so` versioned by soname. The
-trade-off is real — per-library runtimes are the only option that gives a
-library the exact runtime it was compiled against, which is what M3's
-versioning story is built on.
+**Per-library-version state, via symbol mangling.** Each library version's
+runtime state is mangled `<lib>_<version>_<name>`, so two versions inside
+one `.so` do not share `_last_error`, `_call_depth`, `_print_depth`, or the
+resource tables. Codegen emits a `%define` block ahead of the includes and
+NASM's preprocessor rewrites both definitions and uses, so **no coreasm file
+changes** — which matters because M6 ports coreasm three more times. The
+rules, including C-identifier sanitization (`0.1` → `0_1`, since a C caller
+cannot name `flags_0.1_hasflag`), are the project standard in
+[docs/SYMBOL_MANGLING.md](../SYMBOL_MANGLING.md).
 
-**Whichever is chosen, the phases below change shape.** If the runtime
-moves out of the `.so`, the original code comment ("shared libraries don't
-include coreasm — they're pure function exports") was right in intent and
-only missing the `extern` declarations; Phase 1 then disappears entirely,
-because `resource.asm`'s 34 absolute relocations only appear in a `.so`
-that contains `resource.asm`.
+**Cleanup runs on two paths, because the hosts differ.** A C or Rust host
+gets it free: libc registers `_dl_fini` via `atexit`, so `ld.so` runs the
+library's `.fini_array`. A Vox host does not — Vox exits through a raw
+`sys_exit`, which never reaches `_dl_fini` — so codegen also emits explicit
+cleanup calls for each linked library before its own exit, which it can do
+because `see`/`--link` gives it the set at compile time. `_cleanup_all` must
+be idempotent so the two paths cannot double-close a descriptor.
 
-### Phase 0 (superseded) — emit the runtime in shared mode (US-1)
+**Error propagation is an ABI convention, not shared state.** A Vox
+program's `on error` reads its own `_last_error`; the library writes
+`<lib>_<ver>_last_error`. Codegen emits a fetch-and-merge after each library
+call. A C consumer needs that accessor regardless, so this is required by
+the standalone goal rather than added by mangling. `_call_depth` and
+`_print_depth` stay per-version and fail permissive (budgets multiply by
+module count); document the limit rather than hide it.
+
+**Consequence for the phases below:** because the `.so` contains coreasm,
+Phase 1's PIC work is **required**, not optional — `resource.asm`'s 34
+absolute `[abs table + reg*8]` relocations cannot be relocated in a shared
+object. Phase 0 stands as written for the include block, with the mangling
+`%define` prologue added.
+
+### Phase 0 — emit the runtime in shared mode (US-1)
 
 In the final-assembly step of `src/codegen/mod.rs` (the
 `if self.shared_lib_mode` branch at `:1342`), emit the **same
@@ -181,7 +189,7 @@ Note this phase alone makes **runtime-light libraries** (no
 buffers/files/floats ⇒ no `resource.asm`) build and link end-to-end;
 Phase 1 removes the remaining blocker for the rest.
 
-### Phase 1 (superseded — may be unnecessary) — make the runtime position-independent (US-2)
+### Phase 1 (REQUIRED — see decided architecture) — make the runtime position-independent (US-2)
 
 Rewrite the 34 `[abs table + reg*scale]` sites in
 `coreasm/x86_64/resource.asm` to:
