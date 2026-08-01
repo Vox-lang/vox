@@ -45,8 +45,13 @@ graph LR
       verified 2026-07-31 at 5 000 and 10 000 appends. The original report:
       an empty list was created with capacity 8 and the 9th append crashed
       with SIGSEGV.)*
-- [ ] Add regression tests to `tests/` for list growth across the realloc
+- [x] Add regression tests to `tests/` for list growth across the realloc
       boundary (9, 100, 100 000 elements) and for dynamic buffer growth.
+      *(`tests/209_list_growth_realloc_boundary.vox` brackets the 9th-append
+      grow path and reads back first and last element at each size, so a
+      realloc that loses or misaligns copied data fails rather than merely
+      counting correctly. `tests/210_buffer_growth.vox` covers dynamic growth
+      and the fixed-buffer refusal.)*
 - [x] Reconcile documented vs. actual dynamic-buffer semantics. *(Resolved by
       documenting the real behavior, the second of the two options: a
       fixed-size buffer does not grow, and `set byte N` past the end is a

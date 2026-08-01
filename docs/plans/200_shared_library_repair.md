@@ -359,6 +359,12 @@ until Phase 3).
 - [ ] Explicit per-library cleanup calls before `sys_exit` for a Vox host
 - [ ] Error fetch-and-merge after each library call, so `on error` works
       across the boundary
+- [ ] While rewriting those 34 sites, consider making the tables growable.
+      `MAX_FDS` and `MAX_BUFFERS` are 64 and `alloc_table` is 256, fixed in
+      `.bss`, and `_register_buffer` silently no-ops when full. Growing them
+      means heap-allocating and loading a base pointer at each access - the
+      *same* 34 sites this phase already touches, so doing it separately
+      means editing them twice.
 - [ ] `readelf -r` zero-abs-reloc check; full `test.sh` + NASM
       warning sweep
 

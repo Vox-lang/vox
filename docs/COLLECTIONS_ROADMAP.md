@@ -137,6 +137,37 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
+**A dynamic map key costs a 4 KiB page.** `set m's "key{i}" to v` builds the
+key by allocating a fresh buffer per evaluation, and `_alloc_buffer` mmaps —
+which is page-granular whatever size is requested. 10 000 dynamic keys
+measure at 41 MB peak RSS for ~80 KB of key text, and the pages are never
+released. Correctness is unaffected (measured, and the keys stay distinct);
+this is purely footprint, and only for programs building many dynamic keys.
+
+Now that `_map_insert` copies the key, the temp buffer is **dead the moment
+the call returns**, so it can be reclaimed — which was impossible while the
+map borrowed a pointer into it. Two routes:
+
+- *Free after insert.* Emit `_free_buffer(key_ptr - BUF_DATA)` after
+  `_map_insert`, only when the key expression allocated a temp (a
+  `FormatString`, not a `StringLit` — freeing a `.data` literal would be
+  fatal). Needs the key pointer preserved across the call; `_map_insert`
+  saves `rbx`/`r12`-`r15`, so a callee-saved register works, but the
+  surrounding codegen uses `rbx` as scratch, so verify rather than assume.
+- *Reuse one scratch per site.* Cleaner in principle, but the format-string
+  path builds through `_buffer_append_*`, which reallocate on growth and so
+  need a real heap buffer, not a static region.
+
+Deliberately not done in the same pass as the key copy: it is a
+use-after-free risk in exactly the code path just hardened, and shrinking the
+1024-byte request would achieve nothing since the page is the unit of cost.
+
+Also worth knowing: `_register_buffer` silently no-ops when `buf_table` is
+full (64 entries), so temp key buffers saturate the table and later buffers
+go untracked. No observable consequence today — untracked buffers are
+reclaimed by the OS at exit exactly as `_cleanup_buffers` would — but
+freeing the temps also frees their table slots.
+
 Remaining after 1c, in order of closure:
 
 - ~~Appends whose value type is statically unknowable (e.g. function
