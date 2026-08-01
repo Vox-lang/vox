@@ -261,7 +261,18 @@ run_shared_library_test() {
         local got exp
         got=$(nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | sort)
         exp=$(printf '%s\n' mathkit_1_0_add_two_numbers mathkit_1_0_greet mathkit_1_0_makebuf | sort)
-        if [[ "$got" != "$exp" ]]; then
+        # 2b. A3: the .lib interface file is written beside the .so. Assert its
+        #     exact content — a drift in the emitted format fails here, not at
+        #     A4. `makebuf` is a multi-statement body, so the parser does not
+        #     capture its return type (a known A3 gap, see the report); its ToC
+        #     entry reads `To "makebuf".` with no `, returning` clause. The
+        #     other two are single-line defs whose typed `Return a number, ...`
+        #     is captured, so they carry `, returning a number`.
+        local lib_exp
+        lib_exp=$(printf 'Library "mathkit" version "1.0".\nLocation "./libmath.so".\n\nTable of Contents:\n    To "add two numbers" with a number called "n", returning a number.\n    To "greet".\n    To "makebuf".\n')
+        if ! diff -u <(printf '%s\n' "$lib_exp") "$work/libmath.lib" >"$work/libdiff.log" 2>&1; then
+            fail_msg="shared/libmath (.lib content mismatch)"; fail_log="$work/libdiff.log"
+        elif [[ "$got" != "$exp" ]]; then
             fail_msg="shared/libmath (export set is not exactly {mathkit_1_0_add_two_numbers, mathkit_1_0_greet, mathkit_1_0_makebuf})"
             { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
             fail_log="$work/diff.log"
@@ -344,7 +355,16 @@ run_two_version_library_test() {
         local got exp
         got=$(nm -D --defined-only "$work/libflags.so" | awk '{print $3}' | sort)
         exp=$(printf '%s\n' flags_0_1_hasflag flags_1_0_hasflag | sort)
-        if [[ "$got" != "$exp" ]]; then
+        # 2b. A3: the .lib interface file carries both versions' signatures —
+        #     the round-trip artifact A4 will parse. Pin its exact content so a
+        #     formatting drift fails here. Both `hasflag` defs are single-line
+        #     (`To ... . Return a number, ...`), so each carries `, returning a
+        #     number`; one Library block per version, `Location` relative.
+        local lib_exp
+        lib_exp=$(printf 'Library "flags" version "0.1".\nLocation "./libflags.so".\n\nTable of Contents:\n    To "hasflag" with a number called "n", returning a number.\n\nLibrary "flags" version "1.0".\nLocation "./libflags.so".\n\nTable of Contents:\n    To "hasflag" with a number called "n", returning a number.\n')
+        if ! diff -u <(printf '%s\n' "$lib_exp") "$work/libflags.lib" >"$work/libdiff.log" 2>&1; then
+            fail_msg="two-version flags (.lib content mismatch)"; fail_log="$work/libdiff.log"
+        elif [[ "$got" != "$exp" ]]; then
             fail_msg="two-version flags (export set is not exactly {flags_0_1_hasflag, flags_1_0_hasflag})"
             { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
             fail_log="$work/diff.log"
@@ -388,6 +408,46 @@ run_two_version_library_test() {
     rm -rf "$work"
 }
 run_two_version_library_test
+
+# A3 clobber-refusal test (plan 230 stage A3; the same hazard class as plan 210
+# P1, where `--shared` silently destroyed a user's `.map`). A `--shared` build
+# writes `<stem>.lib` beside the `.so`; if that `.lib` already exists, vox must
+# refuse to overwrite it and abort *before* building, rather than silently
+# destroying a file it did not create. Pre-creates a sentinel `.lib`, runs a
+# shared build that would target it, and asserts the build errored, the
+# sentinel is untouched, and no `.so` was produced (so the pair cannot disagree).
+# It must never report "skipped": clobbering a file the user owns is the one
+# silent failure most worth a loud test.
+run_lib_clobber_refusal_test() {
+    local work lib_src sentinel rc fail_msg
+    lib_src="$SCRIPT_DIR/tests/shared/libmath.vox"
+    work="$(mktemp -d)"
+    sentinel="THIS IS A HAND-WRITTEN .lib — DO NOT OVERWRITE"
+    printf '%s\n' "$sentinel" > "$work/libmath.lib"
+
+    "$VOX_BIN" "$lib_src" --shared -o "$work/libmath.so" >"$work/build.log" 2>&1
+    rc=$?
+
+    fail_msg=""
+    if [[ $rc -eq 0 ]]; then
+        fail_msg="clobber-refusal (build succeeded instead of refusing)"
+    elif ! diff -q <(printf '%s\n' "$sentinel") "$work/libmath.lib" >/dev/null 2>&1; then
+        fail_msg="clobber-refusal (sentinel .lib was modified)"
+    elif [[ -e "$work/libmath.so" ]]; then
+        fail_msg="clobber-refusal (.so created despite .lib clobber)"
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$work/build.log" ] && sed 's/^/      /' "$work/build.log" | head -20
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} clobber-refusal/lib"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_lib_clobber_refusal_test
 
 # Summary
 echo ""

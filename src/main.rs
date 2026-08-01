@@ -17,7 +17,7 @@ use lexer::Lexer;
 use parser::Parser;
 use parser::ast::{Program, Statement};
 use analyzer::Analyzer;
-use codegen::CodeGenerator;
+use codegen::{CodeGenerator, render_lib_file};
 
 /// Find the coreasm library directory using industry-standard resolution order:
 /// 1. EC_CORE_PATH environment variable (user override)
@@ -476,6 +476,28 @@ fn main() {
     if emit_asm_only {
         return;
     }
+
+    // A3: a `--shared` build writes `<stem>.lib` beside the `.so`. Never
+    // clobber a file this build did not create — plan 210's P1 was exactly this
+    // class, where `--shared` silently destroyed a user's `.map`. If the .lib
+    // already exists, fail loudly *before* building: overwriting it would leave
+    // a `.so`/`.lib` pair that disagree, and the pre-existing file may be
+    // hand-maintained or belong to a different library with the same stem. The
+    // cost is that re-running a shared build into a stale `.lib` requires
+    // removing it first — that is the safe default. Skipped for non-shared
+    // builds (no .lib is written) and for `--emit-asm` (returned above).
+    let lib_path = if build_shared {
+        let p = Path::new(&output_path).with_extension("lib");
+        if p.exists() {
+            eprintln!("Error: not overwriting existing file: {}", p.display());
+            eprintln!("       `vox --shared` writes this .lib beside the .so;");
+            eprintln!("       remove it first if you want it regenerated.");
+            std::process::exit(1);
+        }
+        Some(p)
+    } else {
+        None
+    };
     
     // Find coreasm library using standard resolution order
     // The ASM uses %include "coreasm/core.asm", so we need the parent directory
@@ -654,6 +676,28 @@ fn main() {
     }
 
     let _ = fs::remove_file(&obj_path);
+
+    // A3: emit the `.lib` interface file beside the `.so` — one `Library` block
+    // per input, a `Location` relative to the `.lib`, and a `Table of Contents`
+    // of every exported signature. Round-trip is the test: stage A4 parses what
+    // we write here, so it must be re-readable and its ToC must match
+    // `nm -D --defined-only` one-for-one. The `Location` is the `.so`'s basename
+    // (relative, so moving the pair does not break it); absolute paths are
+    // honoured on read but never generated.
+    if let Some(ref lib_path) = lib_path {
+        let so_filename = Path::new(&output_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&output_path);
+        let lib_text = render_lib_file(codegen.library_blocks(), so_filename);
+        if let Err(e) = fs::write(lib_path, &lib_text) {
+            eprintln!("Error writing .lib: {}", e);
+            std::process::exit(1);
+        }
+        if verbose {
+            println!("Created library interface: {}", lib_path.display());
+        }
+    }
 
     if verbose {
         if build_shared {

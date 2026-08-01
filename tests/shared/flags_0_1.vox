@@ -13,4 +13,4 @@ likely to regress silently, so test.sh builds and runs it on every host.)
 Library "flags" version "0.1".
 
 To "hasflag" with a number called "n".
-  Return n add 1.
+  Return a number, n add 1.

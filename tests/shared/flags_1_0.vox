@@ -11,4 +11,4 @@ silently.)
 Library "flags" version "1.0".
 
 To "hasflag" with a number called "n".
-  Return n add 100.
+  Return a number, n add 100.

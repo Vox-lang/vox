@@ -33,6 +33,12 @@ pub struct CodeGenerator {
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
+    // Per-library exported signatures for the Stage A3 `.lib` interface file:
+    // one `LibBlock` per <library, version> identity, in first-seen order, each
+    // carrying its functions in source order. Populated by
+    // `collect_function_signatures` in shared mode only; empty for non-shared
+    // builds. `main.rs` renders this beside the `.so` after a successful link.
+    library_blocks: Vec<LibBlock>,
     // The identity of the library currently being compiled, set by a
     // `Library "name" version "x.y".` declaration. In shared library mode
     // this prefixes every exported label (and every intra-library call) as
@@ -206,6 +212,121 @@ pub(crate) fn make_function_label(
     mangle_symbol(name)
 }
 
+// ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
+//
+// A `--shared` build writes `<output-stem>.lib` beside the `.so`: one `Library`
+// block per input, a `Location` relative to the `.lib`, and a `Table of
+// Contents` of every exported signature. Stage A4 parses this back to type-check
+// `see` calls, so the format is a contract: emit what the source declares, one
+// entry per line (never wrapped), parameters joined with ` and ` exactly as Vox
+// source joins them, and a `value` parameter/return rendered by its type name
+// alone (the `value` ABI is fixed, so nothing about it is per-function).
+
+/// One exported function's signature for the `.lib` table of contents: the
+/// authored name, the full parameter list (name + type), and the declared
+/// return type. The return type is read from the `Return a <type>,` annotation
+/// (the only place Vox source states it); a bodiless `.lib` declaration has no
+/// body, hence `, returning a <type>` existing only in `.lib` files.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibFunction {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+}
+
+/// One `Library` block in a `.lib`: a <library, version> identity and the
+/// exported functions declared under it, in source order. A multi-input
+/// `--shared` build produces several blocks in one `.lib`, one per input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibBlock {
+    pub lib: String,
+    pub version: String,
+    pub funcs: Vec<LibFunction>,
+}
+
+/// Author-facing noun for a parameter type, matching the Vox source vocabulary
+/// the parser accepts in `with a <type> called <name>` (`number`, `text`,
+/// `boolean`, `file`, `buffer`, `list`, `map`, `value`). Returns `None` for
+/// `Unknown` (an untyped `with n` parameter) and types the parser never produces
+/// in a parameter position (`Float`/`decimal`, `Time`, `Timer`, `Void`).
+fn param_type_noun(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::Integer => Some("number"),
+        Type::String => Some("text"),
+        Type::Boolean => Some("boolean"),
+        Type::File => Some("file"),
+        Type::Buffer => Some("buffer"),
+        Type::List(_) => Some("list"),
+        Type::Map(_) => Some("map"),
+        Type::Value => Some("value"),
+        _ => None,
+    }
+}
+
+/// Author-facing noun for a return type, matching the vocabulary the parser
+/// accepts in `Return a <type>,` (`number`, `text`, `boolean`, `file`,
+/// `value`). Returns `None` for `Void` (no `, returning` clause — the function
+/// returns nothing) and types the return-annotation parser never produces
+/// (`Float`, `Buffer`, `List`, `Map`, `Time`, `Timer`).
+fn return_type_noun(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::Integer => Some("number"),
+        Type::String => Some("text"),
+        Type::Boolean => Some("boolean"),
+        Type::File => Some("file"),
+        Type::Value => Some("value"),
+        _ => None,
+    }
+}
+
+/// Render the `.lib` text for `blocks` (one per library identity, in order)
+/// whose `.so` is named `so_filename` (basename only — the `.lib` sits beside
+/// it, so the `Location` is `./<so_filename>`, relative to the `.lib`). Each
+/// table-of-contents entry is exactly one line, however long; entries are never
+/// wrapped. A parameterless, void-returning function reads `To "name".`; a
+/// `value` parameter or return needs only its type name (`a value called "v"`,
+/// `, returning a value`).
+pub fn render_lib_file(blocks: &[LibBlock], so_filename: &str) -> String {
+    let mut out = String::new();
+    for (i, block) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("Library \"{}\" version \"{}\".\n", block.lib, block.version));
+        out.push_str(&format!("Location \"./{}\".\n", so_filename));
+        out.push_str("\nTable of Contents:\n");
+        for func in &block.funcs {
+            out.push_str("    To \"");
+            out.push_str(&func.name);
+            out.push('"');
+            if !func.params.is_empty() {
+                out.push_str(" with ");
+                let joined = func
+                    .params
+                    .iter()
+                    .map(|(pname, ptype)| {
+                        // An untyped (`Unknown`) parameter has no noun the `.lib`
+                        // can express; render it as `number`, the 1-word scalar
+                        // default an untyped parameter occupies (see
+                        // `emit_function_call`'s `word_count`). Library authors
+                        // should type their exports; see the A3 report for the
+                        // caveat.
+                        let noun = param_type_noun(ptype).unwrap_or("number");
+                        format!("a {} called \"{}\"", noun, pname)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                out.push_str(&joined);
+            }
+            if let Some(rnoun) = return_type_noun(&func.return_type) {
+                out.push_str(&format!(", returning a {}", rnoun));
+            }
+            out.push_str(".\n");
+        }
+    }
+    out
+}
+
 /// Three-state result of statically classifying an expression into a list
 /// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
 /// certain. `Unknowable` means no static proof is possible — stage 1b widens
@@ -331,6 +452,7 @@ impl CodeGenerator {
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
+            library_blocks: Vec::new(),
             current_library: None,
             uses_ints: false,
             uses_floats: false,
@@ -891,6 +1013,14 @@ impl CodeGenerator {
         &self.exported_functions
     }
 
+    /// The per-library exported signatures for the Stage A3 `.lib` interface
+    /// file: one `LibBlock` per <library, version> identity, in first-seen
+    /// order, each carrying its functions in source order. Empty for non-shared
+    /// builds. `main.rs` renders this beside the `.so` after a successful link.
+    pub fn library_blocks(&self) -> &[LibBlock] {
+        &self.library_blocks
+    }
+
     pub fn set_target_arch(&mut self, arch: &str) {
         self.target_arch = arch.to_string();
     }
@@ -970,6 +1100,16 @@ impl CodeGenerator {
         // found). A local, not `self.current_library`, so this pre-pass does
         // not disturb the identity the main generate walk manages.
         let mut current_lib: Option<(String, String)> = None;
+        // Stage A3: collect per-library exported signatures for the `.lib`
+        // interface file, in the same single walk. Shared mode only — a
+        // non-shared build has no `Library` blocks and writes no `.lib`. The
+        // block list is keyed by <lib, version> (first-seen order), so two
+        // versions of one library become two blocks, each carrying its own
+        // functions in source order. A function with no current_lib in shared
+        // mode is a malformed input the analyzer has already rejected, so it
+        // is skipped here rather than crash the collector.
+        let mut lib_blocks: Vec<LibBlock> = Vec::new();
+        let mut block_idx: HashMap<(String, String), usize> = HashMap::new();
         for stmt in &program.statements {
             match stmt {
                 Statement::LibraryDecl { name, version } => {
@@ -997,10 +1137,35 @@ impl CodeGenerator {
                     self.function_return_types.insert(key.clone(), vt);
                     self.function_param_types
                         .insert(key, params.iter().map(|(_, t)| t.clone()).collect());
+
+                    if self.shared_lib_mode {
+                        if let Some((lib, ver)) = current_lib.as_ref() {
+                            let id = (lib.clone(), ver.clone());
+                            let idx = match block_idx.get(&id) {
+                                Some(&i) => i,
+                                None => {
+                                    let i = lib_blocks.len();
+                                    block_idx.insert(id, i);
+                                    lib_blocks.push(LibBlock {
+                                        lib: lib.clone(),
+                                        version: ver.clone(),
+                                        funcs: Vec::new(),
+                                    });
+                                    i
+                                }
+                            };
+                            lib_blocks[idx].funcs.push(LibFunction {
+                                name: name.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }
         }
+        self.library_blocks = lib_blocks;
     }
 
     fn collect_flag_schemas(&mut self, program: &Program) {
@@ -7085,7 +7250,7 @@ mod tests {
     use crate::analyzer::Analyzer;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use super::CodeGenerator;
+    use super::{CodeGenerator, LibBlock};
 
     /// Parse, analyze, and generate asm for a source snippet. Panics with a
     /// clear message if parsing or analysis fails, so test failures point at
@@ -7542,6 +7707,218 @@ To \"call1\".\n  Return \"hasflag\" of 5.\n";
         assert!(
             asm.contains("call flags_1_0_hasflag"),
             "a call in the 1.0 library must target flags_1_0_hasflag"
+        );
+    }
+
+    // ---- Stage A2 (corpus fix): differing signatures prove table scoping ----
+    //
+    // The flags corpus above (`two_versions_of_one_library_coexist_in_one_unit`
+    // and `two_version_call_resolves_within_its_own_library`) gives both
+    // versions of `hasflag` the SAME signature — a number in, a number out.
+    // That proves the mangled LABELS are distinct and intra-library calls
+    // target the right label, but it is blind to the bug A2 exists to prevent:
+    // a failure to scope the SIGNATURE tables (`function_return_types` /
+    // `function_param_types`) by <lib,version>. With identical signatures, a
+    // collapsed (name-keyed) table produces byte-identical codegen to a scoped
+    // one — the second library's return type "wins" but is the same value, so
+    // nothing observable changes. A test that passes for the wrong reason
+    // reports safety it is not checking.
+    //
+    // This case gives the two `get`s DIFFERENT return types — number in 0.1,
+    // text in 1.0 — and consumes each result with `print`. The print routing
+    // (PRINT_INT for a number, PRINT_CSTR for text) is driven by
+    // `infer_expr_type`, which reads `function_return_types[function_label(name)]`
+    // — the scoped lookup. If the table were keyed by authored name, 1.0's
+    // `text` return would win for 0.1's `useit` too, and a number would be
+    // printed with PRINT_CSTR: wrong code, no diagnostic. The assertions below
+    // fail in exactly that collapse, so the case is now sensitive to the
+    // signature-table scoping the flags corpus cannot see.
+
+    /// The first `PRINT_*` instruction occurring after `anchor` in `asm`, used
+    /// to check that a function-call result is routed by its inferred (scoped)
+    /// return type. `"PRINT_INT "` / `"PRINT_CSTR "` (with the trailing space)
+    /// avoid matching `PRINT_INT_ZEROPAD` / `PRINT_INT_PADDED`, which embed the
+    /// `PRINT_INT` prefix under an underscore.
+    fn first_print_after(asm: &str, anchor: &str) -> &'static str {
+        let i = asm
+            .find(anchor)
+            .unwrap_or_else(|| panic!("anchor {:?} not found in asm", anchor));
+        let rest = &asm[i..];
+        let int = rest.find("PRINT_INT ");
+        let cstr = rest.find("PRINT_CSTR ");
+        match (int, cstr) {
+            (Some(a), Some(b)) => {
+                if a < b {
+                    "PRINT_INT"
+                } else {
+                    "PRINT_CSTR"
+                }
+            }
+            (Some(_), None) => "PRINT_INT",
+            (None, Some(_)) => "PRINT_CSTR",
+            (None, None) => panic!("no PRINT_* found after anchor {:?}", anchor),
+        }
+    }
+
+    #[test]
+    fn two_versions_differing_signatures_resolve_per_library() {
+        let src = "\
+Library \"sig\" version \"0.1\".\n\
+To \"get\" with a number called \"n\".\n  Return a number, n add 1.\n\
+To \"useit\" with a number called \"n\".\n  Print \"get\" of n.\n\n\
+Library \"sig\" version \"1.0\".\n\
+To \"get\" with a number called \"n\".\n  Return a text, \"hello\".\n\
+To \"useit2\" with a number called \"n\".\n  Print \"get\" of n.\n";
+        let asm = compile_to_asm_shared(src);
+        // The call inside each library targets its own `get` (the property
+        // A2 scoped; restated here because this is the case that also carries
+        // the return-type value).
+        assert!(
+            asm.contains("call sig_0_1_get"),
+            "a call in the 0.1 library must target sig_0_1_get"
+        );
+        assert!(
+            asm.contains("call sig_1_0_get"),
+            "a call in the 1.0 library must target sig_1_0_get"
+        );
+        // The return-type VALUE is scoped per library: 0.1's `get` returns a
+        // number, so `useit` prints it with PRINT_INT; 1.0's `get` returns text,
+        // so `useit2` prints it with PRINT_CSTR. A name-keyed table would let
+        // 1.0's `text` win for 0.1's call, making `useit` print a number with
+        // PRINT_CSTR — the wrong-code bug, caught here.
+        assert_eq!(
+            first_print_after(&asm, "call sig_0_1_get"),
+            "PRINT_INT",
+            "0.1's get returns a number, so its result must print as PRINT_INT"
+        );
+        assert_eq!(
+            first_print_after(&asm, "call sig_1_0_get"),
+            "PRINT_CSTR",
+            "1.0's get returns text, so its result must print as PRINT_CSTR"
+        );
+    }
+
+    // ---- Stage A3: emit the `.lib` interface file ----
+
+    /// Compile `source` in `--shared` mode and return the collected per-library
+    /// signature blocks plus the mangled export labels, so the `.lib` render
+    /// and the ToC↔export round-trip can be tested without shelling out to
+    /// nasm/ld. Mirrors `compile_to_asm_shared` but exposes the codegen state.
+    fn compile_shared_with_libs(source: &str) -> (Vec<LibBlock>, Vec<String>) {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("lib_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("shared test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new()
+            .with_source("lib_test.vox", source)
+            .with_shared_mode(true);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "shared test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.set_shared_lib_mode(true);
+        gen.generate(&program);
+        (gen.library_blocks().to_vec(), gen.exported_functions().to_vec())
+    }
+
+    #[test]
+    fn lib_file_two_version_round_trip() {
+        // The showcase case: two versions of `flags` in one .so, each with a
+        // typed return (`Return a number, ...`), so the `.lib` carries a
+        // return type. The emitted `.lib` is pasted in the A3 report; this test
+        // pins it to the normative format so a formatting drift fails here.
+        let src = "\
+Library \"flags\" version \"0.1\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return a number, n add 1.\n\
+Library \"flags\" version \"1.0\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return a number, n add 100.\n";
+        let (blocks, exports) = compile_shared_with_libs(src);
+
+        // Two Library blocks, one per version, in source order.
+        assert_eq!(blocks.len(), 2, "two inputs -> two Library blocks in one .lib");
+        assert_eq!(blocks[0].lib, "flags");
+        assert_eq!(blocks[0].version, "0.1");
+        assert_eq!(blocks[1].lib, "flags");
+        assert_eq!(blocks[1].version, "1.0");
+
+        // Round-trip invariant (the one thing to test): each ToC entry, mangled
+        // by its block's <lib, version>, must equal the exported dynamic
+        // symbol set one-for-one. A4 will re-parse this `.lib` and verify the
+        // same against `.dynsym`; here we verify it against the codegen's own
+        // export list, which becomes `.dynsym` via the version script.
+        let toc_mangled: Vec<String> = blocks
+            .iter()
+            .flat_map(|b| {
+                b.funcs
+                    .iter()
+                    .map(|f| super::mangle_library_symbol(&b.lib, &b.version, &f.name))
+            })
+            .collect();
+        let mut got = toc_mangled.clone();
+        got.sort();
+        let mut exp = exports.clone();
+        exp.sort();
+        assert_eq!(
+            got, exp,
+            "ToC mangled names must match exported_functions one-for-one"
+        );
+
+        // The emitted `.lib` for libflags.so (the normative format; one entry
+        // per line, never wrapped; `Location` relative to the `.lib`). Written
+        // as one literal — Rust's `\` line continuation strips leading
+        // whitespace, which would silently drop the 4-space indent the format
+        // requires, so the entry lines are kept on their `\n` continuation
+        // line instead of split across one.
+        let lib = super::render_lib_file(&blocks, "libflags.so");
+        let expected = "Library \"flags\" version \"0.1\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n\nLibrary \"flags\" version \"1.0\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n";
+        assert_eq!(lib, expected, "emitted .lib must match the normative format");
+    }
+
+    #[test]
+    fn lib_file_signatures_carry_params_names_types_and_return() {
+        // A library whose export has multiple parameters and a `value` return:
+        // the `.lib` must carry every parameter (name + type), joined with
+        // ` and `, and the return type as `, returning a value` (the `value` ABI
+        // is fixed, so the type name alone is complete — no extra fields).
+        let src = "\
+Library \"m\" version \"2.0\".\n\
+To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\".\n  Return a value, v.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        assert_eq!(blocks.len(), 1);
+        let lib = super::render_lib_file(&blocks, "libm.so");
+        assert!(
+            lib.contains("To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\", returning a value."),
+            "multi-param entry joined with ` and `, value param/return by type name only; got:\n{}",
+            lib
+        );
+    }
+
+    #[test]
+    fn lib_file_parameterless_and_void_return_omits_clauses() {
+        // `To "greet".` — no params, void return — reads as a bare entry with
+        // no `with` clause and no `, returning` clause. A parameterless function
+        // with a return reads `To "makebuf", returning a number.`. This is the
+        // parameterless / value-parameter readability the steer asked to settle.
+        let src = "\
+Library \"m\" version \"1.0\".\n\
+To \"greet\".\n  Print \"hi\".\n\n\
+To \"makebuf\".\n  Return a number, 7.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        let lib = super::render_lib_file(&blocks, "libm.so");
+        assert!(
+            lib.contains("To \"greet\"."),
+            "a parameterless void-return function reads `To \"greet\".`; got:\n{}",
+            lib
+        );
+        assert!(
+            lib.contains("To \"makebuf\", returning a number."),
+            "a parameterless function with a return reads `To \"makebuf\", returning a number.`; got:\n{}",
+            lib
         );
     }
 
