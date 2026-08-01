@@ -684,6 +684,17 @@ impl Analyzer {
                              definitions, 'Library', and 'see' may appear at the top level.",
                             shared_top_level_label(stmt)
                         ),
+                        // No source location: `Statement` carries no span (see
+                        // plan 210 P3). The only location mechanism here is
+                        // `find_symbol_location`, a text search keyed on a
+                        // symbol name; a top-level print/if/while/exit has no
+                        // name, and even the name-bearing kinds (assignment,
+                        // call) would resolve to the first textual occurrence
+                        // of that name anywhere in the file — usually inside a
+                        // function body, i.e. a misleading line. A real fix
+                        // needs spans threaded into the Statement AST (the
+                        // parser has token positions but discards them), which
+                        // is separate work.
                         None,
                     );
                     return;
@@ -708,6 +719,12 @@ impl Analyzer {
                      file defines none. Add a function definition, or drop --shared \
                      to build an executable."
                         .to_string(),
+                    // No source location: this reports an ABSENCE of function
+                    // definitions, so there is no offending statement and no
+                    // symbol to anchor `find_symbol_location` on (plan 210 P3).
+                    // Spanning the Statement AST would let this point at the
+                    // file/first line; until then it stays a message-only
+                    // diagnostic, deliberately.
                     None,
                 );
                 return;

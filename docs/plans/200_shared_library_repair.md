@@ -538,10 +538,22 @@ Three things are carried forward rather than finished:
 2. **Growable resource tables** were folded into Phase 1 to avoid touching
    the same 34 sites twice. Those sites are now rewritten, so that saving is
    gone and the work needs its own plan.
-3. **The C/Rust host path is unverified.** The assembly driver proves the
-   SysV boundary, not the `_dl_fini` cleanup a libc host relies on. That
-   wants a one-off manual check rather than a harness test, since the suite
-   deliberately cannot depend on a C toolchain.
+3. **The `.fini_array` / `_cleanup_all` path is unverified, and the
+   C/Rust host path is the same gap.** Phase 1 registers `_cleanup_all` in
+   `.fini_array` so a libc host runs cleanup on unload, but nothing in the
+   suite reaches it: `tests/runtime/shared_lib_driver.asm` exits through a
+   raw `sys_exit`, which never calls `_dl_fini`, which is what would run
+   `.fini_array`. The code is therefore untested by construction — the
+   suite would stay green if it were deleted. The assembly driver proves
+   the SysV boundary and the PIC runtime; it does **not** prove the
+   `_dl_fini` cleanup a libc host relies on. What would verify it is a
+   one-off manual check with a C or Rust host (load the `.so`, call an
+   export, exit normally, confirm cleanup ran) — the same check the
+   unticked success criterion below names. The two are one gap, not two:
+   the suite deliberately cannot depend on a C toolchain (`nasm` + `ld` +
+   `cargo` only), and a `command -v cc` guard would skip silently and let
+   CI go green with nothing tested, so this is recorded here rather than
+   papered over with a host the harness cannot honestly run.
 
 Also worth recording: `LANGUAGE.md` still contains a pre-existing
 contradiction, where the `see` section lists `see "./lib.so"` as working

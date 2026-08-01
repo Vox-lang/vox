@@ -490,6 +490,13 @@ fn main() {
         // static binary with no loader dependency.
         let mut dynamic_args: Vec<String> = Vec::new();
         if !link_libs.is_empty() {
+            // FIXME(x86-64, M6): this loader path is hard-coded for x86-64.
+            // `target_arch` is in scope here (it is threaded down from the
+            // --arch flag / TARGET_ARCH at line ~249), so M6's port can derive
+            // the path from it per architecture instead of fixing this string
+            // by hand. Left as-is for now because the other architectures do
+            // not exist yet and guessing their loader paths would be worse
+            // than a grep-findable marker. See plan 210 P6.
             dynamic_args.push("-dynamic-linker".to_string());
             dynamic_args.push("/lib64/ld-linux-x86-64.so.2".to_string());
             for p in lib_paths.iter() {
