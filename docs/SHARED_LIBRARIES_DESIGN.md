@@ -39,17 +39,37 @@ The `.lib` file serves as the public interface for the library and contains:
    - Parameter types and names
    - Return type information
 
-Example `.lib` file structure:
+Example `.lib` file structure (the normative format — see plan 230, "The `.lib`
+format"; the code track emits this in Stage A3 and parses it in A4):
 ```
 Library "flags" version "0.1".
-Location "/home/josj/scr/vox/libs/libflags.so".
+Location "./libflags.so".
 
 Table of Contents:
-    To "hasflag" with a text called "flag".
-    To "isverbose".
-    To "wantshelp".
-    To "getoption" with a text called "flag".
+    To "hasflag" with a text called "flag", returning a boolean.
+    To "isverbose", returning a boolean.
+    To "wantshelp", returning a boolean.
+    To "getoption" with a text called "flag", returning a text.
 ```
+
+A `.lib` is a sequence of `Library` blocks. Each block has three parts: a
+`Library "<name>" version "<ver>"` line, a `Location` line naming the `.so`, and
+a `Table of Contents` of exported signatures. Several `Library` blocks may
+appear in one `.lib` and parsing runs to EOF — a `Library` line starts a new
+block (see "Parsing Multi-Library `.lib` Files" below).
+
+`Location` resolves **relative to the `.lib` first**, then the `--lib-path`
+flag, then error. It is relative by norm so a `.lib`/`.so` pair can be moved or
+shipped together; an absolute `Location` is honoured when read but never
+generated.
+
+Parameter and return types are drawn from a fixed vocabulary — `number`,
+`text`, `boolean`, `file`, `value`; anything else is an error naming the
+unsupported type. The `, returning a <type>` suffix exists **only** in `.lib`
+files: a `.lib` entry is a bodiless declaration, so the return type rides the
+signature. In Vox source the return type lives in the body
+(`Return a number, x.`), which a bodiless `.lib` line has no room for. An entry
+with no `returning` clause denotes a function that returns nothing.
 
 ### Library Linking
 
@@ -82,7 +102,7 @@ A single `.so` file can contain multiple libraries and different versions. This 
 
 #### Parsing Multi-Library `.lib` Files
 
-The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator between library blocks. The parsing continues until EOF is reached.
+The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as the start of a new block, each with its own `Location` and `Table of Contents`. Parsing continues until EOF is reached.
 
 > **A `.so` is binary ELF, not text.** An earlier draft of this section said
 > the compiler "parses `.so` files" this way — that was the abandoned
