@@ -37,7 +37,7 @@ Primary touch points for the feature are:
 
 6. Language docs and examples
 - `LANGUAGE.md` command-line argument section (to document schema syntax and semantics)
-- `examples/args_and_env.en` (feature demonstration and migration from manual parsing)
+- `examples/args_and_env.vox` (feature demonstration and migration from manual parsing)
 
 ## Scope of Changes
 ### Parse Orchestration Strategy (Design Decision)
@@ -110,7 +110,7 @@ Primary touch points for the feature are:
 
 ### Docs / Examples / Tests
 - Document syntax and semantics in `LANGUAGE.md`.
-- Update `examples/args_and_env.en` with supported syntax once implemented.
+- Update `examples/args_and_env.vox` with supported syntax once implemented.
 - Add parser/analyzer/codegen tests + integration tests for core scenarios.
 - Add regression tests.
 
@@ -157,6 +157,6 @@ The feature is considered complete when all are true:
 - [ ] `arguments's all` returns only positional args after schema parse.
 - [ ] `arguments's raw` returns original unfiltered user arguments.
 - [ ] Required/missing/default behavior is implemented and tested.
-- [ ] Integration tests cover at least the 8 example scenarios drafted in `examples/args_and_env.en`.
+- [ ] Integration tests cover at least the 8 example scenarios drafted in `examples/args_and_env.vox`.
 - [ ] `LANGUAGE.md` documents syntax, semantics, and edge cases.
 - [ ] `./test.sh` passes with no regressions.

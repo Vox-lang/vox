@@ -1,0 +1,19 @@
+(ROADMAP M0 — dynamic buffer growth. A dynamic buffer starts small and must
+ grow as content is appended; a fixed-size buffer must NOT grow, and a write
+ past its end is a no-op that sets the error flag. Both halves are asserted
+ here because README's memory model now states both, and the two behaviours
+ were documented inconsistently until they were reconciled.)
+
+Create a buffer called "grower".
+a number called "i" is 1.
+While i is less than or equal to 500,
+  Append "0123456789" to grower,
+  Increment i.
+print grower's size.
+
+a buffer called "fixed" is 4 bytes in size.
+Set byte 100 of fixed to 65.
+on error print "fixed buffer refused the out-of-bounds write".
+Set byte 1 of fixed to 65.
+Set byte 2 of fixed to 66.
+print fixed.

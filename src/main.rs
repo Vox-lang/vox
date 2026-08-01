@@ -152,8 +152,9 @@ fn process_includes(
                 continue;
             }
             
-            // Only process .en source files (not .so libraries)
-            if path.ends_with(".en") {
+            // Only inline Vox source (not .so libraries). A `see` of a source
+            // file splices its statements in here, before compilation.
+            if path.ends_with(".vox") {
                 if let Ok(source) = fs::read_to_string(&include_path) {
                     if verbose {
                         println!("Including: {}", include_path.display());
@@ -177,7 +178,7 @@ fn process_includes(
                 } else if verbose {
                     eprintln!("Warning: Could not read file: {}", include_path.display());
                 }
-                // Don't keep the see statement for .en files - content is inlined
+                // Don't keep the see statement for source files - content is inlined
             } else {
                 // Keep the see statement for .so files as a marker
                 new_statements.push(stmt);
@@ -195,7 +196,7 @@ fn show_version() {
 }
 
 fn show_help() {
-    eprintln!("Usage: vox <source.en> [options]");
+    eprintln!("Usage: vox <source.vox> [options]");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --emit-asm       Output assembly only (don't assemble/link)");

@@ -3838,7 +3838,7 @@ impl Parser {
     
     fn parse_see(&mut self) -> Result<Statement, Box<CompileError>> {
         // Supported syntaxes:
-        // see "./path/to/file.en".
+        // see "./path/to/file.vox".
         // see "math" version "1.0" from "./path.so".
         // see "./path.so" for "math" version "1.0".
         // see "./path.so" for math version 1.0.
@@ -3872,7 +3872,7 @@ impl Parser {
         let first = get_name_or_string(self.current())
             .ok_or_else(|| self.err(
                 "Missing path or library name after 'see'\n  \
-                 Syntax: see \"./path/to/file.en\".\n  \
+                 Syntax: see \"./path/to/file.vox\".\n  \
                  Or: see \"libname\" version \"1.0\" from \"./path.so\"."
             ))?;
         self.advance();

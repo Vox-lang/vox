@@ -1,0 +1,36 @@
+(ROADMAP M0 — list growth across the realloc boundary. A list literal is
+ created with capacity 8, so the 9th append is the first that must grow the
+ block, copy the data AND the tag region, and return the new pointer. That
+ path once segfaulted on the 9th element; the sizes here bracket it at 9,
+ 100 and 100 000.
+
+ Each check reads back the first and last element as well as the length, so
+ a realloc that loses or misaligns the copied data fails rather than merely
+ counting correctly.)
+
+a list called "nine" is [].
+a number called "i" is 1.
+While i is less than or equal to 9,
+  Append i to nine,
+  Increment i.
+print nine's length.
+print element 1 of nine.
+print element 9 of nine.
+
+a list called "hundred" is [].
+set i to 1.
+While i is less than or equal to 100,
+  Append i to hundred,
+  Increment i.
+print hundred's length.
+print element 1 of hundred.
+print element 100 of hundred.
+
+a list called "many" is [].
+set i to 1.
+While i is less than or equal to 100000,
+  Append i to many,
+  Increment i.
+print many's length.
+print element 1 of many.
+print element 100000 of many.

@@ -2793,13 +2793,13 @@ For each number from 1 to 15, print the number, but if "check divisibility" of t
 Use `see` to include other source files or libraries:
 
 ```
-see "./utils.en".
+see "./utils.vox".
 see "./libraries/math.so".
 see "math" version "1.0" from "./libraries/math.so".
 ```
 
 **Syntax variations:**
-- `see "./path/to/file.en".` - Include source file
+- `see "./path/to/file.vox".` - Include source file
 - `see "./path/to/lib.so".` - Include compiled library
 - `see "libname" version "1.0" from "./path.so".` - Include specific version
 - `see "./path.so" for "libname" version "1.0".` - Alternative syntax
@@ -2829,7 +2829,7 @@ To "cube" a number x:
 After including a library, use its functions directly:
 
 ```
-see "./math.en".
+see "./math.vox".
 
 a number called "result" is "square" of 5.
 print result.
@@ -2842,7 +2842,7 @@ print result.
 ### Basic Usage
 
 ```bash
-vox <source.en> [options]
+vox <source.vox> [options]
 ```
 
 ### Options
@@ -2861,16 +2861,16 @@ vox <source.en> [options]
 
 ```bash
 # Compile and run
-vox hello.en --run
+vox hello.vox --run
 
 # Build executable with custom name
-vox hello.en -o myprogram
+vox hello.vox -o myprogram
 
 # Build shared library
-vox math.en --shared
+vox math.vox --shared
 
 # Link against shared library
-vox main.en --link libmath --lib-path ./libs
+vox main.vox --link libmath --lib-path ./libs
 ```
 
 ---

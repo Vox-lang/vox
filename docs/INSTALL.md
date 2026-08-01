@@ -45,7 +45,7 @@ sudo cp -r coreasm /usr/local/share/ec/coreasm
 At this point you should be able to run:
 
 ```bash
-ec /path/to/program.en --run
+vox /path/to/program.vox --run
 ```
 
 ## How `ec` finds `coreasm`

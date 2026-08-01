@@ -126,9 +126,10 @@ objects, retiring that trade-off permanently.
 statements are spliced in where the `see` appears, before compilation —
 no runtime involvement at all. This already works (`process_includes` in
 `src/main.rs`, recursive, with cycle protection via the `included` set); it
-is only gated on the `.en` extension while the tree uses `.vox`, so
-`see "./lib.vox".` is silently not inlined today and the author gets
-"Unknown function". Fixing the gate is the whole task.
+**Done 2026-08-01** — the gate tested for `.en` while the tree uses `.vox`,
+so every include silently failed to inline; `.vox` is now the sole source
+extension and `tests/208_source_include.vox` covers it, including the
+transitive case.
 
 **A `see` of a `.so` produces a standalone library.** The shared object is
 self-contained and usable from C, Rust, or any other host — not only from
@@ -272,7 +273,6 @@ growth across the realloc boundary remain open.
 | `src/codegen/mod.rs` | emit the mangling `%define` prologue ahead of the includes | 0 |
 | `src/analyzer/mod.rs` | error on top-level executable statements under `--shared` | 0 |
 | `src/main.rs` | thread a `--shared` flag into the analyzer for that diagnostic | 0 |
-| `src/main.rs:156` | inline `see` of a `.vox` file (gate currently says `.en`, so `.vox` includes silently do not inline) | 0 |
 | `coreasm/x86_64/resource.asm` | 34 sites: `[abs T + r*s]` → `lea`+index, PIC-safe | 1 |
 | `src/codegen/mod.rs` | `.fini_array` entry for the library's `_cleanup_all`; make it idempotent | 1 |
 | `src/codegen/mod.rs` | emit explicit cleanup calls per linked library before `sys_exit` (a Vox host never reaches `_dl_fini`) | 1 |
@@ -345,9 +345,8 @@ until Phase 3).
 - [ ] Emit conditional coreasm includes in `shared_lib_mode` (exclude
       `args.asm`); keep `default rel`
 - [ ] Emit the mangling `%define` prologue ahead of the includes
-- [ ] Inline `see` of a `.vox` file (`src/main.rs:156` still gates on
-      `.en`, so a `.vox` include silently does not inline and the author
-      gets "Unknown function")
+- [x] Inline `see` of a `.vox` file — done 2026-08-01, with
+      `tests/208_source_include.vox`
 - [ ] Analyzer: reject top-level executable statements under `--shared`
 - [ ] Compile-fail test for the new diagnostic (`tests/compile_fail/`)
 - [ ] LANGUAGE.md `--shared` section; register plan in `docs/plans/README.md`
@@ -360,6 +359,12 @@ until Phase 3).
 - [ ] Explicit per-library cleanup calls before `sys_exit` for a Vox host
 - [ ] Error fetch-and-merge after each library call, so `on error` works
       across the boundary
+- [ ] While rewriting those 34 sites, consider making the tables growable.
+      `MAX_FDS` and `MAX_BUFFERS` are 64 and `alloc_table` is 256, fixed in
+      `.bss`, and `_register_buffer` silently no-ops when full. Growing them
+      means heap-allocating and loading a base pointer at each access - the
+      *same* 34 sites this phase already touches, so doing it separately
+      means editing them twice.
 - [ ] `readelf -r` zero-abs-reloc check; full `test.sh` + NASM
       warning sweep
 
