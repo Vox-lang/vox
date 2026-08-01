@@ -2129,9 +2129,30 @@ impl CodeGenerator {
         result.push_str("section .text\n");
         
         if self.shared_lib_mode {
-            // Shared library mode: export functions, no _start
+            // A C/Rust host unloads the .so through libc's atexit -> _dl_fini,
+            // which runs .fini_array. Register _cleanup_all there so the
+            // library closes its tracked fds/buffers regardless of who loaded
+            // it. A Vox host exits through sys_exit and never reaches
+            // _dl_fini, so it must call cleanup explicitly before exit. Gate
+            // the entry on the same condition that includes resource.asm,
+            // where _cleanup_all is defined: a runtime-light library tracks
+            // nothing and the symbol would otherwise be an undefined ref.
+            if self.uses_buffers || self.uses_files || self.uses_floats {
+                // `write` so ld can place the RELATIVE relocation here without
+                // relaxing its read-only-segment check for the rest of the
+                // .so — a targeted fix, not a blanket `-z notext`.
+                result.push_str("section .fini_array progbits alloc write\n");
+                result.push_str("    dq _cleanup_all\n\n");
+                result.push_str("section .text\n");
+            }
+
+            // Shared library mode: export functions, no _start. The
+            // `:function` type tag marks each export STT_FUNC: a NOTYPE
+            // dynamic symbol resolves wrongly through the PLT and the first
+            // cross-boundary call segfaults, so ld warns "type and size of
+            // dynamic symbol ... are not defined" and the call traps.
             for func in &self.exported_functions {
-                result.push_str(&format!("global {}\n", func));
+                result.push_str(&format!("global {}:function\n", func));
             }
             result.push('\n');
             
