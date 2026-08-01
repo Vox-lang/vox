@@ -256,9 +256,9 @@ run_shared_library_test() {
     else
         local got exp
         got=$(nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | sort)
-        exp=$(printf '%s\n' add_two greet makebuf | sort)
+        exp=$(printf '%s\n' add_two_numbers greet makebuf | sort)
         if [[ "$got" != "$exp" ]]; then
-            fail_msg="shared/libmath (export set is not exactly {add_two, greet, makebuf})"
+            fail_msg="shared/libmath (export set is not exactly {add_two_numbers, greet, makebuf})"
             { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
             fail_log="$work/diff.log"
         # 3. readelf -d reports a parseable dynamic section.
@@ -276,7 +276,12 @@ run_shared_library_test() {
             out=$("$work/driver" 2>"$work/run.err")
             rc=$?
             if [[ $rc -ne 0 ]]; then
-                fail_msg="shared/libmath (driver exited $rc)"; fail_log="$work/run.err"
+                case "$rc" in
+                    2) fail_msg="shared/libmath (driver: add_two_numbers(40) != 42)" ;;
+                    3) fail_msg="shared/libmath (driver: makebuf() != 5)" ;;
+                    *) fail_msg="shared/libmath (driver exited $rc)" ;;
+                esac
+                fail_log="$work/run.err"
             elif [[ "$out" != "hello from libmath" ]]; then
                 fail_msg="shared/libmath (driver stdout mismatch)"
                 { echo "expected: hello from libmath"; echo "got: $out"; } >"$work/out.log"
