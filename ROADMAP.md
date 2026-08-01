@@ -129,7 +129,10 @@ bounds-checked.
 ## Milestone 3 — Dynamic / Shared Library System
 
 *Design doc: [docs/SHARED_LIBRARIES_DESIGN.md](docs/SHARED_LIBRARIES_DESIGN.md).
-`--shared`, `--link`, and `see ... version ...` already exist in early form.*
+`--shared` and `--link` work today; `see ... version ...` is parsed but not
+yet wired — it currently emits an assembly comment and links nothing. The
+consumption path arrives with the `.lib` interface in this milestone, whose
+chain is `.vox` → `see` a `.lib` → `Location` → `.so`.*
 
 - [ ] Harden `--shared` builds: symbol scoping (library-private vs. exported
       functions), no symbol collisions between libraries.

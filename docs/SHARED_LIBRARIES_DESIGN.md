@@ -66,9 +66,20 @@ A single `.so` file can contain multiple libraries and different versions. This 
 - **Reduced File Count**: Related libraries can be bundled together
 - **Version Isolation**: Different versions don't interfere with each other
 
-#### Parsing Multi-Library .so Files
+#### Parsing Multi-Library `.lib` Files
 
-The compiler must parse `.so` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator between library blocks. The parsing continues until EOF is reached.
+The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator between library blocks. The parsing continues until EOF is reached.
+
+> **A `.so` is binary ELF, not text.** An earlier draft of this section said
+> the compiler "parses `.so` files" this way — that was the abandoned
+> direct-`.so` model. A `.so` carries mangled symbol *names* in `.dynsym` but
+> nothing about Vox types, so it cannot be parsed for `Library` blocks or
+> signatures. The typed interface that *is* parsed top to bottom is the
+> `.lib`: the chain is **`.vox` → `see` a `.lib` → `Location` → `.so`**. The
+> `.lib` is the `.h` equivalent; the `.so` it points at is only ever linked,
+> never read for types. (The multi-library `.so` *structure* — several
+> libraries' mangled symbols bundled in one `.so` — is correct and stays;
+> what was wrong was parsing the `.so` itself.)
 
 ### Name Mangling
 
@@ -96,11 +107,23 @@ This mangling scheme:
 > identifier. Since a standalone `.so` must be callable from other languages,
 > the dot form is unusable.
 >
-> The same mangling applies to the library's **runtime state**, not just its
-> functions, so two versions inside one `.so` do not share `_last_error` or
-> the resource tables. Full rules, including how this is applied without
-> editing any `coreasm/` file, are in
-> [SYMBOL_MANGLING.md](SYMBOL_MANGLING.md) — the project standard.
+> **Runtime state is deliberately *not* mangled — an explicit non-goal of
+> Phase 3.** An earlier draft of this section said `_last_error` and the
+> resource tables get per-version mangling (`flags_0_1_last_error`, etc.) so
+> two versions inside one `.so` would not share them. **Phase 3 does not do
+> this, on purpose.** Multi-input `--shared` compiles several libraries into
+> one assembly unit, so the runtime is emitted once and shared by every
+> library in that `.so` — which is correct and desirable: one resource
+> table, one `.fini_array`, one idempotent `_cleanup_all`. Duplicating the
+> runtime per library would multiply the `.so`'s size and give it several
+> competing cleanup paths. Cross-`.so` isolation already holds without
+> per-version mangling, because each `.so` carries its own runtime and the
+> version script keeps those symbols out of `.dynsym`. Only **function
+> labels** are mangled (`<lib>_<version>_<func>`); that scheme stands and is
+> the project standard in [SYMBOL_MANGLING.md](SYMBOL_MANGLING.md). The
+> per-version runtime-state mangling that document also describes is
+> superseded by this decision — see plan 230, "Explicit non-goal: runtime
+> state is not mangled".
 
 ## Implementation Considerations
 
@@ -109,7 +132,7 @@ This mangling scheme:
 #### 1. Parser Modifications
 - Detect `Library` declarations at file start
 - Parse library name and version
-- Handle multi-library parsing in `.so` files
+- Handle multi-library parsing in `.lib` files
 - Parse `See` statements for library linking
 
 #### 2. Symbol Table Management

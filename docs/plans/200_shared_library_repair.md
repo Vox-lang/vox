@@ -165,6 +165,33 @@ self-contained and usable from C, Rust, or any other host — not only from
 Vox — and cleans up its own resources on exit regardless of who loaded it.
 It therefore contains its own copy of coreasm.
 
+> **Superseded 2026-08-01 by plan 230 — read this section as history, not
+> current design.** Two things below are reversed; the text is left in place
+> as the record of the decision taken here.
+>
+> 1. The "`see` of a `.so`" framing is the abandoned direct-`.so` model. The
+>    *content* (a `.so` carrying its own runtime, loadable from C/Rust,
+>    self-cleaning) is correct and stands; only the `see`-of-a-`.so` path to
+>    it is gone. The current chain is **`.vox` → `see` a `.lib` → `Location`
+>    → `.so`** — a pure-Vox caller reaches a library through a `.lib`, never
+>    by `see`-ing the `.so` directly. A `--shared` build, not a `see` of a
+>    `.so`, is what produces the standalone library.
+> 2. The "Per-library-version state, via symbol mangling" paragraph
+>    immediately below — and the error-propagation-as-shared-state claim at
+>    the `**Error propagation is an ABI convention, not shared state.**`
+>    paragraph — describe per-version mangling of `_last_error` and the
+>    resource tables. **Plan 230 deliberately does not do this** (its
+>    "Explicit non-goal: runtime state is not mangled"). Multi-input
+>    `--shared` compiles to one assembly unit, so the runtime is emitted
+>    once and shared by every library in that `.so`: one resource table, one
+>    `.fini_array`, one idempotent `_cleanup_all`. Duplicating the runtime
+>    per library would multiply size and give the `.so` several competing
+>    cleanup paths; cross-`.so` isolation already holds because each `.so`
+>    carries its own runtime and the version script hides it. **Function
+>    labels are still mangled** (`<lib>_<version>_<func>`); only runtime
+>    state is not. See plan 230 and
+>    [SYMBOL_MANGLING.md](../SYMBOL_MANGLING.md).
+
 **Per-library-version state, via symbol mangling.** Each library version's
 runtime state is mangled `<lib>_<version>_<name>`, so two versions inside
 one `.so` do not share `_last_error`, `_call_depth`, `_print_depth`, or the
