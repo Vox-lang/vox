@@ -7923,6 +7923,44 @@ To \"makebuf\".\n  Return a number, 7.\n";
     }
 
     #[test]
+    fn bodyless_function_does_not_absorb_successor() {
+        // A3 round-trip regression: a bodyless function (`To "greet".` with no
+        // body and no separating blank line) used to absorb the following
+        // `To "c" ...` as a *nested* FunctionDef. The nested function was still
+        // emitted (so it appeared in `nm -D`) but was invisible to the top-level
+        // walk that collects `.lib` signatures, so the ToC dropped it while the
+        // `.so` still exported it — a silent `.lib`/`.so` mismatch and the one
+        // property this stage exists for. The parser now terminates a body on
+        // `To`/`Library`, keeping the successor top-level. This asserts the
+        // successor is collected (not absorbed) and that the ToC count equals
+        // the export count — the class-wide invariant, not a name check.
+        let src = "\
+Library \"toc\" version \"1.0\".\n\
+To \"a\". Return a number, 1.\n\
+To \"greet\".\n\
+To \"c\". Return a number, 3.\n";
+        let (blocks, exports) = compile_shared_with_libs(src);
+        assert_eq!(blocks.len(), 1);
+        let names: Vec<&str> = blocks[0].funcs.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names, vec!["a", "greet", "c"],
+            "a bodyless `greet` must not absorb `c` into its body"
+        );
+        // ToC count == export count: each ToC entry, mangled by its block's
+        // <lib, version>, must equal the exported set one-for-one.
+        let toc_mangled: Vec<String> = blocks[0]
+            .funcs
+            .iter()
+            .map(|f| super::mangle_library_symbol(&blocks[0].lib, &blocks[0].version, &f.name))
+            .collect();
+        let mut got = toc_mangled.clone();
+        got.sort();
+        let mut exp = exports.clone();
+        exp.sort();
+        assert_eq!(got, exp, "ToC count must equal exported function count");
+    }
+
+    #[test]
     fn non_shared_builds_keep_plain_labels() {
         // Non-shared builds must be completely unaffected: same labels as
         // today. The same source without --shared emits the bare mangled

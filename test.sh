@@ -449,6 +449,49 @@ run_lib_clobber_refusal_test() {
 }
 run_lib_clobber_refusal_test
 
+# A3 table-of-contents completeness (plan 230). A bodyless function —
+# `To "greet".` with no body and no separating blank line — used to absorb the
+# following `To "c" ...` as a nested definition, so `c` was exported by the .so
+# but missing from the .lib ToC: a silent .lib/.so mismatch and the one property
+# this stage exists for. This builds tests/shared/toc_count.vox (a bodyless
+# function in the middle and two bodyless in a row, no blank lines between them
+# so the absorption path is exercised) and asserts the .lib ToC entry count
+# EQUALS the `nm -D --defined-only` count. A count equality, not a name list —
+# it catches the whole class, so any function dropped from the ToC while still
+# exported fails here, whichever one it is. It must never report "skipped": a
+# silent ToC/.so mismatch is the one failure most worth a loud test.
+run_lib_toc_count_test() {
+    local work lib_src nm_count toc_count
+    lib_src="$SCRIPT_DIR/tests/shared/toc_count.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libtoc.so" >"$work/build.log" 2>&1; then
+        fail_msg="toc-count (build)"; fail_log="$work/build.log"
+    else
+        nm_count=$(nm -D --defined-only "$work/libtoc.so" | awk '{print $3}' | grep -c .)
+        toc_count=$(grep -c '^    To ' "$work/libtoc.lib")
+        if [[ -z "$nm_count" || -z "$toc_count" || "$nm_count" != "$toc_count" || "$nm_count" -eq 0 ]]; then
+            fail_msg="toc-count (ToC entries ${toc_count:-?} != nm -D exports ${nm_count:-?})"
+            { echo "nm -D --defined-only:"; nm -D --defined-only "$work/libtoc.so" | awk '{print $3}' | sort | sed 's/^/  /'; echo ".lib ToC:"; grep '^    To ' "$work/libtoc.lib" | sed 's/^/  /'; } >"$work/diff.log"
+            fail_log="$work/diff.log"
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -30
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} toc-count/lib ($nm_count == $toc_count)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_lib_toc_count_test
+
 # Summary
 echo ""
 echo -e "${BOLD}=== Summary ===${NC}"

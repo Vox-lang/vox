@@ -4104,9 +4104,20 @@ impl Parser {
             }
         }
 
-        // Continue parsing body until paragraph break
+        // Continue parsing body until paragraph break. A function body never
+        // contains another function definition or a Library declaration —
+        // `Token::To` and `Token::Library` always begin a NEW top-level
+        // construct, so they terminate the body just like a paragraph break.
+        // Without this, a bodyless function (`To "greet".` with no Return and
+        // no separating blank line) silently absorbed the following `To "f".`
+        // as a *nested* FunctionDef: the nested function was still emitted (so
+        // it appeared in `nm -D`) but was invisible to any walk of top-level
+        // statements — notably the Stage A3 `.lib` signature collector, which
+        // then dropped it from the table of contents while the `.so` still
+        // exported it. Terminating on `To`/`Library` keeps the successor
+        // top-level where it belongs.
         while !body_ended_at_return
-            && !matches!(self.current(), Token::ParagraphBreak | Token::EOF)
+            && !matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library)
         {
             self.skip_noise();
             if matches!(self.current(), Token::Comma) {
@@ -4118,7 +4129,7 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
             }
-            if matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
+            if matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library) {
                 break;
             }
             let stmt = self.parse_statement()?;
