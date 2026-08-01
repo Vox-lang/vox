@@ -480,7 +480,16 @@ fn main() {
             .args(&all_args)
             .status()
     };
-    
+
+    // Remove the version script regardless of whether `ld` succeeded. The
+    // cleanup used to live after the success check, so a failed link left
+    // `<name>.map` in the user's working directory — a file they never asked
+    // to see, named for a script they have no reason to know exists. Removing
+    // it here covers both the success and the two failure exits below.
+    if build_shared {
+        let _ = fs::remove_file(format!("{}.map", base_name));
+    }
+
     match ld_result {
         Ok(status) if status.success() => {}
         Ok(_) => {
@@ -494,9 +503,6 @@ fn main() {
     }
 
     let _ = fs::remove_file(&obj_path);
-    if build_shared {
-        let _ = fs::remove_file(format!("{}.map", base_name));
-    }
 
     if verbose {
         if build_shared {
