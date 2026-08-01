@@ -105,3 +105,151 @@ notice a code defect while reading, record it at the end under
 - [ ] `cargo build --release` 0 warnings; `cargo test --release` ≥ 116;
       `./test.sh` ≥ 196 passed, 0 failed, 6 skipped — unchanged, since this
       task changes no code
+
+---
+
+## Findings
+
+Audit run 2026-08-01 on `so-lib-audit` at `570aefc`. Search set read end to
+end, not just grepped: `LANGUAGE.md`, `README.md`, `ROADMAP.md`, every file in
+`docs/` (including `docs/plans/`), every `.rs` in `src/`, `tests/`, `examples/`.
+The classification boundary in the spec held — nothing was found that proves a
+`.so` carries Vox type information, and `--link` is verified working (it links
+an assembly driver against `libmath.so` and calls across the boundary in
+`./test.sh`; the driver is hand-written assembly that declares its externs
+itself, which is exactly why `--link` works for it while a compiler-driven
+`see .so` cannot). Grouped by file, most load-bearing first.
+
+### `LANGUAGE.md` — what users read
+
+| field | content |
+|---|---|
+| location | `LANGUAGE.md:2797-2798` |
+| quote | `see "./libraries/math.so".` / `see "math" version "1.0" from "./libraries/math.so".` (shown under "Use `see` to include other source files or libraries:") |
+| why wrong | A `.so` is binary ELF with mangled symbol names but no Vox type information, so the compiler cannot treat a `see` of one as a library import; today `see` of a non-`.vox` path is kept as a marker and emitted as an assembly comment (`src/codegen/mod.rs:4164`), linking nothing. |
+| suggested correction | Replace both lines with the intended chain — `see "./math.lib"` (a `.lib` carrying the typed table of contents and a `Location` pointing at the `.so`) — and keep `see "./utils.vox"` as the source-include form. Do not apply yet. |
+| confidence | confirmed |
+
+| field | content |
+|---|---|
+| location | `LANGUAGE.md:2803-2805` |
+| quote | `- see "./path/to/lib.so". - Include compiled library` / `- see "libname" version "1.0" from "./path.so". - Include specific version` / `- see "./path.so" for "libname" version "1.0". - Alternative syntax` |
+| why wrong | The "Syntax variations" list presents three `see`-of-a-`.so` forms as supported library imports; none of them links anything (see above). |
+| suggested correction | Replace the three `.so` bullets with the `.lib` form(s); keep the `see "./path/to/file.vox".` bullet. Do not apply yet. |
+| confidence | confirmed |
+
+**Silence (no single line is wrong, but the section is).** The "Libraries and
+Imports" section documents `see` with a `.vox` and a `.so` form but never shows
+`see` of a `.lib` — the typed interface the design moved to. `.lib` is named
+only once, buried in the "What is not yet supported" paragraph at
+`LANGUAGE.md:2857` ("`.lib` metadata … arrive together in a later phase"),
+which itself defers the whole feature. A user reading the `see` syntax list
+gets the old direct-`.so` model and no pointer to the `.lib` chain that
+replaced it. Worth recording even though no one line is false.
+
+**Internal contradiction (already noted by plan 200 at
+`docs/plans/200_shared_library_repair.md:558-561`).** The examples and syntax
+list above (`:2797-2805`) present `see` of a `.so` as working, while
+`LANGUAGE.md:2854-2859` says "linking a program against a `.so` through `see`
+arrive together in a later phase; until then `--link` is the way to link an
+executable against a built `.so`." The later paragraph is the correct,
+current-state one; the `see .so` examples above are the stale remnant.
+
+### `docs/SHARED_LIBRARIES_DESIGN.md` — the design authority
+
+| field | content |
+|---|---|
+| location | `docs/SHARED_LIBRARIES_DESIGN.md:71` |
+| quote | "The compiler must parse `.so` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator between library blocks. The parsing continues until EOF is reached." |
+| why wrong | A `.so` is binary and contains no `Library "…"` text; this describes parsing a `.lib` (the typed table of contents), not a `.so`. |
+| suggested correction | "The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator…" Do not apply yet. |
+| confidence | confirmed |
+
+| field | content |
+|---|---|
+| location | `docs/SHARED_LIBRARIES_DESIGN.md:112` |
+| quote | "- Handle multi-library parsing in `.so` files" (under "#### 1. Parser Modifications") |
+| why wrong | Same error as `:71` — the parser cannot read `Library` declarations out of a binary `.so`; that is `.lib` parsing. |
+| suggested correction | "Handle multi-library parsing in `.lib` files". Do not apply yet. |
+| confidence | confirmed |
+
+Note: this file is mostly *correct* on the new model — its "Library Linking"
+section at `:48-51` already says `See "Path/to/library.lib" for "lib_name"
+"version"`, and the `Location "…/libflags.so"` example at `:37` is the intended
+chain. The two findings above are stale remnants of the pre-`.lib` design
+surviving in the "Multi-Library .so" subsection. The multi-library `.so`
+*structure* diagram at `:275-288` and the linker bullet at `:128` ("Handle
+multiple library versions in single `.so` files") describe bundling several
+libraries' mangled symbols into one `.so`, which is fine and is **not** flagged.
+
+### `src/parser/mod.rs` — parser doc-comment and diagnostic
+
+| field | content |
+|---|---|
+| location | `src/parser/mod.rs:3840-3844` |
+| quote | `// Supported syntaxes:` followed by `// see "math" version "1.0" from "./path.so".`, `// see "./path.so" for "math" version "1.0".`, `// see "./path.so" for math version 1.0.` (in `parse_see`) |
+| why wrong | A parser doc-comment listing `.so` as a "Supported" `see` argument; `see` of a `.so` is parsed but compiles to a comment (`src/codegen/mod.rs:4164`), so it is not a supported library-linking syntax. |
+| suggested correction | Keep only `// see "./path/to/file.vox".` here and route the library forms through `.lib` when that lands. Do not apply yet. |
+| confidence | confirmed |
+
+| field | content |
+|---|---|
+| location | `src/parser/mod.rs:3874-3876` |
+| quote | Error message: `Or: see "libname" version "1.0" from "./path.so".` (shown when `see` is missing its path/name) |
+| why wrong | The diagnostic offers a `.so` as the `see` argument, steering users at the non-working direct-`.so` form. |
+| suggested correction | Point the hint at `see "./path/to/file.lib"` (or, until `.lib` exists, at `--link`). Do not apply yet. |
+| confidence | confirmed |
+
+### `ROADMAP.md`
+
+| field | content |
+|---|---|
+| location | `ROADMAP.md:132` |
+| quote | "`--shared`, `--link`, and `see ... version ...` already exist in early form." |
+| why wrong | `--shared` and `--link` work; `see ... version ...` only *parses* and then emits a comment — it does not link. Grouping it with the two working flags as "already exist in early form" overstates it. |
+| suggested correction | "`--shared` and `--link` work today; `see ... version ...` is parsed but not yet wired (arrives with `.lib` in Milestone 3)." Do not apply yet. |
+| confidence | uncertain — "in early form" could be read as "the parser exists", which is true; flagged because it is filed beside two mechanisms that actually link. |
+
+### `docs/plans/200_shared_library_repair.md` — the active implementation plan
+
+| field | content |
+|---|---|
+| location | `docs/plans/200_shared_library_repair.md:163` |
+| quote | "**A `see` of a `.so` produces a standalone library.** The shared object is self-contained and usable from C, Rust, or any other host — not only from Vox — and cleans up its own resources on exit regardless of who loaded it." |
+| why wrong | The "`see` of a `.so`" framing is the direct-`.so` model the `.lib` indirection was introduced to replace; a pure-Vox `see` caller is explicitly out of scope here (`:142`: "A pure-Vox caller via `see` (needs the `.lib`/extern wiring above)"). |
+| suggested correction | Reframe as "A `--shared` build produces a standalone `.so`…" and leave the `see` caller to the `.lib`-based Phase 3 design. Do not apply yet. |
+| confidence | uncertain — the *content* (a `.so` carrying its own runtime, loadable from C/Rust) is correct and in the do-not-flag list; only the "`see` of a `.so`" framing is stale. This is a live plan, not user-facing doc, so it is low-load-bearing. |
+
+### Count
+
+| file | findings | uncertain |
+|---|---|---|
+| `LANGUAGE.md` | 2 confirmed + 1 silence | 0 |
+| `docs/SHARED_LIBRARIES_DESIGN.md` | 2 confirmed | 0 |
+| `src/parser/mod.rs` | 2 confirmed | 0 |
+| `ROADMAP.md` | 1 | 1 |
+| `docs/plans/200_shared_library_repair.md` | 1 | 1 |
+| **total** | **9 entries (7 confirmed, 2 uncertain) + 1 silence** | **2** |
+
+The two or three most load-bearing:
+
+1. **`LANGUAGE.md:2797-2798`** — the example a user copies. It says `see
+   "./libraries/math.so"` includes a library. It does not.
+2. **`LANGUAGE.md:2803-2805`** — the "Syntax variations" list a user references
+   for the correct form; three of four bullets point at a `.so`.
+3. **`docs/SHARED_LIBRARIES_DESIGN.md:71`** — the design authority literally
+   specifying "parse `.so` files … treating each `Library` declaration as a
+   separator," which is the `.lib`-parsing claim the spec pre-confirmed.
+
+### Incidental code observations (not defects, no action taken)
+
+- `src/main.rs:155-185` / `src/codegen/mod.rs:4164-4173`: a `see` whose path
+  does not end in `.vox` is silently kept as a marker and emitted as an
+  assembly comment (`; See: ...`), with no "not yet supported" diagnostic.
+  This is why the `LANGUAGE.md` examples mislead without any compile-time
+  warning — the program compiles and the library call simply is not there.
+  By design pending Phase 3; recorded because it is what makes the stale docs
+  dangerous in practice rather than just cosmetically wrong.
+- No code defect was noticed. The `see .so` no-op, the `--link`/`--shared`
+  paths, the version script, `.fini_array`, and the PIC runtime all behave as
+  the (correct) docs and plans describe.
