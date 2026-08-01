@@ -1,0 +1,16 @@
+(Plan 230 stage A2 — the backwards-compatibility case the whole design exists
+for: TWO VERSIONS of one library in a single .so, both callable, resolving to
+different code. This is version 0.1 of `flags`. It is linked with
+flags_1_0.vox (version 1.0) by `vox flags_0_1.vox flags_1_0.vox --shared -o
+libflags.so`; both define `hasflag`, and the mangling keeps them apart:
+flags_0_1_hasflag vs flags_1_0_hasflag.
+
+`hasflag` here returns n add 1, so hasflag(5) equals 6. The 1.0 build returns
+n add 100 (equals 105). The driver calls both and checks each result, proving
+the two versions are independently callable from one .so — the property most
+likely to regress silently, so test.sh builds and runs it on every host.)
+
+Library "flags" version "0.1".
+
+To "hasflag" with a number called "n".
+  Return n add 1.

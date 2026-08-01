@@ -223,12 +223,15 @@ run_runtime_test() {
 
 for runtime_test in "$SCRIPT_DIR"/tests/runtime/*.asm; do
     [ -e "$runtime_test" ] || break
-    # shared_lib_driver is a cross-boundary driver that must be linked against
-    # the libmath .so. It is built and run — always, never skipped — by
-    # run_shared_library_test below, which assembles it with the .so on the
-    # link line. The plain nasm+ld here has no .so to resolve its externs, so
-    # skip it in this loop rather than report undefined-symbol errors as a fail.
-    [[ "$(basename "$runtime_test" .asm)" == "shared_lib_driver" ]] && continue
+    # shared_lib_driver and two_version_driver are cross-boundary drivers that
+    # must be linked against a .so. They are built and run — always, never
+    # skipped — by run_shared_library_test / run_two_version_library_test
+    # below, which assemble them with the .so on the link line. The plain
+    # nasm+ld here has no .so to resolve their externs, so skip them in this
+    # loop rather than report undefined-symbol errors as a fail.
+    case "$(basename "$runtime_test" .asm)" in
+        shared_lib_driver|two_version_driver) continue ;;
+    esac
     run_runtime_test "$(basename "$runtime_test" .asm)"
 done
 
@@ -302,6 +305,89 @@ run_shared_library_test() {
     rm -rf "$work"
 }
 run_shared_library_test
+
+# Two-version shared-library boundary test (plan 230 stage A2). This is the
+# backwards-compatibility case the entire multi-version design exists for: TWO
+# VERSIONS of one library (flags 0.1 and flags 1.0) in ONE .so, both defining
+# `hasflag`, both independently callable and resolving to different code. It
+# builds the .so from two sources with the real CLI end to end
+# (`vox a.vox b.vox --shared -o lib.so`), then asserts:
+#   1. nm -D --defined-only is EXACTLY {flags_0_1_hasflag, flags_1_0_hasflag}
+#      — a set equality, not a presence grep, so a regression that drops or
+#      renames one version's export fails here;
+#   2. readelf -d reports a valid dynamic section;
+#   3. readelf -r has ZERO absolute relocations (the PIC invariant, which a
+#      per-library runtime — the design going wrong — would break);
+#   4. an assembly driver linked against the .so calls flags_0_1_hasflag(5)
+#      (== 6) and flags_1_0_hasflag(5) (== 105) and exits 0 — proving the two
+#      versions coexist and resolve to different bodies. A collision that let
+#      the second library's signature overwrite the first's (the A1 finding)
+#      makes one call return the other's value, so BOTH are checked.
+# It must never report "skipped": the two-version property is the one most
+# likely to regress silently, and a case that only ever existed in a
+# transcript is a case that stops being true.
+run_two_version_library_test() {
+    local work src0 src1 driver
+    src0="$SCRIPT_DIR/tests/shared/flags_0_1.vox"
+    src1="$SCRIPT_DIR/tests/shared/flags_1_0.vox"
+    driver="$SCRIPT_DIR/tests/runtime/two_version_driver.asm"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    # 1. Build the two-version .so from two sources in one link step.
+    if ! "$VOX_BIN" "$src0" "$src1" --shared -o "$work/libflags.so" >"$work/build.log" 2>&1; then
+        fail_msg="two-version flags (build)"; fail_log="$work/build.log"
+    # 2. Exact export set: both mangled labels and nothing else.
+    else
+        local got exp
+        got=$(nm -D --defined-only "$work/libflags.so" | awk '{print $3}' | sort)
+        exp=$(printf '%s\n' flags_0_1_hasflag flags_1_0_hasflag | sort)
+        if [[ "$got" != "$exp" ]]; then
+            fail_msg="two-version flags (export set is not exactly {flags_0_1_hasflag, flags_1_0_hasflag})"
+            { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
+            fail_log="$work/diff.log"
+        # 3. readelf -d reports a parseable dynamic section.
+        elif ! readelf -d "$work/libflags.so" >"$work/dyn.log" 2>&1 \
+              || ! grep -q "Dynamic section" "$work/dyn.log"; then
+            fail_msg="two-version flags (no valid dynamic section)"; fail_log="$work/dyn.log"
+        # 4. Zero absolute relocations on the multi-library .so.
+        elif [[ $(readelf -r "$work/libflags.so" | grep -cE "R_X86_64_(32|32S)") -ne 0 ]]; then
+            fail_msg="two-version flags (absolute relocations present)"; fail_log="$work/reloc.log"
+            readelf -r "$work/libflags.so" >"$work/reloc.log" 2>&1
+        # 5. Assemble and link the driver against the .so, then run it.
+        elif ! nasm -f elf64 -i "$SCRIPT_DIR/" -o "$work/driver.o" "$driver" >"$work/nasm.log" 2>&1; then
+            fail_msg="two-version flags (driver nasm)"; fail_log="$work/nasm.log"
+        elif ! ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 -rpath "$work" \
+                -o "$work/driver" "$work/driver.o" -L"$work" -lflags >"$work/ld.log" 2>&1; then
+            fail_msg="two-version flags (driver link)"; fail_log="$work/ld.log"
+        else
+            local rc
+            "$work/driver" >"$work/run.out" 2>"$work/run.err"
+            rc=$?
+            if [[ $rc -ne 0 ]]; then
+                case "$rc" in
+                    2) fail_msg="two-version flags (driver: flags_0_1_hasflag(5) != 6)" ;;
+                    3) fail_msg="two-version flags (driver: flags_1_0_hasflag(5) != 105)" ;;
+                    *) fail_msg="two-version flags (driver exited $rc)" ;;
+                esac
+                fail_log="$work/run.err"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -30
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} two-version/flags"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_two_version_library_test
 
 # Summary
 echo ""

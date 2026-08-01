@@ -597,6 +597,16 @@ pub struct Analyzer {
     /// main body and silently dropped. Reject such statements up front rather
     /// than mislead the author.
     shared_mode: bool,
+    /// The identity of the library whose function definitions surround the
+    /// statement currently being analyzed, set by `Library` declarations as
+    /// the walk proceeds. The per-function tables (`functions`,
+    /// `function_param_counts`, `mangled_functions`) are keyed by the
+    /// `<lib>_<ver>_<func>` mangled label, so a call resolves only against the
+    /// current library's functions: a name defined in a DIFFERENT library of
+    /// the same .so is not in this library's key set and stays the existing
+    /// "Unknown function" error (cross-library calls are out of scope for A2).
+    /// `None` outside shared mode, where the key is plain `mangle_symbol(name)`.
+    current_library: Option<(String, String)>,
 }
 
 #[derive(Clone, Default)]
@@ -653,6 +663,7 @@ impl Analyzer {
             value_typed_names: HashSet::new(),
             loop_depth: 0,
             shared_mode: false,
+            current_library: None,
         }
     }
 
@@ -665,7 +676,18 @@ impl Analyzer {
         self.shared_mode = enabled;
         self
     }
-    
+
+    /// The key under which a function DEFINED in the current library is filed
+    /// in the per-function tables: the `<lib>_<ver>_<func>` mangled label in
+    /// shared mode (with an identity set), else `mangle_symbol(name)`. This is
+    /// the same rule codegen's `function_label` uses, so the two agree on a
+    /// function's identity and a call that the analyzer accepts also resolves
+    /// at the call site. Reads `current_library`, which the statement walk sets
+    /// as it passes each `Library` declaration.
+    fn func_key(&self, name: &str) -> String {
+        crate::codegen::make_function_label(self.shared_mode, self.current_library.as_ref(), name)
+    }
+
     pub fn analyze(&mut self, program: &mut Program) {
         // A shared library has no `_start`, so top-level executable statements
         // would be generated into the discarded main body and silently dropped.
@@ -778,11 +800,26 @@ impl Analyzer {
             }
         }
 
+        // Track the library identity as we walk so each function is filed under
+        // its OWN `<lib>_<ver>_<func>` key (a local, not `self.current_library`,
+        // so this pre-pass does not disturb the identity the second-pass walk
+        // manages). This scopes `functions`/`function_param_counts`: two
+        // libraries in one .so each defining `greet` get distinct keys, so a
+        // call in library A does not match library B's `greet`.
+        let mut current_lib: Option<(String, String)> = None;
         for stmt in &program.statements {
             match stmt {
+                Statement::LibraryDecl { name, version } => {
+                    current_lib = Some((name.clone(), version.clone()));
+                }
                 Statement::FunctionDef { name, params, .. } => {
-                    self.functions.insert(name.clone());
-                    self.function_param_counts.insert(name.clone(), params.len());
+                    let key = crate::codegen::make_function_label(
+                        self.shared_mode,
+                        current_lib.as_ref(),
+                        name,
+                    );
+                    self.functions.insert(key.clone());
+                    self.function_param_counts.insert(key, params.len());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -1031,7 +1068,7 @@ impl Analyzer {
     /// register values (silently using 0 or garbage), while too many
     /// were silently dropped.
     fn validate_function_call_args(&mut self, name: &str, args: &[Expr]) {
-        if let Some(&expected) = self.function_param_counts.get(name) {
+        if let Some(&expected) = self.function_param_counts.get(&self.func_key(name)) {
             if args.len() != expected {
                 self.push_error(
                     format!(
@@ -1906,7 +1943,7 @@ impl Analyzer {
             
             Statement::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(name) {
+                if !self.functions.contains(&self.func_key(name)) {
                     let mut err = format!("Unknown function: {}", name);
                     if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));
@@ -1939,8 +1976,13 @@ impl Analyzer {
                 }
                 // Names that differ only in characters the mangler folds to
                 // '_' would emit the same label, so one body would silently
-                // win. Reject rather than miscompile.
-                let symbol = crate::codegen::mangle_symbol(name);
+                // win. Reject rather than miscompile. The check is scoped by
+                // library: the key is the full `<lib>_<ver>_<func>` label, so
+                // "my.helper" and "my helper" in the SAME library collide (and
+                // are flagged), while the same two names in DIFFERENT libraries
+                // of one .so produce distinct labels and are both fine — that
+                // is the whole point of the mangling.
+                let symbol = self.func_key(name);
                 match self.mangled_functions.get(&symbol) {
                     Some(prev) if prev != name => {
                         self.push_error(
@@ -1956,8 +1998,9 @@ impl Analyzer {
                         self.mangled_functions.insert(symbol, name.clone());
                     }
                 }
-                self.functions.insert(name.clone());
-                self.function_param_counts.insert(name.clone(), params.len());
+                self.functions.insert(self.func_key(name));
+                self.function_param_counts
+                    .insert(self.func_key(name), params.len());
                 self.deps.uses_funcs = true; // Track that functions are used
 
                 // Functions can access top-level globals, but locals declared inside
@@ -2411,8 +2454,17 @@ impl Analyzer {
                 self.deps.uses_heap = true;
             }
             
-            Statement::LibraryDecl { .. } => {
-                // Library declarations are metadata, no analysis needed
+            Statement::LibraryDecl { name, version } => {
+                // A `Library` declaration sets the identity for the function
+                // definitions that follow it. The per-function tables are keyed
+                // by the `<lib>_<ver>_<func>` label, so a call inside this
+                // library's bodies resolves only against this library's
+                // functions. The walk is in source order and a `Library`
+                // precedes its functions, so the field is current when each
+                // `FunctionDef` body is analyzed. (In a multi-input --shared
+                // build the concatenated unit has one `Library` per input,
+                // so each library's functions resolve in their own scope.)
+                self.current_library = Some((name.clone(), version.clone()));
             }
             
             Statement::See { .. } => {
@@ -2656,7 +2708,7 @@ impl Analyzer {
             
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(name) {
+                if !self.functions.contains(&self.func_key(name)) {
                     let mut err = format!("Unknown function: {}", name);
                     if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
                         err.push_str(&format!(" (did you mean '{}'?)", suggestion));

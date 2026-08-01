@@ -15,7 +15,7 @@ use std::process::Command;
 
 use lexer::Lexer;
 use parser::Parser;
-use parser::ast::Statement;
+use parser::ast::{Program, Statement};
 use analyzer::Analyzer;
 use codegen::CodeGenerator;
 
@@ -216,12 +216,12 @@ fn show_help() {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         show_help();
         std::process::exit(1);
     }
-    
+
     // Check for help/version flags before treating first arg as source file
     if args.len() == 2 {
         match args[1].as_str() {
@@ -236,8 +236,8 @@ fn main() {
             _ => {}
         }
     }
-    
-    let source_path = &args[1];
+
+    let mut source_paths: Vec<String> = Vec::new();
     let mut emit_asm_only = false;
     let mut keep_asm = false;
     let mut run_after = false;
@@ -247,8 +247,13 @@ fn main() {
     let mut link_libs: Vec<String> = Vec::new();
     let mut lib_paths: Vec<String> = Vec::new();
     let mut target_arch = option_env!("TARGET_ARCH").unwrap_or("x86_64").to_string();
-    
-    let mut i = 2;
+
+    // Any positional argument that is not a recognised flag (and not the value
+    // consumed by -o/--link/--lib-path/--target) is a source file. This accepts
+    // one or several: `vox a.vox --shared -o lib.so` (single, as today) and
+    // `vox a.vox b.vox --shared -o lib.so` (plan 230 stage A2: several libraries
+    // linked into one .so in a single link step).
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--help" | "-h" => {
@@ -288,59 +293,164 @@ fn main() {
                     target_arch = args[i].clone();
                 }
             }
-            _ => {}
+            _ => {
+                // A positional argument: a source file. The old loop started at
+                // index 2 and silently dropped any extra positional args (the
+                // `_ => {}` arm), so `vox a.vox b.vox --shared` quietly lost
+                // `b.vox`. Collecting them here is what makes multi-input work.
+                source_paths.push(args[i].clone());
+            }
         }
         i += 1;
     }
-    
-    let source = match fs::read_to_string(source_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error reading file '{}': {}", source_path, e);
-            std::process::exit(1);
-        }
-    };
-    
-    if verbose {
-        println!("Compiling {}...", source_path);
+
+    if source_paths.is_empty() {
+        show_help();
+        std::process::exit(1);
     }
-    
-    let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize();
-    
-    let mut parser = Parser::new(tokens).with_source(source_path, &source);
-    let mut program = match parser.parse() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+
+    // Multi-input is --shared only. Two `main`-equivalents in one executable
+    // has no meaning, and silently picking one would be the worst outcome; a
+    // shared build is the one place several sources combine into one output.
+    if source_paths.len() > 1 && !build_shared {
+        eprintln!(
+            "Multiple source files ({}) are only valid with --shared, which links \
+             them into one library in a single link step. An executable build takes \
+             a single source — pass --shared, or compile each source separately.",
+            source_paths.join(", ")
+        );
+        std::process::exit(1);
+    }
+
+    let first_source = source_paths[0].clone();
+
+    // Parse each source independently, then concatenate the statements into
+    // ONE compilation unit so the coreasm runtime is emitted once and shared by
+    // every library in the .so (plan 230 stage A2's design: one resource table,
+    // one .fini_array, one idempotent _cleanup_all — never a runtime per input).
+    // Each input is lexed/parsed on its own so a parse error names its own file
+    // and a `see` of a .vox resolves relative to that file's directory.
+    let mut combined_statements: Vec<Statement> = Vec::new();
+    // (library, version, filename) per input, to reject duplicate identities.
+    let mut identities: Vec<(String, String, String)> = Vec::new();
+    for source_path in &source_paths {
+        let source = match fs::read_to_string(source_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading file '{}': {}", source_path, e);
+                std::process::exit(1);
+            }
+        };
+
+        if verbose {
+            println!("Compiling {}...", source_path);
         }
-    };
-    
-    // Process includes (see statements) with circular dependency tracking
-    let source_path_buf = PathBuf::from(source_path);
-    let mut included_files = HashSet::new();
-    included_files.insert(source_path_buf.canonicalize().unwrap_or(source_path_buf.clone()));
-    process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
-    
+
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize();
+
+        let mut parser = Parser::new(tokens).with_source(source_path, &source);
+        let mut program = match parser.parse() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Process includes (see statements) with circular dependency tracking,
+        // relative to this input's directory.
+        let source_path_buf = PathBuf::from(source_path);
+        let mut included_files = HashSet::new();
+        included_files.insert(
+            source_path_buf
+                .canonicalize()
+                .unwrap_or(source_path_buf.clone()),
+        );
+        process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
+
+        // Multi-input --shared: every input must carry its own `Library`
+        // declaration (its symbols are mangled by it), and no two inputs may
+        // claim the same <library, version> — the second would silently
+        // overwrite the first's signatures, the wrong-code bug A1 found. This
+        // is a property of the inputs, not the program, so it is checked here
+        // in the driver where both filenames are in hand (the analyzer sees one
+        // concatenated unit and has no filenames).
+        if build_shared && source_paths.len() > 1 {
+            let identity = program.statements.iter().find_map(|s| {
+                if let Statement::LibraryDecl { name, version } = s {
+                    Some((name.clone(), version.clone()))
+                } else {
+                    None
+                }
+            });
+            match identity {
+                Some((lib, ver)) => {
+                    if let Some((_, prev_file)) = identities.iter().find_map(|(l, v, f)| {
+                        if l == &lib && v == &ver {
+                            Some(((), f.clone()))
+                        } else {
+                            None
+                        }
+                    }) {
+                        eprintln!(
+                            "Duplicate library identity: '{}' and '{}' both declare \
+                             Library \"{}\" version \"{}\". Two sources linked into one .so \
+                             must each name a distinct library and version, or the second's \
+                             signatures silently overwrite the first's. Rename one.",
+                            prev_file, source_path, lib, ver
+                        );
+                        std::process::exit(1);
+                    }
+                    identities.push((lib, ver, source_path.clone()));
+                }
+                None => {
+                    eprintln!(
+                        "'{}' has no `Library` declaration. A source linked into a shared \
+                         library alongside others must declare its identity — \
+                         `Library \"name\" version \"x.y\".` — so its symbols are mangled \
+                         apart from the other libraries' and a `.lib` can be written for it. \
+                         Add one before the function definitions.",
+                        source_path
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        combined_statements.extend(program.statements);
+    }
+
+    // One Program for the whole .so. `Program::new` defaults every uses_* flag
+    // to false; the single analyze pass below sets them from the combined
+    // statement list, so the runtime include block reflects what every library
+    // in the .so actually needs (and is emitted once).
+    let mut program = Program::new(combined_statements);
+
+    // The analyzer locates errors by text search in one source file (plan 210
+    // P3 — the Statement AST carries no span). For a multi-input build that is
+    // the first file; a symbol in a later library may mislocate, but a
+    // spanned AST is the separate work that fixes it. Single-input builds are
+    // unchanged: the same source, the same content, as today.
+    let first_source_content = fs::read_to_string(&first_source).unwrap_or_default();
     let mut analyzer = Analyzer::new()
-        .with_source(source_path, &source)
+        .with_source(&first_source, &first_source_content)
         .with_shared_mode(build_shared);
     analyzer.analyze(&mut program);
-    
+
     if !analyzer.errors.is_empty() {
         for err in &analyzer.errors {
             eprintln!("{}", err);
         }
         std::process::exit(1);
     }
-    
+
     let mut codegen = CodeGenerator::new();
     codegen.set_shared_lib_mode(build_shared);
     codegen.set_target_arch(&target_arch);
     let assembly = codegen.generate(&program);
     
-    let base_name = Path::new(source_path)
+    let base_name = Path::new(&first_source)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");

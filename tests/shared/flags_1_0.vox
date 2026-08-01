@@ -1,0 +1,14 @@
+(Plan 230 stage A2 — version 1.0 of `flags`, linked with flags_0_1.vox (version
+0.1) into one .so. Both define `hasflag`; the mangling (flags_1_0_hasflag vs
+flags_0_1_hasflag) is what lets two versions coexist in one binary. See the
+header in flags_0_1.vox for the rationale and the driver contract.
+
+`hasflag` here returns n add 100, so hasflag(5) equals 105 (the 0.1 build
+returns 6). The driver calls both and asserts each, so a regression that
+collapses the two versions back onto one body fails loudly instead of
+silently.)
+
+Library "flags" version "1.0".
+
+To "hasflag" with a number called "n".
+  Return n add 100.
