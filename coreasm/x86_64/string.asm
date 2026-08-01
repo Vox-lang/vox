@@ -79,68 +79,6 @@ section .text
     pop rdi
 %endmacro
 
-; Duplicate a null-terminated string
-; Args: rdi = source string pointer
-; Returns: rax = pointer to new copy (or 0 on failure)
-global _strdup
-_strdup:
-    push rbx
-    push r12
-    push r13
-    
-    mov r12, rdi            ; save source pointer
-    
-    ; Get string length
-    xor rcx, rcx
-.strdup_len:
-    cmp byte [rdi + rcx], 0
-    je .strdup_len_done
-    inc rcx
-    jmp .strdup_len
-.strdup_len_done:
-    inc rcx                 ; +1 for null terminator
-    mov r13, rcx            ; save length+1
-    
-    ; Allocate memory via mmap
-    mov rax, 9              ; sys_mmap
-    mov rdi, 0              ; addr = NULL
-    mov rsi, rcx            ; size = len+1
-    add rsi, 4095
-    and rsi, ~4095          ; page-align
-    mov rdx, 3              ; PROT_READ | PROT_WRITE
-    mov r10, 0x22           ; MAP_PRIVATE | MAP_ANONYMOUS
-    mov r8, -1              ; fd = -1
-    mov r9, 0               ; offset = 0
-    syscall
-    
-    cmp rax, -4096          ; raw mmap returns -errno in [-4095,-1]
-    ja .strdup_fail
-    
-    mov rbx, rax            ; save dest pointer
-    
-    ; Copy string
-    xor rcx, rcx
-.strdup_copy:
-    cmp rcx, r13
-    jge .strdup_done
-    mov al, [r12 + rcx]
-    mov [rbx + rcx], al
-    inc rcx
-    jmp .strdup_copy
-    
-.strdup_done:
-    mov rax, rbx            ; return new string pointer
-    pop r13
-    pop r12
-    pop rbx
-    ret
-
-.strdup_fail:
-    xor rax, rax
-    pop r13
-    pop r12
-    pop rbx
-    ret
 
 ; String equality function (callable)
 ; Args: rdi = string1, rsi = string2
@@ -178,15 +116,15 @@ _str_eq:
     pop rbx
     ret
 
-; Same as _strdup, but bounded by an explicit max length rather than
-; scanning indefinitely for a NUL terminator. Needed for buffer content:
+; Copy a string, bounded by an explicit max length rather than scanning
+; indefinitely for a NUL terminator. Needed for buffer content:
 ; _buffer_clear only zeroes the buffer's first byte (a cheap "empty"
 ; marker), not the whole allocation, so a buffer that held a longer
 ; value before being cleared and rewritten with something shorter can
 ; have stale non-NUL bytes sitting right after its new logical content
-; - an unbounded strdup would read straight through those stale bytes.
+; - an unbounded copy would read straight through those stale bytes.
 ; Still stops early at a genuine NUL within the bound, and the result
-; is always NUL-terminated, matching _strdup's own contract.
+; is always NUL-terminated.
 ; Args: rdi = source pointer, rsi = max length in bytes (e.g. the
 ; buffer's own tracked length via _buffer_length)
 ; Returns: rax = pointer to a freshly allocated, NUL-terminated copy
