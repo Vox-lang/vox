@@ -3,9 +3,14 @@ real library needs: pure arithmetic, printing, and buffer use. The buffer
 function is the one that exercises the Phase 1 resource.asm PIC work —
 buffer registration touches buf_table, the table that could not be relocated
 before the lea [rel] rewrite. Built with `vox --shared`; called from
-tests/runtime/shared_lib_driver.asm.)
+tests/runtime/shared_lib_driver.asm.
 
-To "add_two" with a number called "n".
+The arithmetic export is named with a space on purpose: "add two numbers"
+mangles to the label `add_two_numbers`, so the export-set assertion in
+test.sh exercises mangle_symbol instead of passing on an identity. See
+plan 210 P2.)
+
+To "add two numbers" with a number called "n".
   Return n add 2.
 
 To "greet".

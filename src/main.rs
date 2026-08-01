@@ -416,6 +416,20 @@ fn main() {
         println!("Linking...");
     }
     
+    // The version script is a pure implementation detail the user never asked
+    // to see, so it must never touch their working directory — a `.map` next to
+    // a source file is entirely plausible (linker scripts and source maps both
+    // use that extension), and writing then deleting `<base_name>.map` there
+    // would destroy a pre-existing file (plan 210 P1). Put it in the system temp
+    // dir under a name unique to this process. The single `map_path` is the
+    // only place this path exists, so the cleanup below cannot drift from the
+    // write (plan 210 P7 — the two used to be recomputed independently).
+    let map_path = if build_shared {
+        Some(env::temp_dir().join(format!("vox-{}-{}.map", base_name, std::process::id())))
+    } else {
+        None
+    };
+
     let ld_result = if build_shared {
         // An anonymous version script restricts the dynamic symbol table to
         // exactly the library's exported functions. coreasm declares ~54 of
@@ -425,7 +439,7 @@ fn main() {
         // coreasm edits) for the same reason the %define mangling is: coreasm
         // is ported per architecture. The anonymous form (no version tag)
         // keeps `nm -D` reporting the plain symbol names.
-        let map_path = format!("{}.map", base_name);
+        let map_path = map_path.as_ref().unwrap();
         let mut script = String::from("{ global:");
         for func in codegen.exported_functions() {
             script.push_str(&format!(" {};", func));
@@ -438,7 +452,7 @@ fn main() {
 
         let mut all_args: Vec<String> = vec![
             "-shared".to_string(),
-            format!("--version-script={}", map_path),
+            format!("--version-script={}", map_path.display()),
             "-o".to_string(),
             output_path.clone(),
             obj_path.clone(),
@@ -476,6 +490,13 @@ fn main() {
         // static binary with no loader dependency.
         let mut dynamic_args: Vec<String> = Vec::new();
         if !link_libs.is_empty() {
+            // FIXME(x86-64, M6): this loader path is hard-coded for x86-64.
+            // `target_arch` is in scope here (it is threaded down from the
+            // --arch flag / TARGET_ARCH at line ~249), so M6's port can derive
+            // the path from it per architecture instead of fixing this string
+            // by hand. Left as-is for now because the other architectures do
+            // not exist yet and guessing their loader paths would be worse
+            // than a grep-findable marker. See plan 210 P6.
             dynamic_args.push("-dynamic-linker".to_string());
             dynamic_args.push("/lib64/ld-linux-x86-64.so.2".to_string());
             for p in lib_paths.iter() {
@@ -504,9 +525,10 @@ fn main() {
     // cleanup used to live after the success check, so a failed link left
     // `<name>.map` in the user's working directory — a file they never asked
     // to see, named for a script they have no reason to know exists. Removing
-    // it here covers both the success and the two failure exits below.
-    if build_shared {
-        let _ = fs::remove_file(format!("{}.map", base_name));
+    // it here covers both the success and the two failure exits below. The
+    // temp path lives in `map_path`, the same value written above.
+    if let Some(ref p) = map_path {
+        let _ = fs::remove_file(p);
     }
 
     match ld_result {
