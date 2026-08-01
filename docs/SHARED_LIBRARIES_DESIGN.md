@@ -239,8 +239,8 @@ The compiler's type system must work across library boundaries:
 Based on the codebase analysis, these symbols need mangling:
 
 1. **Function Names**
-   - User-defined functions: `flags_0.1_hasflag`
-   - Property access functions: `flags_0.1_buffer_size`
+   - User-defined functions: `flags_0_1_hasflag`
+   - Property access functions: `flags_0_1_buffer_size`
 
 2. **Property Access Functions**
    - Generated for object properties: `lib_ver_property_name`
@@ -380,9 +380,18 @@ project/
 ```
 
 #### Library Discovery
-- Search standard library paths (`/usr/lib/vox`, `/usr/local/lib/vox`)
-- Support relative and absolute paths in `See` statements
-- Environment variable for additional library paths
+
+> **Not implemented — future.** The automatic standard-path search and the
+> environment variable below are aspirational, not built. Plan 230 specifies no
+> automatic discovery: `Location` resolves relative to the `.lib` first, then
+> the `--lib-path` flag, then error; `see` of a `.lib` resolves relative to the
+> source file, then `--lib-path`. Nothing searches `/usr/lib/vox` or reads an
+> env var today. Do not mistake the bullets below for current behaviour — that
+> is the same failure mode plan 220 existed to clean up.
+
+- Search standard library paths (`/usr/lib/vox`, `/usr/local/lib/vox`) — *future, not built*
+- Support relative and absolute paths in `See` statements — *relative and absolute `Location` paths are honoured on read; see the resolution order above*
+- Environment variable for additional library paths — *future, not built*
 
 ### Version Management
 
