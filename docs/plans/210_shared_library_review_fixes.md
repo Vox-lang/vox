@@ -190,13 +190,16 @@ build path, not just `--shared`.
 
 ## Success criteria
 
-- [ ] P1 reproduction fails to reproduce; a cargo test guards it
-- [ ] At least one export in the shared corpus is produced by mangling
-- [ ] Both `--shared` diagnostics carry file/line/column, or the report
-      explains precisely why they cannot
-- [ ] Plan 200's `.fini_array` and C/Rust-host gaps read consistently
-- [ ] Driver failures name the failing check
-- [ ] `cargo build --release` 0 warnings; `cargo test --release` ≥ 115;
+- [x] P1 reproduction fails to reproduce; a cargo test guards it
+- [x] At least one export in the shared corpus is produced by mangling
+- [x] Both `--shared` diagnostics carry file/line/column, or the report
+      explains precisely why they cannot — *the escape hatch was taken and
+      independently verified: no `Statement` variant carries positional data,
+      and `find_symbol_location` is a name-keyed text search that would return
+      a confidently wrong line.*
+- [x] Plan 200's `.fini_array` and C/Rust-host gaps read consistently
+- [x] Driver failures name the failing check
+- [x] `cargo build --release` 0 warnings; `cargo test --release` ≥ 115;
       `./test.sh` ≥ 196 passed, 0 failed, **skips still 6**
-- [ ] On a built `.so`: `readelf -r` 0 absolute relocations, `nm -D` exactly
+- [x] On a built `.so`: `readelf -r` 0 absolute relocations, `nm -D` exactly
       the corpus exports
