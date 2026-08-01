@@ -1,7 +1,7 @@
 mod lexer;
 mod parser;
 mod analyzer;
-pub mod codegen;
+mod codegen;
 mod errors;
 #[cfg(test)]
 mod compile_fail_tests;
