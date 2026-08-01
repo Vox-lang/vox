@@ -689,6 +689,29 @@ impl Analyzer {
                     return;
                 }
             }
+
+            // A `--shared` compile with no function definitions exports
+            // nothing, so the version script main.rs writes comes out as
+            // `{ global: local:*; };` — empty between `global:` and
+            // `local:`. `ld` rejects that with "syntax error in VERSION
+            // script", which tells the author nothing about what they
+            // actually did wrong. Reject it here, at the same standard as
+            // the top-level-statement diagnostic above, before codegen ever
+            // writes the script.
+            if !program
+                .statements
+                .iter()
+                .any(|s| matches!(s, Statement::FunctionDef { .. }))
+            {
+                self.push_error(
+                    "A shared library must export at least one function, but this \
+                     file defines none. Add a function definition, or drop --shared \
+                     to build an executable."
+                        .to_string(),
+                    None,
+                );
+                return;
+            }
         }
 
         // First pass: collect function definitions, global declarations, and flag schemas.
