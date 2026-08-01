@@ -267,8 +267,8 @@ Use `a` or `an` before the type to declare a new variable:
 ```
 a number called "x" is 5.
 a text called "name" is "Alice".
-a boolean called "flag" is true.
-a list called "numbers" is [1, 2, 3].
+a boolean called "done" is true.
+a list called "nums" is [1, 2, 3].
 a map called "person" is {"name": "Alice", "age": 30}.
 ```
 
@@ -276,7 +276,7 @@ a map called "person" is {"name": "Alice", "age": 30}.
 
 ```
 Set a number called counter to 1.
-Create a text called message to "Hello".
+Create a text called greeting to "Hello".
 ```
 
 ### Assignment (Existing Variable)
@@ -579,15 +579,15 @@ a number called "pi truncated" is pi as a number.
 
 (Number to text)
 a number called "age" is 25.
-a text called "age text" is the age as text.
+a text called "agestr" is the age as text.
 
 (Text to number - parsing)
-a text called "input" is "123".
-a number called "parsed" is the input as a number.
+a text called "userinput" is "123".
+a number called "parsed" is the userinput as a number.
 
 (Boolean to number)
-a boolean called "flag" is true.
-a number called "flag num" is the flag as a number.
+a boolean called "done" is true.
+a number called "done num" is the done as a number.
 
 (Inline casting)
 Print 3.14159 as a number.
@@ -595,27 +595,29 @@ Print 3.14159 as a number.
 
 **The `in` Keyword:**
 
-The `in` keyword is an alternative to `as` that reads more naturally for unit conversions and durations:
+The `in` keyword reads more naturally for timer duration casts. It applies to
+a timer's `duration` or `elapsed`, not to a plain number:
 
 ```
-(Unit conversions)
-a number called "ms" is 5000.
-a number called "secs" is the ms in seconds.
-
 (Duration from timer)
 Print the timer's duration in seconds.
 Print the timer's elapsed in milliseconds.
 ```
 
+`in` only works on a timer's `duration`/`elapsed` (it lowers to a duration
+cast); `<number> in <unit>` on a plain number is not valid syntax. To convert a
+plain number of milliseconds to seconds, divide: `the millis divide 1000`.
+
 **Formatted Output:**
 
-Numbers can be converted to padded text for display formatting:
+Numbers can be converted to padded text for display formatting with the
+zero-pad format specifier:
 
 ```
 (Pad to 2 digits - for times like 09:05)
-a number called "hour" is 9.
-a text called "hour padded" is the hour as text padded to 2.
-Print the hour padded.  (prints "09")
+a number called "h" is 9.
+a text called "hpadded" is "{h:02}".
+Print the hpadded.  (prints "09")
 ```
 
 **Casting Rules:**
@@ -629,7 +631,7 @@ Print the hour padded.  (prints "09")
   number`) stops parsing at the first character invalid for that base,
   rather than failing outright - it does not set the error flag
 - Zero is `false`, any non-zero number is `true`
-- `in` keyword is preferred for unit/time conversions
+- `in` keyword is for timer `duration`/`elapsed` casts (see above)
 
 ---
 
@@ -713,8 +715,8 @@ For each <variable> in <list>, <statement>.
 
 **Example:**
 ```
-a list called "numbers" is [1, 2, 3].
-For each n in numbers, print the n.
+a list called "nums" is [1, 2, 3].
+For each n in nums, print the n.
 ```
 
 ### Loop Control
@@ -763,10 +765,10 @@ Decrement the value.
 Create lists with square brackets containing comma-separated values:
 
 ```
-a list called "numbers" is [1, 2, 3].
+a list called "nums" is [1, 2, 3].
 a list called "names" is ["Alice", "Bob", "Charlie"].
 a list called "mixed" is [1, "two", 3].
-a list called "empty" is [].
+a list called "emptylist" is [].
 ```
 
 **Key points:**
@@ -851,7 +853,7 @@ predicates:
 
 ```
 For each item in [1, [2, 3], "x"],
-  if item is a list, print "L", otherwise print "s".
+  if item is a list then, print "L". otherwise print "s".
 (prints: s, L, s)
 ```
 
@@ -886,9 +888,9 @@ literal uses braces with `"key": value` pairs, and an empty map is `{}`:
 
 ```
 a map called "person" is {"name": "Ada", "age": 36}.
-a map called "empty" is {}.
+a map called "emptymap" is {}.
 print person.            (prints: {"name": "Ada", "age": 36})
-print empty.             (prints: {})
+print emptymap.          (prints: {})
 ```
 
 Read a value by key with `map's "key"` (the key is a text literal; a
@@ -1197,7 +1199,7 @@ print items's length.      (prints 3)
 print items's size.        (same as length)
 print items's first.       (prints 10)
 print items's last.        (prints 30)
-print items's empty.       (prints false)
+print items's empty.       (prints 0)
 ```
 
 | Property | Description | Type |
@@ -1213,16 +1215,16 @@ print items's empty.       (prints false)
 Access elements by index (1-indexed):
 
 ```
-a list called "numbers" is [10, 20, 30].
+a list called "nums" is [10, 20, 30].
 
-Print element 1 of numbers.   (prints 10)
-Print element 2 of numbers.   (prints 20)
-Print numbers's first.        (prints 10)
-Print numbers's last.         (prints 30)
+Print element 1 of nums.   (prints 10)
+Print element 2 of nums.   (prints 20)
+Print nums's first.        (prints 10)
+Print nums's last.         (prints 30)
 
 (Using variable index)
 a number called "i" is 2.
-Print element i of numbers.   (prints 20)
+Print element i of nums.   (prints 20)
 ```
 
 **Bounds checking:**
@@ -1240,10 +1242,10 @@ On error print "Cannot access element 100 - out of bounds!".
 Add elements to the end of a list using the `append` keyword:
 
 ```
-a list called "numbers" is [1, 2, 3].
-append 4 to numbers.
-append 5 to numbers.
-print numbers's length.       (prints 5)
+a list called "nums" is [1, 2, 3].
+append 4 to nums.
+append 5 to nums.
+print nums's length.       (prints 5)
 ```
 
 `append` is overloaded by destination type:
@@ -1444,11 +1446,16 @@ Print "Hello, {name}! You are {age} years old.".
 | `{var:.N}` | N decimal places | `{pi:.2}` | `3.14` |
 | `{var:N}` | Pad to N characters | `{x:6}` | `    42` |
 | `{var:0N}` | Zero-pad to N chars | `{x:06}` | `000042` |
-| `{var:x}` | Hexadecimal (lowercase) | `{255:x}` | `0xff` |
-| `{var:X}` | Hexadecimal (uppercase) | `{255:X}` | `0xFF` |
-| `{var:b}` | Binary | `{5:b}` | `101` |
-| `{var:o}` | Octal | `{8:o}` | `0o10` |
-| `{var:04x}` | Padded hex | `{255:04x}` | `0x00ff` |
+| `{var:x}` | Hexadecimal (lowercase) | `{n:x}` | `0xff` |
+| `{var:X}` | Hexadecimal (uppercase) | `{n:X}` | `0xFF` |
+| `{var:b}` | Binary | `{n:b}` | `101` |
+| `{var:o}` | Octal | `{n:o}` | `0o10` |
+| `{var:04x}` | Padded hex | `{n:04x}` | `0x00ff` |
+
+The value inside `{}` must be a variable or expression, not a bare literal —
+`{255:x}` is rejected (`255` is read as a variable name). The examples above
+assume a declared `a number called "n" is 255.` (set `n` to 5 or 8 for the
+binary and octal rows).
 
 #### Expressions in Format Strings
 
@@ -1557,7 +1564,7 @@ Buffers are memory blocks for I/O operations. They come in two types:
 #### Dynamic Buffers (default)
 
 ```
-a buffer called "input".
+a buffer called "inputbuf".
 a buffer called "data".
 ```
 
@@ -1706,7 +1713,7 @@ Set byte 3 of data to 0xBE.
 Set byte 4 of data to 0xEF.
 
 a number called "b1" is byte 1 of data.
-Print "First byte: 0x{b1:02X}".
+Print "First byte: {b1:02X}".
 
 (Out of bounds - caught by error handler)
 a number called "bad" is byte 100 of data.
@@ -1749,7 +1756,7 @@ If src's size is greater than 1048576 then,
 
 **Example:**
 ```
-a list of strings called "names" contains "Alice", "Bob", "Charlie".
+a list called "names" is ["Alice", "Bob", "Charlie"].
 
 print names's length.
 
@@ -1763,20 +1770,19 @@ Access list elements by index. Indexes are **1-indexed** (like natural language:
 
 **By index:**
 ```
-a list called "numbers" is [10, 20, 30].
+a list called "nums" is [10, 20, 30].
 
-Print element 1 of numbers.   (prints 10)
-Print element 2 of numbers.   (prints 20)
+Print element 1 of nums.   (prints 10)
+Print element 2 of nums.   (prints 20)
 
 a number called "i" is 2.
-Print element i of numbers.   (prints 20)
+Print element i of nums.   (prints 20)
 ```
 
 **By property:**
 ```
-Print numbers's first.        (prints 10)
-Print numbers's last.         (prints 30)
-Print numbers's second.       (prints 20)
+Print nums's first.        (prints 10)
+Print nums's last.         (prints 30)
 ```
 
 **Bounds Checking:**
@@ -1998,9 +2004,9 @@ If buffer's size is equal to buffer's capacity then,
 All resources are automatically cleaned up on program exit:
 
 ```
-a buffer called "data".                    # Auto-freed on exit
-open a file for writing called log at "x". # Auto-closed on exit
-# Even if you forget to close - it's handled!
+a buffer called "data".                    (Auto-freed on exit)
+open a file for writing called log at "x". (Auto-closed on exit)
+(Even if you forget to close - it's handled!)
 ```
 
 #### Dynamic Buffers
@@ -2008,8 +2014,8 @@ open a file for writing called log at "x". # Auto-closed on exit
 Buffers start at 4KB and grow automatically. No size specification needed:
 
 ```
-a buffer called "input".     # Grows as needed - never overflows
-Read from source into input. # Safe regardless of file size
+a buffer called "inputbuf".     (Grows as needed - never overflows)
+Read from source into inputbuf. (Safe regardless of file size)
 ```
 
 **Internal structure:**
@@ -2031,7 +2037,7 @@ This works correctly even with conditional file operations:
 If condition is true then,
     open a file for writing called log at "debug.log".
     Write "Debug info" to log.
-    # Close might be forgotten here - still safe!
+    (Close might be forgotten here - still safe!)
 ```
 
 #### Safety vs C Comparison
@@ -3199,6 +3205,7 @@ additive    ::= multiplicative ((add | subtract) multiplicative)*
 multiplicative ::= primary ((multiply | divide | modulo) primary)*
 primary     ::= literal | identifier | func_call | "(" expr ")"
 
-type        ::= "number" | "text" | "boolean" | "list"
+type        ::= "number" | "float" | "text" | "boolean" | "list"
+              | "map" | "buffer" | "file" | "time" | "timer" | "value"
 name        ::= string | identifier
 ```
