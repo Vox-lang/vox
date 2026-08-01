@@ -48,8 +48,14 @@ Table of Contents:
 Programs that want to use a library must include a see statement:
 
 ```
-See "Path/to/library.lib" for "lib_name" "version"
+see "lib_name" version "1.0" from "Path/to/library.lib".
 ```
+
+This is the sole canonical form (plan 230, decision 2): `see "<lib>" version
+"<ver>" from "<path>.lib".` The earlier `See "…/library.lib" for "lib_name"
+"version"` ordering is retired — the compiler's `see` of a `.lib` accepts only
+this form, and the old `for`-form produces a diagnostic showing the canonical
+syntax. (`see` of a `.vox` file remains a source include and is unchanged.)
 
 This declaration:
 - Automatically links the program to the specified library version

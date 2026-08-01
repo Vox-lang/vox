@@ -18,7 +18,7 @@ anywhere two independently-authored names can reach the same symbol table.
 | Runtime internals | `_` prefix | `_map_insert`, `_last_error` | coreasm |
 | Author functions (executable) | name with spaces → `_` | `greet_user` | the Vox author |
 | Library exports | `<lib>_<version>_<name>` | `flags_0_1_hasflag` | a shared library |
-| Library runtime state | `<lib>_<version>_<name>` | `flags_0_1_last_error` | a shared library |
+| Library runtime state *(superseded — see note below)* | `<lib>_<version>_<name>` | `flags_0_1_last_error` | a shared library |
 
 > **The "Library runtime state" row is superseded — see plan 230.** Phase 3
 > deliberately does *not* mangle runtime state. The row is left here as the
