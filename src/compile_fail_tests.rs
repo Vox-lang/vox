@@ -6,17 +6,31 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    fn compile_to_error(source_name: &str, source: &str) -> Result<(), String> {
-        let mut lexer = Lexer::new(source);
+    fn compile_to_error(vox_path: &Path) -> Result<(), String> {
+        let source_name = vox_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown_case");
+        let source = fs::read_to_string(vox_path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", vox_path.display(), e));
+
+        let mut lexer = Lexer::new(&source);
         let tokens = lexer.tokenize();
 
-        let mut parser = Parser::new(tokens).with_source(source_name, source);
+        let mut parser = Parser::new(tokens).with_source(source_name, &source);
         let mut program = match parser.parse() {
             Ok(p) => p,
             Err(err) => return Err(err.to_string()),
         };
 
-        let mut analyzer = Analyzer::new().with_source(source_name, source);
+        // A `.shared` sidecar marks a case that must be analyzed as a
+        // `--shared` compile (top-level executable statements are rejected
+        // only in that mode). The marker is a zero-byte file named
+        // `<case>.shared` next to the `.vox`.
+        let shared = vox_path.with_extension("shared").exists();
+        let mut analyzer = Analyzer::new()
+            .with_source(source_name, &source)
+            .with_shared_mode(shared);
         analyzer.analyze(&mut program);
 
         if analyzer.errors.is_empty() {
@@ -63,9 +77,6 @@ mod tests {
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown_case");
 
-            let source = fs::read_to_string(&vox_path)
-                .unwrap_or_else(|e| panic!("failed to read {}: {}", vox_path.display(), e));
-
             let err_path = vox_path.with_extension("err");
             let expected = fs::read_to_string(&err_path)
                 .unwrap_or_else(|e| panic!("missing .err for {}: {}", case_name, e));
@@ -76,7 +87,7 @@ mod tests {
                 case_name
             );
 
-            match compile_to_error(case_name, &source) {
+            match compile_to_error(&vox_path) {
                 Ok(()) => panic!("{} unexpectedly compiled successfully", case_name),
                 Err(actual) => {
                     assert!(

@@ -2812,17 +2812,42 @@ see "math" version "1.0" from "./libraries/math.so".
 
 ### Creating Libraries
 
-Declare a library with name and version:
+Declare a library with name and version, then build it with `--shared`:
 
 ```
 Library "math" version "1.0".
 
-To "square" a number x:
-    return x multiply x.
+To "square" with a number called "x". Return a number, x multiply x.
 
-To "cube" a number x:
-    return x multiply x multiply x.
+To "cube" with a number called "x". Return a number, x multiply x multiply x.
 ```
+
+```bash
+vox math.vox --shared -o libmath.so
+```
+
+**What `--shared` produces.** A self-contained shared object: it carries its
+own copy of the Vox runtime, so it is loadable from C, Rust, or any other host
+— not only from Vox. Only the library's own function definitions are exported;
+every runtime symbol is kept out of the dynamic symbol table. Verify with:
+
+```bash
+nm -D --defined-only libmath.so   # lists exactly square and cube, nothing else
+```
+
+**Top-level statements are rejected.** A shared library has no entry point, so
+a top-level executable statement (`print`, assignment, `if`, a bare function
+call, …) would be silently dropped. The compiler rejects it instead with a
+clear diagnostic. Only function definitions, `Library`, and `see` may appear
+at the top level of a `--shared` compile. Put any work you need inside a
+function.
+
+**What is not yet supported.** The `Library "name" version "ver"` declaration
+is recorded but not yet enforced, and exported symbols are the plain function
+labels (e.g. `square`), not the `<lib>_<version>_<name>` mangled form. Name
+mangling, `.lib` metadata, version-mismatch diagnostics, and linking a
+program against a `.so` through `see` arrive together in a later phase; until
+then `--link` is the way to link an executable against a built `.so`.
 
 ### Using Library Functions
 
