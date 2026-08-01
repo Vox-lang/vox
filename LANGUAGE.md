@@ -2808,13 +2808,28 @@ There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
 `see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
 version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF:
 it carries mangled symbol *names* but no Vox type information, so the compiler
-cannot check a call against it. Those forms are retired (Stage A5); `see` of a
-`.so` now errors and directs you to the `.lib`. `see` of a `.vox` source is
-unchanged.
+cannot check a call against it. Those forms are retired (Stage A5): `see` of a
+`.so` will then error and direct you to the `.lib`. **Today it does neither** —
+a `see` of a `.so` (or any non-`.vox` path) is a silent no-op: it compiles, and
+any call into the library is simply missing, with no warning. That silence is
+the trap, so be aware `see` of a `.so` buys you nothing until Stage A5 replaces
+it with an error. `see` of a `.vox` source is unchanged.
 
-**Search paths.** A relative `see` path resolves against the directory of the
-file that contains the statement, then the `--lib-path` directories, then the
-system library path (`/usr/share/vox/lib/`).
+**Search paths.** `see` resolves the path by its shape:
+
+- `./…` or `../…` — resolved against the directory of the file that contains
+  the `see` statement, and only there.
+- `/…` — used as-is (absolute).
+- a bare name — `/usr/share/vox/lib/<name>` is checked **first**, and only if
+  that does not exist does it fall back to the containing file's directory.
+  Watch this: a bare `see "utils.vox".` can silently pick up a system file in
+  preference to the one sitting next to your source. Write `./utils.vox` when
+  you mean the local one.
+
+`--lib-path` is not consulted by `see`; it only passes search paths to the
+linker (`-L`) for `--link`. (The `--lib-path`-aware resolution is part of the
+`.lib` consumption path that arrives in Stage A4 — see
+[Consuming a library](#consuming-a-library).)
 
 **Circular includes.** The compiler tracks files already seen and skips a
 `see` that would re-enter one.
