@@ -1,6 +1,14 @@
-# EC Language - Future Features and Improvements
+# Vox Language - Future Features and Improvements
 
-This document brainstorms potential enhancements to the EC language, organized by category.
+> **Status:** Brainstorm, mostly not built. The compiler-warning ideas
+> (unused variables/functions, unreachable code, constant conditions, etc.)
+> are not implemented — there is no such warning machinery in the analyzer;
+> the `any`/`all`/`none` list quantifiers are not implemented (absent from the
+> parser and LANGUAGE.md). A few items the document itself marks "Implemented"
+> (parameter loop expansion in calls; variable shadowing as documented
+> behavior). _(assessed 2026-08, vox v0.1.23)_
+
+This document brainstorms potential enhancements to the Vox language, organized by category.
 
 ---
 
@@ -152,7 +160,7 @@ append "hello" to items.
 (Type mismatch - list was integers, now appending string)
 ```
 
-**Rationale:** While EC allows mixed-type lists, appending a different type than the initial elements is likely an error.
+**Rationale:** While Vox allows mixed-type lists, appending a different type than the initial elements is likely an error.
 
 **Current Status:** Not implemented
 

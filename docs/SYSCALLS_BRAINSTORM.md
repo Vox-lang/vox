@@ -1,6 +1,15 @@
-# Linux Syscalls Brainstorm for EC
+# Linux Syscalls Brainstorm for Vox
 
-This document explores Linux syscalls that could be leveraged to add powerful features to EC (sentence based code).
+> **Status:** Brainstorm, now substantially realized. The "Currently
+> Implemented" table near the top is stale — many "proposed" syscalls below
+> actually ship and are documented in LANGUAGE.md §Directories, Mounting, and
+> Process Control: `mkdir`, `mount`/`unmount`, `mknod`, `symlink`,
+> `pivot_root`, `execve`, `fork`/`reap`, `shutdown`/`reboot`/`halt`, `rmdir`,
+> `chdir`, `is available` (access), `Sleep for` (nanosleep). This document's
+> body needs its own rewrite pass to reflect what shipped — flagged here, not
+> fixed in this stage. _(assessed 2026-08, vox v0.1.23)_
+
+This document explores Linux syscalls that could be leveraged to add powerful features to Vox (sentence based code).
 
 ## Currently Implemented
 
@@ -29,7 +38,7 @@ This document explores Linux syscalls that could be leveraged to add powerful fe
 | `getdents64` | 217 | List directory contents | `List files in "." into filelist.` |
 
 **Example:**
-```ec
+```vox
 Create a directory called "output".
 Change directory to "output".
 Get current directory into cwd.
@@ -54,7 +63,7 @@ Print cwd.
 | `truncate` | 76 | Resize file | `Truncate "file.txt" to 0 bytes.` |
 
 **Example:**
-```ec
+```vox
 If "config.txt" exists then,
     get info about "config.txt" into info,
     print info's size.
@@ -91,7 +100,7 @@ If "output.log" is writable then,
 | `getppid` | 110 | Get parent PID | `Get parent process id into ppid.` |
 
 **Example:**
-```ec
+```vox
 Fork into child.
 If child is 0 then,
     execute "/bin/echo" with arguments ["hello"],
@@ -135,7 +144,7 @@ Print "Child exited with " then status.
 | `getsockopt` | 55 | Get socket option | `Get option REUSEADDR from server into value.` |
 
 **Example:**
-```ec
+```vox
 Create a TCP socket called "server".
 Bind server to port 8080.
 Listen on server with backlog 10.
@@ -150,7 +159,7 @@ Loop forever,
 
 ### DNS & Address Resolution (via helper functions)
 
-```ec
+```vox
 Resolve "example.com" into address.
 Connect client to address port 443.
 ```
@@ -170,7 +179,7 @@ Connect client to address port 443.
 | `munlock` | 150 | Unlock memory | `Unlock region.` |
 
 **Example:**
-```ec
+```vox
 Map "database.db" into memory as db.
 (Access db like a buffer)
 Read 100 bytes from db at offset 0 into header.
@@ -192,7 +201,7 @@ Unmap db.
 | `timer_settime` | 223 | Set timer | `Set heartbeat to fire every 1 second.` |
 
 **Example:**
-```ec
+```vox
 Get time into start.
 (... do work ...)
 Get time into end.
@@ -216,7 +225,7 @@ Print "Done waiting!".
 | `sigaltstack` | 131 | Set alt signal stack | `Set signal stack to altstack.` |
 
 **Example:**
-```ec
+```vox
 Define cleanup as:
     print "Caught interrupt, cleaning up...",
     close all files,
@@ -245,7 +254,7 @@ Loop forever,
 | `dup2` | 33 | Duplicate to specific fd | `Redirect stdout to logfile.` |
 
 **Example:**
-```ec
+```vox
 Create a pipe called "channel".
 Fork into child.
 
@@ -292,7 +301,7 @@ Wait for child.
 | `signalfd` | 282 | Create signal fd | `Create signal fd for INTERRUPT called "sigfd".` |
 
 **Example:**
-```ec
+```vox
 Create event monitor called "events".
 Watch server for connections in events.
 Watch stdin for input in events.
@@ -326,7 +335,7 @@ Loop forever,
 | `prctl` | 157 | Process control | `Set process name to "worker".` |
 
 **Example:**
-```ec
+```vox
 Get system info into sysinfo.
 Print "Running on " then sysinfo's nodename.
 Print "Kernel: " then sysinfo's release.
@@ -416,8 +425,8 @@ S_IXOTH = 0001   (other execute)
 
 ## Example: Complete HTTP Server
 
-```ec
-(Simple HTTP server in EC)
+```vox
+(Simple HTTP server in Vox)
 
 Enable error catching.
 Create a TCP socket called "server".
@@ -434,7 +443,7 @@ Loop forever,
     receive from client into request,
     
     (Build response)
-    set response to "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Hello from EC!</h1>",
+    set response to "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>Hello from Vox!</h1>",
     
     send response to client,
     close client.
@@ -444,7 +453,7 @@ Loop forever,
 
 ## Example: File Watcher
 
-```ec
+```vox
 (Watch a directory for changes)
 
 Create event monitor called "watcher".
@@ -461,7 +470,7 @@ Loop forever,
 ## Next Steps
 
 1. Prioritize which syscalls to implement first based on user needs
-2. Design consistent EC syntax for each category
+2. Design consistent Vox syntax for each category
 3. Implement stdlib assembly routines for each syscall
 4. Add parser support for new constructs
 5. Add codegen support

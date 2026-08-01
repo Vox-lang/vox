@@ -1,8 +1,16 @@
 # Shared Libraries Design Document
 
+> **Status:** Active design document — the authority for the shared-library
+> work in progress on the code track. The `see "<lib>" version "<ver>" from
+> "<path>.lib"` form and the `.lib`→`.so` chain are the live design; the earlier
+> direct-`.so` model (plan 220) and per-version runtime-state mangling (plan 230
+> explicit non-goal) are abandoned. The library-export
+> `<lib>_<ver>_<func>` composition is not yet live on this branch (it arrives
+> with the code track's Stage A1). _(assessed 2026-08, vox v0.1.23)_
+
 ## Overview
 
-This document outlines the design and implementation considerations for a shared library system in the EC compiler. The system allows developers to create reusable libraries that can be linked to other programs at compile time, enabling modular code organization and code reuse across multiple projects.
+This document outlines the design and implementation considerations for a shared library system in the Vox compiler. The system allows developers to create reusable libraries that can be linked to other programs at compile time, enabling modular code organization and code reuse across multiple projects.
 
 ## Core Concepts
 
@@ -34,7 +42,7 @@ The `.lib` file serves as the public interface for the library and contains:
 Example `.lib` file structure:
 ```
 Library "flags" version "0.1".
-Location "/home/josj/scr/ec/libs/libflags.so".
+Location "/home/josj/scr/vox/libs/libflags.so".
 
 Table of Contents:
     To "hasflag" with a text called "flag".
@@ -156,10 +164,10 @@ This mangling scheme:
 - Validate library availability and version compatibility
 - Handle multiple library versions in single `.so` files
 
-### EC Language Abstraction Considerations
+### Vox Language Abstraction Considerations
 
 #### High-Level Language Features
-The EC compiler provides sophisticated abstractions that must be preserved in shared libraries:
+The Vox compiler provides sophisticated abstractions that must be preserved in shared libraries:
 
 **Property Access Patterns**
 - Expressions like `buffer's size`, `current time's hour` must work across library boundaries
@@ -352,7 +360,7 @@ project/
 ```
 
 #### Library Discovery
-- Search standard library paths (`/usr/lib/ec`, `/usr/local/lib/ec`)
+- Search standard library paths (`/usr/lib/vox`, `/usr/local/lib/vox`)
 - Support relative and absolute paths in `See` statements
 - Environment variable for additional library paths
 
@@ -465,7 +473,7 @@ project/
 
 ## Conclusion
 
-The shared library system provides a robust foundation for modular development in the EC compiler. By supporting versioning, multi-library files, and clean name mangling, it enables both simple use cases and complex dependency management scenarios.
+The shared library system provides a robust foundation for modular development in the Vox compiler. By supporting versioning, multi-library files, and clean name mangling, it enables both simple use cases and complex dependency management scenarios.
 
 The design prioritizes:
 - **Developer Experience**: Simple syntax, clear error messages
@@ -473,4 +481,4 @@ The design prioritizes:
 - **Compatibility**: Backwards compatibility and version management
 - **Extensibility**: Room for future enhancements and features
 
-This system will significantly enhance the EC compiler's capabilities for building large, modular applications while maintaining the language's philosophy of readable, intuitive syntax.
+This system will significantly enhance the Vox compiler's capabilities for building large, modular applications while maintaining the language's philosophy of readable, intuitive syntax.

@@ -1,5 +1,12 @@
 # Installing `vox` system-wide
 
+> **Status:** Current install guide — paths and the coreasm resolution order
+> verified against `src/main.rs` (B5 audit). The `EC_CORE_PATH` environment
+> variable is intentionally left with its `EC_` prefix: the compiler reads that
+> exact name (`src/main.rs:30`), so changing it here would make this guide
+> wrong; renaming the env var is a source-side change for the code track.
+> _(assessed 2026-08, vox v0.1.23)_
+
 This document describes how to install `vox` and its runtime assembly macros (`coreasm`) so it works from *any* directory.
 
 ## Prerequisites

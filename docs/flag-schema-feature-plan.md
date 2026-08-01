@@ -1,12 +1,18 @@
 # Flag Schema Runtime Parsing - Feature Plan
 
+> **Status:** Built — declarative flag schemas ship. The parser implements
+> `a flag called "..." is "-x" or "--long", it is a <type> [and is required |
+> with default "..."]` (`parse_flag_schema_decl`) with unit tests. The
+> "Current State" / unchecked-box framing below reads as a pre-implementation
+> plan; the feature is done. _(assessed 2026-08, vox v0.1.23)_
+
 ## User Story
-As a CLI developer using EC, I want to declare a flag schema in source code (short/long names, type, defaults, required-ness) so that flags are parsed automatically at runtime, typed variables are assigned automatically, and positional arguments are exposed cleanly.
+As a CLI developer using Vox, I want to declare a flag schema in source code (short/long names, type, defaults, required-ness) so that flags are parsed automatically at runtime, typed variables are assigned automatically, and positional arguments are exposed cleanly.
 
 As a CLI end user, I want Unix-compatible behavior where `--` stops flag parsing and everything to its right remains positional.
 
 ## Current State
-EC currently exposes raw argument helpers (`arguments's count`, `arguments's first`, `arguments's all`, `argument at`, `arguments has`) but does not provide declarative flag definitions.
+Vox currently exposes raw argument helpers (`arguments's count`, `arguments's first`, `arguments's all`, `argument at`, `arguments has`) but does not provide declarative flag definitions.
 
 Current behavior limitations:
 - No schema-based flag declaration.
@@ -105,7 +111,7 @@ Primary touch points for the feature are:
 ### Codegen
 - Emit runtime initialization for declared schemas before program user logic executes.
 - Emit schema table/static descriptors into assembly (aliases, type, default, required bits).
-- Emit variable assignment from parser result memory into EC variables.
+- Emit variable assignment from parser result memory into Vox variables.
 - Keep compatibility for existing argument expressions.
 
 ### Docs / Examples / Tests

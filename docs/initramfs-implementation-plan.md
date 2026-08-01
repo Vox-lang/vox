@@ -1,5 +1,14 @@
 # Initramfs Example Implementation Plan
 
+> **Status:** Substantially realized — the plan's required syscalls ship. The
+> compiler implements `mkdir`, `mount`/`unmount`, `mknod`, `symlink`,
+> `pivot_root`, `execve`, `chdir`, `rmdir`, `is available` (access), and
+> `Sleep for` (nanosleep), documented in LANGUAGE.md §Directories, Mounting,
+> and Process Control; `examples/initramfs.vox` exists and the README pitches
+> it as a working early-userspace init. (The example file's own "proposed"
+> header comment is now stale.) Item-by-item completion of every phase below
+> is not verified here. _(assessed 2026-08, vox v0.1.23)_
+
 This document outlines what is needed to bring the initramfs example (`vox/examples/initramfs.vox`) from a syntax demonstration to a working Vox program.
 
 ---
