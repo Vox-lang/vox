@@ -592,12 +592,36 @@ pub struct Analyzer {
     /// operand check uses this set to reject unguarded use with a clear error.
     value_typed_names: HashSet<String>,
     loop_depth: usize,
+    /// True when compiling `--shared`. A shared library has no `_start`, so a
+    /// top-level executable statement would be generated into the discarded
+    /// main body and silently dropped. Reject such statements up front rather
+    /// than mislead the author.
+    shared_mode: bool,
 }
 
 #[derive(Clone, Default)]
 struct AnalysisEnv {
     always: HashSet<String>,
     guarded: HashMap<String, HashSet<String>>,
+}
+
+/// A short, human-readable name for a statement kind, used in the shared-mode
+/// top-level diagnostic. Only called for statements that are NOT one of the
+/// three allowed top-level forms (FunctionDef/LibraryDecl/See).
+fn shared_top_level_label(stmt: &Statement) -> &'static str {
+    match stmt {
+        Statement::Print { .. } => "print statement",
+        Statement::VarDecl { .. } => "variable declaration",
+        Statement::Assignment { .. } => "assignment",
+        Statement::If { .. } => "if statement",
+        Statement::While { .. } => "while loop",
+        Statement::ForRange { .. } | Statement::ForEach { .. } | Statement::Repeat { .. } => "loop",
+        Statement::FunctionCall { .. } => "function call",
+        Statement::Exit { .. } => "exit statement",
+        Statement::OnError { .. } => "on error handler",
+        Statement::FlagSchemaDecl { .. } | Statement::ParseFlags => "flag declaration",
+        _ => "statement",
+    }
 }
 
 impl Analyzer {
@@ -628,6 +652,7 @@ impl Analyzer {
             function_param_counts: HashMap::new(),
             value_typed_names: HashSet::new(),
             loop_depth: 0,
+            shared_mode: false,
         }
     }
 
@@ -635,8 +660,60 @@ impl Analyzer {
         self.source_file = Some(SourceFile::new(filename, content));
         self
     }
+
+    pub fn with_shared_mode(mut self, enabled: bool) -> Self {
+        self.shared_mode = enabled;
+        self
+    }
     
     pub fn analyze(&mut self, program: &mut Program) {
+        // A shared library has no `_start`, so top-level executable statements
+        // would be generated into the discarded main body and silently dropped.
+        // Reject them before any other analysis so the author gets one clear
+        // diagnostic instead of a confusing cascade. Only function definitions,
+        // `Library`, and `see` may appear at the top level of a library.
+        if self.shared_mode {
+            for stmt in &program.statements {
+                if !matches!(
+                    stmt,
+                    Statement::FunctionDef { .. } | Statement::LibraryDecl { .. } | Statement::See { .. }
+                ) {
+                    self.push_error(
+                        format!(
+                            "Top-level {} is not allowed in a shared library: only function \
+                             definitions, 'Library', and 'see' may appear at the top level.",
+                            shared_top_level_label(stmt)
+                        ),
+                        None,
+                    );
+                    return;
+                }
+            }
+
+            // A `--shared` compile with no function definitions exports
+            // nothing, so the version script main.rs writes comes out as
+            // `{ global: local:*; };` — empty between `global:` and
+            // `local:`. `ld` rejects that with "syntax error in VERSION
+            // script", which tells the author nothing about what they
+            // actually did wrong. Reject it here, at the same standard as
+            // the top-level-statement diagnostic above, before codegen ever
+            // writes the script.
+            if !program
+                .statements
+                .iter()
+                .any(|s| matches!(s, Statement::FunctionDef { .. }))
+            {
+                self.push_error(
+                    "A shared library must export at least one function, but this \
+                     file defines none. Add a function definition, or drop --shared \
+                     to build an executable."
+                        .to_string(),
+                    None,
+                );
+                return;
+            }
+        }
+
         // First pass: collect function definitions, global declarations, and flag schemas.
         let mut explicit_parse_seen = false;
 

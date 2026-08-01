@@ -371,24 +371,31 @@ complete at `:3810`/`:3839`), `src/codegen/mod.rs:4119`/`:4125`
 
 ## Success Criteria
 
-- [ ] `vox <lib>.vox --shared -o lib<x>.so` exits 0 for a library using
+- [x] `vox <lib>.vox --shared -o lib<x>.so` exits 0 for a library using
       arithmetic, print, and buffers — no NASM errors, no `ld`
-      relocation errors.
-- [ ] `readelf -r` on the shared object path shows **zero**
-      `R_X86_64_32`/`R_X86_64_32S` relocations (34 today, all from
+      relocation errors. *(`tests/shared/libmath.vox` is exactly that
+      library: `add_two`, `greet`, `makebuf`.)*
+- [x] `readelf -r` on the shared object path shows **zero**
+      `R_X86_64_32`/`R_X86_64_32S` relocations (was 34, all from
       `resource.asm`).
-- [ ] `nm -D --defined-only` on that `.so` lists **only** the library's
+- [x] `nm -D --defined-only` on that `.so` lists **only** the library's
       own exports — zero of the 54 coreasm `global` symbols reach
-      `.dynsym`.
-- [ ] All test and example programs still compile with **zero** NASM
-      warnings (223 programs as of 2026-08-01; no regression of `4fb5694`).
-- [ ] `./test.sh` and `cargo test --release` stay green (192 integration
-      / 115 cargo as of 2026-08-01) plus the new shared-library tests.
-- [ ] Hosted runtime behavior is byte-for-byte equivalent in observable
-      output — `test.sh` is the arbiter.
+      `.dynsym`. *Asserted as a set equality in `test.sh`.*
+- [x] All test and example programs still compile with **zero** NASM
+      warnings (227 programs as of 2026-08-01; no regression of `4fb5694`).
+- [x] `./test.sh` and `cargo test --release` stay green — **196
+      integration / 115 cargo**, 6 skips (baseline preserved), including
+      the new shared-library tests.
+- [x] Hosted runtime behavior is byte-for-byte equivalent in observable
+      output — `test.sh` is the arbiter, and it is green.
 - [ ] A C or Rust program can load the `.so`, call an exported function
       by the name `nm -D` reports for it, and see its resources cleaned
-      up at exit.
+      up at exit. **Not verified.** The Phase 2 driver is assembly, which
+      proves the SysV boundary and the PIC runtime but not the
+      `_dl_fini` cleanup path a libc host takes. Verifying this needs a
+      C or Rust host, which the test suite deliberately cannot depend on
+      — so it wants a one-off manual check, recorded here, not a
+      harness test.
 
 ---
 
@@ -425,46 +432,65 @@ complete at `:3810`/`:3839`), `src/codegen/mod.rs:4119`/`:4125`
 
 ## Tasks
 
-**Phase 0**
-- [ ] Emit conditional coreasm includes in `shared_lib_mode` (exclude
+**Phase 0** — complete (`238f5df`)
+- [x] Emit conditional coreasm includes in `shared_lib_mode` (exclude
       `args.asm`); keep `default rel`
-- [ ] Write an anonymous version script and pass `--version-script` to the
+- [x] Write an anonymous version script and pass `--version-script` to the
       `-shared` `ld`, so none of coreasm's 54 `global` symbols reach
       `.dynsym`; clean the temp `.map` up with the `.o`
 - [x] Inline `see` of a `.vox` file — done 2026-08-01, with
       `tests/208_source_include.vox`
-- [ ] Analyzer: reject top-level executable statements under `--shared`
-- [ ] Compile-fail test for the new diagnostic (`tests/compile_fail/`)
-- [ ] LANGUAGE.md `--shared` section; register plan in `docs/plans/README.md`
+- [x] Analyzer: reject top-level executable statements under `--shared`
+- [x] Compile-fail test for the new diagnostic (`tests/compile_fail/`) —
+      `shared_top_level_executable`, plus `shared_empty_exports` (`9e883aa`)
+- [x] LANGUAGE.md `--shared` section; register plan in `docs/plans/README.md`
 
-**Phase 1**
-- [ ] Rewrite the 34 `resource.asm` sites (`fd_table`, `buf_table`,
+**Phase 1** — complete for the PIC work (`57b917e`)
+- [x] Rewrite the 34 `resource.asm` sites (`fd_table`, `buf_table`,
       `ra_*`) to `lea [rel]`+index; audit scratch registers around
-      syscalls
-- [ ] `.fini_array` entry for `_cleanup_all`, made idempotent
-- [ ] Explicit per-library cleanup calls before `sys_exit` for a Vox host
-- [ ] Error fetch-and-merge after each library call, so `on error` works
-      across the boundary
-- [ ] While rewriting those 34 sites, consider making the tables growable.
+      syscalls. *Reviewed site-by-site: callee-saved bases all pushed;
+      the eight routines with two `pop` paths are branch-exclusive and
+      balanced; the single `r11` base has its syscall after the last use;
+      `r8`/`r9`/`r10` bases are rebuilt after `call _grow_buffer` (a
+      Linux `syscall` clobbers only `rcx`/`r11`, a `call` clobbers all
+      caller-saved).*
+- [x] `.fini_array` entry for `_cleanup_all`, made idempotent — gated on
+      `resource.asm` being included, else a runtime-light library carries
+      an undefined ref
+- [x] `readelf -r` zero-abs-reloc check; full `test.sh` + NASM
+      warning sweep — 0 relocations, 0 warnings across 227 programs,
+      and `[abs ` no longer appears anywhere in `coreasm/`
+- [x] **Unplanned, found during implementation:** mark exports `STT_FUNC`
+      (`global name:function`). A NOTYPE dynamic symbol resolves wrongly
+      through the PLT and the first cross-boundary call segfaults.
+- [ ] *Moved to Phase 3* — explicit per-library cleanup calls before
+      `sys_exit` for a Vox host. Needs the `see`/`--link` wiring to know
+      which libraries are loaded, which is Phase 3 by definition.
+- [ ] *Moved to Phase 3* — error fetch-and-merge after each library call,
+      so `on error` works across the boundary. Needs the mangled
+      per-library error symbols, also Phase 3.
+- [ ] *Not done, still open* — make the resource tables growable.
       `MAX_FDS` and `MAX_BUFFERS` are 64 and `alloc_table` is 256, fixed in
-      `.bss`, and `_register_buffer` silently no-ops when full. Growing them
-      means heap-allocating and loading a base pointer at each access - the
-      *same* 34 sites this phase already touches, so doing it separately
-      means editing them twice.
-- [ ] `readelf -r` zero-abs-reloc check; full `test.sh` + NASM
-      warning sweep
+      `.bss`, and `_register_buffer` silently no-ops when full. This was
+      folded in here to avoid editing the same 34 sites twice; that
+      saving is now spent, so it needs its own plan.
 
-**Phase 2**
-- [ ] `tests/shared/libmath.vox` (arith + print + buffer functions)
-- [ ] `test.sh` shared section: build, **exact export-set** assert via
+**Phase 2** — complete (`94464ca`, `9e883aa`, `5e69399`)
+- [x] `tests/shared/libmath.vox` (arith + print + buffer functions)
+- [x] `test.sh` shared section: build, **exact export-set** assert via
       `nm -D` (set equality, not `grep` presence), `readelf -d` assert,
       and an **assembly** driver under `tests/runtime/` (never C — it
       would add a toolchain the project avoids and would skip silently
       when absent)
-- [ ] `-dynamic-linker`/`-rpath` on executable `ld` when `link_libs`
-      non-empty
-- [ ] Regression tests ROADMAP M0 asks for: list growth across realloc
-      boundary (9 / 100 / 100 000 appends)
+- [x] `-dynamic-linker`/`-rpath` on executable `ld` when `link_libs`
+      non-empty — verified both ways: a plain build stays flat static
+      with no dynamic section; a `--link` build gets `NEEDED`, `RUNPATH`
+      and a `PT_INTERP`
+- [x] Regression tests ROADMAP M0 asks for: list growth across realloc
+      boundary — landed earlier in PR #99
+- [x] Reject `--shared` with no exported functions, rather than emitting
+      a version script `ld` cannot parse (`9e883aa`)
+- [x] Remove the temp `.map` on the link-failure path too (`5e69399`)
 
 ---
 
@@ -495,3 +521,29 @@ complete at `:3810`/`:3839`), `src/codegen/mod.rs:4119`/`:4125`
 - The assembly driver proves exactly one thing: the
   SysV boundary. It should be deleted, not extended, when Phase 3
   delivers a pure-Vox `see` caller.
+
+### Status as of 2026-08-01 — Phases 0–2 landed
+
+`--shared` works end to end: it emits the runtime, the runtime is
+position-independent, the dynamic symbol table holds only the library's own
+exports, and `test.sh` builds a `.so` and calls across its boundary on every
+run. 196 integration / 115 cargo, 6 skips, 0 build warnings, 0 NASM warnings
+across 227 programs.
+
+Three things are carried forward rather than finished:
+
+1. **Two Phase-1 tasks moved to Phase 3** (per-library cleanup before a Vox
+   host's `sys_exit`; error fetch-and-merge so `on error` crosses the
+   boundary). Both need `see`/`--link` wiring that does not exist yet.
+2. **Growable resource tables** were folded into Phase 1 to avoid touching
+   the same 34 sites twice. Those sites are now rewritten, so that saving is
+   gone and the work needs its own plan.
+3. **The C/Rust host path is unverified.** The assembly driver proves the
+   SysV boundary, not the `_dl_fini` cleanup a libc host relies on. That
+   wants a one-off manual check rather than a harness test, since the suite
+   deliberately cannot depend on a C toolchain.
+
+Also worth recording: `LANGUAGE.md` still contains a pre-existing
+contradiction, where the `see` section lists `see "./lib.so"` as working
+while a later paragraph defers `.so` includes to a later phase. It predates
+this work and resolves properly in Phase 3.

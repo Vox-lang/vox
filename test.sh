@@ -223,8 +223,79 @@ run_runtime_test() {
 
 for runtime_test in "$SCRIPT_DIR"/tests/runtime/*.asm; do
     [ -e "$runtime_test" ] || break
+    # shared_lib_driver is a cross-boundary driver that must be linked against
+    # the libmath .so. It is built and run — always, never skipped — by
+    # run_shared_library_test below, which assembles it with the .so on the
+    # link line. The plain nasm+ld here has no .so to resolve its externs, so
+    # skip it in this loop rather than report undefined-symbol errors as a fail.
+    [[ "$(basename "$runtime_test" .asm)" == "shared_lib_driver" ]] && continue
     run_runtime_test "$(basename "$runtime_test" .asm)"
 done
+
+# Shared-library boundary test (plan 200, Phase 2). Builds tests/shared/libmath.vox
+# as a .so, asserts the dynamic export set is EXACTLY the three function labels
+# (a presence grep would pass while runtime symbols leak — Phase 0's version
+# script is only honest if this is a set equality), asserts a valid dynamic
+# section, then links an assembly driver and calls across the boundary. The
+# driver is assembly precisely so nasm+ld — already required to build Vox — run
+# it on every host. It must never report "skipped".
+run_shared_library_test() {
+    local work lib_src driver
+    lib_src="$SCRIPT_DIR/tests/shared/libmath.vox"
+    driver="$SCRIPT_DIR/tests/runtime/shared_lib_driver.asm"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    # 1. Build the shared library.
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libmath.so" >"$work/build.log" 2>&1; then
+        fail_msg="shared/libmath (build)"; fail_log="$work/build.log"
+    # 2. Exact export set: nm -D --defined-only must list exactly the three
+    #    exports and nothing else. Compare as a sorted set, not a grep.
+    else
+        local got exp
+        got=$(nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | sort)
+        exp=$(printf '%s\n' add_two greet makebuf | sort)
+        if [[ "$got" != "$exp" ]]; then
+            fail_msg="shared/libmath (export set is not exactly {add_two, greet, makebuf})"
+            { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
+            fail_log="$work/diff.log"
+        # 3. readelf -d reports a parseable dynamic section.
+        elif ! readelf -d "$work/libmath.so" >"$work/dyn.log" 2>&1 \
+              || ! grep -q "Dynamic section" "$work/dyn.log"; then
+            fail_msg="shared/libmath (no valid dynamic section)"; fail_log="$work/dyn.log"
+        # 4. Assemble and link the driver against the .so, then run it.
+        elif ! nasm -f elf64 -i "$SCRIPT_DIR/" -o "$work/driver.o" "$driver" >"$work/nasm.log" 2>&1; then
+            fail_msg="shared/libmath (driver nasm)"; fail_log="$work/nasm.log"
+        elif ! ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 -rpath "$work" \
+                -o "$work/driver" "$work/driver.o" -L"$work" -lmath >"$work/ld.log" 2>&1; then
+            fail_msg="shared/libmath (driver link)"; fail_log="$work/ld.log"
+        else
+            local out rc
+            out=$("$work/driver" 2>"$work/run.err")
+            rc=$?
+            if [[ $rc -ne 0 ]]; then
+                fail_msg="shared/libmath (driver exited $rc)"; fail_log="$work/run.err"
+            elif [[ "$out" != "hello from libmath" ]]; then
+                fail_msg="shared/libmath (driver stdout mismatch)"
+                { echo "expected: hello from libmath"; echo "got: $out"; } >"$work/out.log"
+                fail_log="$work/out.log"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -30
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} shared/libmath"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_shared_library_test
 
 # Summary
 echo ""

@@ -43,6 +43,11 @@ section .bss
     ra_filled: resq READAHEAD_SLOTS
     ra_data: resb READAHEAD_SLOTS * READAHEAD_BUF_SIZE
 
+    ; Idempotency guard for _cleanup_all: the .fini_array path (C/Rust host)
+    ; and an explicit pre-exit call (Vox host) can both fire; this prevents a
+    ; double-close / double-munmap. Reset to 0 each time the .so is loaded.
+    cleanup_done: resb 1
+
 section .text
 
 ; Register a file descriptor for tracking
@@ -52,24 +57,25 @@ global _register_fd
 _register_fd:
     push rbx
     push rcx
-    
+
+    lea rbx, [rel fd_table]
     ; Find empty slot
     xor rcx, rcx
 .find_slot:
     cmp rcx, MAX_FDS
     jge .table_full
-    
-    mov rax, [abs fd_table + rcx*8]
+
+    mov rax, [rbx + rcx*8]
     test rax, rax
     jz .found_slot
-    
+
     inc rcx
     jmp .find_slot
-    
+
 .found_slot:
-    mov [abs fd_table + rcx*8], rdi
+    mov [rbx + rcx*8], rdi
     inc qword [rel fd_count]
-    
+
 .table_full:
     pop rcx
     pop rbx
@@ -80,6 +86,17 @@ _register_fd:
 ; Returns: slot index in rax, or -1 if no slot available
 ; Clobbers: rcx, rdx
 _get_readahead_slot:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    ; Hoist one RIP-relative base per read-ahead table: each is indexed by
+    ; the same slot in rcx, and the bases never change across the routine.
+    lea rbx, [rel ra_used]
+    lea r12, [rel ra_fd]
+    lea r13, [rel ra_pos]
+    lea r14, [rel ra_filled]
     xor rcx, rcx
     mov rdx, -1                 ; first free slot (or -1)
 
@@ -87,11 +104,11 @@ _get_readahead_slot:
     cmp rcx, READAHEAD_SLOTS
     jge .slot_done_scan
 
-    movzx eax, byte [abs ra_used + rcx]
+    movzx eax, byte [rbx + rcx]
     test eax, eax
     jz .slot_is_free
 
-    mov rax, [abs ra_fd + rcx*8]
+    mov rax, [r12 + rcx*8]
     cmp rax, rdi
     je .slot_found_existing
 
@@ -109,52 +126,71 @@ _get_readahead_slot:
 
 .slot_found_existing:
     mov rax, rcx
-    ret
+    jmp .epilogue
 
 .slot_done_scan:
     cmp rdx, -1
     je .slot_none
 
     mov rcx, rdx
-    mov byte [abs ra_used + rcx], 1
-    mov [abs ra_fd + rcx*8], rdi
-    mov qword [abs ra_pos + rcx*8], 0
-    mov qword [abs ra_filled + rcx*8], 0
+    mov byte [rbx + rcx], 1
+    mov [r12 + rcx*8], rdi
+    mov qword [r13 + rcx*8], 0
+    mov qword [r14 + rcx*8], 0
     mov rax, rcx
-    ret
+    jmp .epilogue
 
 .slot_none:
     mov rax, -1
+
+.epilogue:
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     ret
 
 ; Flush read-ahead state for a specific fd
 ; Args: fd in rdi
 ; Clobbers: rax, rcx
 _flush_readahead_fd:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    lea rbx, [rel ra_used]
+    lea r12, [rel ra_fd]
+    lea r13, [rel ra_pos]
+    lea r14, [rel ra_filled]
     xor rcx, rcx
 
 .flush_scan:
     cmp rcx, READAHEAD_SLOTS
     jge .flush_done
 
-    movzx eax, byte [abs ra_used + rcx]
+    movzx eax, byte [rbx + rcx]
     test eax, eax
     jz .flush_next
 
-    mov rax, [abs ra_fd + rcx*8]
+    mov rax, [r12 + rcx*8]
     cmp rax, rdi
     jne .flush_next
 
-    mov byte [abs ra_used + rcx], 0
-    mov qword [abs ra_fd + rcx*8], 0
-    mov qword [abs ra_pos + rcx*8], 0
-    mov qword [abs ra_filled + rcx*8], 0
+    mov byte [rbx + rcx], 0
+    mov qword [r12 + rcx*8], 0
+    mov qword [r13 + rcx*8], 0
+    mov qword [r14 + rcx*8], 0
 
 .flush_next:
     inc rcx
     jmp .flush_scan
 
 .flush_done:
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     ret
 
 ; Read a single line from fd into buffer (stops at '\n' or EOF)
@@ -187,12 +223,15 @@ _read_line_into_buffer:
 
     ; Slot-backed mode setup
     mov rbx, rax
-    lea r8, [abs ra_pos + rbx*8]      ; &ra_pos[slot]
-    lea r9, [abs ra_filled + rbx*8]   ; &ra_filled[slot]
+    lea r8, [rel ra_pos]              ; &ra_pos[slot]
+    lea r8, [r8 + rbx*8]
+    lea r9, [rel ra_filled]           ; &ra_filled[slot]
+    lea r9, [r9 + rbx*8]
 
     mov rax, rbx
     imul rax, READAHEAD_BUF_SIZE
-    lea r10, [abs ra_data + rax]      ; slot data pointer
+    lea r10, [rel ra_data]            ; slot data pointer
+    lea r10, [r10 + rax]
 
 .line_loop_slot:
     ; Ensure at least 1 byte of data capacity remains
@@ -216,11 +255,14 @@ _read_line_into_buffer:
     mov r13, rax
 
     ; _grow_buffer may clobber caller-saved registers; rebuild slot pointers.
-    lea r8, [abs ra_pos + rbx*8]
-    lea r9, [abs ra_filled + rbx*8]
+    lea r8, [rel ra_pos]
+    lea r8, [r8 + rbx*8]
+    lea r9, [rel ra_filled]
+    lea r9, [r9 + rbx*8]
     mov rax, rbx
     imul rax, READAHEAD_BUF_SIZE
-    lea r10, [abs ra_data + rax]
+    lea r10, [rel ra_data]
+    lea r10, [r10 + rax]
 
     jmp .line_loop_slot
 
@@ -525,23 +567,24 @@ _unregister_fd:
 
     ; Closing/unregistering an fd must drop cached read-ahead state.
     call _flush_readahead_fd
-    
+
+    lea rbx, [rel fd_table]
     xor rcx, rcx
 .find_fd:
     cmp rcx, MAX_FDS
     jge .not_found
-    
-    mov rax, [abs fd_table + rcx*8]
+
+    mov rax, [rbx + rcx*8]
     cmp rax, rdi
     je .found_fd
-    
+
     inc rcx
     jmp .find_fd
-    
+
 .found_fd:
-    mov qword [abs fd_table + rcx*8], 0
+    mov qword [rbx + rcx*8], 0
     dec qword [rel fd_count]
-    
+
 .not_found:
     pop rcx
     pop rbx
@@ -554,30 +597,32 @@ _cleanup_fds:
     push rbx
     push r12            ; use callee-saved register for loop counter
     push r13
-    
+
+    lea rbx, [rel fd_table]
     xor r12, r12        ; r12 = loop counter
 .close_loop:
     cmp r12, MAX_FDS
     jge .done
-    
-    mov rdi, [abs fd_table + r12*8]
+
+    mov rdi, [rbx + r12*8]
     test rdi, rdi
     jz .next
-    
+
     ; Don't close stdin/stdout/stderr
     cmp rdi, 3
     jl .next
-    
-    ; Close this fd
+
+    ; Close this fd. rbx (the table base) survives the syscall: only
+    ; rax/rcx/r11 are clobbered, and r12 (the index) is callee-saved.
     mov rax, 3          ; SYS_CLOSE
     syscall
-    
-    mov qword [abs fd_table + r12*8], 0
-    
+
+    mov qword [rbx + r12*8], 0
+
 .next:
     inc r12
     jmp .close_loop
-    
+
 .done:
     mov qword [rel fd_count], 0
     pop r13
@@ -713,23 +758,24 @@ global _register_buffer
 _register_buffer:
     push rbx
     push rcx
-    
+
+    lea rbx, [rel buf_table]
     xor rcx, rcx
 .find_slot:
     cmp rcx, MAX_BUFFERS
     jge .table_full
-    
-    mov rax, [abs buf_table + rcx*8]
+
+    mov rax, [rbx + rcx*8]
     test rax, rax
     jz .found_slot
-    
+
     inc rcx
     jmp .find_slot
-    
+
 .found_slot:
-    mov [abs buf_table + rcx*8], rdi
+    mov [rbx + rcx*8], rdi
     inc qword [rel buf_count]
-    
+
 .table_full:
     pop rcx
     pop rbx
@@ -741,21 +787,22 @@ global _unregister_buffer
 _unregister_buffer:
     push rbx
     push rcx
-    
+
+    lea rbx, [rel buf_table]
     xor rcx, rcx
 .find_unreg:
     cmp rcx, MAX_BUFFERS
     jge .not_found_unreg
-    
-    mov rax, [abs buf_table + rcx*8]
+
+    mov rax, [rbx + rcx*8]
     cmp rax, rdi
     je .found_unreg
-    
+
     inc rcx
     jmp .find_unreg
-    
+
 .found_unreg:
-    mov qword [abs buf_table + rcx*8], 0
+    mov qword [rbx + rcx*8], 0
     dec qword [rel buf_count]
     
 .not_found_unreg:
@@ -770,22 +817,23 @@ _free_buffer:
     push rbx
     push rcx
     push rsi
-    
+
+    lea rbx, [rel buf_table]
     ; Find and remove from table
     xor rcx, rcx
 .find_buf:
     cmp rcx, MAX_BUFFERS
     jge .not_found
-    
-    mov rax, [abs buf_table + rcx*8]
+
+    mov rax, [rbx + rcx*8]
     cmp rax, rdi
     je .found_buf
-    
+
     inc rcx
     jmp .find_buf
-    
+
 .found_buf:
-    mov qword [abs buf_table + rcx*8], 0
+    mov qword [rbx + rcx*8], 0
     dec qword [rel buf_count]
     
     ; munmap the buffer
@@ -808,27 +856,29 @@ _cleanup_buffers:
     push r12            ; use r12 for loop counter (preserved across syscall)
     push r13
     push r14
-    
+
+    lea rbx, [rel buf_table]
     xor r12, r12        ; r12 = loop counter
 .free_loop:
     cmp r12, MAX_BUFFERS
     jge .done
-    
-    mov rdi, [abs buf_table + r12*8]
+
+    mov rdi, [rbx + r12*8]
     test rdi, rdi
     jz .next
-    
+
     ; Save buffer pointer before syscall clobbers registers
     mov r13, rdi
-    
-    ; Get size and munmap (+1 for null terminator)
+
+    ; Get size and munmap (+1 for null terminator). rbx (table base) and
+    ; r12 (index) both survive the syscall: only rax/rcx/r11 are clobbered.
     mov rsi, [rdi + BUF_CAPACITY]
     add rsi, BUF_DATA + 1
     mov rax, 11             ; SYS_MUNMAP
     syscall
-    
-    mov qword [abs buf_table + r12*8], 0
-    
+
+    mov qword [rbx + r12*8], 0
+
 .next:
     inc r12
     jmp .free_loop
@@ -899,18 +949,20 @@ _grow_buffer:
     mov rcx, [r12 + BUF_LENGTH]
     rep movsb
     
-    ; Update buffer table entry
+    ; Update buffer table entry. No syscall between the lea and the uses
+    ; below, so a caller-saved scratch (r11) holds the base safely.
+    lea r11, [rel buf_table]
     xor rcx, rcx
 .find_entry:
     cmp rcx, MAX_BUFFERS
     jge .no_entry
-    mov rax, [abs buf_table + rcx*8]
+    mov rax, [r11 + rcx*8]
     cmp rax, r12
     je .update_entry
     inc rcx
     jmp .find_entry
 .update_entry:
-    mov [abs buf_table + rcx*8], rbx
+    mov [r11 + rcx*8], rbx
 .no_entry:
     
     ; Free old buffer (+1 for null terminator)
@@ -1749,11 +1801,18 @@ section .rodata
 
 section .text
 
-; Cleanup all resources - call before exit
+; Cleanup all resources - call before exit. Idempotent: the .fini_array
+; path (C/Rust host, run by _dl_fini) and an explicit pre-exit call (Vox
+; host, which exits via sys_exit and so never reaches _dl_fini) can both
+; fire for one load; the guard byte keeps the second call a no-op.
 global _cleanup_all
 _cleanup_all:
+    cmp byte [rel cleanup_done], 0
+    jne .done
+    mov byte [rel cleanup_done], 1
     call _cleanup_fds
     call _cleanup_buffers
+.done:
     ret
 
 ; ============================================================================

@@ -323,7 +323,9 @@ fn main() {
     included_files.insert(source_path_buf.canonicalize().unwrap_or(source_path_buf.clone()));
     process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
     
-    let mut analyzer = Analyzer::new().with_source(source_path, &source);
+    let mut analyzer = Analyzer::new()
+        .with_source(source_path, &source)
+        .with_shared_mode(build_shared);
     analyzer.analyze(&mut program);
     
     if !analyzer.errors.is_empty() {
@@ -415,57 +417,98 @@ fn main() {
     }
     
     let ld_result = if build_shared {
-        // Build shared library with -shared flag
-        let ld_args = vec!["-shared", "-o", &output_path, &obj_path];
-        
-        // Add library search paths
-        let lib_path_args: Vec<String> = lib_paths.iter()
-            .map(|p| format!("-L{}", p))
-            .collect();
-        
-        // Add linked libraries
-        let link_args: Vec<String> = link_libs.iter()
-            .map(|l| format!("-l{}", l))
-            .collect();
-        
-        let mut all_args: Vec<&str> = ld_args;
-        for p in &lib_path_args {
+        // An anonymous version script restricts the dynamic symbol table to
+        // exactly the library's exported functions. coreasm declares ~54 of
+        // its runtime symbols `global`; without this script every one would
+        // leak into .dynsym, colliding on generic names like `_str_len` when
+        // two Vox .so files are loaded together. The fix is link-time (zero
+        // coreasm edits) for the same reason the %define mangling is: coreasm
+        // is ported per architecture. The anonymous form (no version tag)
+        // keeps `nm -D` reporting the plain symbol names.
+        let map_path = format!("{}.map", base_name);
+        let mut script = String::from("{ global:");
+        for func in codegen.exported_functions() {
+            script.push_str(&format!(" {};", func));
+        }
+        script.push_str(" local:*; };\n");
+        if let Err(e) = fs::write(&map_path, &script) {
+            eprintln!("Error writing version script: {}", e);
+            std::process::exit(1);
+        }
+
+        let mut all_args: Vec<String> = vec![
+            "-shared".to_string(),
+            format!("--version-script={}", map_path),
+            "-o".to_string(),
+            output_path.clone(),
+            obj_path.clone(),
+        ];
+        for p in lib_paths.iter().map(|p| format!("-L{}", p)) {
             all_args.push(p);
         }
-        for l in &link_args {
+        for l in link_libs.iter().map(|l| format!("-l{}", l)) {
             all_args.push(l);
         }
-        
+
+        let arg_refs: Vec<&str> = all_args.iter().map(|s| s.as_str()).collect();
         Command::new("ld")
-            .args(&all_args)
+            .args(&arg_refs)
             .status()
     } else {
         // Build executable
         let ld_args = vec!["-o", &output_path, &obj_path];
-        
+
         // Add library search paths
         let lib_path_args: Vec<String> = lib_paths.iter()
             .map(|p| format!("-L{}", p))
             .collect();
-        
+
         // Add linked libraries
         let link_args: Vec<String> = link_libs.iter()
             .map(|l| format!("-l{}", l))
             .collect();
-        
+
+        // A static executable has no PT_INTERP and no runtime dependencies, so
+        // it execs directly. But an executable linked against a shared library
+        // needs the dynamic loader to map the .so in at runtime, and an rpath so
+        // the loader finds it. Add both ONLY when there are link libs, so plain
+        // static builds are untouched — the default Vox output stays a flat
+        // static binary with no loader dependency.
+        let mut dynamic_args: Vec<String> = Vec::new();
+        if !link_libs.is_empty() {
+            dynamic_args.push("-dynamic-linker".to_string());
+            dynamic_args.push("/lib64/ld-linux-x86-64.so.2".to_string());
+            for p in lib_paths.iter() {
+                dynamic_args.push("-rpath".to_string());
+                dynamic_args.push(p.clone());
+            }
+        }
+
         let mut all_args: Vec<&str> = ld_args;
+        for a in &dynamic_args {
+            all_args.push(a);
+        }
         for p in &lib_path_args {
             all_args.push(p);
         }
         for l in &link_args {
             all_args.push(l);
         }
-        
+
         Command::new("ld")
             .args(&all_args)
             .status()
     };
     
+    // Remove the version script regardless of whether `ld` succeeded. The
+    // cleanup used to live after the success check, so a failed link left
+    // `<name>.map` in the user's working directory — a file they never asked
+    // to see, named for a script they have no reason to know exists. Removing
+    // it here covers both the success and the two failure exits below.
+    if build_shared {
+        let _ = fs::remove_file(format!("{}.map", base_name));
+    }
+
     match ld_result {
         Ok(status) if status.success() => {}
         Ok(_) => {
