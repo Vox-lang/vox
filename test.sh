@@ -183,6 +183,34 @@ for test_file in "${TEST_FILES[@]}"; do
     run_test "$test_file"
 done
 
+# Runtime-level tests: invariants no Vox program can express, checked by
+# assembling a driver directly against coreasm. Uses only nasm and ld, which
+# building Vox already requires, so this always runs - never silently skipped.
+run_runtime_test() {
+    local name="$1"
+    local src="$SCRIPT_DIR/tests/runtime/${name}.asm"
+    [ -f "$src" ] || return 0
+
+    local work
+    work="$(mktemp -d)"
+    if nasm -f elf64 -i "$SCRIPT_DIR/" -o "$work/t.o" "$src" >"$work/log" 2>&1 \
+       && ld -o "$work/t" "$work/t.o" >>"$work/log" 2>&1 \
+       && "$work/t" >>"$work/log" 2>&1; then
+        echo -e "  ${GREEN}PASS${NC} runtime/$name"
+        ((PASSED++))
+    else
+        echo -e "  ${RED}FAIL${NC} runtime/$name"
+        sed 's/^/      /' "$work/log" | head -20
+        ((FAILED++))
+    fi
+    rm -rf "$work"
+}
+
+for runtime_test in "$SCRIPT_DIR"/tests/runtime/*.asm; do
+    [ -e "$runtime_test" ] || break
+    run_runtime_test "$(basename "$runtime_test" .asm)"
+done
+
 # Summary
 echo ""
 echo -e "${BOLD}=== Summary ===${NC}"
