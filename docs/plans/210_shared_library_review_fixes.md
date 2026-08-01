@@ -162,6 +162,32 @@ Do not start plan 200 Phase 3, do not touch the `LANGUAGE.md` `see "./lib.so"`
 contradiction (it resolves in Phase 3), and do not begin growable resource
 tables. Those are all separately tracked.
 
+## Found while fixing these — not a code defect
+
+**A stale system install makes `--shared` look broken outside the repo.**
+Surfaced by the worker as a "coreasm path-resolution quirk"; the real cause is
+simpler and worth recording so nobody debugs the compiler over it.
+
+`find_coreasm_path` falls back to system paths when it is not run from a repo
+checkout. If `/usr/local/share/vox/coreasm` predates the Phase 1 PIC rewrite,
+a `--shared` build outside the repo assembles the *old* runtime and fails with
+exactly the 34 relocations Phase 1 removed. Demonstrated on one source file:
+
+```
+$ vox lib.vox --shared -o lib.so                     # system coreasm
+/usr/bin/ld.bfd: relocation R_X86_64_32S ... Linking failed
+
+$ EC_CORE_PATH=<repo>/coreasm vox lib.vox --shared -o lib.so
+$ nm -D --defined-only lib.so   → add_two
+```
+
+The fix is `sudo make install`, not a code change. What is arguably a defect is
+the *diagnostic*: the user sees a linker relocation error, with nothing
+connecting it to an out-of-date runtime. Version-stamping `coreasm` and warning
+on a mismatch between the compiler and the runtime it resolved would turn a
+confusing failure into a clear one. That wants its own plan — it affects every
+build path, not just `--shared`.
+
 ## Success criteria
 
 - [ ] P1 reproduction fails to reproduce; a cargo test guards it
