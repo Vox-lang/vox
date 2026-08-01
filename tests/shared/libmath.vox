@@ -1,0 +1,17 @@
+(Phase 2 shared-library test corpus. Three exports cover the three things a
+real library needs: pure arithmetic, printing, and buffer use. The buffer
+function is the one that exercises the Phase 1 resource.asm PIC work —
+buffer registration touches buf_table, the table that could not be relocated
+before the lea [rel] rewrite. Built with `vox --shared`; called from
+tests/runtime/shared_lib_driver.asm.)
+
+To "add_two" with a number called "n".
+  Return n add 2.
+
+To "greet".
+  Print "hello from libmath".
+
+To "makebuf".
+  Create a buffer called "b".
+  Append "hello" to b.
+  Return b's size.

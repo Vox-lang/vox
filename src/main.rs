@@ -457,30 +457,49 @@ fn main() {
     } else {
         // Build executable
         let ld_args = vec!["-o", &output_path, &obj_path];
-        
+
         // Add library search paths
         let lib_path_args: Vec<String> = lib_paths.iter()
             .map(|p| format!("-L{}", p))
             .collect();
-        
+
         // Add linked libraries
         let link_args: Vec<String> = link_libs.iter()
             .map(|l| format!("-l{}", l))
             .collect();
-        
+
+        // A static executable has no PT_INTERP and no runtime dependencies, so
+        // it execs directly. But an executable linked against a shared library
+        // needs the dynamic loader to map the .so in at runtime, and an rpath so
+        // the loader finds it. Add both ONLY when there are link libs, so plain
+        // static builds are untouched — the default Vox output stays a flat
+        // static binary with no loader dependency.
+        let mut dynamic_args: Vec<String> = Vec::new();
+        if !link_libs.is_empty() {
+            dynamic_args.push("-dynamic-linker".to_string());
+            dynamic_args.push("/lib64/ld-linux-x86-64.so.2".to_string());
+            for p in lib_paths.iter() {
+                dynamic_args.push("-rpath".to_string());
+                dynamic_args.push(p.clone());
+            }
+        }
+
         let mut all_args: Vec<&str> = ld_args;
+        for a in &dynamic_args {
+            all_args.push(a);
+        }
         for p in &lib_path_args {
             all_args.push(p);
         }
         for l in &link_args {
             all_args.push(l);
         }
-        
+
         Command::new("ld")
             .args(&all_args)
             .status()
     };
-
+    
     // Remove the version script regardless of whether `ld` succeeded. The
     // cleanup used to live after the success check, so a failed link left
     // `<name>.map` in the user's working directory — a file they never asked
