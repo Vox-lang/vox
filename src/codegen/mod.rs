@@ -33,6 +33,15 @@ pub struct CodeGenerator {
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
+    // The identity of the library currently being compiled, set by a
+    // `Library "name" version "x.y".` declaration. In shared library mode
+    // this prefixes every exported label (and every intra-library call) as
+    // `<lib>_<ver>_<func>` so two libraries linked into one .so can both
+    // define `greet` without a duplicate-label collision. `None` outside
+    // shared mode (and in shared mode only transiently, before the
+    // declaration is seen — `collect_library_identity` runs a pre-pass so
+    // the order of `Library` vs `To` in the source does not matter).
+    current_library: Option<(String, String)>,
     // Feature tracking for conditional includes
     uses_ints: bool,
     uses_floats: bool,
@@ -122,6 +131,21 @@ const TAG_NOTHING: u8 = 6;
 /// Used for function labels today and for the `<lib>_<version>_<name>` library
 /// mangling when shared libraries land, so both go through one rule.
 pub(crate) fn mangle_symbol(name: &str) -> String {
+    let mut out = sanitize_symbol(name);
+    if out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// The per-character sanitizer that is the core of `mangle_symbol`: every
+/// character outside `[A-Za-z0-9_]` becomes `_`. This is the ONE sanitizer —
+/// `mangle_symbol` layers the leading-digit prefix on top, and the library
+/// mangling applies it per component (prefixing only the first, since a digit
+/// may start an interior component without making the whole joined symbol an
+/// invalid C identifier). Factoring it out keeps a second sanitizer from
+/// being written, per plan 230.
+fn sanitize_symbol(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 1);
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' {
@@ -130,10 +154,30 @@ pub(crate) fn mangle_symbol(name: &str) -> String {
             out.push('_');
         }
     }
-    if out.starts_with(|c: char| c.is_ascii_digit()) {
-        out.insert(0, '_');
-    }
     out
+}
+
+/// The library mangling: `<lib>_<version>_<func>`, built by applying the
+/// shared `sanitize_symbol` to each of the three components and joining with
+/// `_`. The library component goes through the full `mangle_symbol` (with the
+/// leading-digit prefix) because it STARTS the symbol — a digit there would
+/// make the whole result an invalid C identifier. The version and function
+/// components are interior (joined with `_`), so a leading digit there is
+/// fine and the prefix would only insert a spurious double underscore:
+/// `1.0` sanitizes to `1_0`, giving `mathkit_1_0_greet` as the plan specifies
+/// — not `mathkit__1_0_greet`, which a literal `mangle_symbol("1.0")` (whose
+/// leading-digit rule turns `1.0` into `_1_0`) would produce. This is the
+/// only place the three-component form is built — both the definition label
+/// and the call site resolve through it, so a .so that defines
+/// `mathkit_1_0_greet` also calls `mathkit_1_0_greet`, never the bare `greet`
+/// it would otherwise emit.
+pub(crate) fn mangle_library_symbol(lib: &str, version: &str, func: &str) -> String {
+    format!(
+        "{}_{}_{}",
+        mangle_symbol(lib),
+        sanitize_symbol(version),
+        sanitize_symbol(func)
+    )
 }
 
 /// Three-state result of statically classifying an expression into a list
@@ -261,6 +305,7 @@ impl CodeGenerator {
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
+            current_library: None,
             uses_ints: false,
             uses_floats: false,
             uses_files: false,
@@ -743,7 +788,18 @@ impl CodeGenerator {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
 
-        let func_label = mangle_symbol(name);
+        // In shared library mode a call to a function DEFINED in this
+        // library must target the same `<lib>_<ver>_<func>` label the
+        // definition emitted — otherwise the .so defines
+        // `mathkit_1_0_greet` while the call site branches to the bare
+        // `greet`, which the version script does not export. `function_return_types` keys exactly the user-defined functions of this compilation, so an (A4) extern or a runtime helper falls through to the plain mangled name. Non-shared builds take the plain path unconditionally, so their output is byte-identical to today.
+        let func_label = if self.shared_lib_mode
+            && self.function_return_types.contains_key(name)
+        {
+            self.function_label(name)
+        } else {
+            mangle_symbol(name)
+        };
         self.emit_indent(&format!("call {}", func_label));
 
         // Clean up stack words + pad (caller cleanup in SysV). The return tag
@@ -757,6 +813,38 @@ impl CodeGenerator {
 
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
         self.shared_lib_mode = enabled;
+    }
+
+    /// Resolve the assembly label for a function DEFINED in this compilation.
+    /// In shared library mode with a library identity set, the label is
+    /// `<lib>_<ver>_<func>` (each component through `mangle_symbol`); this is
+    /// what makes two libraries in one .so both defining `greet` emit two
+    /// distinct labels. In every other case it is the plain `mangle_symbol`
+    /// of the name, so non-shared builds are byte-identical to today.
+    fn function_label(&self, name: &str) -> String {
+        if self.shared_lib_mode {
+            if let Some((lib, ver)) = &self.current_library {
+                return mangle_library_symbol(lib, ver, name);
+            }
+        }
+        mangle_symbol(name)
+    }
+
+    /// Pre-pass: find the `Library` declaration that names this compilation's
+    /// identity and stash it in `current_library` before any function is
+    /// generated. Running this up front (rather than only when the statement
+    /// is reached during `generate`) means the order of `Library` vs `To` in
+    /// the source is irrelevant — a forward call to a function defined above
+    /// the declaration still mangles correctly. The analyzer has already
+    /// rejected `--shared` with no `Library` line, so in shared mode exactly
+    /// one is expected; the first wins and a second is left for A2 to reject.
+    fn collect_library_identity(&mut self, program: &Program) {
+        for stmt in &program.statements {
+            if let Statement::LibraryDecl { name, version } = stmt {
+                self.current_library = Some((name.clone(), version.clone()));
+                return;
+            }
+        }
     }
 
     /// The mangled labels of functions exported by a `--shared` compile, in
@@ -2011,6 +2099,10 @@ impl CodeGenerator {
         // from declared-return functions. Signature collection only reads
         // FunctionDef.return_type from the AST, so this reorder is safe.
         self.collect_function_signatures(program);
+        // Resolve the library identity before any function is generated so the
+        // `<lib>_<ver>_<func>` label is correct regardless of where the
+        // `Library` declaration sits in the source. No-op outside shared mode.
+        self.collect_library_identity(program);
         self.prescan_mixed_lists(&program.statements);
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
@@ -2710,7 +2802,7 @@ impl CodeGenerator {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
-                let func_label = mangle_symbol(name);
+                let func_label = self.function_label(name);
 
                 // Track exported functions for shared library mode
                 if self.shared_lib_mode {
@@ -4156,8 +4248,17 @@ impl CodeGenerator {
             }
             
             Statement::LibraryDecl { name, version } => {
-                // Library declaration - emit as comment for now
-                // In the future, this metadata could be used for linking
+                // A `Library` declaration sets the codegen's current library
+                // identity. Every `FunctionDef` and intra-library call site
+                // after this point resolves its label through it (in shared
+                // mode), so the exported symbol becomes `<lib>_<ver>_<func>`.
+                // `collect_library_identity` already stashed the first
+                // declaration before generation began, so a forward call to a
+                // function defined above this line still mangles correctly;
+                // re-setting here keeps the identity current as the walk
+                // passes each declaration (matters once A2 concatenates
+                // several libraries into one unit).
+                self.current_library = Some((name.clone(), version.clone()));
                 self.emit(&format!("; Library: {} version {}", name, version));
             }
             
@@ -6937,6 +7038,31 @@ mod tests {
         gen.generate(&program)
     }
 
+    /// Like `compile_to_asm`, but in `--shared` mode: the analyzer enforces the
+    /// library top-level rules (a `Library` declaration, only function defs)
+    /// and the codegen mangles labels by library and version. Used to test the
+    /// shared-library path without shelling out to nasm/ld.
+    fn compile_to_asm_shared(source: &str) -> String {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("lib_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("shared test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new()
+            .with_source("lib_test.vox", source)
+            .with_shared_mode(true);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "shared test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.set_shared_lib_mode(true);
+        gen.generate(&program)
+    }
+
     #[test]
     fn whole_list_print_routes_to_list_print() {
         let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint xs.\n");
@@ -7162,6 +7288,146 @@ mod tests {
         assert_eq!(mangle_symbol("2fast"), "_2fast");
         // Already-valid names are untouched.
         assert_eq!(mangle_symbol("already_fine"), "already_fine");
+    }
+
+    #[test]
+    fn mangle_library_symbol_joins_three_components() {
+        use super::mangle_library_symbol;
+        // The plan 230 example: mathkit + 1.0 + "add two numbers".
+        assert_eq!(
+            mangle_library_symbol("mathkit", "1.0", "add two numbers"),
+            "mathkit_1_0_add_two_numbers"
+        );
+        // Each component is mangled independently, then joined with `_`.
+        // A version with a dot folds to `_` only inside that component.
+        assert_eq!(
+            mangle_library_symbol("my.lib", "2.0", "greet"),
+            "my_lib_2_0_greet"
+        );
+        // A leading-digit version component is prefixed per mangle_symbol.
+        assert_eq!(
+            mangle_library_symbol("lib", "1", "greet"),
+            "lib_1_greet"
+        );
+    }
+
+    // ---- Stage A1: mangle exported symbols by library and version ----
+    //
+    // The label itself must change, not just the export list. These lock in
+    // both halves: the definition emits `<lib>_<ver>_<func>`, and a call
+    // site inside the library targets the same mangled label (never the bare
+    // name the version script does not export).
+
+    #[test]
+    fn shared_lib_mangles_exported_labels_by_library_and_version() {
+        // The tests/shared/libmath.vox corpus, in source form: a Library
+        // declaration plus the three exports. In --shared mode every defined
+        // label becomes <lib>_<ver>_<func>.
+        let src = "\
+Library \"mathkit\" version \"1.0\".\n\
+To \"add two numbers\" with a number called \"n\".\n  Return n add 2.\n\
+To \"greet\".\n  Print \"hello from libmath\".\n\
+To \"makebuf\".\n  Create a buffer called \"b\".\n  Append \"hello\" to b.\n  Return b's size.\n";
+        let asm = compile_to_asm_shared(src);
+        // The three definitions emit the mangled labels...
+        assert!(
+            asm.contains("mathkit_1_0_add_two_numbers:"),
+            "the 'add two numbers' definition must emit the mangled label"
+        );
+        assert!(
+            asm.contains("mathkit_1_0_greet:"),
+            "the 'greet' definition must emit the mangled label"
+        );
+        assert!(
+            asm.contains("mathkit_1_0_makebuf:"),
+            "the 'makebuf' definition must emit the mangled label"
+        );
+        // ...and each is exported as a STT_FUNC dynamic symbol.
+        assert!(
+            asm.contains("global mathkit_1_0_add_two_numbers:function"),
+            "the mangled label must be the exported symbol, not the bare name"
+        );
+        assert!(
+            asm.contains("global mathkit_1_0_greet:function"),
+            "greet must be exported under its mangled name"
+        );
+        assert!(
+            asm.contains("global mathkit_1_0_makebuf:function"),
+            "makebuf must be exported under its mangled name"
+        );
+        // The bare labels must NOT appear as definitions or exports — that is
+        // the half-right failure mode the plan warns about.
+        assert!(
+            !asm.contains("\nadd_two_numbers:"),
+            "the bare label must not be defined alongside the mangled one"
+        );
+        assert!(
+            !asm.contains("global greet:function"),
+            "the bare 'greet' must not be exported"
+        );
+    }
+
+    #[test]
+    fn shared_lib_call_site_targets_mangled_label() {
+        // A function that calls a sibling in the same library must `call` the
+        // mangled label, not the bare name — otherwise the .so defines
+        // mathkit_1_0_greet while the call branches to greet, which the
+        // version script does not export.
+        let src = "\
+Library \"mathkit\" version \"1.0\".\n\
+To \"double\" with a number called \"n\".\n  Return n add n.\n\
+To \"run\".\n  Print \"double\" of 21.\n";
+        let asm = compile_to_asm_shared(src);
+        assert!(
+            asm.contains("call mathkit_1_0_double"),
+            "an intra-library call must target the mangled label, not the bare name"
+        );
+        assert!(
+            !asm.contains("call double\n") && !asm.contains("call double "),
+            "the bare name must not be the call target in shared mode"
+        );
+    }
+
+    // Acceptance item 2 — two source files each defining `greet` in one .so
+    // — is NOT demonstrated here. The CLI cannot link two inputs until A2,
+    // and a cargo unit test over codegen cannot stand in for it cleanly: the
+    // compiler's per-compilation symbol tables are keyed by the AUTHORED name
+    // (codegen's `function_return_types` / `function_param_types`, and the
+    // analyzer's `functions` / `mangled_functions` / `function_param_counts`),
+    // so two libraries each defining `greet` collide in those maps even when
+    // their emitted labels differ. Resolving that needs the tables scoped by
+    // `<lib,version>`, which is A2's multi-library work — building it here
+    // would prop up a test with changes that belong in the next stage. See
+    // the stage report for the precise collision. A1 owns one library per
+    // .so, where no two authored names can collide; the single-library tests
+    // above (mangled def + call site) cover what A1 is responsible for.
+
+    #[test]
+    fn non_shared_builds_keep_plain_labels() {
+        // Non-shared builds must be completely unaffected: same labels as
+        // today. The same source without --shared emits the bare mangled
+        // name, no library prefix, no `:function` export.
+        let src = "\
+To \"greet\".\n  Print \"hi\".\n\
+To \"double\" with a number called \"n\".\n  Return n add n.\n\
+To \"run\".\n  Print \"double\" of 21.\n";
+        let asm = compile_to_asm(src);
+        assert!(
+            asm.contains("greet:"),
+            "non-shared builds keep the plain mangled label"
+        );
+        assert!(
+            asm.contains("call double"),
+            "non-shared call sites target the plain mangled name"
+        );
+        assert!(
+            !asm.contains("_1_0_"),
+            "no library/version mangling outside shared mode"
+        );
+        assert!(
+            !asm.contains(":function"),
+            "the :function export tag is shared-mode only"
+        );
     }
 
     #[test]

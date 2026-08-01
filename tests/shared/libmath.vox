@@ -8,7 +8,16 @@ tests/runtime/shared_lib_driver.asm.
 The arithmetic export is named with a space on purpose: "add two numbers"
 mangles to the label `add_two_numbers`, so the export-set assertion in
 test.sh exercises mangle_symbol instead of passing on an identity. See
-plan 210 P2.)
+plan 210 P2.
+
+Phase 3 (plan 230, stage A1) adds the `Library` declaration: the export
+labels become `<lib>_<ver>_<func>`, so "add two numbers" is now
+`mathkit_1_0_add_two_numbers`. The driver's externs and test.sh's exact
+export set move with it. Two libraries in one .so both defining `greet`
+is what the mangling exists to allow; that case is exercised by a cargo
+unit test, since the CLI cannot link two inputs until A2.)
+
+Library "mathkit" version "1.0".
 
 To "add two numbers" with a number called "n".
   Return n add 2.

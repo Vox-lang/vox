@@ -5,11 +5,14 @@
 ; PLT, proving the Vox calling convention survives the .so boundary and that
 ; the library's own coreasm runtime works when driven from a foreign host:
 ;
-;   add_two_numbers(40) -> 42  arithmetic; one scalar arg in rdi, result in rax
-;   makebuf()    -> 5          buffer registration via resource.asm (Phase 1 PIC
-;                              tables) — the case that could not relocate before
-;                              the lea [rel] rewrite
-;   greet()      prints        "hello from libmath" (io/format includes)
+;   mathkit_1_0_add_two_numbers(40) -> 42  arithmetic; one scalar arg in rdi,
+;                                          result in rax
+;   mathkit_1_0_makebuf()    -> 5          buffer registration via resource.asm
+;                                          (Phase 1 PIC tables) — the case that
+;                                          could not relocate before the
+;                                          lea [rel] rewrite
+;   mathkit_1_0_greet()      prints        "hello from libmath" (io/format
+;                                          includes)
 ;
 ; The library carries its own runtime; the driver references only the three
 ; exported labels (the version script keeps every coreasm symbol local, so
@@ -24,9 +27,14 @@
 
 global _start
 
-extern add_two_numbers
-extern greet
-extern makebuf
+; Phase 3 (plan 230, stage A1): the library's exports are now mangled by
+; library and version — `mathkit` + `1.0` + <func> — so the externs and call
+; sites use the <lib>_<ver>_<func> labels. "add two numbers" mangles to
+; mathkit_1_0_add_two_numbers; the space-to-underscore step still exercises
+; mangle_symbol, now per component.
+extern mathkit_1_0_add_two_numbers
+extern mathkit_1_0_greet
+extern mathkit_1_0_makebuf
 
 section .text
 _start:
@@ -35,24 +43,26 @@ _start:
     ; Vox prologue (push rbp) assumes the caller honoured it.
     and rsp, -16
 
-    ; add_two_numbers(40) == 42 — proves a scalar arg crosses the boundary and
-    ; the result returns in rax. The label is mangled from "add two numbers",
-    ; so this also proves mangle_symbol survived the .so boundary.
+    ; mathkit_1_0_add_two_numbers(40) == 42 — proves a scalar arg crosses the
+    ; boundary and the result returns in rax. The label is mangled from
+    ; "add two numbers" through the library+version prefix, so this also
+    ; proves mangle_symbol survived the .so boundary.
     mov rdi, 40
-    call add_two_numbers
+    call mathkit_1_0_add_two_numbers
     cmp rax, 42
     jne .fail_add
 
-    ; makebuf() == 5 — creates a buffer inside the library, registering it in
-    ; buf_table. This is the resource.asm access that was 34 absolute
-    ; relocations before Phase 1; if the PIC rewrite is wrong the library
-    ; traps here.
-    call makebuf
+    ; mathkit_1_0_makebuf() == 5 — creates a buffer inside the library,
+    ; registering it in buf_table. This is the resource.asm access that was
+    ; 34 absolute relocations before Phase 1; if the PIC rewrite is wrong the
+    ; library traps here.
+    call mathkit_1_0_makebuf
     cmp rax, 5
     jne .fail_makebuf
 
-    ; greet() prints the line; the harness compares the driver's stdout.
-    call greet
+    ; mathkit_1_0_greet() prints the line; the harness compares the driver's
+    ; stdout.
+    call mathkit_1_0_greet
 
     ; Exit 0 (SYS_exit). No libc, so no EXIT wrapper — raw syscall.
     mov rax, 60

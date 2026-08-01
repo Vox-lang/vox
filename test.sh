@@ -232,13 +232,14 @@ for runtime_test in "$SCRIPT_DIR"/tests/runtime/*.asm; do
     run_runtime_test "$(basename "$runtime_test" .asm)"
 done
 
-# Shared-library boundary test (plan 200, Phase 2). Builds tests/shared/libmath.vox
-# as a .so, asserts the dynamic export set is EXACTLY the three function labels
-# (a presence grep would pass while runtime symbols leak — Phase 0's version
-# script is only honest if this is a set equality), asserts a valid dynamic
-# section, then links an assembly driver and calls across the boundary. The
-# driver is assembly precisely so nasm+ld — already required to build Vox — run
-# it on every host. It must never report "skipped".
+# Shared-library boundary test (plan 200, Phase 2; plan 230 stage A1 mangling).
+# Builds tests/shared/libmath.vox as a .so, asserts the dynamic export set is
+# EXACTLY the three mangled function labels (a presence grep would pass while
+# runtime symbols leak — Phase 0's version script is only honest if this is a
+# set equality), asserts a valid dynamic section, then links an assembly
+# driver and calls across the boundary. The driver is assembly precisely so
+# nasm+ld — already required to build Vox — run it on every host. It must
+# never report "skipped".
 run_shared_library_test() {
     local work lib_src driver
     lib_src="$SCRIPT_DIR/tests/shared/libmath.vox"
@@ -256,9 +257,9 @@ run_shared_library_test() {
     else
         local got exp
         got=$(nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | sort)
-        exp=$(printf '%s\n' add_two_numbers greet makebuf | sort)
+        exp=$(printf '%s\n' mathkit_1_0_add_two_numbers mathkit_1_0_greet mathkit_1_0_makebuf | sort)
         if [[ "$got" != "$exp" ]]; then
-            fail_msg="shared/libmath (export set is not exactly {add_two_numbers, greet, makebuf})"
+            fail_msg="shared/libmath (export set is not exactly {mathkit_1_0_add_two_numbers, mathkit_1_0_greet, mathkit_1_0_makebuf})"
             { echo "expected:"; echo "$exp" | sed 's/^/  /'; echo "got:"; echo "$got" | sed 's/^/  /'; } >"$work/diff.log"
             fail_log="$work/diff.log"
         # 3. readelf -d reports a parseable dynamic section.

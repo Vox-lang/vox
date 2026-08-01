@@ -701,6 +701,33 @@ impl Analyzer {
                 }
             }
 
+            // A `--shared` compile with no `Library` declaration has no
+            // identity: there is no mangling (so two libraries in one .so
+            // could not both define `greet`) and no name/version for the
+            // `.lib` A3 writes. Reject it before codegen, naming the
+            // missing declaration so the author knows exactly what to add.
+            if !program
+                .statements
+                .iter()
+                .any(|s| matches!(s, Statement::LibraryDecl { .. }))
+            {
+                self.push_error(
+                    "A shared library must declare its identity with a `Library` \
+                     declaration giving its name and version — without one there is \
+                     no mangling and no `.lib`. Add `Library \"name\" version \
+                     \"x.y\".` before the function definitions and rebuild with \
+                     --shared."
+                        .to_string(),
+                    // No source location: this reports an ABSENCE of a
+                    // declaration, so there is no offending statement to anchor
+                    // `find_symbol_location` on (plan 210 P3). A spanned AST
+                    // would let this point at the file's first line; until then
+                    // it stays a message-only diagnostic, deliberately.
+                    None,
+                );
+                return;
+            }
+
             // A `--shared` compile with no function definitions exports
             // nothing, so the version script main.rs writes comes out as
             // `{ global: local:*; };` — empty between `global:` and
