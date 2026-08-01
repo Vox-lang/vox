@@ -127,19 +127,13 @@ _map_fnv:
 ; ============================================================================
 ; _map_key_dup - copy a key into the map-owned key arena.
 ; Args:      rdi = source C-string.
-; Returns:   rax = the copy (or the source unchanged if allocation fails).
+; Returns:   rax = the copy.
 ; Clobbers:  rax, rcx, rdx, rsi, rdi, r8, r9, r10, r11. Preserves rbx, r12-r15.
 ;
-; A map must retain each key's bytes: lookup confirms a probe hit by comparing
-; the stored key against the wanted one, and `keys` hands the text back. Storing
-; the caller's pointer makes that correctness depend on the caller keeping the
-; text alive and unchanged for the map's whole life. Owning a copy removes that
-; requirement.
-;
-; Bump-allocated from arena chunks and never freed, matching the allocation
-; discipline elsewhere in the runtime (see the grow paths in this file and
-; list.asm). Per-key mmap is not an option - it rounds to a 4096-byte page for
-; a key of a few bytes.
+; The map owns its keys: lookup compares stored key against wanted key, so the
+; bytes must outlive the caller's copy. Bump-allocated, never freed (same
+; discipline as the grow paths here and in list.asm). Not mmap per key - that
+; rounds to a 4096-byte page.
 ; ============================================================================
 %define MAP_KEY_ARENA_SIZE 65536
 
@@ -182,7 +176,11 @@ _map_key_dup:
     syscall
     pop rsi
     cmp rax, -4096              ; raw mmap returns -errno in [-4095,-1]
-    ja .kd_fail
+    jbe .kd_mmap_ok
+    mov rdi, 1                  ; allocation failure: exit(1), as every other
+    mov rax, 60                 ; allocation site here and in list.asm does.
+    syscall                     ; Returning the caller's pointer instead would
+.kd_mmap_ok:                    ; silently restore the borrowing bug.
     mov [rel _mk_next], rax
     add rax, rsi
     mov [rel _mk_end], rax
@@ -194,14 +192,6 @@ _map_key_dup:
     mov rcx, rbx
     rep movsb
     add [rel _mk_next], rbx
-    pop r12
-    pop rbx
-    ret
-
-.kd_fail:
-    ; Out of memory: keep the caller's pointer. Degrades to the borrowing
-    ; behaviour rather than losing the entry.
-    mov rax, r12
     pop r12
     pop rbx
     ret

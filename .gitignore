@@ -23,12 +23,19 @@ target
 *.vsix
 release.sh
 *.7z
-# Compiler output: the .asm emitted next to a source being compiled.
-*.asm
-# ...but the runtime library IS source. Without this a NEW coreasm module is
-# silently untracked - map.asm was, and the build only broke on a fresh
-# checkout. Matters again for each architecture port (aarch64, riscv, Win64).
-!coreasm/**/*.asm
+# Compiler output: `.asm` emitted beside the source being compiled, and at the
+# repo root when compiling from here. Listed by LOCATION rather than as a blanket
+# `*.asm`, so hand-written assembly anywhere else is tracked by default.
+#
+# A blanket rule fails silently and in the worst direction: coreasm/x86_64/map.asm
+# and tests/runtime/*.asm were both swallowed by one, and nothing complained -
+# the tree built fine and only a fresh checkout broke. Adding a `!` exception per
+# directory means remembering, every time, forever. Ignoring only where output
+# actually lands fails safe instead: a missed spot commits a junk file, which is
+# obvious and harmless, rather than dropping source, which is neither.
+/*.asm
+/tests/*.asm
+/examples/*.asm
 
 -e 
 # Compiled vox output binaries at repo root (from running the compiler on examples)
