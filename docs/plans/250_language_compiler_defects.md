@@ -168,3 +168,65 @@ already corrected on the docs branch. Do not start plan 230 work here.
 - [ ] The LANGUAGE.md samples that exposed D1–D4 are restored to the forms the
       docs originally claimed, and each is covered by a test
 - [ ] 0 warnings; cargo ≥ 120; `./test.sh` ≥ 196 passed, 0 failed, 6 skipped
+
+---
+
+## Open questions — recorded, not yet defects
+
+### Q1 — a braced bare string silently yields a pointer where a call was likely meant
+
+```
+$ printf 'To "c". Return a number, 3.\na number called "r" is {"c"}.\nprint r.\n' > c.vox
+$ vox c.vox -o c && ./c
+4198480
+```
+
+`{"c"}` is a braced *string literal*, so `r` receives a string pointer and
+prints as a meaningless number. No diagnostic. The documented call form with
+arguments (`"sq" of 5` → `25`) works correctly.
+
+Two questions, neither settled — which is why this is not filed as a defect:
+
+1. Is there a syntax for calling a **zero-argument** function in expression
+   position at all? `"name".` works as a statement; `of` requires arguments.
+2. If not, should assigning a braced string to a `number`-typed variable be a
+   type error? It currently is not.
+
+Confirmed unrelated to the bodyless-function parser fix in `998bc10` —
+reproduces identically with and without one. Settle question 1 before treating
+this as a bug.
+
+### Q2 — `./test.sh` totals do not obviously reconcile with its numbering
+
+Raised 2026-08-01 because the run counts visibly to `210_buffer_growth` while
+the summary reports 202 total. **Investigated: there is no bug.**
+
+```
+191 distinct numbers   (210 slots − 19 gaps)
++ 3 duplicate files    (112, 113, 114 each used twice)
+= 194 numbered .vox
++   6 manual_*         → the 6 SKIPs
++   1 runtime/map_key_ownership
++   1 shared/libmath
+= 202 total
+```
+
+`tests/runtime/shared_lib_driver.asm` is skipped by that loop deliberately —
+`run_shared_library_test` builds and runs it separately, so it is not
+double-counted.
+
+Two real observations, both minor:
+
+- **19 gaps** in the numbering (`028`, `034`, `046`–`049`, `076`–`079`, `153`,
+  `192`–`199`) from deleted or unused numbers, so the highest number never
+  implied the count.
+- **Three duplicated prefixes** — `112_text_buffer_to_float_cast` /
+  `112_write_format_string`, and the same for `113` and `114`. Both of each
+  pair run, nothing is lost, but "test 112" is ambiguous in a commit message
+  or bug report.
+
+**Suggested (not blocking):** have `test.sh` print the count of test files
+*discovered* alongside `Total:`, so the two can never silently diverge. The
+question above took arithmetic to answer; it should have taken a glance. This
+matters beyond tidiness — every `196 >= 195` baseline asserted during plan 230
+rests on those numbers meaning what they appear to mean.

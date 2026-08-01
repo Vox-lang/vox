@@ -57,10 +57,17 @@ Library "mathkit" version "1.0".
 Location "./libmathkit.so".
 
 Table of Contents:
-    To "add two numbers" with a number called "n", returning a number.
+    To "add two numbers" with a number called "a" and a number called "b", returning a number.
     To "greet".
     To "makebuf", returning a number.
 ```
+
+> **Corrected 2026-08-01, after B7.** This example previously showed
+> `add two numbers` with a single parameter `n`, while the real
+> `examples/mathkit_lib.vox` it describes declares two (`a`, `b`). The format
+> was never ambiguous; the example was inconsistent with the source, which
+> would have sent A3's round-trip test after a signature the shipped library
+> does not have.
 
 - **Lexed with the existing `Lexer`** so quoting and escaping rules cannot
   drift from Vox source, but **parsed by a dedicated parser** in
@@ -75,6 +82,19 @@ Table of Contents:
   bodiless declaration has no room for.
 - **Several `Library` blocks may appear in one `.lib`**, each with its own
   `Location`. Parsing runs to EOF; a `Library` line starts a new block.
+- **One entry per line; a `To` line never wraps** (settled 2026-08-01, after
+  B7 found this undefined). Newlines are significant: each table-of-contents
+  entry is exactly one line however long, so a function with eight parameters
+  emits one long line. The emitter must never wrap, and the parser is entitled
+  to treat a newline as ending the entry. A generated file has no reason to be
+  line-width-pretty, and this removes a whole class of round-trip bug.
+- **An entry with no `returning` clause returns nothing.** Implied by the
+  format from the start but never stated; made explicit after B7 had to
+  document it.
+- **A `value` needs only its type name.** A `value` carries a runtime tag in
+  `r11` alongside its payload in `rax`, but that ABI is fixed and identical for
+  every `value`, so it is not per-function information: `a value called "v"`
+  and `, returning a value` are complete.
 
 ## Mangling (normative)
 
