@@ -109,6 +109,33 @@ const TAG_LIST: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_NOTHING: u8 = 6;
 
+/// Turn an author-written name into an assembly symbol, per the project
+/// standard in `docs/SYMBOL_MANGLING.md`.
+///
+/// Every character outside `[A-Za-z0-9_]` becomes `_`, and a leading digit is
+/// prefixed with `_`. The target is a valid **C** identifier, not merely a
+/// valid NASM one: NASM happily assembles `my.helper` and `flags_0.1_hasflag`,
+/// so a dot survives all the way to the symbol table and only fails when a C
+/// or Rust consumer tries to name the function — which is the entire point of
+/// a standalone `.so`. Catching it here keeps that failure impossible.
+///
+/// Used for function labels today and for the `<lib>_<version>_<name>` library
+/// mangling when shared libraries land, so both go through one rule.
+pub(crate) fn mangle_symbol(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 1);
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
 /// Three-state result of statically classifying an expression into a list
 /// slot tag for the pre-scan. `Known(tag)` is a proof: the value's type is
 /// certain. `Unknowable` means no static proof is possible — stage 1b widens
@@ -716,7 +743,7 @@ impl CodeGenerator {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
 
-        let func_label = name.replace(' ', "_");
+        let func_label = mangle_symbol(name);
         self.emit_indent(&format!("call {}", func_label));
 
         // Clean up stack words + pad (caller cleanup in SysV). The return tag
@@ -2644,7 +2671,7 @@ impl CodeGenerator {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
-                let func_label = name.replace(' ', "_");
+                let func_label = mangle_symbol(name);
 
                 // Track exported functions for shared library mode
                 if self.shared_lib_mode {
@@ -7079,6 +7106,23 @@ mod tests {
             asm.contains("movzx r11, byte [rbp-"),
             "the for-each variable's tag must be loaded from its shadow slot"
         );
+    }
+
+    #[test]
+    fn mangle_symbol_produces_c_identifiers() {
+        use super::mangle_symbol;
+        // Spaces, the existing case.
+        assert_eq!(mangle_symbol("greet user"), "greet_user");
+        // Dots - the case that matters, because library versions contain one.
+        assert_eq!(mangle_symbol("my.helper"), "my_helper");
+        assert_eq!(mangle_symbol("flags_0.1_hasflag"), "flags_0_1_hasflag");
+        // Anything else outside [A-Za-z0-9_].
+        assert_eq!(mangle_symbol("parse-line"), "parse_line");
+        assert_eq!(mangle_symbol("add%"), "add_");
+        // A leading digit is not a legal identifier start in C.
+        assert_eq!(mangle_symbol("2fast"), "_2fast");
+        // Already-valid names are untouched.
+        assert_eq!(mangle_symbol("already_fine"), "already_fine");
     }
 
     #[test]

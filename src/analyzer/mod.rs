@@ -553,6 +553,10 @@ pub struct Analyzer {
     pub deps: Dependencies,
     pub variables: HashSet<String>,
     pub functions: HashSet<String>,
+    /// Assembly symbol -> the function name that claimed it. Two names that
+    /// differ only in characters the mangler folds to `_` ("my.helper" and
+    /// "my helper") would emit one label and silently share a body.
+    mangled_functions: std::collections::HashMap<String, String>,
     pub used_identifiers: HashSet<String>,  // Track all identifiers seen
     typo_candidates: HashSet<String>,
     pub errors: Vec<CompileError>,
@@ -602,6 +606,7 @@ impl Analyzer {
             deps: Dependencies::default(),
             variables: HashSet::new(),
             functions: HashSet::new(),
+            mangled_functions: std::collections::HashMap::new(),
             used_identifiers: HashSet::new(),
             typo_candidates: HashSet::new(),
             errors: Vec::new(),
@@ -1810,6 +1815,25 @@ impl Analyzer {
                         ),
                         Some(name),
                     );
+                }
+                // Names that differ only in characters the mangler folds to
+                // '_' would emit the same label, so one body would silently
+                // win. Reject rather than miscompile.
+                let symbol = crate::codegen::mangle_symbol(name);
+                match self.mangled_functions.get(&symbol) {
+                    Some(prev) if prev != name => {
+                        self.push_error(
+                            format!(
+                                "Functions '{}' and '{}' both become the assembly symbol \
+                                 '{}'; rename one so they stay distinct.",
+                                prev, name, symbol
+                            ),
+                            Some(name),
+                        );
+                    }
+                    _ => {
+                        self.mangled_functions.insert(symbol, name.clone());
+                    }
                 }
                 self.functions.insert(name.clone());
                 self.function_param_counts.insert(name.clone(), params.len());

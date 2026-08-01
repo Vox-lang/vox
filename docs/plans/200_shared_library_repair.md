@@ -111,7 +111,7 @@ objects, retiring that trade-off permanently.
   of [SHARED_LIBRARIES_DESIGN.md](../SHARED_LIBRARIES_DESIGN.md).
 - Cross-library resource cleanup / error-flag propagation ABI.
 - A pure-Vox caller via `see` (needs the `.lib`/extern wiring above);
-  Phase 2's cross-boundary test uses a C `dlopen` driver instead.
+  Phase 2's cross-boundary test uses an assembly driver instead.
 
 ---
 
@@ -214,7 +214,7 @@ for both executables and shared objects. Verify mechanically:
 readelf -r <obj> | grep -c R_X86_64_32   # must be 0 for the .so path
 ```
 
-and confirm zero NASM warnings remain across all 175 test/example
+and confirm zero NASM warnings remain across all test/example
 programs (the bar set by `4fb5694`).
 
 ### Phase 2 — cross-boundary test in the harness (US-3)
@@ -224,12 +224,19 @@ programs (the bar set by `4fb5694`).
   that uses a buffer (exercises the Phase-1 `resource.asm` work).
 - New `test.sh` section:
   1. build the `.so`; assert exit 0;
-  2. `nm -D --defined-only` contains the three exports;
+  2. `nm -D --defined-only` contains the three exports, **mangled**
+     (`libmath_1_0_add`, not `libmath_1.0_add`);
   3. `readelf -d` shows a valid dynamic section;
-  4. if a C compiler is present (`command -v cc`), build a ~20-line
-     `dlopen`/`dlsym` driver, call the arithmetic function, assert the
-     return value; otherwise count the sub-test as skipped (the
-     harness already reports skips — currently 6).
+  4. link a driver against it and call across the boundary, asserting
+     both the return value and that the library's error accessor
+     reports cleanly.
+- **Write the driver in assembly, not C.** `tests/runtime/*.asm` already
+  does exactly this for `map_key_ownership`: `nasm` + `ld`, both already
+  required to build Vox, so the test always runs. An earlier draft of this
+  plan proposed a `dlopen` driver in C guarded by `command -v cc` — that
+  adds a toolchain the project deliberately does not need, and worse, it
+  *skips silently* when the compiler is absent, so CI would report green
+  with the boundary untested.
 - Fix the latent executable-link gap while here: add
   `-dynamic-linker /lib64/ld-linux-x86-64.so.2` (and `-rpath`)
   to the executable `ld` invocation **only when** `link_libs` is
@@ -247,14 +254,13 @@ comment. Mangling and `.lib` generation live in the `--shared` compile;
 version enforcement lives in the `see` resolution. Design authority:
 [SHARED_LIBRARIES_DESIGN.md](../SHARED_LIBRARIES_DESIGN.md).
 
-### Housekeeping (bundled with Phase 0's PR)
+### Housekeeping — done 2026-08-01
 
-- ROADMAP.md is headed "v0.1.10" and still lists the `_list_append`
-  9th-element realloc segfault as the open M0 blocker. Verified
-  2026-07-31: the reproducer runs clean at 5 000 appends. Mark it
-  fixed, update the version reference, and point M3's first checkbox
-  at this plan. The M0 regression *tests* it asks for (growth across
-  the realloc boundary) are still absent and remain a valid open item.
+The ROADMAP items this plan bundled are complete: the `_list_append`
+realloc segfault is marked fixed (verified at 10 000 appends), the
+documented-vs-actual buffer semantics are reconciled in README's memory
+model, and the version header is current. The M0 regression *tests* for
+growth across the realloc boundary remain open.
 
 ---
 
@@ -262,16 +268,26 @@ version enforcement lives in the `see` resolution. Design authority:
 
 | File | Change | Phase |
 |------|--------|-------|
-| `src/codegen/mod.rs:1342` | emit conditional coreasm includes in shared mode (minus `args.asm`) | 0 |
+| `src/codegen/mod.rs` | emit conditional coreasm includes in shared mode (minus `args.asm`) | 0 |
+| `src/codegen/mod.rs` | emit the mangling `%define` prologue ahead of the includes | 0 |
 | `src/analyzer/mod.rs` | error on top-level executable statements under `--shared` | 0 |
 | `src/main.rs` | thread a `--shared` flag into the analyzer for that diagnostic | 0 |
+| `src/main.rs:156` | inline `see` of a `.vox` file (gate currently says `.en`, so `.vox` includes silently do not inline) | 0 |
 | `coreasm/x86_64/resource.asm` | 34 sites: `[abs T + r*s]` → `lea`+index, PIC-safe | 1 |
+| `src/codegen/mod.rs` | `.fini_array` entry for the library's `_cleanup_all`; make it idempotent | 1 |
+| `src/codegen/mod.rs` | emit explicit cleanup calls per linked library before `sys_exit` (a Vox host never reaches `_dl_fini`) | 1 |
+| `src/codegen/mod.rs` | fetch-and-merge the library's error value after each library call | 1 |
 | `src/main.rs:443` | `-dynamic-linker`/`-rpath` on executable links when `link_libs` non-empty | 2 |
-| `test.sh` | new shared-library section (build, exports, dlopen driver, skip logic) | 2 |
-| `tests/shared/libmath.vox` (+ driver `.c`) | new | 2 |
+| `test.sh` | shared-library section (build, mangled exports, dynamic section, asm driver) | 2 |
+| `tests/shared/libmath.vox`, `tests/runtime/*.asm` | new | 2 |
 | `LANGUAGE.md` | document what `--shared` supports and rejects | 0–2 |
-| `ROADMAP.md` | M0 segfault entry, version header, M3 pointer | 0 |
 | `docs/plans/README.md` | register this plan | 0 |
+
+Already in place: `mangle_symbol` in `src/codegen/mod.rs` with its
+collision guard in the analyzer, and the standard it implements in
+[SYMBOL_MANGLING.md](../SYMBOL_MANGLING.md). Versions fold `.` → `_`
+without a guard because their alphabet (`[0-9.]`) cannot produce a
+collision; author-chosen components fold and are checked.
 
 Unchanged by design: `src/parser/mod.rs` (`see`/`Library` parsing is
 complete), `src/codegen/mod.rs:3199` (`See`/`LibraryDecl` stay comments
@@ -286,15 +302,14 @@ until Phase 3).
       relocation errors.
 - [ ] `readelf -r` on the shared object path shows **zero**
       `R_X86_64_32`/`R_X86_64_32S` relocations.
-- [ ] All 175 test/example programs still compile with **zero** NASM
-      warnings (no regression of `4fb5694`).
-- [ ] `./test.sh`: all existing tests pass (145 at time of writing) plus
-      the new shared-library tests; `cargo test --release` stays green
-      (71).
+- [ ] All test and example programs still compile with **zero** NASM
+      warnings (223 programs as of 2026-08-01; no regression of `4fb5694`).
+- [ ] `./test.sh` and `cargo test --release` stay green (192 integration
+      / 115 cargo as of 2026-08-01) plus the new shared-library tests.
 - [ ] Hosted runtime behavior is byte-for-byte equivalent in observable
       output — `test.sh` is the arbiter.
-- [ ] ROADMAP.md no longer instructs a contributor to fix an
-      already-fixed segfault.
+- [ ] A C or Rust program can load the `.so`, call an exported function
+      by its mangled name, and see its resources cleaned up at exit.
 
 ---
 
@@ -307,12 +322,12 @@ until Phase 3).
 2. **Given** a library function that prints and one that uses a buffer,
    **when** compiled with `--shared`, **then** the build succeeds
    (runtime included, PIC-clean) and the printing function works when
-   invoked via `dlopen`.
+   invoked from the driver.
 3. **Given** a `.vox` file with top-level executable statements,
    **when** compiled with `--shared`, **then** the compiler rejects it
    with a clear diagnostic naming the offending statement — not a
    silent drop.
-4. **Given** the `dlopen` driver, **when** it calls the arithmetic
+4. **Given** the assembly driver, **when** it calls the arithmetic
    export with known operands, **then** the returned value is correct
    (proves calling convention survives the boundary).
 5. **Given** a machine without a C compiler, **when** `./test.sh` runs,
@@ -329,22 +344,31 @@ until Phase 3).
 **Phase 0**
 - [ ] Emit conditional coreasm includes in `shared_lib_mode` (exclude
       `args.asm`); keep `default rel`
+- [ ] Emit the mangling `%define` prologue ahead of the includes
+- [ ] Inline `see` of a `.vox` file (`src/main.rs:156` still gates on
+      `.en`, so a `.vox` include silently does not inline and the author
+      gets "Unknown function")
 - [ ] Analyzer: reject top-level executable statements under `--shared`
 - [ ] Compile-fail test for the new diagnostic (`tests/compile_fail/`)
-- [ ] LANGUAGE.md: `--shared` section; ROADMAP.md refresh; register plan
-      in `docs/plans/README.md`
+- [ ] LANGUAGE.md `--shared` section; register plan in `docs/plans/README.md`
 
 **Phase 1**
 - [ ] Rewrite the 34 `resource.asm` sites (`fd_table`, `buf_table`,
       `ra_*`) to `lea [rel]`+index; audit scratch registers around
       syscalls
+- [ ] `.fini_array` entry for `_cleanup_all`, made idempotent
+- [ ] Explicit per-library cleanup calls before `sys_exit` for a Vox host
+- [ ] Error fetch-and-merge after each library call, so `on error` works
+      across the boundary
 - [ ] `readelf -r` zero-abs-reloc check; full `test.sh` + NASM
       warning sweep
 
 **Phase 2**
 - [ ] `tests/shared/libmath.vox` (arith + print + buffer functions)
-- [ ] `test.sh` shared section: build, `nm -D` assert, `readelf -d`
-      assert, `dlopen` driver with cc-missing skip
+- [ ] `test.sh` shared section: build, mangled-export assert via `nm -D`,
+      `readelf -d` assert, and an **assembly** driver under
+      `tests/runtime/` (never C — it would add a toolchain the project
+      avoids and would skip silently when absent)
 - [ ] `-dynamic-linker`/`-rpath` on executable `ld` when `link_libs`
       non-empty
 - [ ] Regression tests ROADMAP M0 asks for: list growth across realloc
@@ -358,15 +382,16 @@ until Phase 3).
   `4fb5694`: `lea [rel]`+index is the one form valid in both link
   models. After it lands, `[abs ...]` should not appear anywhere in
   `coreasm/` — worth a grep in the test harness or CI.
-- Each `.so` carries its own private copy of the runtime (symbols
-  module-local, not exported). Two Vox libraries in one process
-  therefore have *independent* fd/buffer tables — fine for now, but
-  this is exactly the "cross-library resource tracking" item M3 lists;
-  Phase 3 must decide whether the runtime becomes a shared `libvox`
-  before libraries proliferate.
-- `_check_call_depth` (in `core.asm`) is carried into the `.so` by
-  Phase 0's includes, so recursion depth is guarded per-library with
-  its own counter — same caveat as above, acceptable for now.
-- The `dlopen` driver is a stopgap for exactly one thing: proving the
+- Each `.so` carrying its own runtime is now the **decided design**, not a
+  limitation: it is what lets the library be loaded by a C or Rust host and
+  keep the exact runtime it was compiled against. Mangling makes it safe
+  even for two versions inside one `.so`.
+- The cost is that per-version counters fail *permissive*.
+  `_check_call_depth`'s 10 000 limit and `_print_depth`'s 64-deep cycle
+  budget apply per module, so recursion or a cyclic structure crossing the
+  boundary can reach N × the limit. This is forced by the decision — a C
+  host has no counter to share — so document the behaviour rather than
+  hide it, and consider making the limits configurable.
+- The assembly driver proves exactly one thing: the
   SysV boundary. It should be deleted, not extended, when Phase 3
   delivers a pure-Vox `see` caller.

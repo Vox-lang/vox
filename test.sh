@@ -86,6 +86,21 @@ cargo_test() {
     echo -e "${YELLOW}Running cargo tests...${NC}"
     cargo test
     err=$?
+    # The compile_fail corpus runs inside one cargo test
+    # (compile_fail_corpus_reports_errors), which walks every .vox in
+    # tests/compile_fail and asserts each one is rejected with its expected
+    # message. Report the count, or the corpus is invisible here and silently
+    # dropping cases would look identical to passing.
+    local cf_dir="$SCRIPT_DIR/tests/compile_fail"
+    if [[ -d "$cf_dir" ]]; then
+        local cf_cases cf_errs
+        cf_cases=$(find "$cf_dir" -name '*.vox' | wc -l)
+        cf_errs=$(find "$cf_dir" -name '*.err' | wc -l)
+        echo -e "  compile_fail corpus: ${cf_cases} cases (checked by cargo test)"
+        if [[ "$cf_cases" -ne "$cf_errs" ]]; then
+            echo -e "  ${RED}WARN${NC} $cf_cases .vox but $cf_errs .err - every case needs both"
+        fi
+    fi
     echo ""
     return $err
 }
