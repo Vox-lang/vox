@@ -241,6 +241,80 @@ The two or three most load-bearing:
    specifying "parse `.so` files … treating each `Library` declaration as a
    separator," which is the `.lib`-parsing claim the spec pre-confirmed.
 
+---
+
+## State of play — 2026-08-01, for the design work that follows
+
+Recorded here because the audit is the starting point for planning Phase 3, and
+a reader arriving cold needs the current position, not just the defect list.
+
+### Shared libraries today: producible, not consumable from Vox
+
+**Works.** `vox lib.vox --shared -o lib.so` builds a real library using the full
+core language — arithmetic, print, buffers, files, floats, lists, maps. Exports
+exactly the library's own functions, named by `mangle_symbol` (`To "add two
+numbers"` → `add_two_numbers`); zero absolute relocations; `.fini_array`
+registered; every coreasm symbol kept out of `.dynsym` by the version script.
+Callable from any SysV host, proven on every `./test.sh` run by an assembly
+driver linked with `--link`. Top-level statements and empty libraries are
+rejected with clear diagnostics.
+
+**Does not work.** From Vox, a library cannot be used at all:
+
+```
+see "mathkit" version "1.0" from "./libmathkit.so".
+Display {"add two numbers" of 40}.
+    → error: Unknown function: add two numbers
+```
+
+The `see` line parses, emits an assembly comment, and links nothing — with no
+diagnostic. `Library "name" version "ver"` is likewise recorded and ignored;
+exports are not `mathkit_1_0_*`.
+
+### The intended design (confirmed with the project owner, 2026-08-01)
+
+The chain is **`.vox` → `see` a `.lib` → `Location` → `.so`**. The `.lib` is the
+typed interface — the `.h` equivalent — carrying library name, version, a
+`Location` pointing at the `.so`, and a `Table of Contents` of signatures.
+Authority: [SHARED_LIBRARIES_DESIGN.md](../SHARED_LIBRARIES_DESIGN.md).
+
+**Multiple libraries — and multiple versions of the same library — live in one
+`.so`, kept apart by name mangling.** This is a deliberate feature for
+backwards compatibility, not an incidental capability: it is what lets a
+consumer keep calling `flags_0_1_hasflag` after `flags_1_0_hasflag` ships
+alongside it. Mangling is therefore load-bearing for the library system, not
+cosmetic. Rules in [SYMBOL_MANGLING.md](../SYMBOL_MANGLING.md); the same scheme
+already mangles per-library runtime state so two versions in one `.so` do not
+share `_last_error`.
+
+Direct `see` of a `.so` was the original design and was abandoned: a `.so` is
+binary ELF, so the compiler can read mangled names from `.dynsym` but nothing
+about Vox types, and cannot check a call site. The findings above are the
+surviving documentation of that abandoned model.
+
+### Open work, roughly by value
+
+1. **Plan 200 Phase 3** — `.lib` generation and parsing, `<lib>_<version>_`
+   export mangling, version enforcement, `see` wiring. This is what makes
+   everything already built reachable from Vox. ROADMAP Milestone 3.
+2. **Make `see` of a `.so` an error** rather than a silent no-op. Small, and it
+   removes the trap that makes the stale docs dangerous.
+3. **Apply these findings** once the target design is settled.
+4. **Growable resource tables** — `MAX_FDS`/`MAX_BUFFERS` are 64 and
+   `_register_buffer` silently no-ops when full. Needs its own plan.
+5. **Spans in the `Statement` AST** — `find_symbol_location` misplaces any
+   diagnostic whose symbol is short or common, not just the `--shared` ones.
+6. **`coreasm` version stamping** — a stale system install currently fails with
+   an inscrutable relocation error. Affects every build path.
+
+### Environment note
+
+`/usr/local/share/vox/coreasm` predates the Phase 1 PIC rewrite (34 `[abs`
+sites against 0 in the repo), so `--shared` fails outside a repo checkout until
+`sudo make install` is run. Not a code defect; see plan 210.
+
+---
+
 ### Incidental code observations (not defects, no action taken)
 
 - `src/main.rs:155-185` / `src/codegen/mod.rs:4164-4173`: a `see` whose path
