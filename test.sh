@@ -86,6 +86,21 @@ cargo_test() {
     echo -e "${YELLOW}Running cargo tests...${NC}"
     cargo test
     err=$?
+    # The compile_fail corpus runs inside one cargo test
+    # (compile_fail_corpus_reports_errors), which walks every .vox in
+    # tests/compile_fail and asserts each one is rejected with its expected
+    # message. Report the count, or the corpus is invisible here and silently
+    # dropping cases would look identical to passing.
+    local cf_dir="$SCRIPT_DIR/tests/compile_fail"
+    if [[ -d "$cf_dir" ]]; then
+        local cf_cases cf_errs
+        cf_cases=$(find "$cf_dir" -name '*.vox' | wc -l)
+        cf_errs=$(find "$cf_dir" -name '*.err' | wc -l)
+        echo -e "  compile_fail corpus: ${cf_cases} cases (checked by cargo test)"
+        if [[ "$cf_cases" -ne "$cf_errs" ]]; then
+            echo -e "  ${RED}WARN${NC} $cf_cases .vox but $cf_errs .err - every case needs both"
+        fi
+    fi
     echo ""
     return $err
 }
@@ -181,6 +196,34 @@ fi
 
 for test_file in "${TEST_FILES[@]}"; do
     run_test "$test_file"
+done
+
+# Runtime-level tests: invariants no Vox program can express, checked by
+# assembling a driver directly against coreasm. Uses only nasm and ld, which
+# building Vox already requires, so this always runs - never silently skipped.
+run_runtime_test() {
+    local name="$1"
+    local src="$SCRIPT_DIR/tests/runtime/${name}.asm"
+    [ -f "$src" ] || return 0
+
+    local work
+    work="$(mktemp -d)"
+    if nasm -f elf64 -i "$SCRIPT_DIR/" -o "$work/t.o" "$src" >"$work/log" 2>&1 \
+       && ld -o "$work/t" "$work/t.o" >>"$work/log" 2>&1 \
+       && "$work/t" >>"$work/log" 2>&1; then
+        echo -e "  ${GREEN}PASS${NC} runtime/$name"
+        ((PASSED++))
+    else
+        echo -e "  ${RED}FAIL${NC} runtime/$name"
+        sed 's/^/      /' "$work/log" | head -20
+        ((FAILED++))
+    fi
+    rm -rf "$work"
+}
+
+for runtime_test in "$SCRIPT_DIR"/tests/runtime/*.asm; do
+    [ -e "$runtime_test" ] || break
+    run_runtime_test "$(basename "$runtime_test" .asm)"
 done
 
 # Summary

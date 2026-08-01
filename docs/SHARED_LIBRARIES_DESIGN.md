@@ -79,15 +79,28 @@ To prevent conflicts and support versioning, all symbols (functions, types, etc.
 ```
 
 Examples:
-- `flags_0.1_hasflag`
-- `flags_0.1_isverbose`
-- `flags_1.0_hasflag` (different version, same function name)
+- `flags_0_1_hasflag`
+- `flags_0_1_isverbose`
+- `flags_1_0_hasflag` (different version, same function name)
 
 This mangling scheme:
 - Enables multiple versions of the same function in one `.so`
 - Prevents naming conflicts between libraries
 - Maintains clean, readable names in `.lib` files
 - Supports backwards compatibility when libraries evolve
+
+> **Components are sanitized to valid C identifiers**, so the version `0.1`
+> appears as `0_1`. Earlier drafts of this section wrote `flags_0.1_hasflag`;
+> NASM accepts the dot, so that form assembles cleanly and only fails when a
+> C or Rust consumer tries to name the function — dots are not legal in a C
+> identifier. Since a standalone `.so` must be callable from other languages,
+> the dot form is unusable.
+>
+> The same mangling applies to the library's **runtime state**, not just its
+> functions, so two versions inside one `.so` do not share `_last_error` or
+> the resource tables. Full rules, including how this is applied without
+> editing any `coreasm/` file, are in
+> [SYMBOL_MANGLING.md](SYMBOL_MANGLING.md) — the project standard.
 
 ## Implementation Considerations
 

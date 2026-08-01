@@ -57,6 +57,11 @@
 
 ; Hash table is kept at load factor <= 1/2: hash_capacity = next_pow2(cap*2).
 
+section .bss
+    ; Bump allocator for map-owned key copies. See _map_key_dup.
+    _mk_next: resq 1            ; next free byte (0 before first use)
+    _mk_end:  resq 1            ; one past the current chunk
+
 section .text
 
 ; Helper: entries-base = map + 24 + hash_capacity*8.
@@ -117,6 +122,78 @@ _map_fnv:
     inc rdi
     jmp .loop
 .done:
+    ret
+
+; ============================================================================
+; _map_key_dup - copy a key into the map-owned key arena.
+; Args:      rdi = source C-string.
+; Returns:   rax = the copy.
+; Clobbers:  rax, rcx, rdx, rsi, rdi, r8, r9, r10, r11. Preserves rbx, r12-r15.
+;
+; The map owns its keys: lookup compares stored key against wanted key, so the
+; bytes must outlive the caller's copy. Bump-allocated, never freed (same
+; discipline as the grow paths here and in list.asm). Not mmap per key - that
+; rounds to a 4096-byte page.
+; ============================================================================
+%define MAP_KEY_ARENA_SIZE 65536
+
+_map_key_dup:
+    push rbx
+    push r12
+    mov r12, rdi                ; r12 = source
+
+    xor rcx, rcx                ; rcx = length
+.kd_len:
+    cmp byte [r12 + rcx], 0
+    je .kd_len_done
+    inc rcx
+    jmp .kd_len
+.kd_len_done:
+    inc rcx                     ; + NUL
+    mov rbx, rcx                ; rbx = bytes needed
+
+    mov rax, [rel _mk_next]
+    add rax, rbx
+    cmp rax, [rel _mk_end]
+    jbe .kd_have_room
+
+    ; Exhausted (or first use): map a fresh chunk. A key larger than the
+    ; default chunk gets its own exactly-sized one.
+    mov rsi, rbx
+    cmp rsi, MAP_KEY_ARENA_SIZE
+    jae .kd_size_ok
+    mov rsi, MAP_KEY_ARENA_SIZE
+.kd_size_ok:
+    add rsi, 4095
+    and rsi, ~4095
+    push rsi
+    mov rax, 9                  ; sys_mmap
+    mov rdi, 0
+    mov rdx, 3                  ; PROT_READ | PROT_WRITE
+    mov r10, 0x22               ; MAP_PRIVATE | MAP_ANONYMOUS
+    mov r8, -1
+    mov r9, 0
+    syscall
+    pop rsi
+    cmp rax, -4096              ; raw mmap returns -errno in [-4095,-1]
+    jbe .kd_mmap_ok
+    mov rdi, 1                  ; allocation failure: exit(1), as every other
+    mov rax, 60                 ; allocation site here and in list.asm does.
+    syscall                     ; Returning the caller's pointer instead would
+.kd_mmap_ok:                    ; silently restore the borrowing bug.
+    mov [rel _mk_next], rax
+    add rax, rsi
+    mov [rel _mk_end], rax
+
+.kd_have_room:
+    mov rax, [rel _mk_next]     ; rax = destination (return value)
+    mov rdi, rax
+    mov rsi, r12
+    mov rcx, rbx
+    rep movsb
+    add [rel _mk_next], rbx
+    pop r12
+    pop rbx
     ret
 
 ; ============================================================================
@@ -329,7 +406,14 @@ _map_insert:
     mov rcx, [rbx + MAP_LENGTH_OFFSET]   ; rcx = length (0-based new index)
     push rax                  ; save bucket index
     push rcx                  ; save length
+    ; Take ownership of the key. Only on this path: replacing an existing
+    ; key keeps the copy already stored, so re-setting one key in a loop
+    ; does not consume arena space per iteration.
+    mov rdi, r13
+    call _map_key_dup
+    mov r13, rax              ; r13 = map-owned key
     MAP_ENTRIES_BASE rbx, rsi
+    mov rcx, [rsp]            ; reload length (the call clobbered rcx)
     imul rcx, MAP_ENTRY_SIZE
     add rsi, rcx              ; rsi = &entries[length]
     mov [rsi + MAP_ENTRY_KEY], r13
