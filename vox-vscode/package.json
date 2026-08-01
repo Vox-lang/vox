@@ -25,7 +25,7 @@
       {
         "id": "vox",
         "aliases": ["Vox", "vox", "English", "english", "en"],
-        "extensions": [".en", ".eng", ".vox", ".vx"],
+        "extensions": [".vox"],
         "icon": {
           "light": "./images/icon.png",
           "dark": "./images/icon.png"

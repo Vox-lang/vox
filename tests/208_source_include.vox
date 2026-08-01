@@ -1,0 +1,12 @@
+(A `see` of a .vox file splices that file's statements in before
+ compilation - no runtime involvement. This also covers the transitive
+ case: math_helpers.vox itself includes greeting.vox.
+
+ Nothing covered includes before, which is how the gate went stale: it
+ tested for a ".en" extension while the whole tree uses ".vox", so every
+ include silently did not inline and the author got "Unknown function".)
+
+see "./include/math_helpers.vox".
+
+print "double" of 21.
+print "greet" of "world".

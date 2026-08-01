@@ -140,7 +140,7 @@ vox-vscode/
 
 ## Usage
 
-Once installed, simply open any `.vox` or `.en` file and syntax highlighting will be applied automatically.
+Once installed, simply open any `.vox` file and syntax highlighting will be applied automatically.
 
 The language will appear as **"Vox"** in the language picker.
 

@@ -8,7 +8,7 @@ This document outlines the design and implementation considerations for a shared
 
 ### Library Declaration
 
-Any `.en` file can become a library by adding a library declaration at the beginning:
+Any `.vox` file can become a library by adding a library declaration at the beginning:
 
 ```
 Library 'lib_name' version '1.0'
@@ -317,7 +317,7 @@ project/
 │   ├── libutils.so
 │   └── utils.lib
 ├── src/
-│   └── main.en
+│   └── main.vox
 └── build/
     └── compiled_program
 ```

@@ -1,0 +1,6 @@
+(Included by 208_source_include.vox. Itself includes another file, so the
+ recursive path in process_includes is exercised too.)
+
+see "./greeting.vox".
+
+To "double" with a number called "n". Return a number, n multiply 2.
