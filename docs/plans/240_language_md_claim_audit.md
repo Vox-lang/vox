@@ -1,8 +1,16 @@
-# Plan 240 — LANGUAGE.md claim audit (Stage B4)
+# Plan 240 — claim audit (LANGUAGE.md, README.md, docs/INSTALL.md)
 
-Audited every Vox code sample and shell command in `LANGUAGE.md` by running it
-against `target/release/vox` (v0.1.23) and recording whether it does what the
-surrounding prose says. The shared-library section written in Stage B2
+Two stages of the same method — run every code sample and shell command in
+the target document against `target/release/vox` (v0.1.23) and record whether
+it does what the surrounding prose says.
+
+- **Stage B4** audited `LANGUAGE.md` (the language reference).
+- **Stage B5** audited `README.md` and `docs/INSTALL.md` — the two documents a
+  new user meets first.
+
+## Stage B4 — LANGUAGE.md
+
+Audited every Vox code sample and shell command in `LANGUAGE.md`. The shared-library section written in Stage B2
 ("Libraries and Imports", lines ~2789–3116) was skipped on instruction — its
 `see`-of-a-`.lib` parts are unbuilt by design and its runnable parts were
 verified in B2. Everything else in the file is covered.
@@ -228,3 +236,136 @@ Print t's start time.
 - Every "compile error" claim in the Nothing and Dynamic Values sections
   (lines 1061, 1139) was verified: the compiler emits exactly the error text
   the doc shows.
+
+---
+
+## Stage B5 — README.md and docs/INSTALL.md
+
+Same method applied to the two documents a new user meets first. README.md
+holds 8 fenced blocks (16 fence markers); docs/INSTALL.md holds 9 (18 markers).
+Every block was run or inspected. Experiments ran in `/tmp/vox-b5`; the repo
+was not mutated outside `.md`/`docs/`.
+
+### Inherited fix — LANGUAGE.md Mangling section
+
+The B2 Mangling section said each component is sanitized and "a leading digit
+is prefixed." Applied per component, the version `1.0` → `_1_0` (the sanitizer
+yields `1_0`, which starts with a digit, so the prefix fires), and the join
+gives `mathkit__1_0_add_two_numbers` — a double underscore, contradicting the
+example `mathkit_1_0_add_two_numbers` on the same line. Inherited from plan 230,
+which stated the rule wrongly; the code track hit the same contradiction
+implementing Stage A1.
+
+**Actual rule** (`src/codegen/mod.rs:124-137`, `mangle_symbol`, plus unit tests
+at `:7151-7164`): one sanitizer maps every character outside `[A-Za-z0-9_]` to
+`_`; the leading-digit prefix applies **only to the library component**, which
+begins the symbol. Version and function components are interior and take the
+sanitizer alone, so `1.0` → `1_0` (the `.` becomes a single `_`, no prefix).
+**Fixed** the wording in `LANGUAGE.md` to state this, and to call out the
+double-underscore trap explicitly.
+
+**Could not verify the composed symbol empirically.** The steer asked for
+`nm -D --defined-only` on a `probe`/`0.1` library to show `probe_0_1_inner`.
+On this branch the `<lib>_<version>_<name>` composition is **not yet live**:
+function labels are `mangle_symbol(name)` only (`src/codegen/mod.rs:2713`), and
+`Statement::LibraryDecl` just emits a comment (`:4158`). Building
+`Library "probe" version "0.1"` + `To "inner"` with `--shared` exports the bare
+symbol `inner`, not `probe_0_1_inner` — consistent with `LANGUAGE.md` line 2900
+("The mangled form … arrives with Stage A1"). So the `nm` check the steer
+named cannot pass on this branch yet. The rule itself was verified from the
+`mangle_symbol` implementation and unit tests, and by composing per the stated
+rule. Reporting this rather than fabricating the verification.
+
+### README.md — coverage
+
+| # | Lines | Block | Result |
+|---|-------|-------|--------|
+| 1 | 125–140 | `text` — the `cat` example | **RUN_OK** — compiles and runs; `printf 'line one\nline two\n' \| vox cat.vox --run` prints `line one`/`line two`, rc=0 |
+| 2 | 144–146 | `open ... at each X from Y` | fragment — illustrative snippet of the construct already exercised in block 1 |
+| 3 | 156–164 | architecture diagram | illustration, not executable |
+| 4 | 179–181 | `sudo apt install nasm rust make` | not executed (system mutation); inspected — **doc wrong**: Debian/Ubuntu has no `rust` package (it ships `cargo`/`rustc`); `apt install rust` fails. **Fixed** → `nasm cargo make` |
+| 5 | 185–187 | `sudo yum install nasm rust make` | not executed; inspected — OK: `rust` is a real Fedora package (verified installed: `rust-1.97.1-1.fc44`), provides `cargo`. Left as-is |
+| 6 | 193–195 | `cargo build --release` | **RUN_OK** — 0 warnings |
+| 7 | 201–208 | `make build` / `sudo make install` / `sudo make uninstall` | not executed (mutates `/usr/local`); inspected — Makefile targets `build`/`install`/`uninstall` all exist; `install` puts the binary at `/usr/local/bin/vox` and coreasm at `/usr/local/share/vox/coreasm` (correct names). The `.7z` aside references a release artifact not in the repo (harmless advice) |
+| 8 | 214–220 | `vox example.vox --run` / `vox example.vox` | **RUN_OK** — `--run` works; bare `vox ex.vox` produces executable `ex` (default output = source basename); `--help` lists `--run`/`--shared`/`--link`/`--lib-path`/`-o`/`--emit-asm`; `--version` → `vox v0.1.23` |
+
+### docs/INSTALL.md — coverage
+
+| # | Lines | Block | Result |
+|---|-------|-------|--------|
+| 1 | 12–15 | `sudo apt update` / `apt install -y nasm binutils` | not executed; inspected — **doc wrong**: Prerequisites list (lines 7–8) omitted Rust entirely, and the apt line omitted `cargo`, so `cargo build --release` (step 1) would fail for a user following the doc. **Fixed** — added `cargo` to Prerequisites and to the apt line |
+| 2 | 23–25 | `cargo build --release` | **RUN_OK** |
+| 3 | 29–31 | `sudo install -m 0755 target/release/ec /usr/local/bin/ec` | not executed; inspected — **doc wrong**: the binary is `target/release/vox` (Cargo.toml `name = "vox"`; Makefile `BIN := vox`); there is no `target/release/ec`. **Fixed** → `vox` |
+| 4 | 39–43 | `sudo mkdir/rm/cp coreasm to /usr/local/share/ec/coreasm` | not executed; inspected — **doc wrong**: the compiler reads coreasm from `/usr/local/share/vox/coreasm` (`src/main.rs:51`), not `.../ec/...`. `coreasm/` exists in the repo with per-arch `.asm` (x86_64/aarch64/Win64). **Fixed** → `vox` |
+| 5 | 47–49 | `vox /path/to/program.vox --run` | **RUN_OK** (uses the correct name `vox`; `--run` works) — note this line already said `vox` even before the fix, contradicting the `ec` install two blocks above |
+| 6 | 68–71 | `export EC_CORE_PATH=/path/to/ec` | inspected — `EC_CORE_PATH` matches the compiler (`src/main.rs:30` reads exactly that var); illustrative path changed `ec`→`vox` |
+| 7 | 81–84 | `text` config: `~/.config/ec/config`, `core_path=…` | inspected — **doc wrong**: the XDG config path is `~/.config/vox/config` (`src/main.rs:24,86`), not `~/.config/ec/config`. The key `core_path=` is correct (`src/main.rs:103`). **Fixed** → `vox` |
+| 8 | 90–93 | `sudo rm -f /usr/local/bin/ec` / `rm -rf /usr/local/share/ec` | not executed; inspected — **doc wrong** (wrong name). **Fixed** → `vox` |
+| 9 | 97–99 | `rm -rf ~/.config/ec` | not executed; inspected — **doc wrong** (wrong path). **Fixed** → `vox` |
+
+The prose "How `ec` finds `coreasm`" resolution list (lines 51–62) had the
+same `ec`→`vox` path errors in steps 2 and 3; **fixed**. Step 1 (`EC_CORE_PATH`)
+left as-is — see the finding below.
+
+### Stage B5 classification
+
+- **doc wrong, fixed** — 3 findings (each spans several locations):
+  - **R-APT** (README apt line): `rust` is not a Debian/Ubuntu package; changed
+    to `cargo`. The yum line is correct (Fedora ships `rust`) and was left
+    alone. *Caveat: this is a Fedora host with no `apt-cache`; the apt fix is
+    reasoned from Debian/Ubuntu package naming (`cargo`/`rustc`, no `rust`).
+    `cargo` is correct and sufficient regardless, so the fix is safe.*
+  - **I-NAME** (docs/INSTALL.md, systematic): the entire document called the
+    compiler `ec` — title, prose, `/usr/local/bin/ec`, `/usr/local/share/ec`,
+    `/usr/share/ec/coreasm`, `/opt/ec/coreasm`, `~/.config/ec/config`, the
+    uninstall paths, and the resolution-list paths (~20 occurrences). The
+    actual binary is `vox` and the compiler reads coreasm from `…/vox/coreasm`.
+    All changed to `vox`.
+  - **I-PREREQ** (docs/INSTALL.md): Prerequisites omitted Rust, and the apt
+    install line omitted `cargo`, so a user following the doc could not build.
+    Added `cargo` to both.
+- **compiler/source wrong, doc right — do not fix (1, observation):**
+  - **ENV-EC** — the env var is `EC_CORE_PATH` (`src/main.rs:30`) while the
+    binary and every path became `vox`. The doc documents `EC_CORE_PATH`
+    correctly (it is what the compiler reads), so it was **not changed** —
+    changing it to `VOX_CORE_PATH` would make the doc wrong. This is a
+    source-side naming inconsistency left over from the `ec`→`vox` rename;
+    flagging it for the code track to consider renaming the env var for
+    consistency. Not a doc defect.
+- **unclear — 0.** (ENV-EC is closest, but it is correctly classified as
+  source-side: the doc matches behavior.)
+
+### INSTALL steps not safely executed
+
+Per the brief, nothing that writes outside the worktree or a temp dir was run.
+Inspected-only (not executed), with what was checked:
+
+- README block 4 (apt install) and block 5 (yum install) — package names
+  verified against the host package set (Fedora: `rust`/`cargo`/`nasm` all
+  installed; Debian/Ubuntu: reasoned, not run).
+- README block 7 (`make install`/`make uninstall`) — Makefile inspected; all
+  three targets exist and install to the correct `vox` paths.
+- INSTALL blocks 1, 3, 4, 8, 9 (all `sudo`/`rm -rf` under `/usr/local` and
+  `~/.config`) — inspected only: verified the real binary name (`vox`), the
+  real coreasm search paths (`src/main.rs:51-53`), and that `coreasm/` exists.
+
+### Version numbers
+
+Neither document hardcodes a version; `vox --version` reports `v0.1.23`,
+matching `Cargo.toml`. The README badges are dynamic. Nothing to flag, and the
+upcoming `0.2.0` bump requires no change to either doc. (Flagging here per the
+brief rather than guessing what a version field should say.)
+
+### Most damaging finding to a new user
+
+**I-NAME (docs/INSTALL.md `ec`→`vox`).** This is the first install path a new
+user follows. As written, it told them to `sudo install … target/release/ec
+/usr/local/bin/ec` (the source binary does not exist under that name) and to
+place coreasm in `/usr/local/share/ec/coreasm` — but the compiler is `vox` and
+looks for coreasm in `/usr/local/share/vox/coreasm`. A user following INSTALL.md
+precisely would, after fixing the missing-`cargo` Prerequisites, find no
+`target/release/ec` to install, and if they renamed it by hand, the compiler
+still could not find coreasm. Compounding it, block 5 already invoked the
+binary as `vox` two lines after installing it as `ec` — the doc contradicted
+itself. A broken install on the very first try is the thing most likely to
+make a newcomer conclude the project is abandoned and leave.

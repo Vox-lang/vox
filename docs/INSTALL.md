@@ -1,9 +1,10 @@
-# Installing `ec` system-wide
+# Installing `vox` system-wide
 
-This document describes how to install `ec` and its runtime assembly macros (`coreasm`) so it works from *any* directory.
+This document describes how to install `vox` and its runtime assembly macros (`coreasm`) so it works from *any* directory.
 
 ## Prerequisites
 
+- `cargo` (Rust toolchain, to build the compiler)
 - `nasm`
 - `ld` (binutils)
 
@@ -11,7 +12,7 @@ On Debian/Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install -y nasm binutils
+sudo apt install -y nasm binutils cargo
 ```
 
 ## Recommended system-wide install (Linux)
@@ -27,19 +28,19 @@ cargo build --release
 ### 2) Install the binary
 
 ```bash
-sudo install -m 0755 target/release/ec /usr/local/bin/ec
+sudo install -m 0755 target/release/vox /usr/local/bin/vox
 ```
 
 ### 3) Install the `coreasm` runtime library
 
-`ec` needs access to the `coreasm/` directory at compile time (it passes an `-I` include path to NASM).
+`vox` needs access to the `coreasm/` directory at compile time (it passes an `-I` include path to NASM).
 
 Install it to the standard shared-data location:
 
 ```bash
-sudo mkdir -p /usr/local/share/ec
-sudo rm -rf /usr/local/share/ec/coreasm
-sudo cp -r coreasm /usr/local/share/ec/coreasm
+sudo mkdir -p /usr/local/share/vox
+sudo rm -rf /usr/local/share/vox/coreasm
+sudo cp -r coreasm /usr/local/share/vox/coreasm
 ```
 
 At this point you should be able to run:
@@ -48,16 +49,16 @@ At this point you should be able to run:
 vox /path/to/program.vox --run
 ```
 
-## How `ec` finds `coreasm`
+## How `vox` finds `coreasm`
 
 The compiler searches for `coreasm` using the following resolution order:
 
 1. `EC_CORE_PATH` environment variable
-2. XDG config file: `~/.config/ec/config` (`core_path=...`)
+2. XDG config file: `~/.config/vox/config` (`core_path=...`)
 3. System paths:
-   - `/usr/local/share/ec/coreasm`
-   - `/usr/share/ec/coreasm`
-   - `/opt/ec/coreasm`
+   - `/usr/local/share/vox/coreasm`
+   - `/usr/share/vox/coreasm`
+   - `/opt/vox/coreasm`
 4. Executable-relative search (portable installs)
 5. Current working directory fallback (`./coreasm`)
 
@@ -66,21 +67,21 @@ The compiler searches for `coreasm` using the following resolution order:
 If you keep `coreasm` somewhere non-standard:
 
 ```bash
-export EC_CORE_PATH=/path/to/ec
-# or: export EC_CORE_PATH=/path/to/ec/coreasm
+export EC_CORE_PATH=/path/to/vox
+# or: export EC_CORE_PATH=/path/to/vox/coreasm
 ```
 
 ## Option B: Configure via XDG config file (per-user)
 
 Create:
 
-`~/.config/ec/config`
+`~/.config/vox/config`
 
 With contents:
 
 ```text
-# ec config
-core_path=/path/to/ec
+# vox config
+core_path=/path/to/vox
 ```
 
 (`core_path` may point at the repo root or at the `coreasm` directory directly.)
@@ -88,12 +89,12 @@ core_path=/path/to/ec
 ## Uninstall
 
 ```bash
-sudo rm -f /usr/local/bin/ec
-sudo rm -rf /usr/local/share/ec
+sudo rm -f /usr/local/bin/vox
+sudo rm -rf /usr/local/share/vox
 ```
 
 If you set up user configuration:
 
 ```bash
-rm -rf ~/.config/ec
+rm -rf ~/.config/vox
 ```

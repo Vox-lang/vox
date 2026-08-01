@@ -3020,8 +3020,13 @@ Every exported function is mangled to a single flat label:
 ```
 
 `mathkit` + `1.0` + `add two numbers` → `mathkit_1_0_add_two_numbers`. Each
-component is sanitized to a valid C identifier (spaces and punctuation become
-`_`, a leading digit is prefixed), so the version `1.0` appears as `1_0`. A
+component is sanitized by mapping every character outside `[A-Za-z0-9_]` to `_`.
+The leading-digit prefix (a digit is not a legal C identifier start) applies
+only to the **library** component, which begins the symbol; the version and
+function components are interior and take the sanitizer alone, so the version
+`1.0` appears as `1_0` (the `.` becomes a single `_`, no prefix — applying the
+prefix per component would yield `mathkit__1_0_add_two_numbers`, a double
+underscore). A
 non-Vox caller — C, Rust, anything that links the `.so` — needs this mangled
 name to call the function at all, which is why the scheme is documented here
 and not only in [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.md) (the full
