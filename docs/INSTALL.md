@@ -1,11 +1,13 @@
 # Installing `vox` system-wide
 
 > **Status:** Current install guide — paths and the coreasm resolution order
-> verified against `src/main.rs` (B5 audit). The `EC_CORE_PATH` environment
-> variable is intentionally left with its `EC_` prefix: the compiler reads that
-> exact name (`src/main.rs:30`), so changing it here would make this guide
-> wrong; renaming the env var is a source-side change for the code track.
-> _(assessed 2026-08, vox v0.1.23)_
+> verified against `src/main.rs` (B5 audit; B9 update for plan 250 D5/D6).
+> `VOX_CORE_PATH` is the documented environment variable and
+> `~/.config/vox/config` the documented config path; the older `EC_CORE_PATH`
+> and `~/.config/ec/config` names still work as deprecated aliases
+> (`src/main.rs:74-86`, `:149-172`). The `vox` name wins when both are set, and a
+> one-line deprecation note is printed when only the old name is found.
+> _(assessed 2026-08, vox v0.1.24)_
 
 This document describes how to install `vox` and its runtime assembly macros (`coreasm`) so it works from *any* directory.
 
@@ -60,8 +62,8 @@ vox /path/to/program.vox --run
 
 The compiler searches for `coreasm` using the following resolution order:
 
-1. `EC_CORE_PATH` environment variable
-2. XDG config file: `~/.config/vox/config` (`core_path=...`)
+1. `VOX_CORE_PATH` environment variable (`EC_CORE_PATH` is read as a deprecated alias; `VOX_CORE_PATH` wins when both are set)
+2. XDG config file: `~/.config/vox/config` (`core_path=...`; `~/.config/ec/config` is read as a deprecated alias, with the `vox` file winning when both exist)
 3. System paths:
    - `/usr/local/share/vox/coreasm`
    - `/usr/share/vox/coreasm`
@@ -74,9 +76,15 @@ The compiler searches for `coreasm` using the following resolution order:
 If you keep `coreasm` somewhere non-standard:
 
 ```bash
-export EC_CORE_PATH=/path/to/vox
-# or: export EC_CORE_PATH=/path/to/vox/coreasm
+export VOX_CORE_PATH=/path/to/vox
+# or: export VOX_CORE_PATH=/path/to/vox/coreasm
 ```
+
+`EC_CORE_PATH` still works as a deprecated alias — `VOX_CORE_PATH` wins when
+both are set. If only `EC_CORE_PATH` is found, the compiler prints a one-line
+note pointing you at `VOX_CORE_PATH` (once, at the start of the build). Existing
+shell profiles and CI that set the old name keep working; migrate when
+convenient.
 
 ## Option B: Configure via XDG config file (per-user)
 
@@ -92,6 +100,12 @@ core_path=/path/to/vox
 ```
 
 (`core_path` may point at the repo root or at the `coreasm` directory directly.)
+
+`~/.config/ec/config` is still read as a deprecated alias — the `vox` file wins
+when both exist. If only the `ec` file is found, the compiler prints a one-line
+note pointing you at `~/.config/vox/config` (once, at the start of the build).
+Existing per-user configs under the old name keep working; migrate when
+convenient.
 
 ## Uninstall
 

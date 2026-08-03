@@ -44,7 +44,8 @@ were left in the tree.
 ## Classification counts
 
 - **doc wrong, compiler right** — 13 findings (fixed in this commit, noted below).
-- **compiler wrong, doc right** — 4 findings (NOT fixed; reported for the code track).
+- **compiler wrong, doc right** — 4 findings (resolved by plan 250, commit
+  `e137a63`; outcomes recorded per-finding below).
 - **unclear** — 0.
 
 ---
@@ -164,10 +165,14 @@ too).
 
 ---
 
-## Findings — compiler wrong, doc right (NOT fixed)
+## Findings — compiler wrong, doc right (resolved by plan 250)
 
-Reported for the code track. Reproducible from each entry alone. Not modified —
-changing these samples would paper over a real defect.
+Filed from the B4 audit for the code track. Three were genuine compiler defects
+fixed by plan 250 (commit `e137a63`); the fourth (F-FORK-1) was not a real
+defect and is recorded as such below. The samples were not modified — changing
+them would have papered over a real defect, and once the compiler was fixed
+they were correct as written. Each entry carries its outcome so the next reader
+does not re-investigate settled ground.
 
 ### F-APP-1 — lines 1259, 1282: `append` rejects arithmetic expressions
 `append` does not accept an arithmetic expression as the value, despite line
@@ -183,6 +188,12 @@ a number called "i" is 2.
 append i multiply i to s.
 ```
 
+**Resolved (plan 250 D2, commit `e137a63`):** `append` now parses its value with
+full arithmetic, including braced expressions — `append i multiply i to
+squares` and `append {i multiply i} to s` both compile and run as documented.
+Verified on this branch: the loop sample (line 1282) → `1 4 9 16 25`; the braced
+form → `4`. Covered by `tests/047`. Sample unchanged.
+
 ### F-APP-2 — lines 1303, 1341: `append each x from <list> to <dest>`
 Fails when the source is a list variable: `Expected 'to' after collection in
 append` — the parser reads `from source to dest` as a *range* (`source to
@@ -195,6 +206,12 @@ a list called "dest" is [].
 append each x from source to dest.
 ```
 
+**Resolved (plan 250 D1, commit `e137a63`):** the list-source append-each no
+longer has its destination eaten by range parsing. Verified on this branch:
+list source `[1, 2, 3]` → `[1, 2, 3]` and `[10, 20, 30]` → `[10, 20, 30]`, while
+the range form `1 to 5` still → `[1, 2, 3, 4, 5]`. Covered by `tests/046`.
+Sample unchanged.
+
 ### F-FORK-1 — line 2173: `Set reaped to reap any child process.`
 Fails when `reaped` is not already declared: `Unknown identifier 'reaped'` (did
 you mean `read`?). `Set <newvar> to <expr>` *does* create new variables in
@@ -203,6 +220,18 @@ without prior declaration (verified). So the compiler accepts `fork` but not
 `reap` as the RHS of a Set-declaration. Pre-declaring (`a number called "reaped" is 0.` then `Set reaped to reap any child process.`) works. The doc's example
 assumes Set creates the variable, which is correct for every other expression.
 **Repro:** `Set reaped to reap any child process.` (alone).
+
+**Resolved (plan 250 D4, commit `e137a63`): not a real defect.** Does not
+reproduce — `Set reaped to reap any child process.` auto-declares at top level
+exactly like every other RHS expression (the existing `tests/102_fork_reap`
+already exercised the comma form). The "Unknown identifier 'reaped'" the audit
+saw came from a different shape: a statement following the `Set` inside an
+if-block separated by a *period*, which terminates the block and leaves the
+next statement at top-level scope where the variable was never declared —
+`Set reaped to 5.` fails identically, so it is not reap-specific. The fix is the
+comma the block syntax requires, not a compiler change. Filed from the audit
+without independent verification. Regression test `tests/211_set_reap_undeclared`
+now guards the top-level auto-declare. Sample unchanged.
 
 ### F-TIMER-1 — lines 2316–2317, 2352, 2354: timer `start time` / `end time`
 These properties do not parse: `Expected a statement, got Time` — `time` is a
@@ -220,6 +249,14 @@ Start t.
 Stop t.
 Print t's start time.
 ```
+
+**Resolved (plan 250 D3, commit `e137a63`):** `start time` / `end time` now
+parse through the reserved `time` keyword (the four property-access sites —
+bare name, quoted name, and both `the ...` forms — now consume a `Time` token
+directly after matching `start`/`end`; no lexer change). Verified on this
+branch: the complete timer example (lines 2338–2361) runs and prints unix
+timestamps for both `start time` and `end time`. Covered by `tests/153`.
+Sample unchanged.
 
 ---
 
