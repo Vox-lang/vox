@@ -1,0 +1,18 @@
+a number called total is 5.
+a number called 'total items' is 5.
+print total.
+print 'total items'.
+Set total to 9.
+Set 'total items' to 9.
+print total's length.
+print 'total items's length.
+To addup with a number called x and a number called y.
+  Return a number, x add y.
+print addup of 3 and 4.
+print 'add up' of 3 and 4.
+print calculate of 3.
+print element N of list.
+print element 2 of items.
+print byte i of buffer.
+a number called b is byte 1 of hay.
+print list of size 16.

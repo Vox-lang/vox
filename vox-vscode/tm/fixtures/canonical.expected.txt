@@ -1,0 +1,107 @@
+  1: "a"  ->  punctuation.definition.vox
+  1: "number"  ->  storage.type.vox
+  1: "called"  ->  punctuation.definition.vox
+  1: "total"  ->  variable.other.vox
+  1: "is"  ->  keyword.operator.vox
+  1: "5"  ->  constant.numeric.integer.vox
+  1: "."  ->  (none)
+  2: "a"  ->  punctuation.definition.vox
+  2: "number"  ->  storage.type.vox
+  2: "called"  ->  punctuation.definition.vox
+  2: "'total items'"  ->  variable.other.vox
+  2: "is"  ->  keyword.operator.vox
+  2: "5"  ->  constant.numeric.integer.vox
+  2: "."  ->  (none)
+  3: "Set"  ->  keyword.other.vox
+  3: "'total items'"  ->  variable.other.vox
+  3: "to"  ->  punctuation.definition.vox
+  3: "9"  ->  constant.numeric.integer.vox
+  3: "."  ->  (none)
+  4: "print"  ->  keyword.other.vox
+  4: "'total items'"  ->  variable.other.vox
+  4: "s"  ->  punctuation.accessor.vox
+  4: "length"  ->  variable.other.property.vox
+  4: "."  ->  (none)
+  5: "print"  ->  keyword.other.vox
+  5: "\""  ->  string.quoted.double.vox
+  5: "text"  ->  string.quoted.double.vox
+  5: "\""  ->  string.quoted.double.vox
+  5: "."  ->  (none)
+  6: "print"  ->  keyword.other.vox
+  6: "'A'"  ->  constant.character.vox
+  6: "."  ->  (none)
+  7: "print"  ->  keyword.other.vox
+  7: "'multi word'"  ->  variable.other.vox
+  7: "."  ->  (none)
+  9: "To"  ->  storage.type.function.vox
+  9: "'add up'"  ->  entity.name.function.definition.vox
+  9: "with"  ->  punctuation.definition.vox
+  9: "a"  ->  punctuation.definition.vox
+  9: "number"  ->  storage.type.vox
+  9: "called"  ->  punctuation.definition.vox
+  9: "'first one'"  ->  variable.other.vox
+  9: "and"  ->  keyword.operator.vox
+  9: "a"  ->  punctuation.definition.vox
+  9: "number"  ->  storage.type.vox
+  9: "called"  ->  punctuation.definition.vox
+  9: "'second one'"  ->  variable.other.vox
+  9: "."  ->  (none)
+ 10: "Return"  ->  keyword.control.vox
+ 10: "a"  ->  punctuation.definition.vox
+ 10: "number"  ->  storage.type.vox
+ 10: ", "  ->  (none)
+ 10: "the"  ->  punctuation.definition.vox
+ 10: "'first one'"  ->  variable.other.vox
+ 10: "add"  ->  keyword.operator.vox
+ 10: "the"  ->  punctuation.definition.vox
+ 10: "'second one'"  ->  variable.other.vox
+ 10: "."  ->  (none)
+ 11: "print"  ->  keyword.other.vox
+ 11: "'add up'"  ->  entity.name.function.call.vox
+ 11: "of"  ->  punctuation.accessor.vox
+ 11: "3"  ->  constant.numeric.integer.vox
+ 11: "and"  ->  keyword.operator.vox
+ 11: "4"  ->  constant.numeric.integer.vox
+ 11: "."  ->  (none)
+ 13: "Library"  ->  keyword.control.import.vox
+ 13: "'math kit'"  ->  variable.other.vox
+ 13: "version"  ->  keyword.control.import.vox
+ 13: "\""  ->  string.quoted.double.vox
+ 13: "1.0"  ->  string.quoted.double.vox
+ 13: "\""  ->  string.quoted.double.vox
+ 13: "."  ->  (none)
+ 14: "see"  ->  keyword.control.import.vox
+ 14: "'math kit'"  ->  variable.other.vox
+ 14: "version"  ->  keyword.control.import.vox
+ 14: "\""  ->  string.quoted.double.vox
+ 14: "1.0"  ->  string.quoted.double.vox
+ 14: "\""  ->  string.quoted.double.vox
+ 14: "from"  ->  punctuation.definition.vox
+ 14: "\""  ->  string.quoted.double.vox
+ 14: "./libmathkit.lib"  ->  string.quoted.double.vox
+ 14: "\""  ->  string.quoted.double.vox
+ 14: "."  ->  (none)
+ 15: "see"  ->  keyword.control.import.vox
+ 15: "\"./utils.vox\""  ->  string.quoted.double.vox
+ 15: "."  ->  (none)
+ 17: "a"  ->  punctuation.definition.vox
+ 17: "map"  ->  storage.type.vox
+ 17: "called"  ->  punctuation.definition.vox
+ 17: "person"  ->  variable.other.vox
+ 17: "is"  ->  keyword.operator.vox
+ 17: " {"  ->  (none)
+ 17: "\""  ->  string.quoted.double.vox
+ 17: "name"  ->  string.quoted.double.vox
+ 17: "\""  ->  string.quoted.double.vox
+ 17: ": "  ->  (none)
+ 17: "\""  ->  string.quoted.double.vox
+ 17: "Ada"  ->  string.quoted.double.vox
+ 17: "\""  ->  string.quoted.double.vox
+ 17: "}."  ->  (none)
+ 18: "print"  ->  keyword.other.vox
+ 18: "person"  ->  variable.other.vox
+ 18: "'s"  ->  punctuation.accessor.vox
+ 18: "\""  ->  string.quoted.double.vox
+ 18: "name"  ->  string.quoted.double.vox
+ 18: "\""  ->  string.quoted.double.vox
+ 18: "."  ->  (none)
