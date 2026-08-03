@@ -121,7 +121,7 @@ on it, and `is a map` recognises it; tag 6 remains reserved for null.
     in an insertion-ordered array alongside an FNV-1a hash table (linear
     probing over power-of-two capacity, grow at load ≤ 1/2, allocate-copy-
     do-not-free-old-block like `_list_append`) for O(1) lookup. Map
-    literals `{"k": v}`, `map's "k"` access, `set map's "k" to v`
+    literals `{"k": v}`, `map's "k"` access, `set map's k to v`
     insert/replace (store-back on realloc), `map's keys`/`values` (fresh
     lists, insertion-ordered), `map's length`/`empty`, `for each key in
     … keys` / `for each v in … values`, `is a map` (folds on a static map,
@@ -143,7 +143,7 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
-**A dynamic map key costs a 4 KiB page.** `set m's "key{i}" to v` builds the
+**A dynamic map key costs a 4 KiB page.** `set m's 'key{i}' to v` builds the
 key by allocating a fresh buffer per evaluation, and `_alloc_buffer` mmaps —
 which is page-granular whatever size is requested. 10 000 dynamic keys
 measure at 41 MB peak RSS for ~80 KB of key text, and the pages are never
@@ -204,7 +204,7 @@ Remaining after 1c, in order of closure:
   (guarded arithmetic that narrows the type inside the branch) remains
   future work.
 - **Nested-list limitations (documented by 1e1).** An extracted child
-  (`a list called "inner" is element 2 of nested.`) is a *reference* to
+  (`a list called inner is element 2 of nested.`) is a *reference* to
   the child list, not a copy: if the parent is later grown past a
   reallocation, a child extracted before it may dangle. Extract after the
   parent finishes growing, or copy element-by-element. And the
@@ -230,7 +230,7 @@ Layout sketch (sibling of the list layout):
 ### Stages
 
 - **2a. Type and layout.** Construction sentences
-  (`a matrix called "m" is 3 by 4.`, literals, zeros/identity); element
+  (`a matrix called m is 3 by 4.`, literals, zeros/identity); element
   get/set; `rows`/`columns` properties; formatted printing.
 - **2b. Arithmetic.** Elementwise add/subtract, scalar multiply,
   transpose, matmul as the classic triple loop. Shape errors at compile
@@ -256,7 +256,7 @@ different types per slot" (Vox lists already do that; Python's
 
 ### Stages
 
-- **3a. Syntax and representation.** `a pair called "p" is (1, "two").` —
+- **3a. Syntax and representation.** `a pair called p is (1, "two").` —
   arity and per-position types recorded statically in the symbol table.
   No runtime header needed: positions and types are fully static, so
   slots can live on the stack.
@@ -286,7 +286,7 @@ monotonicity is what keeps the analysis simple and correct.
 
 A pre-scan pass runs this join to a **fixed point** over the whole program
 before any code is emitted. The fixed point handles aliases and
-out-of-order evidence: `a list called "b" is the a.` makes both names
+out-of-order evidence: `a list called b is the a.` makes both names
 refer to one heap block, so mixedness must flow between them regardless of
 declaration order. (Each pass can only add to the mixed set, so
 termination is guaranteed.)

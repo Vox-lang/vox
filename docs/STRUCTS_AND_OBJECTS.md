@@ -43,14 +43,14 @@ set dog's left leg to 3.
 ### 2. Struct Definition Syntax
 
 ```vox
-Define a struct called "Dog" with:
-    a text called "name",
-    a number called "age",
-    a boolean called "is good".
+Define a struct called Dog with:
+    a text called name,
+    a number called age,
+    a boolean called 'is good'.
 
-Define a struct called "Point" with:
-    a number called "x",
-    a number called "y".
+Define a struct called Point with:
+    a number called x,
+    a number called y.
 ```
 
 **Alternative (more natural-language-like):**
@@ -68,10 +68,10 @@ A Point has:
 ### 3. Struct Instantiation
 
 ```vox
-Create a Dog called "buddy" with name "Buddy", age 3, is good true.
+Create a Dog called buddy with name "Buddy", age 3, is good true.
 
 (Or with defaults)
-Create a Dog called "spot".
+Create a Dog called spot.
 Set spot's name to "Spot".
 Set spot's age to 5.
 ```
@@ -87,12 +87,12 @@ If buddy's is good then print "Good dog!".
 ### 5. Nested Structs
 
 ```vox
-Define a struct called "Person" with:
-    a text called "name",
-    a Dog called "pet".
+Define a struct called Person with:
+    a text called name,
+    a Dog called pet.
 
-Create a Person called "alice" with name "Alice".
-Create a Dog called "fido" with name "Fido", age 2.
+Create a Person called alice with name "Alice".
+Create a Dog called fido with name "Fido", age 2.
 Set alice's pet to fido.
 
 Print alice's pet's name.     (prints "Fido")
@@ -180,7 +180,7 @@ Structs are hash maps at runtime:
 
 ### Phase 5: Methods (Future)
 ```vox
-Define a method on Dog called "bark" that:
+Define a method on Dog called bark that:
     prints "{self's name} says woof!".
 
 Call buddy's bark.
@@ -213,14 +213,14 @@ mov rax, [rax+8]      ; age at offset 8
 ## Syntax Alternatives Considered
 
 ### Definition
-- `Define a struct called "X"` (explicit, clear)
+- `Define a struct called X` (explicit, clear)
 - `A X has` (more natural-language-like)
-- `Create a type called "X"` (verbose)
+- `Create a type called X` (verbose)
 
 ### Instantiation
-- `Create a Dog called "buddy"` ✓
-- `A Dog called "buddy"` (conflicts with variable declaration)
-- `New Dog called "buddy"` (too programming-like)
+- `Create a Dog called buddy` ✓
+- `A Dog called buddy` (conflicts with variable declaration)
+- `New Dog called buddy` (too programming-like)
 
 ## Timeline
 

@@ -9,7 +9,7 @@
 This is the internal (x86_64) calling-convention note for Vox's dynamic
 `value` type — the declared type that carries a runtime type tag alongside
 its payload across function boundaries. It is compiler-internal: Vox authors
-never see these rules, only the `with a value called "x"` /
+never see these rules, only the `with a value called x` /
 `Return a value, <expr>` surface syntax documented in `LANGUAGE.md`. The
 note exists so future work (stage 1e nested-list tags, a clobbering helper,
 shared-library ABI) knows the contract it must preserve or extend.
