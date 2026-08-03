@@ -933,7 +933,7 @@ impl Parser {
         self.skip_noise();
         
         // Check for loop expansion: "print each X from Y [treating X as Y]"
-        if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+        if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
             // Create the variable expression, with optional treating substitution
             let var_expr = if let Some((match_val, replacement)) = treating {
                 Expr::TreatingAs {
@@ -959,7 +959,7 @@ impl Parser {
                 self.skip_noise();
                 
                 // Check if next is "each" for loop expansion
-                if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+                if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                     // Create function call with loop variable as argument
                     let arg_expr = if let Some((match_val, replacement)) = treating {
                         Expr::TreatingAs {
@@ -2254,7 +2254,7 @@ impl Parser {
                     self.skip_noise();
                     
                     // Check for loop expansion: "at each X from Y"
-                    if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+                    if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                         path_info = Some(Err((variable, collection, treating)));
                     } else {
                         path_info = Some(Ok(self.parse_primary()?));
@@ -2479,7 +2479,11 @@ impl Parser {
     /// Try to parse "each <variable> from <collection> [treating X as Y]" pattern.
     /// Returns Some((variable, collection, optional_treating)) if found.
     /// This is the universal loop expansion syntax that works with any action.
-    fn try_parse_each_from(&mut self) -> Result<Option<LoopExpansion>, Box<CompileError>> {
+    /// Parse `each <var> from <collection>`. When `expect_trailing_to` is set
+    /// (the append statement), a `to <dest>` clause follows the collection, so
+    /// a range source (`from 1 to 5 to rl`, two `to`s) must be told apart from
+    /// a list source (`from source to dest`, one `to`).
+    fn try_parse_each_from(&mut self, expect_trailing_to: bool) -> Result<Option<LoopExpansion>, Box<CompileError>> {
         if *self.current() != Token::Each {
             return Ok(None);
         }
@@ -2521,14 +2525,37 @@ impl Parser {
         // But only if first is a simple value (number/identifier), not a list or other collection
         let is_list_or_collection = matches!(first, Expr::ListLit { .. } | Expr::PropertyAccess { .. });
         let collection = if *self.current() == Token::To && !is_list_or_collection {
-            self.advance();
-            self.skip_noise();
-            let end = self.parse_primary()?;
-            self.skip_noise();
-            Expr::Range {
-                start: Box::new(first),
-                end: Box::new(end),
-                inclusive: true,
+            if expect_trailing_to {
+                // Range source (`from 1 to 5 to rl`) vs list source
+                // (`from source to dest`): parse the would-be range end
+                // speculatively and keep the range only when a second `to`
+                // follows. Otherwise the first `to` is the caller's
+                // separator - rewind and leave it for the caller.
+                let saved = self.pos;
+                self.advance();
+                self.skip_noise();
+                let end = self.parse_primary()?;
+                self.skip_noise();
+                if *self.current() == Token::To {
+                    Expr::Range {
+                        start: Box::new(first),
+                        end: Box::new(end),
+                        inclusive: true,
+                    }
+                } else {
+                    self.pos = saved;
+                    first
+                }
+            } else {
+                self.advance();
+                self.skip_noise();
+                let end = self.parse_primary()?;
+                self.skip_noise();
+                Expr::Range {
+                    start: Box::new(first),
+                    end: Box::new(end),
+                    inclusive: true,
+                }
             }
         } else {
             // Not a range - could be a more complex expression, but we already have first
@@ -3524,7 +3551,7 @@ impl Parser {
         self.skip_noise();
         
         // Check for loop expansion: "append each X from Y to Z"
-        if let Some((variable, collection, _treating)) = self.try_parse_each_from()? {
+        if let Some((variable, collection, _treating)) = self.try_parse_each_from(true)? {
             // Get target list name after "to"
             self.skip_noise();
             if *self.current() != Token::To {
@@ -4171,7 +4198,7 @@ impl Parser {
             self.skip_noise();
             
             // Check for loop expansion: "function" of each X from Y [treating X as Y]
-            if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                 // Create the argument expression, with optional treating substitution
                 let arg_expr = if let Some((match_val, replacement)) = treating {
                     Expr::TreatingAs {
