@@ -3545,6 +3545,120 @@ impl Parser {
         Ok(Statement::BufferResize { name, new_size })
     }
     
+    /// Parse one value in append position (literal, identifier, function
+    /// call, or braced expression). We must be careful not to consume 'to',
+    /// which is the append separator. A quoted name followed by of/with/on is
+    /// a function call (`append "f" of x to items`); `to` is NOT a call
+    /// trigger here, unlike the general expression parser, so that
+    /// `append "s" to items` stays an append of the literal string "s".
+    /// Braces force the general expression parser for the enclosed tokens
+    /// (`append {i multiply i} to s`), matching how braces put an expression
+    /// into a value slot elsewhere in Vox.
+    fn parse_append_value_primary(&mut self) -> Result<Expr, Box<CompileError>> {
+        match self.current().clone() {
+            Token::OpenBrace => self.parse_primary(),
+            Token::IntegerLiteral(n) => {
+                self.advance();
+                Ok(Expr::IntegerLit(n))
+            }
+            Token::FloatLiteral(n) => {
+                self.advance();
+                Ok(Expr::FloatLit(n))
+            }
+            Token::StringLiteral(s) => {
+                self.advance();
+                self.skip_noise();
+                // A format string can't be a function name - resolve it first.
+                let resolved = self.string_value_expr(s.clone());
+                if matches!(resolved, Expr::FormatString { .. }) {
+                    Ok(resolved)
+                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
+                    self.advance();
+                    self.skip_noise();
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.parse_expression()?);
+                        self.skip_noise();
+                        if *self.current() == Token::Comma {
+                            // Comma belongs to the enclosing sentence.
+                            break;
+                        }
+                        if *self.current() == Token::And {
+                            self.advance();
+                            self.skip_noise();
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(Expr::FunctionCall { name: s, args })
+                } else {
+                    Ok(resolved)
+                }
+            }
+            Token::True => {
+                self.advance();
+                Ok(Expr::BoolLit(true))
+            }
+            Token::False => {
+                self.advance();
+                Ok(Expr::BoolLit(false))
+            }
+            Token::Identifier(name) => {
+                self.advance();
+                Ok(Expr::Identifier(name))
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                if let Token::Identifier(name) = self.current().clone() {
+                    self.advance();
+                    Ok(Expr::Identifier(name))
+                } else {
+                    Err(self.err("Expected identifier after 'the' in append"))
+                }
+            }
+            _ => Err(self.err("Expected value to append")),
+        }
+    }
+
+    /// Continue an append value over any binary operators that follow it.
+    /// Precedence matches the general expression parser (bitwise tighter
+    /// than multiplicative, multiplicative tighter than additive); right
+    /// operands reuse the restricted append primary so the separator can
+    /// never be eaten. `to` is never an operator here, so the walk always
+    /// stops at it.
+    fn parse_append_value_ops(&mut self, mut left: Expr, min_prec: u8) -> Result<Expr, Box<CompileError>> {
+        loop {
+            self.skip_noise();
+            let (op, prec) = match self.current() {
+                Token::Add => (BinaryOperator::Add, 1),
+                Token::Subtract => (BinaryOperator::Subtract, 1),
+                Token::Multiply => (BinaryOperator::Multiply, 2),
+                Token::Divide => (BinaryOperator::Divide, 2),
+                Token::Modulo => (BinaryOperator::Modulo, 2),
+                Token::BitAnd => (BinaryOperator::BitAnd, 3),
+                Token::BitOr => (BinaryOperator::BitOr, 3),
+                Token::BitXor => (BinaryOperator::BitXor, 3),
+                Token::BitShiftLeft => (BinaryOperator::ShiftLeft, 3),
+                Token::BitShiftRight => (BinaryOperator::ShiftRight, 3),
+                _ => break,
+            };
+            if prec < min_prec {
+                break;
+            }
+            self.advance();
+            self.skip_noise();
+            let primary = self.parse_append_value_primary()?;
+            let right = self.parse_append_value_ops(primary, prec + 1)?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn parse_append(&mut self) -> Result<Statement, Box<CompileError>> {
         // "append <expr> to <list>" or "append each <var> from <collection> to <list>"
         self.advance(); // consume 'append'
@@ -3584,76 +3698,12 @@ impl Parser {
             return self.wrap_in_loop_expansion(variable, collection, append_stmt);
         }
         
-        // Parse just the value (literal, identifier, function call, or simple
-        // expression). We must be careful not to consume 'to', which is the
-        // append separator. A quoted name followed by of/with/on is a function
-        // call (`append "f" of x to items`); `to` is NOT a call trigger here,
-        // unlike the general expression parser, so that `append "s" to items`
-        // stays an append of the literal string "s".
-        let mut value = match self.current().clone() {
-            Token::IntegerLiteral(n) => {
-                self.advance();
-                Expr::IntegerLit(n)
-            }
-            Token::FloatLiteral(n) => {
-                self.advance();
-                Expr::FloatLit(n)
-            }
-            Token::StringLiteral(s) => {
-                self.advance();
-                self.skip_noise();
-                // A format string can't be a function name - resolve it first.
-                let resolved = self.string_value_expr(s.clone());
-                if matches!(resolved, Expr::FormatString { .. }) {
-                    resolved
-                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
-                    self.advance();
-                    self.skip_noise();
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.parse_expression()?);
-                        self.skip_noise();
-                        if *self.current() == Token::Comma {
-                            // Comma belongs to the enclosing sentence.
-                            break;
-                        }
-                        if *self.current() == Token::And {
-                            self.advance();
-                            self.skip_noise();
-                        } else {
-                            break;
-                        }
-                    }
-                    Expr::FunctionCall { name: s, args }
-                } else {
-                    resolved
-                }
-            }
-            Token::True => {
-                self.advance();
-                Expr::BoolLit(true)
-            }
-            Token::False => {
-                self.advance();
-                Expr::BoolLit(false)
-            }
-            Token::Identifier(name) => {
-                self.advance();
-                Expr::Identifier(name)
-            }
-            Token::The => {
-                self.advance();
-                self.skip_noise();
-                if let Token::Identifier(name) = self.current().clone() {
-                    self.advance();
-                    Expr::Identifier(name)
-                } else {
-                    return Err(self.err("Expected identifier after 'the' in append"));
-                }
-            }
-            _ => return Err(self.err("Expected value to append")),
-        };
-        
+        // Parse just the value, then any arithmetic that applies to it
+        // (`append i multiply i to s`). The operator walk never treats `to`
+        // as an operator, so it always stops at the append separator.
+        let mut value = self.parse_append_value_primary()?;
+        value = self.parse_append_value_ops(value, 0)?;
+
         self.skip_noise();
 
         // Stage 1c: a type predicate as the append value, e.g.
