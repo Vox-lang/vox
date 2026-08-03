@@ -4,18 +4,26 @@
   "scopeName": "source.vox",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#on-error" },
+    { "include": "#library-declaration" },
+    { "include": "#see-import" },
     { "include": "#function-definition" },
     { "include": "#function-call" },
     { "include": "#strings" },
     { "include": "#types" },
     { "include": "#booleans" },
+    { "include": "#null-literal" },
     { "include": "#numbers" },
     { "include": "#loop-expansion" },
     { "include": "#conditional-branch" },
     { "include": "#control-keywords" },
+    { "include": "#import-keywords" },
     { "include": "#action-keywords" },
+    { "include": "#argument-keywords" },
     { "include": "#io-keywords" },
+    { "include": "#time-keywords" },
     { "include": "#operators" },
+    { "include": "#property-keywords" },
     { "include": "#properties" },
     { "include": "#articles" }
   ],
@@ -28,6 +36,33 @@
         { "include": "#comments" }
       ]
     },
+    "on-error": {
+      "comment": "Exception handler clause: 'on error ...'",
+      "name": "keyword.control.exception.vox",
+      "match": "(?<![\\w-])(?i:on)\\s+(?i:error)(?![\\w-])"
+    },
+    "library-declaration": {
+      "comment": "Library declaration: Library \"name\" version \"x.y\"",
+      "match": "(?<![\\w-])(?i:(library|lib))\\s+(\"[^\"]*\")\\s+(?i:(version|ver))\\s+(\"[^\"]*\")",
+      "captures": {
+        "1": { "name": "keyword.control.import.vox" },
+        "2": { "name": "string.quoted.double.vox" },
+        "3": { "name": "keyword.control.import.vox" },
+        "4": { "name": "string.quoted.double.vox" }
+      }
+    },
+    "see-import": {
+      "comment": "Source include / library import: see \"name\" [version \"x\"] [from \"path\"]",
+      "match": "(?<![\\w-])(?i:(see|import|include|require))\\s+(\"[^\"]*\")(?:\\s+(?i:(version|ver))\\s+(\"[^\"]*\"))?(?:\\s+(?i:(from|starting))\\s+(\"[^\"]*\"))?",
+      "captures": {
+        "1": { "name": "keyword.control.import.vox" },
+        "2": { "name": "string.quoted.double.vox" },
+        "3": { "name": "keyword.control.import.vox" },
+        "4": { "name": "string.quoted.double.vox" },
+        "5": { "name": "keyword.control.import.vox" },
+        "6": { "name": "string.quoted.double.vox" }
+      }
+    },
     "function-definition": {
       "match": "\\b(To)\\s+(\"[^\"]+\")",
       "captures": {
@@ -36,7 +71,7 @@
       }
     },
     "function-call": {
-      "match": "(\"[^\"]+\")\\s+(of|on)\\b",
+      "match": "(\"[^\"]+\")\\s+(?i:(of|on))(?![\\w-])",
       "captures": {
         "1": { "name": "entity.name.function.call.vox" },
         "2": { "name": "punctuation.accessor.vox" }
@@ -65,60 +100,34 @@
         },
         {
           "name": "variable.other.readwrite.vox",
-          "match": "'[^']+'",
-          "captures": {
-            "0": { "name": "variable.other.readwrite.vox" }
-          }
+          "match": "'[^']+'"
         }
       ]
     },
-    "loop-expansion": {
-      "comment": "Parameter loop expansion: 'each X from Y' - uses entity.name.tag for distinct blue color",
-      "match": "\\b(each)\\b",
-      "name": "entity.name.tag.each.vox"
-    },
-    "conditional-branch": {
-      "comment": "Conditional branching: 'but' keyword - uses support.type for distinct teal/cyan color",
-      "match": "\\b(but)\\b",
-      "name": "support.type.vox"
-    },
-    "control-keywords": {
-      "name": "keyword.control.vox",
-      "match": "\\b(?i:(if|then|otherwise|else|while|for|from|to|return|exit|break|continue|repeat|times))\\b"
-    },
-    "action-keywords": {
-      "name": "keyword.other.vox",
-      "match": "\\b(?i:(print|set|create|append|copy|clear|increment|decrement|is|are|was|treating|as|enable|disable|error|catching|flag|flags|parse|required|default|argument|arguments))\\b"
-    },
-    "io-keywords": {
-      "name": "support.function.vox",
-      "match": "\\b(?i:(open|close|read|write|delete|resize|reading|writing|appending))\\b"
-    },
     "types": {
+      "comment": "Type names (storage.type): Number, Float, Int, Text, Boolean, List, Map, Buffer, File, Bytes, Byte and their aliases.",
       "name": "storage.type.vox",
-      "match": "\\b(?i:(number|text|boolean|buffer|file|float|list|newline))\\b"
-    },
-    "operators": {
-      "name": "keyword.operator.vox",
-      "match": "\\b(?i:(add|subtract|multiply|divide|modulo|plus|minus|greater|less|equal|than|and|or|not))\\b"
-    },
-    "properties": {
-      "match": "('s)\\s*(capacity|size|absolute|sign|even|odd|positive|negative|descriptor|modified|permissions|all|count|first|last)",
-      "captures": {
-        "1": { "name": "punctuation.accessor.vox" },
-        "2": { "name": "variable.other.property.vox" }
-      }
-    },
-    "articles": {
-      "name": "punctuation.definition.vox",
-      "match": "\\b(?i:(a|an|the|called|with|of|on|at|into|for|in|bytes|size|line))\\b"
+      "match": "(?<![\\w-])(?i:(numbers|number|dictionary|collection|integer|boolean|bytes|buffer|decimal|list|array|text|string|message|float|real|int|bool|file|byte|map))(?![\\w-])"
     },
     "booleans": {
       "name": "constant.language.boolean.vox",
-      "match": "\\b(?i:(true|false))\\b"
+      "match": "(?<![\\w-])(?i:(true|false|yes|no))(?![\\w-])"
+    },
+    "null-literal": {
+      "comment": "The nothing/null/nil value literal (distinct from the 'empty' property predicate).",
+      "name": "constant.language.null.vox",
+      "match": "(?<![\\w-])(?i:(nothing|null|nil))(?![\\w-])"
     },
     "numbers": {
       "patterns": [
+        {
+          "name": "constant.numeric.integer.hexadecimal.vox",
+          "match": "-?\\b0[xX][0-9a-fA-F]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.binary.vox",
+          "match": "-?\\b0[bB][01]+\\b"
+        },
         {
           "name": "constant.numeric.float.vox",
           "match": "-?\\b\\d+\\.\\d+\\b"
@@ -128,6 +137,68 @@
           "match": "-?\\b\\d+\\b"
         }
       ]
+    },
+    "loop-expansion": {
+      "comment": "Parameter loop expansion: 'each X from Y' - uses entity.name.tag for distinct blue color",
+      "match": "(?<![\\w-])(?i:(each))(?![\\w-])",
+      "name": "entity.name.tag.each.vox"
+    },
+    "conditional-branch": {
+      "comment": "Conditional branching: 'but' keyword - uses support.type for distinct teal/cyan color",
+      "match": "(?<![\\w-])(?i:(but))(?![\\w-])",
+      "name": "support.type.vox"
+    },
+    "control-keywords": {
+      "name": "keyword.control.vox",
+      "match": "(?<![\\w-])(?i:(otherwise|returns|return|terminate|continue|begin|finish|repeat|break|stop|while|when|then|else|exit|quit|skip|give|times|for|if))(?![\\w-])"
+    },
+    "import-keywords": {
+      "comment": "Library/import keywords: see, library, version (stray occurrences; the library-declaration and see-import patterns colour them in context).",
+      "name": "keyword.control.import.vox",
+      "match": "(?<![\\w-])(?i:(library|lib|version|ver|include|require|import|see))(?![\\w-])"
+    },
+    "action-keywords": {
+      "comment": "Statement-level action verbs and modifiers.",
+      "name": "keyword.other.vox",
+      "match": "(?<![\\w-])(?i:(automatic|deallocate|disabled|enabled|decrement|increment|display|prints|allocate|release|default|required|without|element|append|create|define|assign|enable|disable|parse|print|push|copy|clear|show|store|free|auto|flag|error|make|set))(?![\\w-])"
+    },
+    "argument-keywords": {
+      "comment": "Arguments and environment: argument(s), environment, variable, count, raw and their aliases.",
+      "name": "keyword.other.vox",
+      "match": "(?<![\\w-])(?i:(arguments|argument|parameters|parameter|params|param|environment|variable|args|arg|env|var|count|raw))(?![\\w-])"
+    },
+    "io-keywords": {
+      "comment": "File I/O actions and stream modes.",
+      "name": "support.function.vox",
+      "match": "(?<![\\w-])(?i:(reallocate|appending|reading|writing|standard|opened|closed|remove|exists|resize|shrink|delete|input|close|open|read|grow|write|seek|exist))(?![\\w-])"
+    },
+    "time-keywords": {
+      "comment": "Time and timer keywords: wait/sleep/get, current time, durations and units.",
+      "name": "keyword.other.vox",
+      "match": "(?<![\\w-])(?i:(milliseconds|millisecond|stopwatch|timestamp|minutes|minute|seconds|second|unixtime|current|duration|elapsed|running|retrieve|hours|hour|days|day|months|month|years|year|pause|sleep|delay|timer|time|unix|wait|fetch|get|ms))(?![\\w-])"
+    },
+    "operators": {
+      "comment": "Arithmetic, comparison, logical, cast and bitwise operators. The bit-* forms are listed first so they match as a whole before their inner 'and'/'or'/'not'.",
+      "name": "keyword.operator.vox",
+      "match": "(?<![\\w-])(?i:(bit-shift-right|bit-shift-left|bit-xor|bit-and|bit-or|bit-not|modulo|treating|remainder|equals|greater|smaller|subtract|multiply|divide|treat|bigger|larger|fewer|minus|equal|than|not|and|add|plus|mod|less|more|are|is|or|as))(?![\\w-])"
+    },
+    "property-keywords": {
+      "comment": "Standalone property/predicate keywords (reserved words, always the keyword): 'is empty', 'is zero', 'of size 16', etc.",
+      "name": "variable.other.property.vox",
+      "match": "(?<![\\w-])(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|values|zero|abs|fd|odd))(?![\\w-])"
+    },
+    "properties": {
+      "comment": "Possessive property access: X's capacity / X's first / X's all / X's count.",
+      "match": "('s)\\s*(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|values|zero|count|all|abs|fd|odd))(?![\\w-])",
+      "captures": {
+        "1": { "name": "punctuation.accessor.vox" },
+        "2": { "name": "variable.other.property.vox" }
+      }
+    },
+    "articles": {
+      "comment": "Grammatical particles and range markers (articles, prepositions, collection quantifiers) - muted so they do not compete with real keywords. Lexer groups these as Range/Collection.",
+      "name": "punctuation.definition.vox",
+      "match": "(?<![\\w-])(?i:(inside|into|within|with|starting|between|called|named|from|the|all|an|at|on|of|up|to|in|a))(?![\\w-])"
     }
   }
 }
