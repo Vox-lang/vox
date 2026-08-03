@@ -96,9 +96,9 @@ cd vox-vscode
 vsce package
 
 # Install the generated .vsix file
-code --install-extension vox-0.1.72.vsix
+code --install-extension vox-0.2.0.vsix
 # Or for Windsurf:
-windsurf --install-extension vox-0.1.72.vsix
+windsurf --install-extension vox-0.2.0.vsix
 ```
 
 ---
