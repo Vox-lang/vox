@@ -605,24 +605,21 @@ fn main() {
         return;
     }
 
-    // A3: a `--shared` build writes `<stem>.lib` beside the `.so`. Never
-    // clobber a file this build did not create — plan 210's P1 was exactly this
-    // class, where `--shared` silently destroyed a user's `.map`. If the .lib
-    // already exists, fail loudly *before* building: overwriting it would leave
-    // a `.so`/`.lib` pair that disagree, and the pre-existing file may be
-    // hand-maintained or belong to a different library with the same stem. The
-    // cost is that re-running a shared build into a stale `.lib` requires
-    // removing it first — that is the safe default. Skipped for non-shared
-    // builds (no .lib is written) and for `--emit-asm` (returned above).
+    // A `--shared` build writes `<stem>.lib` beside the `.so` as a declared
+    // output — derived from the user's `-o`, exactly like the `.so` and the
+    // `.asm`, and overwritten the same way on a rebuild. The earlier refusal
+    // (plan 230 A3, borrowed from plan 210 P1's `.map` collision) made a
+    // library buildable once and then never again without manual cleanup —
+    // every edit-build loop, every warm-directory CI run, hit it. The `.map`
+    // danger does not apply: that name was derived from the *source* and could
+    // collide with an unrelated file; this name is derived from `-o`, which
+    // the user chose. The `.so` and `.lib` are written as a pair or not at
+    // all (see the write below): a rebuild must never leave a fresh `.so`
+    // beside a stale `.lib` — the exact inconsistency the `.dynsym`
+    // verification exists to catch. Skipped for non-shared builds (no .lib
+    // is written) and for `--emit-asm` (returned above).
     let lib_path = if build_shared {
-        let p = Path::new(&output_path).with_extension("lib");
-        if p.exists() {
-            eprintln!("Error: not overwriting existing file: {}", p.display());
-            eprintln!("       `vox --shared` writes this .lib beside the .so;");
-            eprintln!("       remove it first if you want it regenerated.");
-            std::process::exit(1);
-        }
-        Some(p)
+        Some(Path::new(&output_path).with_extension("lib"))
     } else {
         None
     };
@@ -867,7 +864,13 @@ fn main() {
             .unwrap_or(&output_path);
         let lib_text = render_lib_file(codegen.library_blocks(), so_filename);
         if let Err(e) = fs::write(lib_path, &lib_text) {
-            eprintln!("Error writing .lib: {}", e);
+            // A declared output, written as a pair with the .so. If the .lib
+            // cannot be written (permissions, a directory in the way), do not
+            // leave the fresh .so beside a stale/no .lib — that is the
+            // disagreeing pair the .dynsym verification exists to detect.
+            // Remove the .so this build just produced and fail loudly.
+            let _ = fs::remove_file(&output_path);
+            eprintln!("Error writing .lib '{}': {}", lib_path.display(), e);
             std::process::exit(1);
         }
         if verbose {
