@@ -597,6 +597,28 @@ pub struct Analyzer {
     /// main body and silently dropped. Reject such statements up front rather
     /// than mislead the author.
     shared_mode: bool,
+    /// The identity of the library whose function definitions surround the
+    /// statement currently being analyzed, set by `Library` declarations as
+    /// the walk proceeds. The per-function tables (`functions`,
+    /// `function_param_counts`, `mangled_functions`) are keyed by the
+    /// `<lib>_<ver>_<func>` mangled label, so a call resolves only against the
+    /// current library's functions: a name defined in a DIFFERENT library of
+    /// the same .so is not in this library's key set and stays the existing
+    /// "Unknown function" error (cross-library calls are out of scope for A2).
+    /// `None` outside shared mode, where the key is plain `mangle_symbol(name)`.
+    current_library: Option<(String, String)>,
+    /// Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    /// "...lib".`, resolved against the filesystem by the driver (parse +
+    /// .dynsym verification) and handed here for name resolution and call
+    /// checking. A call resolves local-first (a local definition SHADOWS a
+    /// same-named import, with a warning naming the library), then by import
+    /// (exactly one exporting <lib,version>), then ambiguity (two imports
+    /// exporting the same name — an error by design, never a pick).
+    imports: Vec<crate::lib_file::ImportedFunction>,
+    /// Non-fatal diagnostics (currently: local-definitions-shadow-imports).
+    /// Printed by the driver with a `warning:` prefix; they never stop a
+    /// build, but shadowing is never silent either.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -653,6 +675,9 @@ impl Analyzer {
             value_typed_names: HashSet::new(),
             loop_depth: 0,
             shared_mode: false,
+            current_library: None,
+            imports: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -665,7 +690,28 @@ impl Analyzer {
         self.shared_mode = enabled;
         self
     }
-    
+
+    /// Register the functions imported by the program's `see ... from
+    /// "*.lib"` statements (already parsed and .dynsym-verified by the
+    /// driver). Names are authorship-level here: `imports` is matched by the
+    /// authored name, and the `<lib>_<ver>_<func>` label only matters to the
+    /// codegen, which gets the same list.
+    pub fn with_imports(mut self, imports: Vec<crate::lib_file::ImportedFunction>) -> Self {
+        self.imports = imports;
+        self
+    }
+
+    /// The key under which a function DEFINED in the current library is filed
+    /// in the per-function tables: the `<lib>_<ver>_<func>` mangled label in
+    /// shared mode (with an identity set), else `mangle_symbol(name)`. This is
+    /// the same rule codegen's `function_label` uses, so the two agree on a
+    /// function's identity and a call that the analyzer accepts also resolves
+    /// at the call site. Reads `current_library`, which the statement walk sets
+    /// as it passes each `Library` declaration.
+    fn func_key(&self, name: &str) -> String {
+        crate::codegen::make_function_label(self.shared_mode, self.current_library.as_ref(), name)
+    }
+
     pub fn analyze(&mut self, program: &mut Program) {
         // A shared library has no `_start`, so top-level executable statements
         // would be generated into the discarded main body and silently dropped.
@@ -699,6 +745,33 @@ impl Analyzer {
                     );
                     return;
                 }
+            }
+
+            // A `--shared` compile with no `Library` declaration has no
+            // identity: there is no mangling (so two libraries in one .so
+            // could not both define `greet`) and no name/version for the
+            // `.lib` A3 writes. Reject it before codegen, naming the
+            // missing declaration so the author knows exactly what to add.
+            if !program
+                .statements
+                .iter()
+                .any(|s| matches!(s, Statement::LibraryDecl { .. }))
+            {
+                self.push_error(
+                    "A shared library must declare its identity with a `Library` \
+                     declaration giving its name and version — without one there is \
+                     no mangling and no `.lib`. Add `Library \"name\" version \
+                     \"x.y\".` before the function definitions and rebuild with \
+                     --shared."
+                        .to_string(),
+                    // No source location: this reports an ABSENCE of a
+                    // declaration, so there is no offending statement to anchor
+                    // `find_symbol_location` on (plan 210 P3). A spanned AST
+                    // would let this point at the file's first line; until then
+                    // it stays a message-only diagnostic, deliberately.
+                    None,
+                );
+                return;
             }
 
             // A `--shared` compile with no function definitions exports
@@ -751,11 +824,26 @@ impl Analyzer {
             }
         }
 
+        // Track the library identity as we walk so each function is filed under
+        // its OWN `<lib>_<ver>_<func>` key (a local, not `self.current_library`,
+        // so this pre-pass does not disturb the identity the second-pass walk
+        // manages). This scopes `functions`/`function_param_counts`: two
+        // libraries in one .so each defining `greet` get distinct keys, so a
+        // call in library A does not match library B's `greet`.
+        let mut current_lib: Option<(String, String)> = None;
         for stmt in &program.statements {
             match stmt {
+                Statement::LibraryDecl { name, version } => {
+                    current_lib = Some((name.clone(), version.clone()));
+                }
                 Statement::FunctionDef { name, params, .. } => {
-                    self.functions.insert(name.clone());
-                    self.function_param_counts.insert(name.clone(), params.len());
+                    let key = crate::codegen::make_function_label(
+                        self.shared_mode,
+                        current_lib.as_ref(),
+                        name,
+                    );
+                    self.functions.insert(key.clone());
+                    self.function_param_counts.insert(key, params.len());
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -774,6 +862,33 @@ impl Analyzer {
                     explicit_parse_seen = true;
                 }
                 _ => {}
+            }
+        }
+
+        // Stage A4 shadow rule: a local definition wins over a same-named
+        // import — but never silently. Warn once per (function, library)
+        // pair, naming the shadowed library, so adding a `see` can never
+        // redirect an existing call without a diagnostic. Order-independent:
+        // functions and imports are both fully collected before this runs.
+        if !self.imports.is_empty() {
+            let mut warned: HashSet<(String, String, String)> = HashSet::new();
+            for stmt in &program.statements {
+                if let Statement::FunctionDef { name, .. } = stmt {
+                    for imp in &self.imports {
+                        if imp.name != *name {
+                            continue;
+                        }
+                        let key = (name.clone(), imp.lib.clone(), imp.version.clone());
+                        if warned.insert(key) {
+                            self.warnings.push(format!(
+                                "'{}' is defined in this program and also exported by \
+                                 library \"{}\" version \"{}\"; the local definition wins — \
+                                 calls to '{}' resolve to it, not to the library.",
+                                name, imp.lib, imp.version, name
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -1004,7 +1119,7 @@ impl Analyzer {
     /// register values (silently using 0 or garbage), while too many
     /// were silently dropped.
     fn validate_function_call_args(&mut self, name: &str, args: &[Expr]) {
-        if let Some(&expected) = self.function_param_counts.get(name) {
+        if let Some(&expected) = self.function_param_counts.get(&self.func_key(name)) {
             if args.len() != expected {
                 self.push_error(
                     format!(
@@ -1017,6 +1132,184 @@ impl Analyzer {
                     Some(name),
                 );
             }
+        }
+    }
+
+    /// How a call to `name` resolves under Stage A4's import rules.
+    /// Local-first is deliberate: adding an unrelated `see` must never
+    /// silently redirect an existing call, so a local definition shadows a
+    /// same-named import (a pre-pass warning names the shadowed library).
+    /// Two imports exporting the same name are ambiguous by identity — a
+    /// re-see of the SAME <lib,version> is one import, but two different
+    /// libraries, or two versions of one library, are two.
+    fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
+        let mut providers: Vec<&crate::lib_file::ImportedFunction> = Vec::new();
+        for imp in &self.imports {
+            if imp.name != name {
+                continue;
+            }
+            if !providers
+                .iter()
+                .any(|p| p.lib == imp.lib && p.version == imp.version)
+            {
+                providers.push(imp);
+            }
+        }
+        providers
+    }
+
+    fn is_local_function(&self, name: &str) -> bool {
+        self.functions.contains(&self.func_key(name))
+    }
+
+    /// Resolve and validate a call site shared by `Statement::FunctionCall`
+    /// and `Expr::FunctionCall`: local definition, then a single import (with
+    /// the same arity message as any other call, plus argument-type checks,
+    /// which an import needs at the call site because it has no body to fail
+    /// in), then ambiguity, then the existing unknown-function error.
+    fn check_function_call(&mut self, name: &str, args: &[Expr]) {
+        let providers = self.imported_providers(name);
+        if self.is_local_function(name) {
+            self.validate_function_call_args(name, args);
+        } else if providers.len() == 1 {
+            let import = providers[0].clone();
+            self.validate_import_call_args(&import, name, args);
+        } else if providers.len() > 1 {
+            let both = providers
+                .iter()
+                .map(|p| format!("library \"{}\" version \"{}\"", p.lib, p.version))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            self.push_error(
+                format!(
+                    "Call to '{}' is ambiguous: it is exported by {}. Vox never picks \
+                     one by import order or by highest version — resolve it by defining \
+                     a local '{}' (which shadows the imports, with a warning), or by \
+                     renaming one library's export.",
+                    name, both, name
+                ),
+                Some(name),
+            );
+        } else {
+            let mut err = format!("Unknown function: {}", name);
+            if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
+                err.push_str(&format!(" (did you mean '{}'?)", suggestion));
+            }
+            self.push_error(err, Some(name));
+        }
+    }
+
+    /// Arity and argument-type validation for a call to an imported function.
+    /// The arity message is the same one any Vox call gets. Type validation
+    /// is static-only: an argument whose category is provably incompatible
+    /// with the declared parameter type is an error (an import has no body
+    /// whose arithmetic check would catch it, so the call site is the only
+    /// place it can be caught); a dynamically-typed argument is trusted, as
+    /// it is for local calls.
+    fn validate_import_call_args(
+        &mut self,
+        imp: &crate::lib_file::ImportedFunction,
+        name: &str,
+        args: &[Expr],
+    ) {
+        let expected = imp.params.len();
+        if args.len() != expected {
+            self.push_error(
+                format!(
+                    "Function '{}' expects {} argument{} but was called with {}.",
+                    name,
+                    expected,
+                    if expected == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                Some(name),
+            );
+            return;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let (pname, ptype) = &imp.params[i];
+            let Some(actual) = self.static_expr_category(arg) else {
+                continue; // dynamically typed — trusted, as local calls are
+            };
+            if !Self::param_accepts(ptype, &actual) {
+                self.push_error(
+                    format!(
+                        "Function '{}' (library \"{}\" version \"{}\") expects a {} \
+                         for argument {} (\"{}\") but was called with {}.",
+                        name,
+                        imp.lib,
+                        imp.version,
+                        Self::type_noun(ptype),
+                        i + 1,
+                        pname,
+                        Self::type_noun(&actual)
+                    ),
+                    Some(name),
+                );
+            }
+        }
+    }
+
+    /// The provable type category of an argument expression, if there is one:
+    /// literals always, identifiers only when their tracked category is
+    /// definite. Anything dynamic (a `value`, a call result, an expression)
+    /// is `None` and skipped by the import type check.
+    fn static_expr_category(&self, e: &Expr) -> Option<Type> {
+        match e {
+            Expr::IntegerLit(_) => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::StringLit(_) => Some(Type::String),
+            Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::Identifier(name) => {
+                if let Some(t) = self.scalar_types.get(name) {
+                    return Some(t.clone());
+                }
+                if self.buffer_variables.contains(name.as_str()) {
+                    Some(Type::Buffer)
+                } else if self.list_variables.contains(name.as_str()) {
+                    Some(Type::List(Box::new(Type::Unknown)))
+                } else if self.map_variables.contains(name.as_str()) {
+                    Some(Type::Map(Box::new(Type::Unknown)))
+                } else if self.file_variables.contains(name.as_str()) {
+                    Some(Type::File)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a statically-known argument category may go to a parameter of
+    /// the declared type. Booleans ride as numbers in the ABI (0/1) and file
+    /// parameters accept number-like handles, so the rejects are the true
+    /// category clashes: pointers where scalars are expected and the reverse.
+    fn param_accepts(param: &Type, actual: &Type) -> bool {
+        use Type::*;
+        match param {
+            Integer | Float => !matches!(actual, String | File | Buffer | List(_) | Map(_)),
+            String => matches!(actual, String),
+            Boolean => !matches!(actual, String | File | Buffer | List(_) | Map(_)),
+            File => !matches!(actual, String | Boolean | Buffer | List(_) | Map(_)),
+            Buffer => matches!(actual, Buffer),
+            List(_) => matches!(actual, List(_)),
+            Map(_) => matches!(actual, Map(_)),
+            // A `value` parameter takes any category (its tag rides alongside).
+            Value | Void | Unknown | Time | Timer => true,
+        }
+    }
+
+    fn type_noun(t: &Type) -> &'static str {
+        match t {
+            Type::Integer | Type::Float => "number",
+            Type::String => "text",
+            Type::Boolean => "boolean",
+            Type::File => "file",
+            Type::Buffer => "buffer",
+            Type::List(_) => "list",
+            Type::Map(_) => "map",
+            Type::Value => "value",
+            _ => "value",
         }
     }
 
@@ -1879,15 +2172,7 @@ impl Analyzer {
             
             Statement::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(name) {
-                    let mut err = format!("Unknown function: {}", name);
-                    if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
-                        err.push_str(&format!(" (did you mean '{}'?)", suggestion));
-                    }
-                    self.push_error(err, Some(name));
-                } else {
-                    self.validate_function_call_args(name, args);
-                }
+                self.check_function_call(name, args);
                 for arg in args {
                     self.analyze_expr(arg);
                 }
@@ -1912,8 +2197,13 @@ impl Analyzer {
                 }
                 // Names that differ only in characters the mangler folds to
                 // '_' would emit the same label, so one body would silently
-                // win. Reject rather than miscompile.
-                let symbol = crate::codegen::mangle_symbol(name);
+                // win. Reject rather than miscompile. The check is scoped by
+                // library: the key is the full `<lib>_<ver>_<func>` label, so
+                // "my.helper" and "my helper" in the SAME library collide (and
+                // are flagged), while the same two names in DIFFERENT libraries
+                // of one .so produce distinct labels and are both fine — that
+                // is the whole point of the mangling.
+                let symbol = self.func_key(name);
                 match self.mangled_functions.get(&symbol) {
                     Some(prev) if prev != name => {
                         self.push_error(
@@ -1929,8 +2219,9 @@ impl Analyzer {
                         self.mangled_functions.insert(symbol, name.clone());
                     }
                 }
-                self.functions.insert(name.clone());
-                self.function_param_counts.insert(name.clone(), params.len());
+                self.functions.insert(self.func_key(name));
+                self.function_param_counts
+                    .insert(self.func_key(name), params.len());
                 self.deps.uses_funcs = true; // Track that functions are used
 
                 // Functions can access top-level globals, but locals declared inside
@@ -2384,8 +2675,17 @@ impl Analyzer {
                 self.deps.uses_heap = true;
             }
             
-            Statement::LibraryDecl { .. } => {
-                // Library declarations are metadata, no analysis needed
+            Statement::LibraryDecl { name, version } => {
+                // A `Library` declaration sets the identity for the function
+                // definitions that follow it. The per-function tables are keyed
+                // by the `<lib>_<ver>_<func>` label, so a call inside this
+                // library's bodies resolves only against this library's
+                // functions. The walk is in source order and a `Library`
+                // precedes its functions, so the field is current when each
+                // `FunctionDef` body is analyzed. (In a multi-input --shared
+                // build the concatenated unit has one `Library` per input,
+                // so each library's functions resolve in their own scope.)
+                self.current_library = Some((name.clone(), version.clone()));
             }
             
             Statement::See { .. } => {
@@ -2629,15 +2929,7 @@ impl Analyzer {
             
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(name) {
-                    let mut err = format!("Unknown function: {}", name);
-                    if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
-                        err.push_str(&format!(" (did you mean '{}'?)", suggestion));
-                    }
-                    self.push_error(err, Some(name));
-                } else {
-                    self.validate_function_call_args(name, args);
-                }
+                self.check_function_call(name, args);
                 for arg in args {
                     self.analyze_expr(arg);
                 }

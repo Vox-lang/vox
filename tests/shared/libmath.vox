@@ -8,10 +8,27 @@ tests/runtime/shared_lib_driver.asm.
 The arithmetic export is named with a space on purpose: "add two numbers"
 mangles to the label `add_two_numbers`, so the export-set assertion in
 test.sh exercises mangle_symbol instead of passing on an identity. See
-plan 210 P2.)
+plan 210 P2.
+
+Phase 3 (plan 230, stage A1) adds the `Library` declaration: the export
+labels become `<lib>_<ver>_<func>`, so "add two numbers" is now
+`mathkit_1_0_add_two_numbers`. The driver's externs and test.sh's exact
+export set move with it. Two libraries in one .so both defining `greet`
+is what the mangling exists to allow; that case is exercised by a cargo
+unit test, since the CLI cannot link two inputs until A2.
+
+Stage A3 writes a `.lib` interface file beside the `.so` carrying each export's
+signature, including its return type. The return type lives only in the `.lib`
+— Vox source declares it in the body via a typed `Return a number, x.` — so the
+returns here are typed rather than bare. That is byte-identical for the `.so`
+(codegen only special-cases a `value` return), but the `.lib` would omit the
+return type without it. `greet` has no Return and stays void, exercising the
+parameterless-void entry `To "greet".` in the ToC.)
+
+Library "mathkit" version "1.0".
 
 To "add two numbers" with a number called "n".
-  Return n add 2.
+  Return a number, n add 2.
 
 To "greet".
   Print "hello from libmath".
@@ -19,4 +36,4 @@ To "greet".
 To "makebuf".
   Create a buffer called "b".
   Append "hello" to b.
-  Return b's size.
+  Return a number, b's size.

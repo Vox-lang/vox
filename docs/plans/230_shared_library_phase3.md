@@ -57,10 +57,17 @@ Library "mathkit" version "1.0".
 Location "./libmathkit.so".
 
 Table of Contents:
-    To "add two numbers" with a number called "n", returning a number.
+    To "add two numbers" with a number called "a" and a number called "b", returning a number.
     To "greet".
     To "makebuf", returning a number.
 ```
+
+> **Corrected 2026-08-01, after B7.** This example previously showed
+> `add two numbers` with a single parameter `n`, while the real
+> `examples/mathkit_lib.vox` it describes declares two (`a`, `b`). The format
+> was never ambiguous; the example was inconsistent with the source, which
+> would have sent A3's round-trip test after a signature the shipped library
+> does not have.
 
 - **Lexed with the existing `Lexer`** so quoting and escaping rules cannot
   drift from Vox source, but **parsed by a dedicated parser** in
@@ -75,16 +82,43 @@ Table of Contents:
   bodiless declaration has no room for.
 - **Several `Library` blocks may appear in one `.lib`**, each with its own
   `Location`. Parsing runs to EOF; a `Library` line starts a new block.
+- **One entry per line; a `To` line never wraps** (settled 2026-08-01, after
+  B7 found this undefined). Newlines are significant: each table-of-contents
+  entry is exactly one line however long, so a function with eight parameters
+  emits one long line. The emitter must never wrap, and the parser is entitled
+  to treat a newline as ending the entry. A generated file has no reason to be
+  line-width-pretty, and this removes a whole class of round-trip bug.
+- **An entry with no `returning` clause returns nothing.** Implied by the
+  format from the start but never stated; made explicit after B7 had to
+  document it.
+- **A `value` needs only its type name.** A `value` carries a runtime tag in
+  `r11` alongside its payload in `rax`, but that ABI is fixed and identical for
+  every `value`, so it is not per-function information: `a value called "v"`
+  and `, returning a value` are complete.
 
 ## Mangling (normative)
 
-```
-mangle_symbol(lib) _ mangle_symbol(version) _ mangle_symbol(func)
-```
-
 `mathkit` + `1.0` + `add two numbers` → `mathkit_1_0_add_two_numbers`.
-Reuse `mangle_symbol` (`src/codegen/mod.rs:124`) per component; do not write a
-second sanitizer.
+
+> **Corrected 2026-08-01, after A1.** This section originally read "apply
+> `mangle_symbol` to each of the three components and join with `_`". Taken
+> literally that produces `mathkit__1_0_add_two_numbers` — a *double*
+> underscore — because `mangle_symbol` prefixes a leading digit, turning `1.0`
+> into `_1_0`. The example above was always the intended result; the rule
+> stated beside it was wrong. A1 implemented the intended result and flagged
+> the contradiction rather than emitting the double underscore.
+
+The rule, precisely: there is **one** sanitizer, `sanitize_symbol`, mapping
+every character outside `[A-Za-z0-9_]` to `_`. `mangle_symbol` is that plus a
+leading-digit prefix. The library mangling applies:
+
+- **full `mangle_symbol` to the library component** — it starts the symbol, so
+  a leading digit there would make the whole result an invalid C identifier;
+- **`sanitize_symbol` alone to the version and function components** — they are
+  interior, joined by `_`, so a leading digit is harmless and the prefix would
+  only insert a spurious second underscore.
+
+Do not write a second sanitizer.
 
 ---
 
@@ -120,6 +154,27 @@ The label itself must change, not just the export list. Two libraries in one
 
 `vox a.vox b.vox --shared -o lib.so`. Sources are parsed independently, then
 concatenated into one compilation unit, so the runtime is included once.
+
+### Carried forward from A1 — the symbol tables are keyed by authored name
+
+A1 mangled the *labels* and proved they are distinct. It could not demonstrate
+two libraries each defining `greet` in one `.so`, and found why: the
+per-compilation symbol tables (`function_return_types`, `function_param_types`,
+and any other map keyed on the authored name) are keyed by the name the author
+wrote, not by the label. Two `greet`s therefore collide in those maps even
+though their emitted labels differ.
+
+**This is A2's to solve, and it is the core of the stage** — not a detail.
+Distinct labels are necessary but not sufficient; until the tables are scoped
+by `<library, version>`, the second library's signature silently overwrites
+the first's, and calls resolve against the wrong return and parameter types
+with no diagnostic. That is a wrong-code bug, not a compile error, so nothing
+will catch it for you.
+
+Scope those tables by `<library, version>` and keep resolution within the
+current library. A call from library A to library B in the same `.so` is out
+of scope for this stage; if a name is not found in the current library, that
+is the existing unknown-function error.
 
 - Reject duplicate `<lib,version>` pairs across inputs with both filenames.
 - Multi-input is `--shared` only; reject it for executable builds, where the
@@ -170,6 +225,32 @@ versions the `.lib` does offer**; missing `.so` at `Location`; symbol absent
 from `.dynsym` (name the symbol — this is the stale-`.lib` case); arity or
 type mismatch at the call site.
 
+### Name resolution (added 2026-08-01 — the spec was silent and cannot be)
+
+`see` puts foreign names into a scope that until now held only the program's
+own definitions, so two collisions become possible for the first time: a local
+definition versus an import, and an import versus another import — including
+two *versions* of one library, which is the expected steady state here, not an
+edge case.
+
+**Local definitions win**, with a **warning** naming the library shadowed. The
+alternative is that adding an unrelated `see` silently redirects an existing
+call to someone else's code — behaviour changing with no diagnostic and no
+edit to the call site. Shadowing is legitimate (it is how you locally override
+a library function), so it is not an error; it must simply never be silent.
+
+**Ambiguity between two imports is a compile error**, naming the call, both
+libraries and both versions. Do not pick one. Resolving by `see` order makes a
+call's meaning depend on the order of unrelated lines at the top of the file;
+resolving by highest version silently changes behaviour on upgrade, which is
+the exact outcome multi-version support exists to prevent.
+
+**No qualification syntax in A4.** `{"greet" from "mathkit"}` is probably right
+eventually, but it is new user-facing surface needing its own design, and the
+error above tells the user what is wrong meanwhile. If you find a case where
+that error leaves a user genuinely stuck with no way forward, report it —
+do not invent the syntax.
+
 **Acceptance**
 - A pure-Vox program calls a pure-Vox library through `see` and prints the
   right answer. **This is the goal of plans 200 and 230 — until it passes,
@@ -178,6 +259,12 @@ type mismatch at the call site.
   entry each produce their own diagnostic. All four are tested.
 - Calling with the wrong argument count or type is a compile error.
 - The two-version `.so` from A2 is consumed at each version from two programs.
+- A program defining `greet` and importing a library exporting `greet`
+  compiles, calls its **own** `greet`, and warns naming the shadowed library.
+- A program importing two libraries that both export `greet` fails to compile,
+  and the error names the call, both library names and both versions.
+- A program importing `flags 0.1` and `flags 1.0` and calling a function
+  present in only one of them resolves correctly and does not warn.
 
 ## Stage A5 — retire the abandoned syntax
 
