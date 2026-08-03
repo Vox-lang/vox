@@ -1,8 +1,14 @@
 # Structs and Objects Design (Future)
 
+> **Status:** Speculative — not built. No struct / `Define a struct` support
+> exists in the compiler (verified: the parser has no such construct); the
+> document itself defers the feature to "a future major version," and the
+> README Roadmap lists User-Defined Types as planned.
+> _(assessed 2026-08, vox v0.1.23)_
+
 ## Overview
 
-This document outlines the planned design for custom types, structs, and objects in EC (sentence based code). The goal is to allow users to define their own data structures with properties accessible via the possessive `'s` syntax.
+This document outlines the planned design for custom types, structs, and objects in Vox (sentence based code). The goal is to allow users to define their own data structures with properties accessible via the possessive `'s` syntax.
 
 ## Current State
 
@@ -21,7 +27,7 @@ Currently, property access with `'s` is hardcoded for built-in types:
 
 **Key Insight:** After `'s`, the next token should be treated as an **identifier**, not a keyword.
 
-```ec
+```vox
 (Currently fails - "left" is a keyword)
 set dog's left leg to 3.
 
@@ -36,7 +42,7 @@ set dog's left leg to 3.
 
 ### 2. Struct Definition Syntax
 
-```ec
+```vox
 Define a struct called "Dog" with:
     a text called "name",
     a number called "age",
@@ -48,7 +54,7 @@ Define a struct called "Point" with:
 ```
 
 **Alternative (more natural-language-like):**
-```ec
+```vox
 A Dog has:
     a name (text),
     an age (number),
@@ -61,7 +67,7 @@ A Point has:
 
 ### 3. Struct Instantiation
 
-```ec
+```vox
 Create a Dog called "buddy" with name "Buddy", age 3, is good true.
 
 (Or with defaults)
@@ -72,7 +78,7 @@ Set spot's age to 5.
 
 ### 4. Property Access
 
-```ec
+```vox
 Print buddy's name.           (prints "Buddy")
 Print buddy's age.            (prints 3)
 If buddy's is good then print "Good dog!".
@@ -80,7 +86,7 @@ If buddy's is good then print "Good dog!".
 
 ### 5. Nested Structs
 
-```ec
+```vox
 Define a struct called "Person" with:
     a text called "name",
     a Dog called "pet".
@@ -97,7 +103,7 @@ Print alice's pet's name.     (prints "Fido")
 Built-in "magic" types would be defined internally as structs:
 
 ### Arguments (implicit)
-```ec
+```vox
 (Internal definition - not user-visible)
 Arguments has:
     count (number),
@@ -106,7 +112,7 @@ Arguments has:
 ```
 
 ### Current Time (implicit)
-```ec
+```vox
 (Internal definition - not user-visible)
 Current Time has:
     hour (number),
@@ -119,7 +125,7 @@ Current Time has:
 ```
 
 ### Lists
-```ec
+```vox
 (Every list implicitly has)
     first (element type),
     last (element type),
@@ -173,7 +179,7 @@ Structs are hash maps at runtime:
 - Helpful error messages for typos
 
 ### Phase 5: Methods (Future)
-```ec
+```vox
 Define a method on Dog called "bark" that:
     prints "{self's name} says woof!".
 

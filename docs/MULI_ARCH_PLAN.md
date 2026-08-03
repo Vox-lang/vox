@@ -1,3 +1,9 @@
+> **Status:** Proposal/roadmap — not built. Depends on an IR layer (see
+> IR_DESIGN.md) that does not yet exist; the compiler has no IR or multi-arch
+> backend today (it lowers AST → x86_64 only). The Stage 0 "no-regret" x86_64
+> items below are not verified item-by-item here. _(assessed 2026-08,
+> vox v0.1.23)_
+
 Here’s the clean way to thread optimizations into your migration so you get speed gains early, without painting yourself into an architecture-shaped corner.
 
 ## The big principle

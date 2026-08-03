@@ -1,0 +1,18 @@
+(Plan 230 stage A3 — table-of-contents completeness regression guard. A
+bodyless function — `To "greet".` with no body and no separating blank line —
+used to absorb the following `To "c" ...` as a nested definition, so `c` was
+exported by the .so but missing from the .lib: a silent .lib/.so mismatch and
+the property this stage exists for. This corpus puts a bodyless function in
+the middle and two bodyless in a row, each followed by another export, with NO
+blank lines between them so the absorption path is exercised. test.sh builds
+it as a .so and asserts the .lib ToC entry count EQUALS the nm -D
+--defined-only count — a count equality, not a name list, so any future drop
+fails here regardless of which function it hits.)
+
+Library "toc" version "1.0".
+To "a". Return a number, 1.
+To "greet".
+To "c". Return a number, 3.
+To "noop".
+To "idle".
+To "z". Return a number, 9.

@@ -1,5 +1,11 @@
 # Internal ABI for the `value` type (Collections stage 1d)
 
+> **Status:** Built — internal x86_64 calling-convention note for the dynamic
+> `value` type (Collections stage 1d, marked done in COLLECTIONS_ROADMAP.md).
+> The ABI is live in codegen (`emit_load_value_tag`, `mixed_tag_slots`); this
+> note records the contract future work must preserve or extend.
+> _(assessed 2026-08, vox v0.1.23)_
+
 This is the internal (x86_64) calling-convention note for Vox's dynamic
 `value` type — the declared type that carries a runtime type tag alongside
 its payload across function boundaries. It is compiler-internal: Vox authors

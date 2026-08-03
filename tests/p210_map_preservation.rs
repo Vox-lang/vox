@@ -26,10 +26,13 @@ fn shared_does_not_clobber_preexisting_map() {
     let precious = "MY IMPORTANT LINKER SCRIPT\n";
     fs::write(work.join("victim.map"), precious).expect("write victim.map");
 
-    // A one-export library — the smallest thing `--shared` accepts.
+    // A one-export library — the smallest thing `--shared` accepts. Plan 230
+    // stage A1 made a `Library` declaration mandatory for `--shared` (a
+    // library with no identity has no mangling and no `.lib`), so the corpus
+    // source carries one; the .map-preservation assertion below is unchanged.
     fs::write(
         work.join("victim.vox"),
-        "To \"greet\".\n  Print \"hi\".\n",
+        "Library \"victim\" version \"1.0\".\nTo \"greet\".\n  Print \"hi\".\n",
     )
     .expect("write victim.vox");
 

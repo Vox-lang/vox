@@ -1,8 +1,16 @@
 # Shared Libraries Design Document
 
+> **Status:** Active design document — the authority for the shared-library
+> feature. The `see "<lib>" version "<ver>" from "<path>.lib"` form and the
+> `.lib`→`.so` chain are the live design, implemented on the code track (plan
+> 230, Stages A1–A5); the earlier direct-`.so` model (plan 220) and per-version
+> runtime-state mangling (plan 230 explicit non-goal) are abandoned. The
+> library-export `<lib>_<ver>_<func>` composition is live (`nm -D` shows e.g.
+> `mathkit_1_0_add_two_numbers`). _(assessed 2026-08, vox v0.2.0)_
+
 ## Overview
 
-This document outlines the design and implementation considerations for a shared library system in the EC compiler. The system allows developers to create reusable libraries that can be linked to other programs at compile time, enabling modular code organization and code reuse across multiple projects.
+This document outlines the design and implementation considerations for a shared library system in the Vox compiler. The system allows developers to create reusable libraries that can be linked to other programs at compile time, enabling modular code organization and code reuse across multiple projects.
 
 ## Core Concepts
 
@@ -31,25 +39,51 @@ The `.lib` file serves as the public interface for the library and contains:
    - Parameter types and names
    - Return type information
 
-Example `.lib` file structure:
+Example `.lib` file structure (the normative format — see plan 230, "The `.lib`
+format"; the code track emits this in Stage A3 and parses it in A4):
 ```
 Library "flags" version "0.1".
-Location "/home/josj/scr/ec/libs/libflags.so".
+Location "./libflags.so".
 
 Table of Contents:
-    To "hasflag" with a text called "flag".
-    To "isverbose".
-    To "wantshelp".
-    To "getoption" with a text called "flag".
+    To "hasflag" with a text called "flag", returning a boolean.
+    To "isverbose", returning a boolean.
+    To "wantshelp", returning a boolean.
+    To "getoption" with a text called "flag", returning a text.
 ```
+
+A `.lib` is a sequence of `Library` blocks. Each block has three parts: a
+`Library "<name>" version "<ver>"` line, a `Location` line naming the `.so`, and
+a `Table of Contents` of exported signatures. Several `Library` blocks may
+appear in one `.lib` and parsing runs to EOF — a `Library` line starts a new
+block (see "Parsing Multi-Library `.lib` Files" below).
+
+`Location` resolves **relative to the `.lib` first**, then the `--lib-path`
+flag, then error. It is relative by norm so a `.lib`/`.so` pair can be moved or
+shipped together; an absolute `Location` is honoured when read but never
+generated.
+
+Parameter and return types are drawn from a fixed vocabulary — `number`,
+`text`, `boolean`, `file`, `value`; anything else is an error naming the
+unsupported type. The `, returning a <type>` suffix exists **only** in `.lib`
+files: a `.lib` entry is a bodiless declaration, so the return type rides the
+signature. In Vox source the return type lives in the body
+(`Return a number, x.`), which a bodiless `.lib` line has no room for. An entry
+with no `returning` clause denotes a function that returns nothing.
 
 ### Library Linking
 
 Programs that want to use a library must include a see statement:
 
 ```
-See "Path/to/library.lib" for "lib_name" "version"
+see "lib_name" version "1.0" from "Path/to/library.lib".
 ```
+
+This is the sole canonical form (plan 230, decision 2): `see "<lib>" version
+"<ver>" from "<path>.lib".` The earlier `See "…/library.lib" for "lib_name"
+"version"` ordering is retired — the compiler's `see` of a `.lib` accepts only
+this form, and the old `for`-form produces a diagnostic showing the canonical
+syntax. (`see` of a `.vox` file remains a source include and is unchanged.)
 
 This declaration:
 - Automatically links the program to the specified library version
@@ -66,9 +100,20 @@ A single `.so` file can contain multiple libraries and different versions. This 
 - **Reduced File Count**: Related libraries can be bundled together
 - **Version Isolation**: Different versions don't interfere with each other
 
-#### Parsing Multi-Library .so Files
+#### Parsing Multi-Library `.lib` Files
 
-The compiler must parse `.so` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as a separator between library blocks. The parsing continues until EOF is reached.
+The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as the start of a new block, each with its own `Location` and `Table of Contents`. Parsing continues until EOF is reached.
+
+> **A `.so` is binary ELF, not text.** An earlier draft of this section said
+> the compiler "parses `.so` files" this way — that was the abandoned
+> direct-`.so` model. A `.so` carries mangled symbol *names* in `.dynsym` but
+> nothing about Vox types, so it cannot be parsed for `Library` blocks or
+> signatures. The typed interface that *is* parsed top to bottom is the
+> `.lib`: the chain is **`.vox` → `see` a `.lib` → `Location` → `.so`**. The
+> `.lib` is the `.h` equivalent; the `.so` it points at is only ever linked,
+> never read for types. (The multi-library `.so` *structure* — several
+> libraries' mangled symbols bundled in one `.so` — is correct and stays;
+> what was wrong was parsing the `.so` itself.)
 
 ### Name Mangling
 
@@ -96,11 +141,23 @@ This mangling scheme:
 > identifier. Since a standalone `.so` must be callable from other languages,
 > the dot form is unusable.
 >
-> The same mangling applies to the library's **runtime state**, not just its
-> functions, so two versions inside one `.so` do not share `_last_error` or
-> the resource tables. Full rules, including how this is applied without
-> editing any `coreasm/` file, are in
-> [SYMBOL_MANGLING.md](SYMBOL_MANGLING.md) — the project standard.
+> **Runtime state is deliberately *not* mangled — an explicit non-goal of
+> Phase 3.** An earlier draft of this section said `_last_error` and the
+> resource tables get per-version mangling (`flags_0_1_last_error`, etc.) so
+> two versions inside one `.so` would not share them. **Phase 3 does not do
+> this, on purpose.** Multi-input `--shared` compiles several libraries into
+> one assembly unit, so the runtime is emitted once and shared by every
+> library in that `.so` — which is correct and desirable: one resource
+> table, one `.fini_array`, one idempotent `_cleanup_all`. Duplicating the
+> runtime per library would multiply the `.so`'s size and give it several
+> competing cleanup paths. Cross-`.so` isolation already holds without
+> per-version mangling, because each `.so` carries its own runtime and the
+> version script keeps those symbols out of `.dynsym`. Only **function
+> labels** are mangled (`<lib>_<version>_<func>`); that scheme stands and is
+> the project standard in [SYMBOL_MANGLING.md](SYMBOL_MANGLING.md). The
+> per-version runtime-state mangling that document also describes is
+> superseded by this decision — see plan 230, "Explicit non-goal: runtime
+> state is not mangled".
 
 ## Implementation Considerations
 
@@ -109,7 +166,7 @@ This mangling scheme:
 #### 1. Parser Modifications
 - Detect `Library` declarations at file start
 - Parse library name and version
-- Handle multi-library parsing in `.so` files
+- Handle multi-library parsing in `.lib` files
 - Parse `See` statements for library linking
 
 #### 2. Symbol Table Management
@@ -127,10 +184,10 @@ This mangling scheme:
 - Validate library availability and version compatibility
 - Handle multiple library versions in single `.so` files
 
-### EC Language Abstraction Considerations
+### Vox Language Abstraction Considerations
 
 #### High-Level Language Features
-The EC compiler provides sophisticated abstractions that must be preserved in shared libraries:
+The Vox compiler provides sophisticated abstractions that must be preserved in shared libraries:
 
 **Property Access Patterns**
 - Expressions like `buffer's size`, `current time's hour` must work across library boundaries
@@ -182,8 +239,8 @@ The compiler's type system must work across library boundaries:
 Based on the codebase analysis, these symbols need mangling:
 
 1. **Function Names**
-   - User-defined functions: `flags_0.1_hasflag`
-   - Property access functions: `flags_0.1_buffer_size`
+   - User-defined functions: `flags_0_1_hasflag`
+   - Property access functions: `flags_0_1_buffer_size`
 
 2. **Property Access Functions**
    - Generated for object properties: `lib_ver_property_name`
@@ -323,9 +380,18 @@ project/
 ```
 
 #### Library Discovery
-- Search standard library paths (`/usr/lib/ec`, `/usr/local/lib/ec`)
-- Support relative and absolute paths in `See` statements
-- Environment variable for additional library paths
+
+> **Not implemented — future.** The automatic standard-path search and the
+> environment variable below are aspirational, not built. Plan 230 specifies no
+> automatic discovery: `Location` resolves relative to the `.lib` first, then
+> the `--lib-path` flag, then error; `see` of a `.lib` resolves relative to the
+> source file, then `--lib-path`. Nothing searches `/usr/lib/vox` or reads an
+> env var today. Do not mistake the bullets below for current behaviour — that
+> is the same failure mode plan 220 existed to clean up.
+
+- Search standard library paths (`/usr/lib/vox`, `/usr/local/lib/vox`) — *future, not built*
+- Support relative and absolute paths in `See` statements — *relative and absolute `Location` paths are honoured on read; see the resolution order above*
+- Environment variable for additional library paths — *future, not built*
 
 ### Version Management
 
@@ -436,7 +502,7 @@ project/
 
 ## Conclusion
 
-The shared library system provides a robust foundation for modular development in the EC compiler. By supporting versioning, multi-library files, and clean name mangling, it enables both simple use cases and complex dependency management scenarios.
+The shared library system provides a robust foundation for modular development in the Vox compiler. By supporting versioning, multi-library files, and clean name mangling, it enables both simple use cases and complex dependency management scenarios.
 
 The design prioritizes:
 - **Developer Experience**: Simple syntax, clear error messages
@@ -444,4 +510,4 @@ The design prioritizes:
 - **Compatibility**: Backwards compatibility and version management
 - **Extensibility**: Room for future enhancements and features
 
-This system will significantly enhance the EC compiler's capabilities for building large, modular applications while maintaining the language's philosophy of readable, intuitive syntax.
+This system will significantly enhance the Vox compiler's capabilities for building large, modular applications while maintaining the language's philosophy of readable, intuitive syntax.

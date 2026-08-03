@@ -1,5 +1,11 @@
 # Vox Standard: Symbol Mangling
 
+> **Status:** Active project standard. The `<library>_<version>_<name>`
+> function-label rule is the adopted standard and is emitted by the compiler
+> (`nm -D` shows e.g. `mathkit_1_0_add_two_numbers`); per-version runtime-state
+> mangling is an explicit non-goal, superseded by plan 230. _(assessed 2026-08,
+> vox v0.2.0)_
+
 Vox emits a flat assembly symbol namespace. Compiler-generated names, runtime
 internals, author-written function names, and — once shared libraries land —
 several library versions inside one process all land in it together. Nothing
@@ -18,7 +24,22 @@ anywhere two independently-authored names can reach the same symbol table.
 | Runtime internals | `_` prefix | `_map_insert`, `_last_error` | coreasm |
 | Author functions (executable) | name with spaces → `_` | `greet_user` | the Vox author |
 | Library exports | `<lib>_<version>_<name>` | `flags_0_1_hasflag` | a shared library |
-| Library runtime state | `<lib>_<version>_<name>` | `flags_0_1_last_error` | a shared library |
+| Library runtime state *(superseded — see note below)* | `<lib>_<version>_<name>` | `flags_0_1_last_error` | a shared library |
+
+> **The "Library runtime state" row is superseded — see plan 230.** Phase 3
+> deliberately does *not* mangle runtime state. The row is left here as the
+> record of the earlier design; the sections below that argue and implement
+> per-version runtime mangling ("Why runtime state is mangled too" and
+> "Implementation: rename at include time, not in coreasm") are likewise
+> superseded. **Function-label mangling** (the "Library exports" row and
+> the `<library>_<version>_<name>` rule for exported functions) stands
+> unchanged and remains the project standard. See plan 230, "Explicit
+> non-goal: runtime state is not mangled", for the reason: multi-input
+> `--shared` compiles to one assembly unit, so the runtime is emitted once
+> and shared by every library in that `.so` — one resource table, one
+> `.fini_array`, one idempotent `_cleanup_all` — and cross-`.so` isolation
+> already holds because each `.so` carries its own runtime and the version
+> script hides it.
 
 **A leading underscore is reserved for the runtime.** This mirrors C, where
 leading-underscore identifiers belong to the implementation. Author function
@@ -56,6 +77,10 @@ one function to reason about rather than two conventions.
 
 ## Why runtime state is mangled too
 
+> **Superseded by plan 230's "Explicit non-goal: runtime state is not
+> mangled".** The argument below was the case for per-version runtime
+> mangling; Phase 3 rejects it for the reason given there. Kept as history.
+
 A shared object's symbols are already module-local unless declared `global`, so
 two separate `.so` files already have independent `_last_error`. Mangling earns
 its keep in the case ELF scoping cannot reach:
@@ -72,6 +97,12 @@ against even if the runtime's table layout changes between releases.
 ---
 
 ## Implementation: rename at include time, not in coreasm
+
+> **Superseded — do not implement.** This `%define` prologue is the mechanism
+> for per-version runtime-state mangling, which plan 230's explicit non-goal
+> reverses. The "no edit to any `coreasm/` file" constraint it illustrates is
+> still good guidance for any future coreasm rewrite; the runtime-state
+> *mangling* itself is not built. Kept as history.
 
 Codegen emits a `%define` block ahead of the includes. NASM's preprocessor
 rewrites the definition *and* every use:
@@ -96,6 +127,11 @@ the emitted prologue means a port inherits it for free.
 ---
 
 ## What mangling does not solve
+
+> **The per-version `_last_error`/counter discussion below is superseded by
+> plan 230's non-goal** — runtime state is shared, not mangled. The broader
+> point that error propagation across a `.so` boundary is an ABI convention
+> rather than shared state still applies. Kept as history.
 
 Isolating a library's `_last_error` means a Vox program's `on error` no longer
 sees it — the caller reads its own flag. That bridge is an **ABI convention,

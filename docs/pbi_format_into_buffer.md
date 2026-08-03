@@ -1,5 +1,12 @@
 # Buffer-Targeted Format Strings (Build Into Buffer)
 
+> **Status:** Built — buffer-targeted format strings are implemented.
+> `Set <buffer> to "...{...}..."`, `append "...{...}..." to <buffer>`, and
+> `copy` build formatted bytes into an existing buffer via codegen
+> `emit_format_parts_into_buffer`; a format string in expression context now
+> allocates a buffer and yields a text too. The "Current State" section below
+> is stale (it says this is unsupported). _(assessed 2026-08, vox v0.1.23)_
+
 ## User Story
 As a Vox user, I want to use format strings to build text into an existing buffer so that I can reuse buffers in hot loops without allocating or leaking memory, and so that formatted content can be written/appended without going through `Print`.
 

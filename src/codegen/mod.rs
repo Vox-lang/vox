@@ -33,6 +33,31 @@ pub struct CodeGenerator {
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
+    // Per-library exported signatures for the Stage A3 `.lib` interface file:
+    // one `LibBlock` per <library, version> identity, in first-seen order, each
+    // carrying its functions in source order. Populated by
+    // `collect_function_signatures` in shared mode only; empty for non-shared
+    // builds. `main.rs` renders this beside the `.so` after a successful link.
+    library_blocks: Vec<LibBlock>,
+    // The identity of the library currently being compiled, set by a
+    // `Library "name" version "x.y".` declaration. In shared library mode
+    // this prefixes every exported label (and every intra-library call) as
+    // `<lib>_<ver>_<func>` so two libraries linked into one .so can both
+    // define `greet` without a duplicate-label collision. `None` outside
+    // shared mode (and in shared mode only transiently, before the
+    // declaration is seen — `collect_library_identity` runs a pre-pass so
+    // the order of `Library` vs `To` in the source does not matter).
+    current_library: Option<(String, String)>,
+    // Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    // "...lib".`, resolved and .dynsym-verified by the driver. A call to an
+    // imported name targets the import's mangled `<lib>_<ver>_<func>` symbol
+    // and the link line gets the `.so` + an rpath. Local definitions shadow
+    // imports (the analyzer warns), so a call always prefers the locally
+    // defined label. Ambiguity between imports is an analyzer error, so at
+    // most one import claimant reaches codegen per authored name.
+    imports: Vec<crate::lib_file::ImportedFunction>,
+    import_labels: HashMap<String, String>,
+    imported_symbols: Vec<String>,
     // Feature tracking for conditional includes
     uses_ints: bool,
     uses_floats: bool,
@@ -122,6 +147,21 @@ const TAG_NOTHING: u8 = 6;
 /// Used for function labels today and for the `<lib>_<version>_<name>` library
 /// mangling when shared libraries land, so both go through one rule.
 pub(crate) fn mangle_symbol(name: &str) -> String {
+    let mut out = sanitize_symbol(name);
+    if out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// The per-character sanitizer that is the core of `mangle_symbol`: every
+/// character outside `[A-Za-z0-9_]` becomes `_`. This is the ONE sanitizer —
+/// `mangle_symbol` layers the leading-digit prefix on top, and the library
+/// mangling applies it per component (prefixing only the first, since a digit
+/// may start an interior component without making the whole joined symbol an
+/// invalid C identifier). Factoring it out keeps a second sanitizer from
+/// being written, per plan 230.
+fn sanitize_symbol(name: &str) -> String {
     let mut out = String::with_capacity(name.len() + 1);
     for ch in name.chars() {
         if ch.is_ascii_alphanumeric() || ch == '_' {
@@ -130,8 +170,169 @@ pub(crate) fn mangle_symbol(name: &str) -> String {
             out.push('_');
         }
     }
-    if out.starts_with(|c: char| c.is_ascii_digit()) {
-        out.insert(0, '_');
+    out
+}
+
+/// The library mangling: `<lib>_<version>_<func>`, built by applying the
+/// shared `sanitize_symbol` to each of the three components and joining with
+/// `_`. The library component goes through the full `mangle_symbol` (with the
+/// leading-digit prefix) because it STARTS the symbol — a digit there would
+/// make the whole result an invalid C identifier. The version and function
+/// components are interior (joined with `_`), so a leading digit there is
+/// fine and the prefix would only insert a spurious double underscore:
+/// `1.0` sanitizes to `1_0`, giving `mathkit_1_0_greet` as the plan specifies
+/// — not `mathkit__1_0_greet`, which a literal `mangle_symbol("1.0")` (whose
+/// leading-digit rule turns `1.0` into `_1_0`) would produce. This is the
+/// only place the three-component form is built — both the definition label
+/// and the call site resolve through it, so a .so that defines
+/// `mathkit_1_0_greet` also calls `mathkit_1_0_greet`, never the bare `greet`
+/// it would otherwise emit.
+pub(crate) fn mangle_library_symbol(lib: &str, version: &str, func: &str) -> String {
+    format!(
+        "{}_{}_{}",
+        mangle_symbol(lib),
+        sanitize_symbol(version),
+        sanitize_symbol(func)
+    )
+}
+
+/// The assembly label a function DEFINED in this compilation emits, independent
+/// of any `CodeGenerator` state. This is the ONE rule both the codegen and the
+/// analyzer use to key their per-function symbol tables, so the tables are
+/// scoped by `<library, version>` rather than by the authored name: two
+/// libraries in one .so each defining `greet` produce two distinct keys
+/// (`alpha_1_0_greet`, `beta_2_0_greet`) instead of colliding on the bare
+/// `greet`. In shared mode with an identity set, the key is the
+/// `<lib>_<ver>_<func>` mangled label; otherwise (non-shared, or shared before
+/// a `Library` declaration is seen) it is the plain `mangle_symbol(name)`,
+/// preserving today's single-library and executable behaviour exactly. The
+/// `current_lib` is passed in rather than read from a field so the pre-passes
+/// that walk statements in order can track the identity in a local without
+/// disturbing `self.current_library` (which the main generate walk owns).
+pub(crate) fn make_function_label(
+    shared: bool,
+    current_lib: Option<&(String, String)>,
+    name: &str,
+) -> String {
+    if shared {
+        if let Some((lib, ver)) = current_lib {
+            return mangle_library_symbol(lib, ver, name);
+        }
+    }
+    mangle_symbol(name)
+}
+
+// ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
+//
+// A `--shared` build writes `<output-stem>.lib` beside the `.so`: one `Library`
+// block per input, a `Location` relative to the `.lib`, and a `Table of
+// Contents` of every exported signature. Stage A4 parses this back to type-check
+// `see` calls, so the format is a contract: emit what the source declares, one
+// entry per line (never wrapped), parameters joined with ` and ` exactly as Vox
+// source joins them, and a `value` parameter/return rendered by its type name
+// alone (the `value` ABI is fixed, so nothing about it is per-function).
+
+/// One exported function's signature for the `.lib` table of contents: the
+/// authored name, the full parameter list (name + type), and the declared
+/// return type. The return type is read from the `Return a <type>,` annotation
+/// (the only place Vox source states it); a bodiless `.lib` declaration has no
+/// body, hence `, returning a <type>` existing only in `.lib` files.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibFunction {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+}
+
+/// One `Library` block in a `.lib`: a <library, version> identity and the
+/// exported functions declared under it, in source order. A multi-input
+/// `--shared` build produces several blocks in one `.lib`, one per input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibBlock {
+    pub lib: String,
+    pub version: String,
+    pub funcs: Vec<LibFunction>,
+}
+
+/// Author-facing noun for a parameter type, matching the Vox source vocabulary
+/// the parser accepts in `with a <type> called <name>` (`number`, `text`,
+/// `boolean`, `file`, `buffer`, `list`, `map`, `value`). Returns `None` for
+/// `Unknown` (an untyped `with n` parameter) and types the parser never produces
+/// in a parameter position (`Float`/`decimal`, `Time`, `Timer`, `Void`).
+fn param_type_noun(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::Integer => Some("number"),
+        Type::String => Some("text"),
+        Type::Boolean => Some("boolean"),
+        Type::File => Some("file"),
+        Type::Buffer => Some("buffer"),
+        Type::List(_) => Some("list"),
+        Type::Map(_) => Some("map"),
+        Type::Value => Some("value"),
+        _ => None,
+    }
+}
+
+/// Author-facing noun for a return type, matching the vocabulary the parser
+/// accepts in `Return a <type>,` (`number`, `text`, `boolean`, `file`,
+/// `value`). Returns `None` for `Void` (no `, returning` clause — the function
+/// returns nothing) and types the return-annotation parser never produces
+/// (`Float`, `Buffer`, `List`, `Map`, `Time`, `Timer`).
+fn return_type_noun(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::Integer => Some("number"),
+        Type::String => Some("text"),
+        Type::Boolean => Some("boolean"),
+        Type::File => Some("file"),
+        Type::Value => Some("value"),
+        _ => None,
+    }
+}
+
+/// Render the `.lib` text for `blocks` (one per library identity, in order)
+/// whose `.so` is named `so_filename` (basename only — the `.lib` sits beside
+/// it, so the `Location` is `./<so_filename>`, relative to the `.lib`). Each
+/// table-of-contents entry is exactly one line, however long; entries are never
+/// wrapped. A parameterless, void-returning function reads `To "name".`; a
+/// `value` parameter or return needs only its type name (`a value called "v"`,
+/// `, returning a value`).
+pub fn render_lib_file(blocks: &[LibBlock], so_filename: &str) -> String {
+    let mut out = String::new();
+    for (i, block) in blocks.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("Library \"{}\" version \"{}\".\n", block.lib, block.version));
+        out.push_str(&format!("Location \"./{}\".\n", so_filename));
+        out.push_str("\nTable of Contents:\n");
+        for func in &block.funcs {
+            out.push_str("    To \"");
+            out.push_str(&func.name);
+            out.push('"');
+            if !func.params.is_empty() {
+                out.push_str(" with ");
+                let joined = func
+                    .params
+                    .iter()
+                    .map(|(pname, ptype)| {
+                        // An untyped (`Unknown`) parameter has no noun the `.lib`
+                        // can express; render it as `number`, the 1-word scalar
+                        // default an untyped parameter occupies (see
+                        // `emit_function_call`'s `word_count`). Library authors
+                        // should type their exports; see the A3 report for the
+                        // caveat.
+                        let noun = param_type_noun(ptype).unwrap_or("number");
+                        format!("a {} called \"{}\"", noun, pname)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                out.push_str(&joined);
+            }
+            if let Some(rnoun) = return_type_noun(&func.return_type) {
+                out.push_str(&format!(", returning a {}", rnoun));
+            }
+            out.push_str(".\n");
+        }
     }
     out
 }
@@ -261,6 +462,11 @@ impl CodeGenerator {
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
+            library_blocks: Vec::new(),
+            current_library: None,
+            imports: Vec::new(),
+            import_labels: HashMap::new(),
+            imported_symbols: Vec::new(),
             uses_ints: false,
             uses_floats: false,
             uses_files: false,
@@ -706,8 +912,13 @@ impl CodeGenerator {
         // right-to-left so word 0 (param 0 payload) ends on top (first pop).
         // When the callee's signature is unknown (e.g. an extern/builtin),
         // assume every parameter is scalar — preserving the original ABI for
-        // statically-typed calls (criterion 6).
-        let param_types = self.function_param_types.get(name).cloned().unwrap_or_default();
+        // statically-typed calls (criterion 6). The signature tables are keyed
+        // by the resolution target (a local `<lib>_<ver>_<func>` label in
+        // shared mode, an import's mangled symbol, or `mangle_symbol(name)`),
+        // so the lookup goes through `resolved_call_label` — the same target
+        // the `call` below emits.
+        let label = self.resolved_call_label(name);
+        let param_types = self.function_param_types.get(&label).cloned().unwrap_or_default();
         let is_value_param = |i: usize| -> bool {
             param_types.get(i) == Some(&Type::Value)
         };
@@ -743,8 +954,29 @@ impl CodeGenerator {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
 
-        let func_label = mangle_symbol(name);
-        self.emit_indent(&format!("call {}", func_label));
+        // In shared library mode a call to a function DEFINED in this
+        // library must target the same `<lib>_<ver>_<func>` label the
+        // definition emitted — otherwise the .so defines
+        // `mathkit_1_0_greet` while the call site branches to the bare
+        // `greet`, which the version script does not export. The signature
+        // tables are keyed by that mangled label, so `contains_key(&label)`
+        // is true exactly for a function defined in the CURRENT library
+        // (whose identity `function_label` reads). A call to a function in
+        // a DIFFERENT library of the same .so never reaches here: the
+        // analyzer scopes its own `functions` set per library, so a
+        // cross-library name is the existing "Unknown function" error
+        // before codegen runs. An (A4) extern or a runtime helper is not in
+        // the table, so it falls through to the plain mangled name. Non-
+        // shared builds take the plain path unconditionally (`label` is
+        // already `mangle_symbol(name)` there), so their output is byte-
+        // identical to today.
+        //
+        // A4: `label` was computed by `resolved_call_label`, which prefers
+        // the local definition (present in the tables), then an import's
+        // mangled extern symbol, then the plain mangled fallback. The call
+        // and the signature lookup above therefore always agree, for local,
+        // imported, and runtime-helper targets alike.
+        self.emit_indent(&format!("call {}", label));
 
         // Clean up stack words + pad (caller cleanup in SysV). The return tag
         // for a `value`-returning function rides in r11; `add rsp` does not
@@ -759,11 +991,86 @@ impl CodeGenerator {
         self.shared_lib_mode = enabled;
     }
 
+    /// Stage A4: register the resolved, .dynsym-verified imports from the
+    /// program's `see ... from "*.lib"` statements. Stored pre-`generate`;
+    /// `collect_function_signatures` merges their signatures into the tables
+    /// (which it clears), keyed by each import's mangled label, and `generate`
+    /// emits one `extern <label>` per imported symbol.
+    pub fn set_imports(&mut self, imports: Vec<crate::lib_file::ImportedFunction>) {
+        self.import_labels.clear();
+        self.imported_symbols.clear();
+        for imp in &imports {
+            // Ambiguity is an analyzer error: at most one claimant per
+            // authored name can reach here. `or_insert` keeps that guarantee
+            // locally rather than re-deriving it.
+            self.import_labels
+                .entry(imp.name.clone())
+                .or_insert_with(|| imp.mangled.clone());
+            if !self.imported_symbols.contains(&imp.mangled) {
+                self.imported_symbols.push(imp.mangled.clone());
+            }
+        }
+        self.imports = imports;
+    }
+
+    /// The label a call to `name` actually targets. A locally defined function
+    /// wins (its label is in the signature tables — the same test the shared-
+    /// mode call path already uses), then an import's mangled `<lib>_<ver>_`
+    /// `<func>` symbol, then the historical plain `mangle_symbol` fallback for
+    /// runtime helpers and other tables-missing calls. Keying everything off
+    /// the signature tables keeps this ONE rule for both call emission and
+    /// return-type inference.
+    fn resolved_call_label(&self, name: &str) -> String {
+        let local = self.function_label(name);
+        if self.function_return_types.contains_key(&local) {
+            return local;
+        }
+        if let Some(mangled) = self.import_labels.get(name) {
+            return mangled.clone();
+        }
+        mangle_symbol(name)
+    }
+
+    /// Resolve the assembly label for a function DEFINED in this compilation.
+    /// In shared library mode with a library identity set, the label is
+    /// `<lib>_<ver>_<func>` (each component through `mangle_symbol`); this is
+    /// what makes two libraries in one .so both defining `greet` emit two
+    /// distinct labels. In every other case it is the plain `mangle_symbol`
+    /// of the name, so non-shared builds are byte-identical to today.
+    fn function_label(&self, name: &str) -> String {
+        make_function_label(self.shared_lib_mode, self.current_library.as_ref(), name)
+    }
+
+    /// Pre-pass: find the `Library` declaration that names this compilation's
+    /// identity and stash it in `current_library` before any function is
+    /// generated. Running this up front (rather than only when the statement
+    /// is reached during `generate`) means the order of `Library` vs `To` in
+    /// the source is irrelevant — a forward call to a function defined above
+    /// the declaration still mangles correctly. The analyzer has already
+    /// rejected `--shared` with no `Library` line, so in shared mode exactly
+    /// one is expected; the first wins and a second is left for A2 to reject.
+    fn collect_library_identity(&mut self, program: &Program) {
+        for stmt in &program.statements {
+            if let Statement::LibraryDecl { name, version } = stmt {
+                self.current_library = Some((name.clone(), version.clone()));
+                return;
+            }
+        }
+    }
+
     /// The mangled labels of functions exported by a `--shared` compile, in
     /// emission order. Populated during `generate`; the linker's version
     /// script names exactly these as the library's public symbols.
     pub fn exported_functions(&self) -> &[String] {
         &self.exported_functions
+    }
+
+    /// The per-library exported signatures for the Stage A3 `.lib` interface
+    /// file: one `LibBlock` per <library, version> identity, in first-seen
+    /// order, each carrying its functions in source order. Empty for non-shared
+    /// builds. `main.rs` renders this beside the `.so` after a successful link.
+    pub fn library_blocks(&self) -> &[LibBlock] {
+        &self.library_blocks
     }
 
     pub fn set_target_arch(&mut self, arch: &str) {
@@ -837,26 +1144,106 @@ impl CodeGenerator {
     fn collect_function_signatures(&mut self, program: &Program) {
         self.function_return_types.clear();
         self.function_param_types.clear();
+        // Track the library identity as we walk so each function is keyed by
+        // its OWN `<lib>_<ver>_<func>` label, not the authored name. This is
+        // what scopes the signature tables: two libraries in one .so each
+        // defining `greet` get distinct keys, so the second no longer silently
+        // overwrites the first's return/parameter types (the wrong-code bug A1
+        // found). A local, not `self.current_library`, so this pre-pass does
+        // not disturb the identity the main generate walk manages.
+        let mut current_lib: Option<(String, String)> = None;
+        // Stage A3: collect per-library exported signatures for the `.lib`
+        // interface file, in the same single walk. Shared mode only — a
+        // non-shared build has no `Library` blocks and writes no `.lib`. The
+        // block list is keyed by <lib, version> (first-seen order), so two
+        // versions of one library become two blocks, each carrying its own
+        // functions in source order. A function with no current_lib in shared
+        // mode is a malformed input the analyzer has already rejected, so it
+        // is skipped here rather than crash the collector.
+        let mut lib_blocks: Vec<LibBlock> = Vec::new();
+        let mut block_idx: HashMap<(String, String), usize> = HashMap::new();
         for stmt in &program.statements {
-            if let Statement::FunctionDef { name, params, return_type, .. } = stmt {
-                let vt = match return_type {
-                    Type::Integer => VarType::Integer,
-                    Type::Float => VarType::Float,
-                    Type::String => VarType::String,
-                    Type::Boolean => VarType::Boolean,
-                    Type::Buffer => VarType::Buffer,
-                    Type::List(_) => VarType::List,
-                    // A `value` return is dynamic: the runtime tag travels
-                    // back in r11 alongside the payload in rax, so the result
-                    // is a Mixed-typed value (no static tag).
-                    Type::Value => VarType::Mixed,
-                    _ => VarType::Unknown,
-                };
-                self.function_return_types.insert(name.clone(), vt);
-                self.function_param_types
-                    .insert(name.clone(), params.iter().map(|(_, t)| t.clone()).collect());
+            match stmt {
+                Statement::LibraryDecl { name, version } => {
+                    current_lib = Some((name.clone(), version.clone()));
+                }
+                Statement::FunctionDef { name, params, return_type, .. } => {
+                    let key = make_function_label(
+                        self.shared_lib_mode,
+                        current_lib.as_ref(),
+                        name,
+                    );
+                    let vt = match return_type {
+                        Type::Integer => VarType::Integer,
+                        Type::Float => VarType::Float,
+                        Type::String => VarType::String,
+                        Type::Boolean => VarType::Boolean,
+                        Type::Buffer => VarType::Buffer,
+                        Type::List(_) => VarType::List,
+                        // A `value` return is dynamic: the runtime tag travels
+                        // back in r11 alongside the payload in rax, so the
+                        // result is a Mixed-typed value (no static tag).
+                        Type::Value => VarType::Mixed,
+                        _ => VarType::Unknown,
+                    };
+                    self.function_return_types.insert(key.clone(), vt);
+                    self.function_param_types
+                        .insert(key, params.iter().map(|(_, t)| t.clone()).collect());
+
+                    if self.shared_lib_mode {
+                        if let Some((lib, ver)) = current_lib.as_ref() {
+                            let id = (lib.clone(), ver.clone());
+                            let idx = match block_idx.get(&id) {
+                                Some(&i) => i,
+                                None => {
+                                    let i = lib_blocks.len();
+                                    block_idx.insert(id, i);
+                                    lib_blocks.push(LibBlock {
+                                        lib: lib.clone(),
+                                        version: ver.clone(),
+                                        funcs: Vec::new(),
+                                    });
+                                    i
+                                }
+                            };
+                            lib_blocks[idx].funcs.push(LibFunction {
+                                name: name.clone(),
+                                params: params.clone(),
+                                return_type: return_type.clone(),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
+
+        // Stage A4: imported signatures, keyed by each import's own
+        // `<lib>_<ver>_<func>` symbol (never the plain authored name, so a
+        // shadowing LOCAL definition — a different key — still wins at the
+        // call site). `resolved_call_label` consults these tables, so the
+        // call, the return type, and the value-parameter word count all read
+        // this same entry. A `value` return is Mixed for the same reason a
+        // local one is (the tag rides home in r11).
+        for imp in &self.imports {
+            let vt = match imp.return_type {
+                Type::Integer => VarType::Integer,
+                Type::Float => VarType::Float,
+                Type::String => VarType::String,
+                Type::Boolean => VarType::Boolean,
+                Type::Buffer => VarType::Buffer,
+                Type::List(_) => VarType::List,
+                Type::Value => VarType::Mixed,
+                _ => VarType::Unknown,
+            };
+            self.function_return_types.insert(imp.mangled.clone(), vt);
+            self.function_param_types.insert(
+                imp.mangled.clone(),
+                imp.params.iter().map(|(_, t)| t.clone()).collect(),
+            );
+        }
+
+        self.library_blocks = lib_blocks;
     }
 
     fn collect_flag_schemas(&mut self, program: &Program) {
@@ -1656,6 +2043,18 @@ impl CodeGenerator {
                 Statement::OnError { actions } => {
                     self.prescan_walk(actions, env, list_seen_tags);
                 }
+                // A `Library` declaration sets the identity for the function
+                // definitions that follow it. The pre-scan classifies
+                // FunctionCall results via `function_return_types`, keyed by
+                // the mangled label, so `infer_expr_type` must see the SAME
+                // library the call site sits in. The walk is in source order
+                // and a `Library` precedes its functions, so setting the field
+                // here (and again on each fixed-point pass) keeps it correct
+                // as the walk enters each library's function bodies. This
+                // mirrors the main generate walk's `LibraryDecl` arm.
+                Statement::LibraryDecl { name, version } => {
+                    self.current_library = Some((name.clone(), version.clone()));
+                }
                 _ => {}
             }
         }
@@ -1986,7 +2385,7 @@ impl CodeGenerator {
     fn expr_leaves_tag_in_r11(&self, e: &Expr) -> bool {
         match e {
             Expr::FunctionCall { name, .. } => {
-                self.function_return_types.get(name) == Some(&VarType::Mixed)
+                self.function_return_types.get(&self.resolved_call_label(name)) == Some(&VarType::Mixed)
             }
             Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
                 self.list_expr_is_mixed(list)
@@ -2011,6 +2410,10 @@ impl CodeGenerator {
         // from declared-return functions. Signature collection only reads
         // FunctionDef.return_type from the AST, so this reorder is safe.
         self.collect_function_signatures(program);
+        // Resolve the library identity before any function is generated so the
+        // `<lib>_<ver>_<func>` label is correct regardless of where the
+        // `Library` declaration sits in the source. No-op outside shared mode.
+        self.collect_library_identity(program);
         self.prescan_mixed_lists(&program.statements);
         self.collect_global_constants(program);
         self.collect_flag_schemas(program);
@@ -2115,7 +2518,19 @@ impl CodeGenerator {
             result.push_str(&format!("%include \"coreasm/{}/map.asm\"\n", self.target_arch));
         }
         result.push('\n');
-        
+
+        // Stage A4: one NASM extern per imported symbol. These are the
+        // mangled <lib>_<ver>_<func> names resolve_see_import verified
+        // against the .so's .dynsym; the .so itself is on the link line
+        // (`main` adds it plus an rpath). No `see`, no imports, no lines —
+        // non-importing builds are byte-identical.
+        if !self.imported_symbols.is_empty() {
+            for sym in &self.imported_symbols {
+                result.push_str(&format!("extern {}\n", sym));
+            }
+            result.push('\n');
+        }
+
         result.push_str("section .data\n");
         result.push_str(&self.data_section);
         result.push('\n');
@@ -2710,7 +3125,7 @@ impl CodeGenerator {
                 // Mark that we're using functions so funcs.asm gets included
                 self.uses_funcs = true;
                 
-                let func_label = mangle_symbol(name);
+                let func_label = self.function_label(name);
 
                 // Track exported functions for shared library mode
                 if self.shared_lib_mode {
@@ -4156,8 +4571,17 @@ impl CodeGenerator {
             }
             
             Statement::LibraryDecl { name, version } => {
-                // Library declaration - emit as comment for now
-                // In the future, this metadata could be used for linking
+                // A `Library` declaration sets the codegen's current library
+                // identity. Every `FunctionDef` and intra-library call site
+                // after this point resolves its label through it (in shared
+                // mode), so the exported symbol becomes `<lib>_<ver>_<func>`.
+                // `collect_library_identity` already stashed the first
+                // declaration before generation began, so a forward call to a
+                // function defined above this line still mangles correctly;
+                // re-setting here keeps the identity current as the walk
+                // passes each declaration (matters once A2 concatenates
+                // several libraries into one unit).
+                self.current_library = Some((name.clone(), version.clone()));
                 self.emit(&format!("; Library: {} version {}", name, version));
             }
             
@@ -6835,7 +7259,9 @@ impl CodeGenerator {
             | Expr::EnvironmentVariableEmpty => Some(VarType::Integer),
             Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
-            Expr::FunctionCall { name, .. } => self.function_return_types.get(name).cloned(),
+            Expr::FunctionCall { name, .. } => {
+                self.function_return_types.get(&self.resolved_call_label(name)).cloned()
+            }
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type
                 match property {
@@ -6914,7 +7340,7 @@ mod tests {
     use crate::analyzer::Analyzer;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use super::CodeGenerator;
+    use super::{CodeGenerator, LibBlock};
 
     /// Parse, analyze, and generate asm for a source snippet. Panics with a
     /// clear message if parsing or analysis fails, so test failures point at
@@ -6934,6 +7360,31 @@ mod tests {
             analyzer.errors
         );
         let mut gen = CodeGenerator::new();
+        gen.generate(&program)
+    }
+
+    /// Like `compile_to_asm`, but in `--shared` mode: the analyzer enforces the
+    /// library top-level rules (a `Library` declaration, only function defs)
+    /// and the codegen mangles labels by library and version. Used to test the
+    /// shared-library path without shelling out to nasm/ld.
+    fn compile_to_asm_shared(source: &str) -> String {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("lib_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("shared test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new()
+            .with_source("lib_test.vox", source)
+            .with_shared_mode(true);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "shared test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.set_shared_lib_mode(true);
         gen.generate(&program)
     }
 
@@ -7162,6 +7613,469 @@ mod tests {
         assert_eq!(mangle_symbol("2fast"), "_2fast");
         // Already-valid names are untouched.
         assert_eq!(mangle_symbol("already_fine"), "already_fine");
+    }
+
+    #[test]
+    fn mangle_library_symbol_joins_three_components() {
+        use super::mangle_library_symbol;
+        // The plan 230 example: mathkit + 1.0 + "add two numbers".
+        assert_eq!(
+            mangle_library_symbol("mathkit", "1.0", "add two numbers"),
+            "mathkit_1_0_add_two_numbers"
+        );
+        // Each component is mangled independently, then joined with `_`.
+        // A version with a dot folds to `_` only inside that component.
+        assert_eq!(
+            mangle_library_symbol("my.lib", "2.0", "greet"),
+            "my_lib_2_0_greet"
+        );
+        // A leading-digit version component is prefixed per mangle_symbol.
+        assert_eq!(
+            mangle_library_symbol("lib", "1", "greet"),
+            "lib_1_greet"
+        );
+    }
+
+    // ---- Stage A1: mangle exported symbols by library and version ----
+    //
+    // The label itself must change, not just the export list. These lock in
+    // both halves: the definition emits `<lib>_<ver>_<func>`, and a call
+    // site inside the library targets the same mangled label (never the bare
+    // name the version script does not export).
+
+    #[test]
+    fn shared_lib_mangles_exported_labels_by_library_and_version() {
+        // The tests/shared/libmath.vox corpus, in source form: a Library
+        // declaration plus the three exports. In --shared mode every defined
+        // label becomes <lib>_<ver>_<func>.
+        let src = "\
+Library \"mathkit\" version \"1.0\".\n\
+To \"add two numbers\" with a number called \"n\".\n  Return n add 2.\n\
+To \"greet\".\n  Print \"hello from libmath\".\n\
+To \"makebuf\".\n  Create a buffer called \"b\".\n  Append \"hello\" to b.\n  Return b's size.\n";
+        let asm = compile_to_asm_shared(src);
+        // The three definitions emit the mangled labels...
+        assert!(
+            asm.contains("mathkit_1_0_add_two_numbers:"),
+            "the 'add two numbers' definition must emit the mangled label"
+        );
+        assert!(
+            asm.contains("mathkit_1_0_greet:"),
+            "the 'greet' definition must emit the mangled label"
+        );
+        assert!(
+            asm.contains("mathkit_1_0_makebuf:"),
+            "the 'makebuf' definition must emit the mangled label"
+        );
+        // ...and each is exported as a STT_FUNC dynamic symbol.
+        assert!(
+            asm.contains("global mathkit_1_0_add_two_numbers:function"),
+            "the mangled label must be the exported symbol, not the bare name"
+        );
+        assert!(
+            asm.contains("global mathkit_1_0_greet:function"),
+            "greet must be exported under its mangled name"
+        );
+        assert!(
+            asm.contains("global mathkit_1_0_makebuf:function"),
+            "makebuf must be exported under its mangled name"
+        );
+        // The bare labels must NOT appear as definitions or exports — that is
+        // the half-right failure mode the plan warns about.
+        assert!(
+            !asm.contains("\nadd_two_numbers:"),
+            "the bare label must not be defined alongside the mangled one"
+        );
+        assert!(
+            !asm.contains("global greet:function"),
+            "the bare 'greet' must not be exported"
+        );
+    }
+
+    #[test]
+    fn shared_lib_call_site_targets_mangled_label() {
+        // A function that calls a sibling in the same library must `call` the
+        // mangled label, not the bare name — otherwise the .so defines
+        // mathkit_1_0_greet while the call branches to greet, which the
+        // version script does not export.
+        let src = "\
+Library \"mathkit\" version \"1.0\".\n\
+To \"double\" with a number called \"n\".\n  Return n add n.\n\
+To \"run\".\n  Print \"double\" of 21.\n";
+        let asm = compile_to_asm_shared(src);
+        assert!(
+            asm.contains("call mathkit_1_0_double"),
+            "an intra-library call must target the mangled label, not the bare name"
+        );
+        assert!(
+            !asm.contains("call double\n") && !asm.contains("call double "),
+            "the bare name must not be the call target in shared mode"
+        );
+    }
+
+    // Acceptance item 2 — two source files each defining `greet` in one .so
+    // — was deferred from A1. A1 mangled the labels but could not demonstrate
+    // coexistence: the per-compilation symbol tables were keyed by the
+    // AUTHORED name, so two `greet`s collided in `function_return_types` /
+    // `function_param_types` (and the analyzer's `functions` /
+    // `mangled_functions` / `function_param_counts`) even with distinct labels.
+    // A2 scopes those tables by `<lib,version>` (keyed on the mangled label),
+    // so the case is now provable. The unit test below mirrors it at the
+    // codegen level; the end-to-end proof is `run_two_version_library_test` in
+    // test.sh, which builds a real two-version .so through the CLI and calls
+    // both versions from an assembly driver.
+
+    #[test]
+    fn two_versions_of_one_library_coexist_in_one_unit() {
+        // The A1 finding, now resolved. Two VERSIONS of `flags` in one
+        // compilation unit (exactly what the CLI concatenates from two inputs),
+        // both defining `hasflag`, no longer collide: the signature tables are
+        // keyed by the `<lib>_<ver>_<func>` label, so each definition emits and
+        // exports its own mangled symbol. A call inside each library would
+        // resolve to its own body; here we assert the definitions survive
+        // side by side rather than the second overwriting the first.
+        let src = "\
+Library \"flags\" version \"0.1\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return n add 1.\n\
+Library \"flags\" version \"1.0\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return n add 100.\n";
+        let asm = compile_to_asm_shared(src);
+        assert!(
+            asm.contains("flags_0_1_hasflag:"),
+            "version 0.1 must emit its own mangled label"
+        );
+        assert!(
+            asm.contains("flags_1_0_hasflag:"),
+            "version 1.0 must emit its own mangled label"
+        );
+        assert!(
+            asm.contains("global flags_0_1_hasflag:function"),
+            "version 0.1 must be exported under its mangled name"
+        );
+        assert!(
+            asm.contains("global flags_1_0_hasflag:function"),
+            "version 1.0 must be exported under its mangled name"
+        );
+        // The collision A1 found would let the second definition's signature
+        // overwrite the first's; both labels must still be defined exactly
+        // once (no silent merge, no duplicate-label NASM error pending). The
+        // `\n` prefix counts the label DEFINITION line, not the
+        // `global <label>:function` export line, which also ends in `:`.
+        assert_eq!(
+            asm.matches("\nflags_0_1_hasflag:").count(),
+            1,
+            "version 0.1 label defined exactly once"
+        );
+        assert_eq!(
+            asm.matches("\nflags_1_0_hasflag:").count(),
+            1,
+            "version 1.0 label defined exactly once"
+        );
+    }
+
+    #[test]
+    fn two_version_call_resolves_within_its_own_library() {
+        // A call to `hasflag` inside version 0.1's body must target
+        // flags_0_1_hasflag, and a call inside 1.0's body must target
+        // flags_1_0_hasflag — the same-library resolution that the scoped
+        // tables make work. This is the wrong-code bug A1 warned about: with
+        // name-keyed tables both calls would resolve against one signature.
+        let src = "\
+Library \"flags\" version \"0.1\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return n add 1.\n\
+To \"call0\".\n  Return \"hasflag\" of 5.\n\
+Library \"flags\" version \"1.0\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return n add 100.\n\
+To \"call1\".\n  Return \"hasflag\" of 5.\n";
+        let asm = compile_to_asm_shared(src);
+        // `call0` lives in the 0.1 library, so its `hasflag` call targets the
+        // 0.1 mangled label; `call1` lives in 1.0, so its call targets 1.0.
+        assert!(
+            asm.contains("call flags_0_1_hasflag"),
+            "a call in the 0.1 library must target flags_0_1_hasflag"
+        );
+        assert!(
+            asm.contains("call flags_1_0_hasflag"),
+            "a call in the 1.0 library must target flags_1_0_hasflag"
+        );
+    }
+
+    // ---- Stage A2 (corpus fix): differing signatures prove table scoping ----
+    //
+    // The flags corpus above (`two_versions_of_one_library_coexist_in_one_unit`
+    // and `two_version_call_resolves_within_its_own_library`) gives both
+    // versions of `hasflag` the SAME signature — a number in, a number out.
+    // That proves the mangled LABELS are distinct and intra-library calls
+    // target the right label, but it is blind to the bug A2 exists to prevent:
+    // a failure to scope the SIGNATURE tables (`function_return_types` /
+    // `function_param_types`) by <lib,version>. With identical signatures, a
+    // collapsed (name-keyed) table produces byte-identical codegen to a scoped
+    // one — the second library's return type "wins" but is the same value, so
+    // nothing observable changes. A test that passes for the wrong reason
+    // reports safety it is not checking.
+    //
+    // This case gives the two `get`s DIFFERENT return types — number in 0.1,
+    // text in 1.0 — and consumes each result with `print`. The print routing
+    // (PRINT_INT for a number, PRINT_CSTR for text) is driven by
+    // `infer_expr_type`, which reads `function_return_types[function_label(name)]`
+    // — the scoped lookup. If the table were keyed by authored name, 1.0's
+    // `text` return would win for 0.1's `useit` too, and a number would be
+    // printed with PRINT_CSTR: wrong code, no diagnostic. The assertions below
+    // fail in exactly that collapse, so the case is now sensitive to the
+    // signature-table scoping the flags corpus cannot see.
+
+    /// The first `PRINT_*` instruction occurring after `anchor` in `asm`, used
+    /// to check that a function-call result is routed by its inferred (scoped)
+    /// return type. `"PRINT_INT "` / `"PRINT_CSTR "` (with the trailing space)
+    /// avoid matching `PRINT_INT_ZEROPAD` / `PRINT_INT_PADDED`, which embed the
+    /// `PRINT_INT` prefix under an underscore.
+    fn first_print_after(asm: &str, anchor: &str) -> &'static str {
+        let i = asm
+            .find(anchor)
+            .unwrap_or_else(|| panic!("anchor {:?} not found in asm", anchor));
+        let rest = &asm[i..];
+        let int = rest.find("PRINT_INT ");
+        let cstr = rest.find("PRINT_CSTR ");
+        match (int, cstr) {
+            (Some(a), Some(b)) => {
+                if a < b {
+                    "PRINT_INT"
+                } else {
+                    "PRINT_CSTR"
+                }
+            }
+            (Some(_), None) => "PRINT_INT",
+            (None, Some(_)) => "PRINT_CSTR",
+            (None, None) => panic!("no PRINT_* found after anchor {:?}", anchor),
+        }
+    }
+
+    #[test]
+    fn two_versions_differing_signatures_resolve_per_library() {
+        let src = "\
+Library \"sig\" version \"0.1\".\n\
+To \"get\" with a number called \"n\".\n  Return a number, n add 1.\n\
+To \"useit\" with a number called \"n\".\n  Print \"get\" of n.\n\n\
+Library \"sig\" version \"1.0\".\n\
+To \"get\" with a number called \"n\".\n  Return a text, \"hello\".\n\
+To \"useit2\" with a number called \"n\".\n  Print \"get\" of n.\n";
+        let asm = compile_to_asm_shared(src);
+        // The call inside each library targets its own `get` (the property
+        // A2 scoped; restated here because this is the case that also carries
+        // the return-type value).
+        assert!(
+            asm.contains("call sig_0_1_get"),
+            "a call in the 0.1 library must target sig_0_1_get"
+        );
+        assert!(
+            asm.contains("call sig_1_0_get"),
+            "a call in the 1.0 library must target sig_1_0_get"
+        );
+        // The return-type VALUE is scoped per library: 0.1's `get` returns a
+        // number, so `useit` prints it with PRINT_INT; 1.0's `get` returns text,
+        // so `useit2` prints it with PRINT_CSTR. A name-keyed table would let
+        // 1.0's `text` win for 0.1's call, making `useit` print a number with
+        // PRINT_CSTR — the wrong-code bug, caught here.
+        assert_eq!(
+            first_print_after(&asm, "call sig_0_1_get"),
+            "PRINT_INT",
+            "0.1's get returns a number, so its result must print as PRINT_INT"
+        );
+        assert_eq!(
+            first_print_after(&asm, "call sig_1_0_get"),
+            "PRINT_CSTR",
+            "1.0's get returns text, so its result must print as PRINT_CSTR"
+        );
+    }
+
+    // ---- Stage A3: emit the `.lib` interface file ----
+
+    /// Compile `source` in `--shared` mode and return the collected per-library
+    /// signature blocks plus the mangled export labels, so the `.lib` render
+    /// and the ToC↔export round-trip can be tested without shelling out to
+    /// nasm/ld. Mirrors `compile_to_asm_shared` but exposes the codegen state.
+    fn compile_shared_with_libs(source: &str) -> (Vec<LibBlock>, Vec<String>) {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("lib_test.vox", source);
+        let mut program = parser
+            .parse()
+            .expect("shared test snippet should parse cleanly");
+        let mut analyzer = Analyzer::new()
+            .with_source("lib_test.vox", source)
+            .with_shared_mode(true);
+        analyzer.analyze(&mut program);
+        assert!(
+            analyzer.errors.is_empty(),
+            "shared test snippet should analyze cleanly, got: {:?}",
+            analyzer.errors
+        );
+        let mut gen = CodeGenerator::new();
+        gen.set_shared_lib_mode(true);
+        gen.generate(&program);
+        (gen.library_blocks().to_vec(), gen.exported_functions().to_vec())
+    }
+
+    #[test]
+    fn lib_file_two_version_round_trip() {
+        // The showcase case: two versions of `flags` in one .so, each with a
+        // typed return (`Return a number, ...`), so the `.lib` carries a
+        // return type. The emitted `.lib` is pasted in the A3 report; this test
+        // pins it to the normative format so a formatting drift fails here.
+        let src = "\
+Library \"flags\" version \"0.1\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return a number, n add 1.\n\
+Library \"flags\" version \"1.0\".\n\
+To \"hasflag\" with a number called \"n\".\n  Return a number, n add 100.\n";
+        let (blocks, exports) = compile_shared_with_libs(src);
+
+        // Two Library blocks, one per version, in source order.
+        assert_eq!(blocks.len(), 2, "two inputs -> two Library blocks in one .lib");
+        assert_eq!(blocks[0].lib, "flags");
+        assert_eq!(blocks[0].version, "0.1");
+        assert_eq!(blocks[1].lib, "flags");
+        assert_eq!(blocks[1].version, "1.0");
+
+        // Round-trip invariant (the one thing to test): each ToC entry, mangled
+        // by its block's <lib, version>, must equal the exported dynamic
+        // symbol set one-for-one. A4 will re-parse this `.lib` and verify the
+        // same against `.dynsym`; here we verify it against the codegen's own
+        // export list, which becomes `.dynsym` via the version script.
+        let toc_mangled: Vec<String> = blocks
+            .iter()
+            .flat_map(|b| {
+                b.funcs
+                    .iter()
+                    .map(|f| super::mangle_library_symbol(&b.lib, &b.version, &f.name))
+            })
+            .collect();
+        let mut got = toc_mangled.clone();
+        got.sort();
+        let mut exp = exports.clone();
+        exp.sort();
+        assert_eq!(
+            got, exp,
+            "ToC mangled names must match exported_functions one-for-one"
+        );
+
+        // The emitted `.lib` for libflags.so (the normative format; one entry
+        // per line, never wrapped; `Location` relative to the `.lib`). Written
+        // as one literal — Rust's `\` line continuation strips leading
+        // whitespace, which would silently drop the 4-space indent the format
+        // requires, so the entry lines are kept on their `\n` continuation
+        // line instead of split across one.
+        let lib = super::render_lib_file(&blocks, "libflags.so");
+        let expected = "Library \"flags\" version \"0.1\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n\nLibrary \"flags\" version \"1.0\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n";
+        assert_eq!(lib, expected, "emitted .lib must match the normative format");
+    }
+
+    #[test]
+    fn lib_file_signatures_carry_params_names_types_and_return() {
+        // A library whose export has multiple parameters and a `value` return:
+        // the `.lib` must carry every parameter (name + type), joined with
+        // ` and `, and the return type as `, returning a value` (the `value` ABI
+        // is fixed, so the type name alone is complete — no extra fields).
+        let src = "\
+Library \"m\" version \"2.0\".\n\
+To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\".\n  Return a value, v.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        assert_eq!(blocks.len(), 1);
+        let lib = super::render_lib_file(&blocks, "libm.so");
+        assert!(
+            lib.contains("To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\", returning a value."),
+            "multi-param entry joined with ` and `, value param/return by type name only; got:\n{}",
+            lib
+        );
+    }
+
+    #[test]
+    fn lib_file_parameterless_and_void_return_omits_clauses() {
+        // `To "greet".` — no params, void return — reads as a bare entry with
+        // no `with` clause and no `, returning` clause. A parameterless function
+        // with a return reads `To "makebuf", returning a number.`. This is the
+        // parameterless / value-parameter readability the steer asked to settle.
+        let src = "\
+Library \"m\" version \"1.0\".\n\
+To \"greet\".\n  Print \"hi\".\n\n\
+To \"makebuf\".\n  Return a number, 7.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        let lib = super::render_lib_file(&blocks, "libm.so");
+        assert!(
+            lib.contains("To \"greet\"."),
+            "a parameterless void-return function reads `To \"greet\".`; got:\n{}",
+            lib
+        );
+        assert!(
+            lib.contains("To \"makebuf\", returning a number."),
+            "a parameterless function with a return reads `To \"makebuf\", returning a number.`; got:\n{}",
+            lib
+        );
+    }
+
+    #[test]
+    fn bodyless_function_does_not_absorb_successor() {
+        // A3 round-trip regression: a bodyless function (`To "greet".` with no
+        // body and no separating blank line) used to absorb the following
+        // `To "c" ...` as a *nested* FunctionDef. The nested function was still
+        // emitted (so it appeared in `nm -D`) but was invisible to the top-level
+        // walk that collects `.lib` signatures, so the ToC dropped it while the
+        // `.so` still exported it — a silent `.lib`/`.so` mismatch and the one
+        // property this stage exists for. The parser now terminates a body on
+        // `To`/`Library`, keeping the successor top-level. This asserts the
+        // successor is collected (not absorbed) and that the ToC count equals
+        // the export count — the class-wide invariant, not a name check.
+        let src = "\
+Library \"toc\" version \"1.0\".\n\
+To \"a\". Return a number, 1.\n\
+To \"greet\".\n\
+To \"c\". Return a number, 3.\n";
+        let (blocks, exports) = compile_shared_with_libs(src);
+        assert_eq!(blocks.len(), 1);
+        let names: Vec<&str> = blocks[0].funcs.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names, vec!["a", "greet", "c"],
+            "a bodyless `greet` must not absorb `c` into its body"
+        );
+        // ToC count == export count: each ToC entry, mangled by its block's
+        // <lib, version>, must equal the exported set one-for-one.
+        let toc_mangled: Vec<String> = blocks[0]
+            .funcs
+            .iter()
+            .map(|f| super::mangle_library_symbol(&blocks[0].lib, &blocks[0].version, &f.name))
+            .collect();
+        let mut got = toc_mangled.clone();
+        got.sort();
+        let mut exp = exports.clone();
+        exp.sort();
+        assert_eq!(got, exp, "ToC count must equal exported function count");
+    }
+
+    #[test]
+    fn non_shared_builds_keep_plain_labels() {
+        // Non-shared builds must be completely unaffected: same labels as
+        // today. The same source without --shared emits the bare mangled
+        // name, no library prefix, no `:function` export.
+        let src = "\
+To \"greet\".\n  Print \"hi\".\n\
+To \"double\" with a number called \"n\".\n  Return n add n.\n\
+To \"run\".\n  Print \"double\" of 21.\n";
+        let asm = compile_to_asm(src);
+        assert!(
+            asm.contains("greet:"),
+            "non-shared builds keep the plain mangled label"
+        );
+        assert!(
+            asm.contains("call double"),
+            "non-shared call sites target the plain mangled name"
+        );
+        assert!(
+            !asm.contains("_1_0_"),
+            "no library/version mangling outside shared mode"
+        );
+        assert!(
+            !asm.contains(":function"),
+            "the :function export tag is shared-mode only"
+        );
     }
 
     #[test]

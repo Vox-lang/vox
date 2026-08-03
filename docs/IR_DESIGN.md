@@ -1,5 +1,10 @@
 # Intermediate Representation (IR) Design Document
 
+> **Status:** Proposal — not built. No `src/ir/` or `src/backend/` exists; the
+> compiler still lowers AST directly to x86_64 NASM (`src/` contains only
+> lexer/parser/analyzer/codegen). Draft 1.0, January 2026.
+> _(assessed 2026-08, vox v0.1.23)_
+
 **Version:** Draft 1.0 | **Date:** January 2026
 
 ---

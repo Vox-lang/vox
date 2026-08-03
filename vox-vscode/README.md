@@ -96,9 +96,9 @@ cd vox-vscode
 vsce package
 
 # Install the generated .vsix file
-code --install-extension vox-0.1.0.vsix
+code --install-extension vox-0.1.72.vsix
 # Or for Windsurf:
-windsurf --install-extension vox-0.1.0.vsix
+windsurf --install-extension vox-0.1.72.vsix
 ```
 
 ---
@@ -129,10 +129,14 @@ windsurf --install-extension vox-0.1.0.vsix
 ```
 vox-vscode/
 ├── setup.sh                     # Auto-setup script for new developers
+├── check-grammar.sh             # Drift checker: lexer keywords vs. grammar
 ├── package.json                 # Extension manifest + color customizations
 ├── language-configuration.json  # Brackets, comments, folding
 ├── syntaxes/
-│   └── english.tmLanguage.json  # TextMate grammar (token rules)
+│   └── vox.tmLanguage.json      # TextMate grammar (token rules)
+├── images/
+│   └── icon.png                 # Extension icon
+├── LICENSE                      # MIT
 └── README.md                    # This file
 ```
 
@@ -146,7 +150,7 @@ The language will appear as **"Vox"** in the language picker.
 
 ## Contributing
 
-The grammar is defined in `syntaxes/english.tmLanguage.json` using TextMate patterns.
+The grammar is defined in `syntaxes/vox.tmLanguage.json` using TextMate patterns.
 Color customizations are in `package.json` under `configurationDefaults.editor.tokenColorCustomizations`.
 
 ## License

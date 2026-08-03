@@ -1,5 +1,11 @@
 # Collections Roadmap: Mixed Lists, Matrices, and Tuples
 
+> **Status:** Living roadmap, partially built. Track 1 (mixed lists): stages
+> 1a–1e2 are done; 1e3's `nothing`/tag-6 is live (`TAG_NOTHING`, `is nothing`),
+> the JSON/YAML parser capstone is pending. Track 2 (matrices/tensors) and
+> Track 3 (tuples) are not started. The per-stage markers in this document are
+> current. _(assessed 2026-08, vox v0.1.23)_
+
 This document maps the planned evolution of Vox's collection types across
 three independent tracks, and records the type-inference model that makes
 heterogeneous lists work without the author ever declaring them.

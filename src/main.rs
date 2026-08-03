@@ -2,7 +2,9 @@ mod lexer;
 mod parser;
 mod analyzer;
 mod codegen;
+mod elf;
 mod errors;
+mod lib_file;
 #[cfg(test)]
 mod compile_fail_tests;
 
@@ -15,9 +17,9 @@ use std::process::Command;
 
 use lexer::Lexer;
 use parser::Parser;
-use parser::ast::Statement;
+use parser::ast::{Program, Statement};
 use analyzer::Analyzer;
-use codegen::CodeGenerator;
+use codegen::{CodeGenerator, mangle_library_symbol, render_lib_file};
 
 /// Resolve the core-path environment override purely from its two inputs, so
 /// the precedence rule can be unit-tested without touching process-global env.
@@ -233,8 +235,11 @@ fn process_includes(
                 continue;
             }
             
-            // Only inline Vox source (not .so libraries). A `see` of a source
-            // file splices its statements in here, before compilation.
+            // Only inline Vox source. A `see` of a source file splices its
+            // statements in here, before compilation; a `.lib` import is kept
+            // as a marker and resolved later by resolve_program_imports. (A
+            // `.so` `see` never reaches here — stage A5 made it a parse error
+            // directing the user to the `.lib`.)
             if path.ends_with(".vox") {
                 if let Ok(source) = fs::read_to_string(&include_path) {
                     if verbose {
@@ -261,7 +266,8 @@ fn process_includes(
                 }
                 // Don't keep the see statement for source files - content is inlined
             } else {
-                // Keep the see statement for .so files as a marker
+                // Keep the see statement — a `.lib` import, resolved later
+                // by resolve_program_imports (which keys on the `.lib` suffix).
                 new_statements.push(stmt);
             }
         } else {
@@ -297,12 +303,12 @@ fn show_help() {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         show_help();
         std::process::exit(1);
     }
-    
+
     // Check for help/version flags before treating first arg as source file
     if args.len() == 2 {
         match args[1].as_str() {
@@ -317,8 +323,8 @@ fn main() {
             _ => {}
         }
     }
-    
-    let source_path = &args[1];
+
+    let mut source_paths: Vec<String> = Vec::new();
     let mut emit_asm_only = false;
     let mut keep_asm = false;
     let mut run_after = false;
@@ -328,8 +334,13 @@ fn main() {
     let mut link_libs: Vec<String> = Vec::new();
     let mut lib_paths: Vec<String> = Vec::new();
     let mut target_arch = option_env!("TARGET_ARCH").unwrap_or("x86_64").to_string();
-    
-    let mut i = 2;
+
+    // Any positional argument that is not a recognised flag (and not the value
+    // consumed by -o/--link/--lib-path/--target) is a source file. This accepts
+    // one or several: `vox a.vox --shared -o lib.so` (single, as today) and
+    // `vox a.vox b.vox --shared -o lib.so` (plan 230 stage A2: several libraries
+    // linked into one .so in a single link step).
+    let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--help" | "-h" => {
@@ -369,59 +380,241 @@ fn main() {
                     target_arch = args[i].clone();
                 }
             }
-            _ => {}
+            _ => {
+                // A positional argument: a source file. The old loop started at
+                // index 2 and silently dropped any extra positional args (the
+                // `_ => {}` arm), so `vox a.vox b.vox --shared` quietly lost
+                // `b.vox`. Collecting them here is what makes multi-input work.
+                source_paths.push(args[i].clone());
+            }
         }
         i += 1;
     }
-    
-    let source = match fs::read_to_string(source_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Error reading file '{}': {}", source_path, e);
-            std::process::exit(1);
-        }
-    };
-    
-    if verbose {
-        println!("Compiling {}...", source_path);
+
+    if source_paths.is_empty() {
+        show_help();
+        std::process::exit(1);
     }
-    
-    let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize();
-    
-    let mut parser = Parser::new(tokens).with_source(source_path, &source);
-    let mut program = match parser.parse() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+
+    // Multi-input is --shared only. Two `main`-equivalents in one executable
+    // has no meaning, and silently picking one would be the worst outcome; a
+    // shared build is the one place several sources combine into one output.
+    if source_paths.len() > 1 && !build_shared {
+        eprintln!(
+            "Multiple source files ({}) are only valid with --shared, which links \
+             them into one library in a single link step. An executable build takes \
+             a single source — pass --shared, or compile each source separately.",
+            source_paths.join(", ")
+        );
+        std::process::exit(1);
+    }
+
+    let first_source = source_paths[0].clone();
+
+    // Parse each source independently, then concatenate the statements into
+    // ONE compilation unit so the coreasm runtime is emitted once and shared by
+    // every library in the .so (plan 230 stage A2's design: one resource table,
+    // one .fini_array, one idempotent _cleanup_all — never a runtime per input).
+    // Each input is lexed/parsed on its own so a parse error names its own file
+    // and a `see` of a .vox resolves relative to that file's directory.
+    let mut combined_statements: Vec<Statement> = Vec::new();
+    // (mangled identity prefix, raw library, raw version, filename) per input,
+    // to reject duplicate identities. The mangler folds every character
+    // outside [A-Za-z0-9_] to '_', so two inputs whose `<library, version>`
+    // pairs *look* distinct (`a-b`/`1.0` vs `a_b`/`1.0`) become the same symbol
+    // prefix and would emit colliding labels in the .so. The check therefore
+    // compares what the identities become — `mangle_library_symbol(lib, ver, "")`
+    // — not what was written, and the diagnostic names both raw identities so
+    // the author can see why `a-b` and `a_b` are the same to the linker.
+    let mut identities: Vec<(String, String, String, String)> = Vec::new();
+    // Stage A4: imports resolved from `see "<lib>" version "<ver>" from
+    // "...lib".` across every input — verified signatures for the analyzer
+    // and codegen, and the .so paths for the link line.
+    let mut all_imported_functions: Vec<lib_file::ImportedFunction> = Vec::new();
+    let mut imported_sos: Vec<PathBuf> = Vec::new();
+    for source_path in &source_paths {
+        let source = match fs::read_to_string(source_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading file '{}': {}", source_path, e);
+                std::process::exit(1);
+            }
+        };
+
+        if verbose {
+            println!("Compiling {}...", source_path);
         }
-    };
-    
-    // Process includes (see statements) with circular dependency tracking
-    let source_path_buf = PathBuf::from(source_path);
-    let mut included_files = HashSet::new();
-    included_files.insert(source_path_buf.canonicalize().unwrap_or(source_path_buf.clone()));
-    process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
-    
+
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize();
+
+        let mut parser = Parser::new(tokens).with_source(source_path, &source);
+        let mut program = match parser.parse() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Process includes (see statements) with circular dependency tracking,
+        // relative to this input's directory.
+        let source_path_buf = PathBuf::from(source_path);
+        let mut included_files = HashSet::new();
+        included_files.insert(
+            source_path_buf
+                .canonicalize()
+                .unwrap_or(source_path_buf.clone()),
+        );
+        process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
+
+        // Stage A4: resolve this input's `see ... from "*.lib"` imports NOW,
+        // while this input's directory is in hand (the .lib resolves relative
+        // to the source, then --lib-path; Location relative to the .lib,
+        // then --lib-path). Resolution parses the .lib, selects the
+        // <lib,version> block, verifies every promised symbol against the
+        // .so's .dynsym, and yields the signatures calls type-check against.
+        // Each failure mode has its own message naming the file and what was
+        // expected; they are fatal — the analyzer can only type-check calls
+        // against signatures it actually holds.
+        let source_dir = source_path_buf
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        match lib_file::resolve_program_imports(&program, &source_dir, &lib_paths) {
+            Ok(imports) => {
+                for import in imports {
+                    all_imported_functions.extend(import.functions);
+                    if !imported_sos.contains(&import.so_path) {
+                        imported_sos.push(import.so_path);
+                    }
+                }
+            }
+            Err(message) => {
+                eprintln!("Error: {}", message);
+                std::process::exit(1);
+            }
+        }
+
+        // Multi-input --shared: every input must carry its own `Library`
+        // declaration (its symbols are mangled by it), and no two inputs may
+        // claim the same <library, version> — the second would silently
+        // overwrite the first's signatures, the wrong-code bug A1 found. This
+        // is a property of the inputs, not the program, so it is checked here
+        // in the driver where both filenames are in hand (the analyzer sees one
+        // concatenated unit and has no filenames).
+        if build_shared && source_paths.len() > 1 {
+            let identity = program.statements.iter().find_map(|s| {
+                if let Statement::LibraryDecl { name, version } = s {
+                    Some((name.clone(), version.clone()))
+                } else {
+                    None
+                }
+            });
+            match identity {
+                Some((lib, ver)) => {
+                    // The symbol prefix every function in this library will
+                    // share; two inputs that sanitise to the same prefix emit
+                    // colliding labels in the .so, so this — not the raw
+                    // strings — is what must be distinct.
+                    let prefix = mangle_library_symbol(&lib, &ver, "");
+                    if let Some((plib, pver, prev_file)) = identities
+                        .iter()
+                        .find_map(|(p, l, v, f)| {
+                            if p == &prefix {
+                                Some((l.clone(), v.clone(), f.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        if plib == lib && pver == ver {
+                            // Same raw identity (e.g. the same file passed
+                            // twice): keep the existing diagnostic's shape.
+                            eprintln!(
+                                "Duplicate library identity: '{}' and '{}' both declare \
+                                 Library \"{}\" version \"{}\". Two sources linked into one \
+                                 .so must each name a distinct library and version, or the \
+                                 second's signatures silently overwrite the first's. Rename \
+                                 one.",
+                                prev_file, source_path, lib, ver
+                            );
+                        } else {
+                            // Different raw identities that sanitise to the
+                            // same symbol prefix. Name both files and both raw
+                            // identities plus the colliding prefix, so the
+                            // author sees why their distinct-looking names are
+                            // the same to the linker.
+                            eprintln!(
+                                "Duplicate library identity: '{}' declares Library \"{}\" \
+                                 version \"{}\" and '{}' declares Library \"{}\" version \"{}\", \
+                                 but both mangle to the symbol prefix '{}'. The mangler folds \
+                                 every character outside [A-Za-z0-9_] to '_', so these are the \
+                                 same to the linker and the second's signatures silently \
+                                 overwrite the first's. Rename one so the library and version \
+                                 stay distinct after mangling.",
+                                prev_file, plib, pver, source_path, lib, ver, prefix
+                            );
+                        }
+                        std::process::exit(1);
+                    }
+                    identities.push((prefix, lib, ver, source_path.clone()));
+                }
+                None => {
+                    eprintln!(
+                        "'{}' has no `Library` declaration. A source linked into a shared \
+                         library alongside others must declare its identity — \
+                         `Library \"name\" version \"x.y\".` — so its symbols are mangled \
+                         apart from the other libraries' and a `.lib` can be written for it. \
+                         Add one before the function definitions.",
+                        source_path
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        combined_statements.extend(program.statements);
+    }
+
+    // One Program for the whole .so. `Program::new` defaults every uses_* flag
+    // to false; the single analyze pass below sets them from the combined
+    // statement list, so the runtime include block reflects what every library
+    // in the .so actually needs (and is emitted once).
+    let mut program = Program::new(combined_statements);
+
+    // The analyzer locates errors by text search in one source file (plan 210
+    // P3 — the Statement AST carries no span). For a multi-input build that is
+    // the first file; a symbol in a later library may mislocate, but a
+    // spanned AST is the separate work that fixes it. Single-input builds are
+    // unchanged: the same source, the same content, as today.
+    let first_source_content = fs::read_to_string(&first_source).unwrap_or_default();
     let mut analyzer = Analyzer::new()
-        .with_source(source_path, &source)
-        .with_shared_mode(build_shared);
+        .with_source(&first_source, &first_source_content)
+        .with_shared_mode(build_shared)
+        .with_imports(all_imported_functions.clone());
     analyzer.analyze(&mut program);
-    
+
+    // Stage A4 warnings (a local definition shadowing an imported name) are
+    // non-fatal but never silent: print them whether or not errors follow.
+    for warning in &analyzer.warnings {
+        eprintln!("warning: {}", warning);
+    }
+
     if !analyzer.errors.is_empty() {
         for err in &analyzer.errors {
             eprintln!("{}", err);
         }
         std::process::exit(1);
     }
-    
+
     let mut codegen = CodeGenerator::new();
     codegen.set_shared_lib_mode(build_shared);
     codegen.set_target_arch(&target_arch);
+    codegen.set_imports(all_imported_functions);
     let assembly = codegen.generate(&program);
     
-    let base_name = Path::new(source_path)
+    let base_name = Path::new(&first_source)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("output");
@@ -447,6 +640,40 @@ fn main() {
     if emit_asm_only {
         return;
     }
+
+    // `<stem>.asm` is an intermediate. On the success path it is removed below
+    // (unless --keep-asm); until F2 a failure path left it in the user's
+    // directory — a temp file they never asked to see. Every failure exit
+    // after this point calls `cleanup_asm_on_failure()` first. It honours the
+    // same `keep_asm` flag as the success path (a user who passed --keep-asm
+    // asked to keep the assembly, even from a failed build); --emit-asm has
+    // already returned above, so its assembly is untouched. The `let _ =`
+    // swallows a missing-file error from an earlier write failure that left no
+    // file behind.
+    let cleanup_asm_on_failure = || {
+        if !keep_asm {
+            let _ = fs::remove_file(&asm_path);
+        }
+    };
+
+    // A `--shared` build writes `<stem>.lib` beside the `.so` as a declared
+    // output — derived from the user's `-o`, exactly like the `.so` and the
+    // `.asm`, and overwritten the same way on a rebuild. The earlier refusal
+    // (plan 230 A3, borrowed from plan 210 P1's `.map` collision) made a
+    // library buildable once and then never again without manual cleanup —
+    // every edit-build loop, every warm-directory CI run, hit it. The `.map`
+    // danger does not apply: that name was derived from the *source* and could
+    // collide with an unrelated file; this name is derived from `-o`, which
+    // the user chose. The `.so` and `.lib` are written as a pair or not at
+    // all (see the write below): a rebuild must never leave a fresh `.so`
+    // beside a stale `.lib` — the exact inconsistency the `.dynsym`
+    // verification exists to catch. Skipped for non-shared builds (no .lib
+    // is written) and for `--emit-asm` (returned above).
+    let lib_path = if build_shared {
+        Some(Path::new(&output_path).with_extension("lib"))
+    } else {
+        None
+    };
     
     // Find coreasm library using standard resolution order
     // The ASM uses %include "coreasm/core.asm", so we need the parent directory
@@ -484,11 +711,13 @@ fn main() {
         Ok(status) if status.success() => {}
         Ok(_) => {
             eprintln!("NASM assembly failed");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("Failed to run NASM: {}", e);
             eprintln!("Make sure NASM is installed: sudo apt install nasm");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
     }
@@ -511,6 +740,38 @@ fn main() {
         None
     };
 
+    // Stage A4: every imported .so goes on the link line. It is named by
+    // EXACT filename (`-l:<name>.so`, found through a `-L` on its directory)
+    // rather than by raw path so the recorded DT_NEEDED stays slash-free:
+    // with no SONAME, `ld` would otherwise bake the build-time path into the
+    // binary, and the loader would key on that instead of the rpath. The
+    // rpath (the .so's canonical directory) is where the loader then finds
+    // it. All `-L` entries precede all `-l:` entries so a same-directory
+    // pair never relies on argument order.
+    let mut import_ld_args: Vec<String> = Vec::new();
+    let mut import_rpaths: Vec<String> = Vec::new();
+    {
+        let mut so_dirs: Vec<String> = Vec::new();
+        let mut so_names: Vec<String> = Vec::new();
+        for so in &imported_sos {
+            let dir = so
+                .parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            let dir = dir.canonicalize().unwrap_or(dir);
+            let dir_s = dir.display().to_string();
+            if !so_dirs.contains(&dir_s) {
+                so_dirs.push(dir_s.clone());
+                import_ld_args.push(format!("-L{}", dir_s));
+                import_rpaths.push(dir_s);
+            }
+            if let Some(fname) = so.file_name().and_then(|f| f.to_str()) {
+                so_names.push(format!("-l:{}", fname));
+            }
+        }
+        import_ld_args.extend(so_names);
+    }
+
     let ld_result = if build_shared {
         // An anonymous version script restricts the dynamic symbol table to
         // exactly the library's exported functions. coreasm declares ~54 of
@@ -528,6 +789,7 @@ fn main() {
         script.push_str(" local:*; };\n");
         if let Err(e) = fs::write(&map_path, &script) {
             eprintln!("Error writing version script: {}", e);
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
 
@@ -543,6 +805,15 @@ fn main() {
         }
         for l in link_libs.iter().map(|l| format!("-l{}", l)) {
             all_args.push(l);
+        }
+        // Stage A4: a library can itself `see` another library's .lib; the
+        // imported .so becomes a DT_NEEDED of this one, found the same way.
+        for a in &import_ld_args {
+            all_args.push(a.clone());
+        }
+        for r in &import_rpaths {
+            all_args.push("-rpath".to_string());
+            all_args.push(r.clone());
         }
 
         let arg_refs: Vec<&str> = all_args.iter().map(|s| s.as_str()).collect();
@@ -566,11 +837,11 @@ fn main() {
         // A static executable has no PT_INTERP and no runtime dependencies, so
         // it execs directly. But an executable linked against a shared library
         // needs the dynamic loader to map the .so in at runtime, and an rpath so
-        // the loader finds it. Add both ONLY when there are link libs, so plain
-        // static builds are untouched — the default Vox output stays a flat
-        // static binary with no loader dependency.
+        // the loader finds it. Add both ONLY when there are link libs or .lib
+        // imports, so plain static builds are untouched — the default Vox
+        // output stays a flat static binary with no loader dependency.
         let mut dynamic_args: Vec<String> = Vec::new();
-        if !link_libs.is_empty() {
+        if !link_libs.is_empty() || !imported_sos.is_empty() {
             // FIXME(x86-64, M6): this loader path is hard-coded for x86-64.
             // `target_arch` is in scope here (it is threaded down from the
             // --arch flag / TARGET_ARCH at line ~249), so M6's port can derive
@@ -584,6 +855,10 @@ fn main() {
                 dynamic_args.push("-rpath".to_string());
                 dynamic_args.push(p.clone());
             }
+            for r in &import_rpaths {
+                dynamic_args.push("-rpath".to_string());
+                dynamic_args.push(r.clone());
+            }
         }
 
         let mut all_args: Vec<&str> = ld_args;
@@ -595,6 +870,9 @@ fn main() {
         }
         for l in &link_args {
             all_args.push(l);
+        }
+        for a in &import_ld_args {
+            all_args.push(a);
         }
 
         Command::new("ld")
@@ -616,15 +894,45 @@ fn main() {
         Ok(status) if status.success() => {}
         Ok(_) => {
             eprintln!("Linking failed");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("Failed to run ld: {}", e);
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
     }
 
     let _ = fs::remove_file(&obj_path);
+
+    // A3: emit the `.lib` interface file beside the `.so` — one `Library` block
+    // per input, a `Location` relative to the `.lib`, and a `Table of Contents`
+    // of every exported signature. Round-trip is the test: stage A4 parses what
+    // we write here, so it must be re-readable and its ToC must match
+    // `nm -D --defined-only` one-for-one. The `Location` is the `.so`'s basename
+    // (relative, so moving the pair does not break it); absolute paths are
+    // honoured on read but never generated.
+    if let Some(ref lib_path) = lib_path {
+        let so_filename = Path::new(&output_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&output_path);
+        let lib_text = render_lib_file(codegen.library_blocks(), so_filename);
+        if let Err(e) = fs::write(lib_path, &lib_text) {
+            // A declared output, written as a pair with the .so. If the .lib
+            // cannot be written (permissions, a directory in the way), do not
+            // leave the fresh .so beside a stale/no .lib — that is the
+            // disagreeing pair the .dynsym verification exists to detect.
+            // Remove the .so this build just produced and fail loudly.
+            let _ = fs::remove_file(&output_path);
+            eprintln!("Error writing .lib '{}': {}", lib_path.display(), e);
+            std::process::exit(1);
+        }
+        if verbose {
+            println!("Created library interface: {}", lib_path.display());
+        }
+    }
 
     if verbose {
         if build_shared {

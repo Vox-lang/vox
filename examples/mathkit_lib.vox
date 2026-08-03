@@ -1,0 +1,13 @@
+(A small shared library, built with `vox --shared`. Its companions are
+mathkit_consumer.vox, which consumes it from Vox through `see` of a `.lib`,
+and mathkit_driver.asm, which calls it from a foreign host. See LANGUAGE.md,
+"Shared libraries".
+
+  vox examples/mathkit_lib.vox --shared -o examples/libmathkit.so)
+
+Library "mathkit" version "1.0".
+
+To "add two numbers" with a number called "a" and a number called "b". Return a number, a add b.
+
+To "greet".
+  Print "hello from mathkit".

@@ -177,7 +177,7 @@ No dynamic analysis or runtime interpretation occurs after compilation.
 ### Debian / Ubuntu
 
 ```sh
-sudo apt install nasm rust make
+sudo apt install nasm cargo make
 ```
 
 ### Fedora

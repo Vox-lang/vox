@@ -1,0 +1,13 @@
+(Plan 230 stage A4 — a second library exporting `greet`, for the import-vs-
+import ambiguity test. A program that `see`s both this (library "other" version
+"1.0") and mathkit_lib (library "mathkit" version "1.0") and then calls `greet`
+must fail to compile naming both libraries and both versions: the spec resolves
+neither by import order nor by highest version, because either rule would make a
+call's meaning depend on unrelated lines or change silently on upgrade — the
+exact outcome multi-version support exists to prevent. `other` is a separate
+`.so`/`.lib` pair from `mathkit` so the two imports genuinely disagree.)
+
+Library "other" version "1.0".
+
+To "greet".
+  Print "hi from other".

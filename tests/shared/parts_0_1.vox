@@ -1,0 +1,15 @@
+(Plan 230 stage A4 — version 0.1 of `parts`. Linked with parts_1_0.vox into one
+.so so a consumer can `see` BOTH versions from one `.lib` and call a function
+present in only one of them. `common` is exported by both versions (so a call to
+it would be ambiguous — the dual case); `only one` is exported by 1.0 only, so
+a consumer importing both versions and calling `only one` resolves to exactly
+one provider and neither errors nor warns. That is the per-name resolution
+guarantee: ambiguity is a property of the called name's provider set, not of
+the import set, so a non-ambiguous name in a multi-version import just works.
+
+`hasflag` is not used here; `common` returns n add 1 in this version.)
+
+Library "parts" version "0.1".
+
+To "common" with a number called "n".
+  Return a number, n add 1.

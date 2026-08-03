@@ -1,5 +1,11 @@
 # User Story
 
+> **Status:** Substantially built. A compile-fail harness exists
+> (`src/compile_fail_tests.rs` + `tests/compile_fail/`, ~59 `.vox`/`.err`
+> pairs, exceeding the plan's "50+ invalid programs" target). Item-by-item
+> coverage of the full safety-class matrix below is not verified here.
+> _(assessed 2026-08, vox v0.1.23)_
+
 > As a Vox language user, I want unsafe or invalid Vox programs to fail at compile time so that generated binaries never segfault at runtime.
 
 ---

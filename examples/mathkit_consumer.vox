@@ -1,0 +1,15 @@
+(Consumes the mathkit library through its `.lib` — the Vox consumption path.
+Builds and runs against the finished compiler: `see` of a `.lib` resolves the
+library, `add two numbers` is type-checked against the `.lib` table of
+contents, and the call links against the `.so`. See LANGUAGE.md, "Consuming a
+library".
+
+  vox examples/mathkit_lib.vox --shared -o examples/libmathkit.so
+  vox examples/mathkit_consumer.vox -o examples/mathkit_consumer
+  ./examples/mathkit_consumer
+  -> 7)
+
+see "mathkit" version "1.0" from "./libmathkit.lib".
+
+a number called "sum" is "add two numbers" of 3 and 4.
+Print the sum.

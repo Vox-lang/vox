@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.24**
+**Version 0.2.0**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -267,8 +267,8 @@ Use `a` or `an` before the type to declare a new variable:
 ```
 a number called "x" is 5.
 a text called "name" is "Alice".
-a boolean called "flag" is true.
-a list called "numbers" is [1, 2, 3].
+a boolean called "done" is true.
+a list called "nums" is [1, 2, 3].
 a map called "person" is {"name": "Alice", "age": 30}.
 ```
 
@@ -276,7 +276,7 @@ a map called "person" is {"name": "Alice", "age": 30}.
 
 ```
 Set a number called counter to 1.
-Create a text called message to "Hello".
+Create a text called greeting to "Hello".
 ```
 
 ### Assignment (Existing Variable)
@@ -579,15 +579,15 @@ a number called "pi truncated" is pi as a number.
 
 (Number to text)
 a number called "age" is 25.
-a text called "age text" is the age as text.
+a text called "agestr" is the age as text.
 
 (Text to number - parsing)
-a text called "input" is "123".
-a number called "parsed" is the input as a number.
+a text called "userinput" is "123".
+a number called "parsed" is the userinput as a number.
 
 (Boolean to number)
-a boolean called "flag" is true.
-a number called "flag num" is the flag as a number.
+a boolean called "done" is true.
+a number called "done num" is the done as a number.
 
 (Inline casting)
 Print 3.14159 as a number.
@@ -595,27 +595,29 @@ Print 3.14159 as a number.
 
 **The `in` Keyword:**
 
-The `in` keyword is an alternative to `as` that reads more naturally for unit conversions and durations:
+The `in` keyword reads more naturally for timer duration casts. It applies to
+a timer's `duration` or `elapsed`, not to a plain number:
 
 ```
-(Unit conversions)
-a number called "ms" is 5000.
-a number called "secs" is the ms in seconds.
-
 (Duration from timer)
 Print the timer's duration in seconds.
 Print the timer's elapsed in milliseconds.
 ```
 
+`in` only works on a timer's `duration`/`elapsed` (it lowers to a duration
+cast); `<number> in <unit>` on a plain number is not valid syntax. To convert a
+plain number of milliseconds to seconds, divide: `the millis divide 1000`.
+
 **Formatted Output:**
 
-Numbers can be converted to padded text for display formatting:
+Numbers can be converted to padded text for display formatting with the
+zero-pad format specifier:
 
 ```
 (Pad to 2 digits - for times like 09:05)
-a number called "hour" is 9.
-a text called "hour padded" is the hour as text padded to 2.
-Print the hour padded.  (prints "09")
+a number called "h" is 9.
+a text called "hpadded" is "{h:02}".
+Print the hpadded.  (prints "09")
 ```
 
 **Casting Rules:**
@@ -629,7 +631,7 @@ Print the hour padded.  (prints "09")
   number`) stops parsing at the first character invalid for that base,
   rather than failing outright - it does not set the error flag
 - Zero is `false`, any non-zero number is `true`
-- `in` keyword is preferred for unit/time conversions
+- `in` keyword is for timer `duration`/`elapsed` casts (see above)
 
 ---
 
@@ -713,8 +715,8 @@ For each <variable> in <list>, <statement>.
 
 **Example:**
 ```
-a list called "numbers" is [1, 2, 3].
-For each n in numbers, print the n.
+a list called "nums" is [1, 2, 3].
+For each n in nums, print the n.
 ```
 
 ### Loop Control
@@ -763,10 +765,10 @@ Decrement the value.
 Create lists with square brackets containing comma-separated values:
 
 ```
-a list called "numbers" is [1, 2, 3].
+a list called "nums" is [1, 2, 3].
 a list called "names" is ["Alice", "Bob", "Charlie"].
 a list called "mixed" is [1, "two", 3].
-a list called "empty" is [].
+a list called "emptylist" is [].
 ```
 
 **Key points:**
@@ -851,7 +853,7 @@ predicates:
 
 ```
 For each item in [1, [2, 3], "x"],
-  if item is a list, print "L", otherwise print "s".
+  if item is a list then, print "L". otherwise print "s".
 (prints: s, L, s)
 ```
 
@@ -886,9 +888,9 @@ literal uses braces with `"key": value` pairs, and an empty map is `{}`:
 
 ```
 a map called "person" is {"name": "Ada", "age": 36}.
-a map called "empty" is {}.
+a map called "emptymap" is {}.
 print person.            (prints: {"name": "Ada", "age": 36})
-print empty.             (prints: {})
+print emptymap.          (prints: {})
 ```
 
 Read a value by key with `map's "key"` (the key is a text literal; a
@@ -1197,7 +1199,7 @@ print items's length.      (prints 3)
 print items's size.        (same as length)
 print items's first.       (prints 10)
 print items's last.        (prints 30)
-print items's empty.       (prints false)
+print items's empty.       (prints 0)
 ```
 
 | Property | Description | Type |
@@ -1213,16 +1215,16 @@ print items's empty.       (prints false)
 Access elements by index (1-indexed):
 
 ```
-a list called "numbers" is [10, 20, 30].
+a list called "nums" is [10, 20, 30].
 
-Print element 1 of numbers.   (prints 10)
-Print element 2 of numbers.   (prints 20)
-Print numbers's first.        (prints 10)
-Print numbers's last.         (prints 30)
+Print element 1 of nums.   (prints 10)
+Print element 2 of nums.   (prints 20)
+Print nums's first.        (prints 10)
+Print nums's last.         (prints 30)
 
 (Using variable index)
 a number called "i" is 2.
-Print element i of numbers.   (prints 20)
+Print element i of nums.   (prints 20)
 ```
 
 **Bounds checking:**
@@ -1240,10 +1242,10 @@ On error print "Cannot access element 100 - out of bounds!".
 Add elements to the end of a list using the `append` keyword:
 
 ```
-a list called "numbers" is [1, 2, 3].
-append 4 to numbers.
-append 5 to numbers.
-print numbers's length.       (prints 5)
+a list called "nums" is [1, 2, 3].
+append 4 to nums.
+append 5 to nums.
+print nums's length.       (prints 5)
 ```
 
 `append` is overloaded by destination type:
@@ -1444,11 +1446,16 @@ Print "Hello, {name}! You are {age} years old.".
 | `{var:.N}` | N decimal places | `{pi:.2}` | `3.14` |
 | `{var:N}` | Pad to N characters | `{x:6}` | `    42` |
 | `{var:0N}` | Zero-pad to N chars | `{x:06}` | `000042` |
-| `{var:x}` | Hexadecimal (lowercase) | `{255:x}` | `0xff` |
-| `{var:X}` | Hexadecimal (uppercase) | `{255:X}` | `0xFF` |
-| `{var:b}` | Binary | `{5:b}` | `101` |
-| `{var:o}` | Octal | `{8:o}` | `0o10` |
-| `{var:04x}` | Padded hex | `{255:04x}` | `0x00ff` |
+| `{var:x}` | Hexadecimal (lowercase) | `{n:x}` | `0xff` |
+| `{var:X}` | Hexadecimal (uppercase) | `{n:X}` | `0xFF` |
+| `{var:b}` | Binary | `{n:b}` | `101` |
+| `{var:o}` | Octal | `{n:o}` | `0o10` |
+| `{var:04x}` | Padded hex | `{n:04x}` | `0x00ff` |
+
+The value inside `{}` must be a variable or expression, not a bare literal —
+`{255:x}` is rejected (`255` is read as a variable name). The examples above
+assume a declared `a number called "n" is 255.` (set `n` to 5 or 8 for the
+binary and octal rows).
 
 #### Expressions in Format Strings
 
@@ -1557,7 +1564,7 @@ Buffers are memory blocks for I/O operations. They come in two types:
 #### Dynamic Buffers (default)
 
 ```
-a buffer called "input".
+a buffer called "inputbuf".
 a buffer called "data".
 ```
 
@@ -1706,7 +1713,7 @@ Set byte 3 of data to 0xBE.
 Set byte 4 of data to 0xEF.
 
 a number called "b1" is byte 1 of data.
-Print "First byte: 0x{b1:02X}".
+Print "First byte: {b1:02X}".
 
 (Out of bounds - caught by error handler)
 a number called "bad" is byte 100 of data.
@@ -1749,7 +1756,7 @@ If src's size is greater than 1048576 then,
 
 **Example:**
 ```
-a list of strings called "names" contains "Alice", "Bob", "Charlie".
+a list called "names" is ["Alice", "Bob", "Charlie"].
 
 print names's length.
 
@@ -1763,20 +1770,19 @@ Access list elements by index. Indexes are **1-indexed** (like natural language:
 
 **By index:**
 ```
-a list called "numbers" is [10, 20, 30].
+a list called "nums" is [10, 20, 30].
 
-Print element 1 of numbers.   (prints 10)
-Print element 2 of numbers.   (prints 20)
+Print element 1 of nums.   (prints 10)
+Print element 2 of nums.   (prints 20)
 
 a number called "i" is 2.
-Print element i of numbers.   (prints 20)
+Print element i of nums.   (prints 20)
 ```
 
 **By property:**
 ```
-Print numbers's first.        (prints 10)
-Print numbers's last.         (prints 30)
-Print numbers's second.       (prints 20)
+Print nums's first.        (prints 10)
+Print nums's last.         (prints 30)
 ```
 
 **Bounds Checking:**
@@ -1998,9 +2004,9 @@ If buffer's size is equal to buffer's capacity then,
 All resources are automatically cleaned up on program exit:
 
 ```
-a buffer called "data".                    # Auto-freed on exit
-open a file for writing called log at "x". # Auto-closed on exit
-# Even if you forget to close - it's handled!
+a buffer called "data".                    (Auto-freed on exit)
+open a file for writing called log at "x". (Auto-closed on exit)
+(Even if you forget to close - it's handled!)
 ```
 
 #### Dynamic Buffers
@@ -2008,8 +2014,8 @@ open a file for writing called log at "x". # Auto-closed on exit
 Buffers start at 4KB and grow automatically. No size specification needed:
 
 ```
-a buffer called "input".     # Grows as needed - never overflows
-Read from source into input. # Safe regardless of file size
+a buffer called "inputbuf".     (Grows as needed - never overflows)
+Read from source into inputbuf. (Safe regardless of file size)
 ```
 
 **Internal structure:**
@@ -2031,7 +2037,7 @@ This works correctly even with conditional file operations:
 If condition is true then,
     open a file for writing called log at "debug.log".
     Write "Debug info" to log.
-    # Close might be forgotten here - still safe!
+    (Close might be forgotten here - still safe!)
 ```
 
 #### Safety vs C Comparison
@@ -2790,91 +2796,330 @@ For each number from 1 to 15, print the number, but if "check divisibility" of t
 
 ### The `see` Keyword
 
-Use `see` to include other source files or libraries:
+`see` pulls in code from another file. It has two distinct jobs:
+
+- **`see "<path>.vox".`** — include another Vox source file. This works today:
+  the file is parsed as part of your program, so its functions become callable
+  with no linking step. It is how you split a program across files.
+- **`see "<lib>" version "<ver>" from "<path>.lib".`** — consume a shared
+  library through its `.lib` interface. This is the library path; see
+  [Shared libraries](#shared-libraries) below.
 
 ```
 see "./utils.vox".
-see "./libraries/math.so".
-see "math" version "1.0" from "./libraries/math.so".
+see "mathkit" version "1.0" from "./libmathkit.lib".
 ```
 
-**Syntax variations:**
-- `see "./path/to/file.vox".` - Include source file
-- `see "./path/to/lib.so".` - Include compiled library
-- `see "libname" version "1.0" from "./path.so".` - Include specific version
-- `see "./path.so" for "libname" version "1.0".` - Alternative syntax
+There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
+`see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
+version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF:
+it carries mangled symbol *names* but no Vox type information, so the compiler
+cannot check a call against it. Those forms are retired: `see` of a `.so`
+errors and directs you to the `.lib`, and the `see ... for ...` form has its
+own diagnostic — both name the canonical form `see "<lib>" version "<x.y>" from
+"<path>.lib".`. `see` of a `.vox` source is unchanged.
 
-**Search paths:**
-1. Relative to current file (`./` or `../`)
-2. System library path (`/usr/share/vox/lib/`)
+**Search paths.** `see` resolves the path by its shape:
 
-**Circular dependencies:** The compiler tracks included files and automatically skips files that have already been included.
+- `./…` or `../…` — resolved against the directory of the file that contains
+  the `see` statement, and only there.
+- `/…` — used as-is (absolute).
+- a bare name — `/usr/share/vox/lib/<name>` is checked **first**, and only if
+  that does not exist does it fall back to the containing file's directory.
+  Watch this: a bare `see "utils.vox".` can silently pick up a system file in
+  preference to the one sitting next to your source. Write `./utils.vox` when
+  you mean the local one.
 
-### Creating Libraries
+`--lib-path` is not consulted by `see` of a `.vox` source; it only passes
+search paths to the linker (`-L`) for `--link`. It *is* consulted by `see` of
+a `.lib` — both to find the `.lib` and to resolve its `Location` `.so` — see
+[Consuming a library](#consuming-a-library).
 
-Declare a library with name and version, then build it with `--shared`:
+**Circular includes.** The compiler tracks files already seen and skips a
+`see` that would re-enter one.
+
+### Shared libraries
+
+A shared library is a `.so` you build from Vox and call from Vox — or from C,
+Rust, or any other host. The chain is:
+
+**`.vox` → `see` a `.lib` → `Location` → `.so`**
+
+The `.lib` is the typed interface (the `.h` equivalent); the `.so` it points
+at is linked, never read for types. This section covers writing one, the `.lib`
+file, consuming one, putting several libraries in one `.so`, and the symbol
+names a non-Vox caller needs.
+
+> **What runs today.** The whole path runs: building a library with `--shared`
+> produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
+> consumes it from Vox, export names are mangled, and multi-input `--shared`
+> links several libraries (and several versions of one library) into one `.so`.
+> Every output below is real, captured from this compiler (vox v0.2.0). A
+> foreign host can also call the `.so` directly — see
+> [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
+
+#### Writing a library
+
+Add a `Library` declaration at the top of a `.vox` file, then build with
+`--shared`:
 
 ```
-Library "math" version "1.0".
+Library "mathkit" version "1.0".
 
-To "square" with a number called "x". Return a number, x multiply x.
+To "add two numbers" with a number called "a" and a number called "b". Return a number, a add b.
 
-To "cube" with a number called "x". Return a number, x multiply x multiply x.
+To "greet".
+  Print "hello from mathkit".
 ```
 
 ```bash
-vox math.vox --shared -o libmath.so
+vox mathkit_lib.vox --shared -o libmathkit.so
 ```
 
-**What `--shared` produces.** A self-contained shared object: it carries its
-own copy of the Vox runtime, so it is loadable from C, Rust, or any other host
-— not only from Vox. The runtime is position-independent, so a library may use
-the full core language — arithmetic, printing, buffers, files, floats, lists,
-maps — not a runtime-free subset. Only the library's own function definitions
-are exported; every runtime symbol is kept out of the dynamic symbol table.
-Verify with:
+This compiles to a self-contained shared object. It carries its own copy of
+the Vox runtime, so it is loadable from C, Rust, or any other host — not only
+from Vox. The runtime is position-independent, so a library may use the full
+core language — arithmetic, printing, buffers, files, floats, lists, maps —
+not a runtime-free subset. Only the library's own function definitions are
+exported; every runtime symbol is kept out of the dynamic symbol table.
+
+Verify what you built:
 
 ```bash
-nm -D --defined-only libmath.so   # lists exactly square and cube, nothing else
-readelf -r libmath.so | grep -c R_X86_64_32   # 0 — no absolute relocations
+$ nm -D --defined-only libmathkit.so
+00000000000005c4 T mathkit_1_0_add_two_numbers
+00000000000005f9 T mathkit_1_0_greet
+$ readelf -r libmathkit.so
+There are no relocations in this file.
 ```
+
+Two exports and nothing else leaked; zero absolute relocations, so the whole
+object is position-independent. The labels are the mangled
+`<library>_<version>_<func>` form — `mathkit_1_0_add_two_numbers` and
+`mathkit_1_0_greet` — so two versions of one library can live in one `.so`
+without colliding; see [Mangling](#mangling) below.
+
+**A library needs an identity.** The `Library` declaration gives the library
+the name and version that drive mangling and the `.lib`. A `--shared` build
+with no `Library` line has no identity and is rejected — add the declaration.
 
 **Top-level statements are rejected.** A shared library has no entry point, so
-a top-level executable statement (`print`, assignment, `if`, a bare function
-call, …) would be silently dropped. The compiler rejects it instead with a
-clear diagnostic. Only function definitions, `Library`, and `see` may appear
-at the top level of a `--shared` compile. Put any work you need inside a
-function.
+a top-level executable statement (`Print`, assignment, `If`, a bare function
+call, …) would be silently dropped. The compiler rejects it instead:
+
+```
+error: Top-level print statement is not allowed in a shared library: only
+function definitions, 'Library', and 'see' may appear at the top level.
+```
+
+Only function definitions, `Library`, and `see` may appear at the top level of
+a `--shared` compile. Put any work you need inside a function.
 
 **An empty library is rejected.** A `--shared` compile with no function
 definitions exports nothing, which would yield a malformed version script and
 an opaque linker error. The compiler rejects it instead: a shared library must
 export at least one function.
 
-**What is not yet supported.** The `Library "name" version "ver"` declaration
-is recorded but not yet enforced, and exported symbols are the plain function
-labels (e.g. `square`), not the `<lib>_<version>_<name>` mangled form. Name
-mangling, `.lib` metadata, version-mismatch diagnostics, and linking a
-program against a `.so` through `see` arrive together in a later phase; until
-then `--link` is the way to link an executable against a built `.so`.
+#### The `.lib` file
 
-**Linking an executable against a `.so`.** `--link` links the program against
-the named shared libraries. Because such an executable needs the dynamic
-loader at runtime, `--link` automatically adds the loader
-(`/lib64/ld-linux-x86-64.so.2`) and an `-rpath` for each `--lib-path` — but
-only when libraries are actually linked, so a plain `vox hello.vox` build
-stays a flat static binary with no loader dependency.
-
-### Using Library Functions
-
-After including a library, use its functions directly:
+The `.lib` is the public interface to a library: its name and version, where
+its `.so` is, and a table of contents of every exported function's signature.
+It is what a consumer `see`s, and the only place Vox types live — ELF carries
+mangled names but no types, so the `.lib` is the type source. A `--shared`
+build writes `<output-stem>.lib` beside the `.so`, one `Library` block per
+input. It will not overwrite a `.lib` that already exists — a repeat
+`--shared` build errors and asks you to remove the `.lib` first, then
+regenerates the `.so` and `.lib` together, so a rebuild cannot silently
+clobber an interface you have pinned or edited. The format:
 
 ```
-see "./math.vox".
+Library "mathkit" version "1.0".
+Location "./libmathkit.so".
 
-a number called "result" is "square" of 5.
-print result.
+Table of Contents:
+    To "add two numbers" with a number called "a" and a number called "b", returning a number.
+    To "greet".
 ```
+
+- **`Library "<name>" version "<ver>".`** — the block's identity. Several
+  `Library` blocks may appear in one `.lib`, each with its own `Location`;
+  parsing runs to EOF, and a `Library` line starts a new block.
+- **`Location "<path>".`** — where the `.so` is. It resolves relative to the
+  `.lib` first, then `--lib-path`, then error. Absolute paths are honoured but
+  never generated, so a `.lib` is portable.
+- **`Table of Contents:`** — one line per exported function, in the same
+  signature vocabulary as Vox source. Parameter and return types are drawn from
+  `number`, `text`, `boolean`, `file`, `value`; anything else is an error
+  naming the unsupported type.
+- **`, returning a <type>`** is new and exists only in `.lib` files. Vox source
+  declares return types in the body (`Return a number, x.`), which a bodiless
+  `.lib` declaration has no room for.
+
+A `.lib` is lexed with the Vox lexer but parsed by a dedicated parser, so it
+cannot carry executable statements — only the interface above.
+
+#### Consuming a library
+
+```
+see "mathkit" version "1.0" from "./libmathkit.lib".
+
+a number called "sum" is "add two numbers" of 3 and 4.
+Print the sum.
+```
+
+`see` of a `.lib` is the consumption path. The compiler:
+
+1. Resolves the `.lib` (relative to the source, then `--lib-path`).
+2. Parses it and selects the block matching name **and** version.
+3. Resolves `Location` relative to the `.lib`, then `--lib-path`.
+4. **Verifies against the `.so`'s dynamic symbol table** — every mangled name
+   the `.lib` promises must exist in the `.so`. This is the staleness check: a
+   `.lib` that lies about a function is a compile error, not a runtime crash.
+5. Registers the signatures, so calls type-check like any other function.
+6. Emits `extern <mangled>` for each used function and adds the `.so` and an
+   `-rpath` to the link line.
+
+Each failure is its own diagnostic naming the file and what was expected:
+missing `.lib`; no such library in it; **version mismatch, listing the
+versions the `.lib` does offer**; missing `.so` at `Location`; symbol absent
+from the `.so` (the stale-`.lib` case — it names the symbol); arity or type
+mismatch at the call site.
+
+The worked example set in [`examples/`](examples) shows the workflow:
+`mathkit_lib.vox` is the library and `mathkit_consumer.vox` is the Vox consumer
+above. A foreign caller — C, Rust, or assembly linking the `.so` directly — is
+shown in [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
+below.
+
+#### Several libraries in one `.so`
+
+`vox a.vox b.vox --shared -o lib.so` links several libraries into one `.so` in
+a single step — you cannot append to a linked `.so`, so one link step is the
+only way to combine them. The sources are parsed independently and then
+compiled into one unit, so the runtime is included once and shared by every
+library in the `.so`.
+
+The reason this exists is **backwards compatibility**: two *versions* of the
+same library can live in one `.so`, kept apart by mangling. A consumer who
+upgrades the library keeps calling `mathkit_1_0_add_two_numbers` after
+`mathkit_2_0_add_two_numbers` ships beside it, with no recompile — both symbols
+are present and independently callable. That version isolation is why the
+whole design looks the way it does, and it is the case to keep in mind when
+the rest of it seems elaborate.
+
+Duplicate `<library, version>` pairs across inputs are rejected with both
+filenames. Multi-input is `--shared` only; it is rejected for executable
+builds, where the semantics would be ambiguous.
+
+#### Mangling
+
+Every exported function is mangled to a single flat label:
+
+```
+<library>_<version>_<func>
+```
+
+`mathkit` + `1.0` + `add two numbers` → `mathkit_1_0_add_two_numbers`. Each
+component is sanitized by mapping every character outside `[A-Za-z0-9_]` to `_`.
+The leading-digit prefix (a digit is not a legal C identifier start) applies
+only to the **library** component, which begins the symbol; the version and
+function components are interior and take the sanitizer alone, so the version
+`1.0` appears as `1_0` (the `.` becomes a single `_`, no prefix — applying the
+prefix per component would yield `mathkit__1_0_add_two_numbers`, a double
+underscore). A
+non-Vox caller — C, Rust, anything that links the `.so` — needs this mangled
+name to call the function at all, which is why the scheme is documented here
+and not only in [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.md) (the full
+rules, including what is and is not mangled). There is no unmangled alias: an
+alias would defeat the version isolation above.
+
+**Runtime state is not mangled** — a deliberate non-goal. The runtime is
+emitted once per `.so` and shared by every library in it (one resource table,
+one `.fini_array`, one idempotent cleanup). Cross-`.so` isolation holds because
+each `.so` carries its own runtime and the version script hides it. Only
+function labels are mangled. See [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.md).
+
+#### Calling a library from a non-Vox host
+
+A shared library is a plain `.so`, so any caller that can link one can use it —
+C, Rust, or hand-written assembly. This is also the case the mangling scheme
+above exists for: the foreign caller must name the export by its mangled label.
+Build the example library, then call it from a small assembly driver (nasm + ld
+only — the tools Vox already requires). Run these from the `examples/` directory:
+
+```bash
+$ vox mathkit_lib.vox --shared -o libmathkit.so
+$ nm -D --defined-only libmathkit.so
+00000000000005c4 T mathkit_1_0_add_two_numbers
+00000000000005f9 T mathkit_1_0_greet
+```
+
+```nasm
+; mathkit_driver.asm — link against libmathkit.so and call its exports.
+global _start
+extern mathkit_1_0_add_two_numbers
+extern mathkit_1_0_greet
+
+section .text
+_start:
+    and rsp, -16            ; 16-byte stack alignment for the Vox prologue
+    mov rdi, 3
+    mov rsi, 4
+    call mathkit_1_0_add_two_numbers  ; mathkit_1_0_add_two_numbers(3, 4) -> 7, in rax
+    cmp rax, 7
+    jne .fail
+    call mathkit_1_0_greet            ; prints "hello from mathkit"
+    mov rax, 60             ; SYS_exit
+    xor rdi, rdi
+    syscall
+.fail:
+    mov rax, 60
+    mov rdi, 2
+    syscall
+```
+
+```bash
+$ nasm -f elf64 -o mathkit_driver.o mathkit_driver.asm
+$ ld -dynamic-linker /lib64/ld-linux-x86-64.so.2 -rpath '$ORIGIN' \
+      -o mathkit_driver mathkit_driver.o -L. -lmathkit
+$ ./mathkit_driver
+hello from mathkit
+```
+
+The driver declares the exports `extern` and calls them with the Vox calling
+convention: integer arguments in `rdi`, `rsi`, … and the result in `rax`.
+`-rpath '$ORIGIN'` makes it find `libmathkit.so` in its own directory, so the
+pair is relocatable. (The `.asm` extension is gitignored under `examples/`
+because the compiler emits `.asm` there as output, so this driver is shown here
+rather than tracked as a file — copy it out to run it.) The `extern` names are
+the mangled labels `mathkit_1_0_add_two_numbers` and `mathkit_1_0_greet`,
+matching what `nm -D` showed above.
+
+#### Linking an executable against a `.so` directly
+
+`--link` puts a built `.so` on the link line of an executable. It takes the
+library's soname *stem* — the part between `lib` and `.so` — so a file named
+`libmath.so` is linked as `--link math`:
+
+```bash
+$ vox hello.vox --link math --lib-path ./libs -o hello
+$ readelf -d hello | grep -E 'NEEDED|RUNPATH'
+ 0x0000000000000001 (NEEDED)             Shared library: [libmath.so]
+ 0x000000000000001d (RUNPATH)            Library runpath: [./libs]
+```
+
+Because such an executable needs the dynamic loader at runtime, `--link`
+automatically adds the loader (`/lib64/ld-linux-x86-64.so.2`) and an `-rpath`
+for each `--lib-path` — but only when libraries are actually linked, so a plain
+`vox hello.vox` build stays a flat static binary with no loader dependency.
+
+`--link` alone does not teach the compiler a library's function signatures, so
+it does not let Vox source call the library's functions — that is what `see` of
+a `.lib` does (it registers the signatures *and* adds the `.so` to the link
+line). `--link` is for the case where the program already references the
+symbols another way, or for a non-Vox driver assembled by hand — the
+[Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
+driver above is exactly that, linked with `ld` rather than `--link`.
 
 ---
 
@@ -2908,10 +3153,10 @@ vox hello.vox --run
 vox hello.vox -o myprogram
 
 # Build shared library
-vox math.vox --shared
+vox math.vox --shared -o libmath.so
 
-# Link against shared library
-vox main.vox --link libmath --lib-path ./libs
+# Link an executable against a built .so (stem, not the lib prefix)
+vox main.vox --link math --lib-path ./libs
 ```
 
 ---
@@ -2964,6 +3209,7 @@ additive    ::= multiplicative ((add | subtract) multiplicative)*
 multiplicative ::= primary ((multiply | divide | modulo) primary)*
 primary     ::= literal | identifier | func_call | "(" expr ")"
 
-type        ::= "number" | "text" | "boolean" | "list"
+type        ::= "number" | "float" | "text" | "boolean" | "list"
+              | "map" | "buffer" | "file" | "time" | "timer" | "value"
 name        ::= string | identifier
 ```
