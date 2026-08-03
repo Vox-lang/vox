@@ -1,10 +1,8 @@
-(Consumes the mathkit library through its `.lib` — the Vox consumption path
-that arrives with plan 230 Stage A4. Until that lands this file will not
-compile: the compiler does not yet emit or read `.lib` files, so `see` of a
-`.lib` is a no-op and `add two numbers` below is an unknown function. It is
-here so the full intended workflow lives in one place, and it will be re-run
-against the finished compiler before this ships. The caller that runs today is
-mathkit_driver.asm. See LANGUAGE.md, "Consuming a library".
+(Consumes the mathkit library through its `.lib` — the Vox consumption path.
+Builds and runs against the finished compiler: `see` of a `.lib` resolves the
+library, `add two numbers` is type-checked against the `.lib` table of
+contents, and the call links against the `.so`. See LANGUAGE.md, "Consuming a
+library".
 
   vox examples/mathkit_lib.vox --shared -o examples/libmathkit.so
   vox examples/mathkit_consumer.vox -o examples/mathkit_consumer

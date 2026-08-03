@@ -1,11 +1,10 @@
 # Vox Standard: Symbol Mangling
 
 > **Status:** Active project standard. The `<library>_<version>_<name>`
-> function-label rule is the adopted standard; per-version runtime-state
-> mangling is an explicit non-goal, superseded by plan 230. The library-export
-> composition is not yet emitting composed symbols on this branch (it arrives
-> with the shared-library code track's Stage A1). _(assessed 2026-08,
-> vox v0.1.23)_
+> function-label rule is the adopted standard and is emitted by the compiler
+> (`nm -D` shows e.g. `mathkit_1_0_add_two_numbers`); per-version runtime-state
+> mangling is an explicit non-goal, superseded by plan 230. _(assessed 2026-08,
+> vox v0.1.24)_
 
 Vox emits a flat assembly symbol namespace. Compiler-generated names, runtime
 internals, author-written function names, and — once shared libraries land —

@@ -2802,8 +2802,8 @@ For each number from 1 to 15, print the number, but if "check divisibility" of t
   the file is parsed as part of your program, so its functions become callable
   with no linking step. It is how you split a program across files.
 - **`see "<lib>" version "<ver>" from "<path>.lib".`** — consume a shared
-  library through its `.lib` interface. This is the library path and arrives
-  with plan 230 (Stage A4); see [Shared libraries](#shared-libraries) below.
+  library through its `.lib` interface. This is the library path; see
+  [Shared libraries](#shared-libraries) below.
 
 ```
 see "./utils.vox".
@@ -2814,12 +2814,10 @@ There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
 `see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
 version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF:
 it carries mangled symbol *names* but no Vox type information, so the compiler
-cannot check a call against it. Those forms are retired (Stage A5): `see` of a
-`.so` will then error and direct you to the `.lib`. **Today it does neither** —
-a `see` of a `.so` (or any non-`.vox` path) is a silent no-op: it compiles, and
-any call into the library is simply missing, with no warning. That silence is
-the trap, so be aware `see` of a `.so` buys you nothing until Stage A5 replaces
-it with an error. `see` of a `.vox` source is unchanged.
+cannot check a call against it. Those forms are retired: `see` of a `.so`
+errors and directs you to the `.lib`, and the `see ... for ...` form has its
+own diagnostic — both name the canonical form `see "<lib>" version "<x.y>" from
+"<path>.lib".`. `see` of a `.vox` source is unchanged.
 
 **Search paths.** `see` resolves the path by its shape:
 
@@ -2832,10 +2830,10 @@ it with an error. `see` of a `.vox` source is unchanged.
   preference to the one sitting next to your source. Write `./utils.vox` when
   you mean the local one.
 
-`--lib-path` is not consulted by `see`; it only passes search paths to the
-linker (`-L`) for `--link`. (The `--lib-path`-aware resolution is part of the
-`.lib` consumption path that arrives in Stage A4 — see
-[Consuming a library](#consuming-a-library).)
+`--lib-path` is not consulted by `see` of a `.vox` source; it only passes
+search paths to the linker (`-L`) for `--link`. It *is* consulted by `see` of
+a `.lib` — both to find the `.lib` and to resolve its `Location` `.so` — see
+[Consuming a library](#consuming-a-library).
 
 **Circular includes.** The compiler tracks files already seen and skips a
 `see` that would re-enter one.
@@ -2852,14 +2850,13 @@ at is linked, never read for types. This section covers writing one, the `.lib`
 file, consuming one, putting several libraries in one `.so`, and the symbol
 names a non-Vox caller needs.
 
-> **What runs today.** Building a library with `--shared` works today and
-> produces a self-contained `.so`, callable from a foreign host. The Vox
-> consumption path — `see` of a `.lib`, the `.lib` file itself, the mangled
-> export names, and multi-input `--shared` — is being built on the code track
-> (plan 230, Stages A1–A5) and does not run in this build yet. Below, the
-> parts that work today show real output captured from this compiler; the
-> parts that are arriving are written from plan 230 as the specification and
-> are marked. No output is invented.
+> **What runs today.** The whole path runs: building a library with `--shared`
+> produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
+> consumes it from Vox, export names are mangled, and multi-input `--shared`
+> links several libraries (and several versions of one library) into one `.so`.
+> Every output below is real, captured from this compiler (vox v0.1.24). A
+> foreign host can also call the `.so` directly — see
+> [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
 #### Writing a library
 
@@ -2886,25 +2883,25 @@ core language — arithmetic, printing, buffers, files, floats, lists, maps —
 not a runtime-free subset. Only the library's own function definitions are
 exported; every runtime symbol is kept out of the dynamic symbol table.
 
-Verify what you built (these commands run today):
+Verify what you built:
 
 ```bash
 $ nm -D --defined-only libmathkit.so
-00000000000005c4 T add_two_numbers
-00000000000005f9 T greet
+00000000000005c4 T mathkit_1_0_add_two_numbers
+00000000000005f9 T mathkit_1_0_greet
 $ readelf -r libmathkit.so
 There are no relocations in this file.
 ```
 
 Two exports and nothing else leaked; zero absolute relocations, so the whole
-object is position-independent. (Today the labels are the plain function names,
-`add_two_numbers` and `greet`. The mangled form `mathkit_1_0_add_two_numbers`
-arrives with Stage A1; see [Mangling](#mangling) below.)
+object is position-independent. The labels are the mangled
+`<library>_<version>_<func>` form — `mathkit_1_0_add_two_numbers` and
+`mathkit_1_0_greet` — so two versions of one library can live in one `.so`
+without colliding; see [Mangling](#mangling) below.
 
 **A library needs an identity.** The `Library` declaration gives the library
 the name and version that drive mangling and the `.lib`. A `--shared` build
-with no `Library` line has no identity and is rejected (Stage A1) — add the
-declaration.
+with no `Library` line has no identity and is rejected — add the declaration.
 
 **Top-level statements are rejected.** A shared library has no entry point, so
 a top-level executable statement (`Print`, assignment, `If`, a bare function
@@ -2923,14 +2920,17 @@ definitions exports nothing, which would yield a malformed version script and
 an opaque linker error. The compiler rejects it instead: a shared library must
 export at least one function.
 
-#### The `.lib` file  *(arriving — Stage A3)*
+#### The `.lib` file
 
 The `.lib` is the public interface to a library: its name and version, where
 its `.so` is, and a table of contents of every exported function's signature.
 It is what a consumer `see`s, and the only place Vox types live — ELF carries
 mangled names but no types, so the `.lib` is the type source. A `--shared`
 build writes `<output-stem>.lib` beside the `.so`, one `Library` block per
-input. The format (from plan 230):
+input. It will not overwrite a `.lib` that already exists — a repeat
+`--shared` build errors and asks you to remove the `.lib` first, then
+regenerates the `.so` and `.lib` together, so a rebuild cannot silently
+clobber an interface you have pinned or edited. The format:
 
 ```
 Library "mathkit" version "1.0".
@@ -2958,7 +2958,7 @@ Table of Contents:
 A `.lib` is lexed with the Vox lexer but parsed by a dedicated parser, so it
 cannot carry executable statements — only the interface above.
 
-#### Consuming a library  *(arriving — Stage A4)*
+#### Consuming a library
 
 ```
 see "mathkit" version "1.0" from "./libmathkit.lib".
@@ -2987,11 +2987,11 @@ mismatch at the call site.
 
 The worked example set in [`examples/`](examples) shows the workflow:
 `mathkit_lib.vox` is the library and `mathkit_consumer.vox` is the Vox consumer
-above (arriving). A foreign caller that runs today — before the Vox path lands —
-is shown in [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
+above. A foreign caller — C, Rust, or assembly linking the `.so` directly — is
+shown in [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
 below.
 
-#### Several libraries in one `.so`  *(arriving — Stage A2)*
+#### Several libraries in one `.so`
 
 `vox a.vox b.vox --shared -o lib.so` links several libraries into one `.so` in
 a single step — you cannot append to a linked `.so`, so one link step is the
@@ -3042,34 +3042,33 @@ function labels are mangled. See [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.
 #### Calling a library from a non-Vox host
 
 A shared library is a plain `.so`, so any caller that can link one can use it —
-C, Rust, or hand-written assembly. This runs today, before the Vox `see`-of-a-
-`.lib` path lands, and it is also the case the mangling scheme above exists for:
-the foreign caller must name the export by its mangled label. Build the example
-library, then call it from a small assembly driver (nasm + ld only — the tools
-Vox already requires). Run these from the `examples/` directory:
+C, Rust, or hand-written assembly. This is also the case the mangling scheme
+above exists for: the foreign caller must name the export by its mangled label.
+Build the example library, then call it from a small assembly driver (nasm + ld
+only — the tools Vox already requires). Run these from the `examples/` directory:
 
 ```bash
 $ vox mathkit_lib.vox --shared -o libmathkit.so
 $ nm -D --defined-only libmathkit.so
-00000000000005c4 T add_two_numbers
-00000000000005f9 T greet
+00000000000005c4 T mathkit_1_0_add_two_numbers
+00000000000005f9 T mathkit_1_0_greet
 ```
 
 ```nasm
 ; mathkit_driver.asm — link against libmathkit.so and call its exports.
 global _start
-extern add_two_numbers      ; today: plain label. After Stage A1: mathkit_1_0_add_two_numbers
-extern greet                ;                  and mathkit_1_0_greet
+extern mathkit_1_0_add_two_numbers
+extern mathkit_1_0_greet
 
 section .text
 _start:
     and rsp, -16            ; 16-byte stack alignment for the Vox prologue
     mov rdi, 3
     mov rsi, 4
-    call add_two_numbers    ; add_two_numbers(3, 4) -> 7, returned in rax
+    call mathkit_1_0_add_two_numbers  ; mathkit_1_0_add_two_numbers(3, 4) -> 7, in rax
     cmp rax, 7
     jne .fail
-    call greet              ; prints "hello from mathkit"
+    call mathkit_1_0_greet            ; prints "hello from mathkit"
     mov rax, 60             ; SYS_exit
     xor rdi, rdi
     syscall
@@ -3092,9 +3091,9 @@ convention: integer arguments in `rdi`, `rsi`, … and the result in `rax`.
 `-rpath '$ORIGIN'` makes it find `libmathkit.so` in its own directory, so the
 pair is relocatable. (The `.asm` extension is gitignored under `examples/`
 because the compiler emits `.asm` there as output, so this driver is shown here
-rather than tracked as a file — copy it out to run it.) Today the `extern` names
-are the plain function labels; once Stage A1 lands they become the mangled
-`mathkit_1_0_add_two_numbers` form and the two `extern` lines change to match.
+rather than tracked as a file — copy it out to run it.) The `extern` names are
+the mangled labels `mathkit_1_0_add_two_numbers` and `mathkit_1_0_greet`,
+matching what `nm -D` showed above.
 
 #### Linking an executable against a `.so` directly
 
