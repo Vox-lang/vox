@@ -22,7 +22,12 @@ section of `LANGUAGE.md` is the full guide.
 > 2. **`--shared` now requires a `Library` declaration.** Add
 >    `Library "name" version "x.y".` at the top of the library source.
 > 3. **Three `see` forms that silently linked nothing are now compile
->    errors.** Switch to `see "<lib>" version "<ver>" from "<path>.lib".`.
+>    errors.** Switch to `see "<lib>" version "<ver>" from "<path>.lib"`.
+>
+> Upgrading from before 0.1.23? Two earlier breaking changes are documented
+> under their own releases below: arithmetic on a text/buffer/list/file now
+> errors with a cast suggestion (`0.1.21`), and `.en` source includes no
+> longer inline — use `.vox` (`0.1.23`).
 
 ### Removed
 
@@ -150,3 +155,107 @@ Compiler fixes. No breaking changes.
   found. Existing shell profiles and CI that set the old name keep working;
   migrate when convenient. Note that the note on stderr can surface in builds
   that capture stderr and expect it empty.
+
+## [0.1.23] - 2026-07-31
+
+Collections, maps, the `nothing` value, and the shared-library foundation.
+
+> **Breaking.** `.vox` is now the sole source extension: a `see` of a `.en`
+> source, which was the only include form that worked before, no longer
+> inlines (silently — the call site errors "Unknown function"). Switch `.en`
+> includes to `.vox`. The main input still accepts any extension. See
+> `### Changed` below.
+
+### Added
+
+- **Whole-list printing.** `Print <list>` renders the list (`[1, 2, 3]`), and
+  `{list}` format interpolation routes the same way. Previously printing a
+  list showed only the first element.
+- **Mixed-type lists with per-slot type tags.** A list may hold number, text,
+  decimal, and boolean together; each element carries a one-byte runtime tag
+  and reads back as its own type. A list the compiler can prove homogeneous
+  keeps an untagged fast path; one it cannot prove widens to mixed by default
+  ("static is a proof, mixed is the default"), so an opaque value — e.g. a
+  function result with no declared return type — is never silently reinterpreted.
+- **Nested lists.** A list element may be a list; printing is recursive and
+  cycle-safe (capped at depth 64).
+- **Type predicates.** `is a number/text/decimal/boolean/list/map` (and
+  `is not a …`) read the runtime type tag and fold at compile time on a
+  statically-typed value.
+- **The `value` type.** A declared dynamic type that carries its runtime tag
+  across a function call, so one function can accept "whatever this slot
+  holds" and ask `is a …` inside. A `value` is rejected from arithmetic until
+  its type is checked.
+- **`nothing` (the absent value).** `null` and `nil` are accepted spellings.
+  It sits in a list, map, or `value` slot, prints as `nothing`, and is tested
+  with `is nothing`. It is not `0`: `0 is nothing` is false.
+- **Maps.** Key/value collections — JSON objects. `{"key": value}` literals
+  (empty `{}`), `map's "key"` read, `set map's "key" to value`, `length`/
+  `empty`/`keys`/`values`, recursive printing. A missing key sets the error
+  flag (it is an error, not `nothing`); keys are text only.
+- **Shared-library foundation.** `--shared` builds a self-contained,
+  position-independent `.so` a C or assembly caller can reach; only the
+  library's own functions are exported (runtime symbols are kept out of the
+  dynamic table), and an empty `--shared` export is rejected. (Consuming a
+  library from Vox via `see` of a `.lib` arrives in 0.2.0.)
+
+### Changed
+
+- **`.vox` is the sole source extension.** `see` of a `.vox` source now
+  inlines correctly — the include gate previously matched `.en`, so
+  `see "./foo.vox".` was silently skipped and the call site errored "Unknown
+  function". The `.en` form, which was the one that worked, no longer inlines;
+  switch `.en` includes to `.vox`. The main input still accepts any extension.
+- **`nothing` is refused in arithmetic.** A literal `nothing` in arithmetic
+  is a compile error — "Cannot use nothing in arithmetic; check it with 'is
+  nothing' first" — and a `nothing` that turns up at run time (read from a map
+  or a mixed list) sets the error flag so `on error` catches it. `nothing` is
+  new in 0.1.23, so this is a safe default, not a change to code that used to
+  work: there was no `nothing` to put in arithmetic before.
+
+### Fixed
+
+- **Maps own their keys.** The map copies each key on insert rather than
+  borrowing the caller's text. No current Vox program could break the old
+  borrowing — keys are text literals and buffers are rejected as keys — but a
+  dynamic key would have corrupted the entry; a forward correctness fix.
+
+## [0.1.22] - 2026-07-31
+
+A hardening release with one user-visible fix.
+
+### Fixed
+
+- **Function-parameter type labels no longer leak to the top level.** A
+  parameter named like a top-level variable previously relabeled it: after
+  `To "show" with a text called "x"`, top-level arithmetic on a number `x`
+  was falsely rejected as text arithmetic. The parameter's type is now
+  scoped to its function body.
+
+## [0.1.21] - 2026-07-28
+
+Heterogeneous lists, type-checked arithmetic, and buffer-safety fixes.
+
+> **Breaking.** Arithmetic on a text, buffer, list, file, or timer now
+> errors with a cast suggestion. Such code previously compiled to pointer or
+> handle arithmetic and produced a wrong number at runtime. Add a cast where
+> you meant a numeric conversion. See `### Changed` below.
+
+### Added
+
+- **Heterogeneous lists with per-slot type tags.** A list may hold mixed
+  types (number, text, decimal, boolean); each element carries a runtime type
+  tag and reads back as its own type. (Whole-list printing, the `value` type,
+  type predicates, maps, and `nothing` follow in 0.1.23.)
+
+### Changed
+
+- **Arithmetic operands are type-checked.** Using a non-numeric value — a
+  text, buffer, list, file, or timer — in arithmetic is now a compile error
+  naming the value and suggesting a cast (`as a number` / `as a float`).
+  Previously such code compiled to pointer or handle arithmetic and produced
+  garbage at runtime. Add a cast where you meant a numeric conversion.
+
+### Fixed
+
+- **A genuine fixed-buffer overflow is an error**, not silent data loss.
