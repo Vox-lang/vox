@@ -402,6 +402,29 @@ pub fn parse_lib_text(text: &str) -> Result<Vec<LibFileBlock>, String> {
 // Resolving a `see` against a .lib + .so
 // ---------------------------------------------------------------------------
 
+/// Strip redundant `.` components for display in diagnostics. `Path::join`
+/// leaves a `.` base joined with a `./`-prefixed relative as `././x`, which
+/// reads badly in error text — a user staring at a failure is exactly who
+/// reads carefully. This rebuilds the path from its components, dropping
+/// every `CurDir` (`.`); `..`, the leading `/` and the final component are
+/// preserved, so the result names the same file without the cosmetic noise.
+/// The stored path is unchanged — only the message is prettified — so the
+/// link line's `parent()`/`canonicalize()` still see the path they expect.
+fn normalise_display(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        if let Component::CurDir = c {
+            continue;
+        }
+        out.push(c.as_os_str());
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
 /// Find `name` relative to `first_dir`, then each `--lib-path` directory.
 /// Returns the first existing candidate; `tried` collects every candidate
 /// for the not-found diagnostic.
@@ -437,7 +460,7 @@ fn resolve_lib_file(path: &str, source_dir: &Path, lib_paths: &[String]) -> Resu
     found.ok_or_else(|| {
         let tried_list = tried
             .iter()
-            .map(|t| format!("  {}", t.display()))
+            .map(|t| format!("  {}", normalise_display(t).display()))
             .collect::<Vec<_>>()
             .join("\n");
         format!(
@@ -473,7 +496,7 @@ fn resolve_location(location: &str, lib_dir: &Path, lib_paths: &[String]) -> Res
              path '{}'.\nThe library binary belongs beside the .lib that \
              describes it (or in a directory given by --lib-path).",
             location,
-            resolved.display()
+            normalise_display(&resolved).display()
         )
     })
 }
@@ -498,9 +521,9 @@ pub fn resolve_see_import(
 ) -> Result<ResolvedImport, String> {
     let lib_path = resolve_lib_file(path, source_dir, lib_paths)?;
     let text = std::fs::read_to_string(&lib_path)
-        .map_err(|e| format!("could not read '{}': {}", lib_path.display(), e))?;
+        .map_err(|e| format!("could not read '{}': {}", normalise_display(&lib_path).display(), e))?;
     let blocks = parse_lib_text(&text)
-        .map_err(|e| format!("could not parse '{}': {}", lib_path.display(), e))?;
+        .map_err(|e| format!("could not parse '{}': {}", normalise_display(&lib_path).display(), e))?;
 
     let matching_name: Vec<&LibFileBlock> = blocks.iter().filter(|b| b.lib == lib_name).collect();
     if matching_name.is_empty() {
@@ -511,7 +534,7 @@ pub fn resolve_see_import(
             .join(", ");
         return Err(format!(
             "'{}' has no library named \"{}\".\nIt declares: {}.",
-            lib_path.display(),
+            normalise_display(&lib_path).display(),
             lib_name,
             if have.is_empty() { "nothing — the file has no Library blocks".to_string() } else { have }
         ));
@@ -527,7 +550,7 @@ pub fn resolve_see_import(
             return Err(format!(
                 "'{}' has library \"{}\" but not version \"{}\".\n\
                  The available versions are: {}.",
-                lib_path.display(),
+                normalise_display(&lib_path).display(),
                 lib_name,
                 lib_version,
                 versions
@@ -555,7 +578,7 @@ pub fn resolve_see_import(
                  Rebuild the library with `vox --shared` to regenerate the pair.",
                 f.name,
                 mangled,
-                so_path.display()
+                normalise_display(&so_path).display()
             ));
         }
         functions.push(ImportedFunction {

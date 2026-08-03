@@ -650,7 +650,8 @@ A number called "r" is "hasflag" of 5.
 Print the r.
 EOF
     if [[ "$err" != *"could not find the library interface file"* ]] \
-        || [[ "$err" != *"nonexistent.lib"* ]] || [[ "$err" != *"--lib-path"* ]]; then
+        || [[ "$err" != *"nonexistent.lib"* ]] || [[ "$err" != *"--lib-path"* ]] \
+        || [[ "$err" == *"././"* ]]; then
         sub_msg="diagnostics (missing .lib)"; printf '%s\n' "$err" >"$work/missing_lib.fail"
     fi
 
@@ -692,7 +693,7 @@ A number called "r" is "hasflag" of 5.
 Print the r.
 EOF
     if [[ "$err" != *"does not exist at the resolved path"* ]] \
-        || [[ "$err" != *"./libflags.so"* ]]; then
+        || [[ "$err" != *"./libflags.so"* ]] || [[ "$err" == *"././"* ]]; then
         sub_msg="diagnostics (missing .so)"; printf '%s\n' "$err" >"$work/missing_so.fail"
     fi
 
@@ -707,7 +708,8 @@ A number called "r" is "ghostflag" of 5.
 Print the r.
 EOF
     if [[ "$err" != *"does not export it"* ]] \
-        || [[ "$err" != *"flags_0_1_ghostflag"* ]] || [[ "$err" != *"stale"* ]]; then
+        || [[ "$err" != *"flags_0_1_ghostflag"* ]] || [[ "$err" != *"stale"* ]] \
+        || [[ "$err" == *"././"* ]]; then
         sub_msg="diagnostics (stale ToC)"; printf '%s\n' "$err" >"$work/stale.fail"
     fi
 
@@ -760,6 +762,107 @@ EOF
     rm -rf "$work"
 }
 run_see_diagnostics_test
+
+# A5 — retire the abandoned `see` syntax. The canonical form
+#   see "<lib>" version "<x.y>" from "<path>.lib".
+# is the only library import that survives. A bare `see "<path>.vox".` is a
+# source include and must keep working. Every other form errors with the
+# canonical form — never a silent compile, which was the trap that made the
+# stale direct-`.so` docs hazardous.
+run_see_retired_forms_test() {
+    local work err=""
+    work="$(mktemp -d)"
+    local sub_msg=""
+
+    # $1 = case name; the program comes on stdin. err captures combined
+    # output. None of these should produce a `prog` binary — a silent compile
+    # of a retired form is exactly the bug this stage closes.
+    run_case() {
+        local name="$1" d="$work/$1"
+        mkdir -p "$d"
+        cat >"$d/prog.vox"
+        err=$( { cd "$d" && "$VOX_BIN" prog.vox -o prog ; } 2>&1 )
+    }
+
+    if [[ -z "$sub_msg" ]]; then
+
+    # 1. see of a .so — the abandoned direct import. Must say so, show the
+    #    canonical form, and point at the .lib. Never compiles silently.
+    run_case see_so <<'EOF'
+see "./libflags.so".
+Print "hi".
+EOF
+    if [[ -f "$work/see_so/prog" ]] || [[ "$err" != *"see of a .so"* ]] \
+        || [[ "$err" != *"Canonical form"* ]] || [[ "$err" != *".lib"* ]]; then
+        sub_msg="retired forms (see of .so)"; printf '%s\n' "$err" >"$work/see_so.fail"
+    fi
+
+    # 2. retired `from` form (no version): see "<lib>" from "<path>".
+    run_case retired_from <<'EOF'
+see "flags" from "./libflags.lib".
+Print "hi".
+EOF
+    if [[ -f "$work/retired_from/prog" ]] || [[ "$err" != *"no longer supported"* ]] \
+        || [[ "$err" != *"from"* ]] || [[ "$err" != *".lib"* ]]; then
+        sub_msg="retired forms (from)"; printf '%s\n' "$err" >"$work/retired_from.fail"
+    fi
+
+    # 3. retired `for` form: see "<path>" for "<lib>" version "<ver>".
+    run_case retired_for <<'EOF'
+see "./libflags.so" for "flags" version "0.1".
+Print "hi".
+EOF
+    if [[ -f "$work/retired_for/prog" ]] || [[ "$err" != *"no longer supported"* ]] \
+        || [[ "$err" != *"for"* ]] || [[ "$err" != *".lib"* ]]; then
+        sub_msg="retired forms (for)"; printf '%s\n' "$err" >"$work/retired_for.fail"
+    fi
+
+    # 4. canonical structure but a .so path — name and version are present, so
+    #    this would have compiled silently under the old `process_includes`
+    #    marker path. The .so check must still fire.
+    run_case canonical_so_path <<'EOF'
+see "flags" version "0.1" from "./libflags.so".
+Print "hi".
+EOF
+    if [[ -f "$work/canonical_so_path/prog" ]] || [[ "$err" != *"see of a .so"* ]] \
+        || [[ "$err" != *"Canonical form"* ]]; then
+        sub_msg="retired forms (canonical .so path)"; printf '%s\n' "$err" >"$work/canonical_so_path.fail"
+    fi
+
+    # 5. .vox source include is unaffected — compiles, runs, prints the value.
+    mkdir -p "$work/vox_ok"
+    cat >"$work/vox_ok/helper.vox" <<'EOF'
+To "inc" with a number called "n". Return a number, n add 1.
+EOF
+    cat >"$work/vox_ok/prog.vox" <<'EOF'
+see "./helper.vox".
+A number called "r" is "inc" of 41.
+Print the r.
+EOF
+    if ! ( cd "$work/vox_ok" && "$VOX_BIN" prog.vox -o prog >"$work/vox_ok/log" 2>&1 ); then
+        sub_msg="retired forms (.vox include compile)"
+        { echo "--- prog.vox ---"; cat "$work/vox_ok/prog.vox"; echo "--- log ---"; cat "$work/vox_ok/log"; } >"$work/vox_ok.fail"
+    elif ! "$work/vox_ok/prog" >"$work/vox_ok/out" 2>&1 || [[ "$(cat "$work/vox_ok/out")" != "42" ]]; then
+        sub_msg="retired forms (.vox include output)"
+        { echo "--- out ---"; cat "$work/vox_ok/out"; } >"$work/vox_ok.fail"
+    fi
+
+    fi
+
+    if [[ -n "$sub_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} see/$sub_msg"
+        local cand
+        for cand in "$work"/*.fail; do
+            [[ -f "$cand" ]] && { echo "      --- $(basename "$cand") ---"; sed 's/^/      /' "$cand" | head -15; }
+        done
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/retired forms (all error with canonical; .vox unaffected)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_retired_forms_test
 
 # A4.4 — name resolution. `see` puts foreign names into scope for the first
 # time, so two collisions become possible and each has a rule (plan 230, "Name

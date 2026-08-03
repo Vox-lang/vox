@@ -154,8 +154,11 @@ fn process_includes(
                 continue;
             }
             
-            // Only inline Vox source (not .so libraries). A `see` of a source
-            // file splices its statements in here, before compilation.
+            // Only inline Vox source. A `see` of a source file splices its
+            // statements in here, before compilation; a `.lib` import is kept
+            // as a marker and resolved later by resolve_program_imports. (A
+            // `.so` `see` never reaches here — stage A5 made it a parse error
+            // directing the user to the `.lib`.)
             if path.ends_with(".vox") {
                 if let Ok(source) = fs::read_to_string(&include_path) {
                     if verbose {
@@ -182,7 +185,8 @@ fn process_includes(
                 }
                 // Don't keep the see statement for source files - content is inlined
             } else {
-                // Keep the see statement for .so files as a marker
+                // Keep the see statement — a `.lib` import, resolved later
+                // by resolve_program_imports (which keys on the `.lib` suffix).
                 new_statements.push(stmt);
             }
         } else {

@@ -3837,18 +3837,22 @@ impl Parser {
     }
     
     fn parse_see(&mut self) -> Result<Statement, Box<CompileError>> {
-        // Supported syntaxes:
-        // see "./path/to/file.vox".
-        // see "math" version "1.0" from "./path.so".
-        // see "./path.so" for "math" version "1.0".
-        // see "./path.so" for math version 1.0.
+        // Stage A5 retired the abandoned direct-`.so` syntax. The one library
+        // import that survives is the canonical form:
+        //   see "<lib>" version "<ver>" from "<path>.lib".
+        // A bare `see "<path>.vox".` is a source include — spliced in by the
+        // frontend before compilation, never part of the library system — and
+        // is unchanged here. Every other `see` form is retired: it gets a
+        // diagnostic showing the canonical form, not a bare parse error, so a
+        // user who wrote a form that used to be documented learns what to
+        // write instead.
         self.advance(); // consume 'see'
         self.skip_noise();
-        
+
         let mut path = String::new();
         let mut lib_name: Option<String> = None;
         let mut lib_version: Option<String> = None;
-        
+
         // Helper to get string or identifier value
         let get_name_or_string = |token: &Token| -> Option<String> {
             match token {
@@ -3857,7 +3861,7 @@ impl Parser {
                 _ => None,
             }
         };
-        
+
         // Helper to get version (string, identifier, or number)
         let get_version = |token: &Token| -> Option<String> {
             match token {
@@ -3867,31 +3871,30 @@ impl Parser {
                 _ => None,
             }
         };
-        
-        // Get first token - could be path or library name
+
+        // First token is the library name (canonical form) or the path
+        // (source include / retired forms).
         let first = get_name_or_string(self.current())
             .ok_or_else(|| self.err(
                 "Missing path or library name after 'see'\n  \
-                 Syntax: see \"./path/to/file.vox\".\n  \
-                 Or: see \"libname\" version \"1.0\" from \"./path.so\"."
+                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".\n  \
+                 (A source include is: see \"<path>.vox\".)"
             ))?;
         self.advance();
         self.skip_noise();
-        
-        // Check what comes next
+
         if *self.current() == Token::Version {
-            // "see libname version X from path"
+            // see "<lib>" version "<ver>" from "<path>.lib".
             lib_name = Some(first);
             self.advance();
             self.skip_noise();
-            
+
             lib_version = get_version(self.current());
             if lib_version.is_some() {
                 self.advance();
                 self.skip_noise();
             }
-            
-            // Expect "from"
+
             if *self.current() == Token::From {
                 self.advance();
                 self.skip_noise();
@@ -3900,41 +3903,37 @@ impl Parser {
                     self.advance();
                 }
             }
-        } else if *self.current() == Token::From {
-            // "see libname from path"
-            lib_name = Some(first);
-            self.advance();
-            self.skip_noise();
-            
-            path = get_name_or_string(self.current()).unwrap_or_default();
-            if !path.is_empty() {
-                self.advance();
-            }
-        } else if *self.current() == Token::For {
-            // "see path for libname version X"
-            path = first;
-            self.advance();
-            self.skip_noise();
-            
-            lib_name = get_name_or_string(self.current());
-            if lib_name.is_some() {
-                self.advance();
-                self.skip_noise();
-                
-                if *self.current() == Token::Version {
-                    self.advance();
-                    self.skip_noise();
-                    lib_version = get_version(self.current());
-                    if lib_version.is_some() {
-                        self.advance();
-                    }
-                }
-            }
+        } else if *self.current() == Token::From || *self.current() == Token::For {
+            // Retired `.so`-era forms: `see "<lib>" from "<path>"` (no version)
+            // and `see "<path>" for "<lib>" version "<ver>"`. Both used to
+            // compile; both now direct the writer to the canonical `.lib`
+            // form rather than failing silently. The keyword is named so the
+            // message echoes the shape the user actually wrote.
+            let form = if *self.current() == Token::From { "from" } else { "for" };
+            return Err(self.err(&format!(
+                "The `see ... {} ...` form is no longer supported.\n  \
+                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".",
+                form
+            )));
         } else {
-            // Simple "see path"
+            // Simple `see "<path>"` — a .vox source include.
             path = first;
         }
-        
+
+        // A `.so` is a binary. The abandoned model imported it directly, which
+        // compiled silently with the library call simply missing — the trap
+        // that made the stale documentation hazardous rather than merely
+        // untidy. It now errors, directing the user to the `.lib` interface
+        // file that is the canonical way to consume a library. This catches a
+        // bare `see "x.so"` and a `see "lib" version "1" from "x.so"` alike.
+        if path.ends_with(".so") {
+            return Err(self.err(
+                "see of a .so is not supported. A .so is a binary; consume it \
+                 through its .lib interface file.\n  \
+                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\"."
+            ));
+        }
+
         Ok(Statement::See { path, lib_name, lib_version })
     }
     
