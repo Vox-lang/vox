@@ -933,7 +933,7 @@ impl Parser {
         self.skip_noise();
         
         // Check for loop expansion: "print each X from Y [treating X as Y]"
-        if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+        if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
             // Create the variable expression, with optional treating substitution
             let var_expr = if let Some((match_val, replacement)) = treating {
                 Expr::TreatingAs {
@@ -959,7 +959,7 @@ impl Parser {
                 self.skip_noise();
                 
                 // Check if next is "each" for loop expansion
-                if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+                if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                     // Create function call with loop variable as argument
                     let arg_expr = if let Some((match_val, replacement)) = treating {
                         Expr::TreatingAs {
@@ -2254,7 +2254,7 @@ impl Parser {
                     self.skip_noise();
                     
                     // Check for loop expansion: "at each X from Y"
-                    if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+                    if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                         path_info = Some(Err((variable, collection, treating)));
                     } else {
                         path_info = Some(Ok(self.parse_primary()?));
@@ -2479,7 +2479,11 @@ impl Parser {
     /// Try to parse "each <variable> from <collection> [treating X as Y]" pattern.
     /// Returns Some((variable, collection, optional_treating)) if found.
     /// This is the universal loop expansion syntax that works with any action.
-    fn try_parse_each_from(&mut self) -> Result<Option<LoopExpansion>, Box<CompileError>> {
+    /// Parse `each <var> from <collection>`. When `expect_trailing_to` is set
+    /// (the append statement), a `to <dest>` clause follows the collection, so
+    /// a range source (`from 1 to 5 to rl`, two `to`s) must be told apart from
+    /// a list source (`from source to dest`, one `to`).
+    fn try_parse_each_from(&mut self, expect_trailing_to: bool) -> Result<Option<LoopExpansion>, Box<CompileError>> {
         if *self.current() != Token::Each {
             return Ok(None);
         }
@@ -2521,14 +2525,37 @@ impl Parser {
         // But only if first is a simple value (number/identifier), not a list or other collection
         let is_list_or_collection = matches!(first, Expr::ListLit { .. } | Expr::PropertyAccess { .. });
         let collection = if *self.current() == Token::To && !is_list_or_collection {
-            self.advance();
-            self.skip_noise();
-            let end = self.parse_primary()?;
-            self.skip_noise();
-            Expr::Range {
-                start: Box::new(first),
-                end: Box::new(end),
-                inclusive: true,
+            if expect_trailing_to {
+                // Range source (`from 1 to 5 to rl`) vs list source
+                // (`from source to dest`): parse the would-be range end
+                // speculatively and keep the range only when a second `to`
+                // follows. Otherwise the first `to` is the caller's
+                // separator - rewind and leave it for the caller.
+                let saved = self.pos;
+                self.advance();
+                self.skip_noise();
+                let end = self.parse_primary()?;
+                self.skip_noise();
+                if *self.current() == Token::To {
+                    Expr::Range {
+                        start: Box::new(first),
+                        end: Box::new(end),
+                        inclusive: true,
+                    }
+                } else {
+                    self.pos = saved;
+                    first
+                }
+            } else {
+                self.advance();
+                self.skip_noise();
+                let end = self.parse_primary()?;
+                self.skip_noise();
+                Expr::Range {
+                    start: Box::new(first),
+                    end: Box::new(end),
+                    inclusive: true,
+                }
             }
         } else {
             // Not a range - could be a more complex expression, but we already have first
@@ -3518,13 +3545,127 @@ impl Parser {
         Ok(Statement::BufferResize { name, new_size })
     }
     
+    /// Parse one value in append position (literal, identifier, function
+    /// call, or braced expression). We must be careful not to consume 'to',
+    /// which is the append separator. A quoted name followed by of/with/on is
+    /// a function call (`append "f" of x to items`); `to` is NOT a call
+    /// trigger here, unlike the general expression parser, so that
+    /// `append "s" to items` stays an append of the literal string "s".
+    /// Braces force the general expression parser for the enclosed tokens
+    /// (`append {i multiply i} to s`), matching how braces put an expression
+    /// into a value slot elsewhere in Vox.
+    fn parse_append_value_primary(&mut self) -> Result<Expr, Box<CompileError>> {
+        match self.current().clone() {
+            Token::OpenBrace => self.parse_primary(),
+            Token::IntegerLiteral(n) => {
+                self.advance();
+                Ok(Expr::IntegerLit(n))
+            }
+            Token::FloatLiteral(n) => {
+                self.advance();
+                Ok(Expr::FloatLit(n))
+            }
+            Token::StringLiteral(s) => {
+                self.advance();
+                self.skip_noise();
+                // A format string can't be a function name - resolve it first.
+                let resolved = self.string_value_expr(s.clone());
+                if matches!(resolved, Expr::FormatString { .. }) {
+                    Ok(resolved)
+                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
+                    self.advance();
+                    self.skip_noise();
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.parse_expression()?);
+                        self.skip_noise();
+                        if *self.current() == Token::Comma {
+                            // Comma belongs to the enclosing sentence.
+                            break;
+                        }
+                        if *self.current() == Token::And {
+                            self.advance();
+                            self.skip_noise();
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(Expr::FunctionCall { name: s, args })
+                } else {
+                    Ok(resolved)
+                }
+            }
+            Token::True => {
+                self.advance();
+                Ok(Expr::BoolLit(true))
+            }
+            Token::False => {
+                self.advance();
+                Ok(Expr::BoolLit(false))
+            }
+            Token::Identifier(name) => {
+                self.advance();
+                Ok(Expr::Identifier(name))
+            }
+            Token::The => {
+                self.advance();
+                self.skip_noise();
+                if let Token::Identifier(name) = self.current().clone() {
+                    self.advance();
+                    Ok(Expr::Identifier(name))
+                } else {
+                    Err(self.err("Expected identifier after 'the' in append"))
+                }
+            }
+            _ => Err(self.err("Expected value to append")),
+        }
+    }
+
+    /// Continue an append value over any binary operators that follow it.
+    /// Precedence matches the general expression parser (bitwise tighter
+    /// than multiplicative, multiplicative tighter than additive); right
+    /// operands reuse the restricted append primary so the separator can
+    /// never be eaten. `to` is never an operator here, so the walk always
+    /// stops at it.
+    fn parse_append_value_ops(&mut self, mut left: Expr, min_prec: u8) -> Result<Expr, Box<CompileError>> {
+        loop {
+            self.skip_noise();
+            let (op, prec) = match self.current() {
+                Token::Add => (BinaryOperator::Add, 1),
+                Token::Subtract => (BinaryOperator::Subtract, 1),
+                Token::Multiply => (BinaryOperator::Multiply, 2),
+                Token::Divide => (BinaryOperator::Divide, 2),
+                Token::Modulo => (BinaryOperator::Modulo, 2),
+                Token::BitAnd => (BinaryOperator::BitAnd, 3),
+                Token::BitOr => (BinaryOperator::BitOr, 3),
+                Token::BitXor => (BinaryOperator::BitXor, 3),
+                Token::BitShiftLeft => (BinaryOperator::ShiftLeft, 3),
+                Token::BitShiftRight => (BinaryOperator::ShiftRight, 3),
+                _ => break,
+            };
+            if prec < min_prec {
+                break;
+            }
+            self.advance();
+            self.skip_noise();
+            let primary = self.parse_append_value_primary()?;
+            let right = self.parse_append_value_ops(primary, prec + 1)?;
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn parse_append(&mut self) -> Result<Statement, Box<CompileError>> {
         // "append <expr> to <list>" or "append each <var> from <collection> to <list>"
         self.advance(); // consume 'append'
         self.skip_noise();
         
         // Check for loop expansion: "append each X from Y to Z"
-        if let Some((variable, collection, _treating)) = self.try_parse_each_from()? {
+        if let Some((variable, collection, _treating)) = self.try_parse_each_from(true)? {
             // Get target list name after "to"
             self.skip_noise();
             if *self.current() != Token::To {
@@ -3557,76 +3698,12 @@ impl Parser {
             return self.wrap_in_loop_expansion(variable, collection, append_stmt);
         }
         
-        // Parse just the value (literal, identifier, function call, or simple
-        // expression). We must be careful not to consume 'to', which is the
-        // append separator. A quoted name followed by of/with/on is a function
-        // call (`append "f" of x to items`); `to` is NOT a call trigger here,
-        // unlike the general expression parser, so that `append "s" to items`
-        // stays an append of the literal string "s".
-        let mut value = match self.current().clone() {
-            Token::IntegerLiteral(n) => {
-                self.advance();
-                Expr::IntegerLit(n)
-            }
-            Token::FloatLiteral(n) => {
-                self.advance();
-                Expr::FloatLit(n)
-            }
-            Token::StringLiteral(s) => {
-                self.advance();
-                self.skip_noise();
-                // A format string can't be a function name - resolve it first.
-                let resolved = self.string_value_expr(s.clone());
-                if matches!(resolved, Expr::FormatString { .. }) {
-                    resolved
-                } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
-                    self.advance();
-                    self.skip_noise();
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.parse_expression()?);
-                        self.skip_noise();
-                        if *self.current() == Token::Comma {
-                            // Comma belongs to the enclosing sentence.
-                            break;
-                        }
-                        if *self.current() == Token::And {
-                            self.advance();
-                            self.skip_noise();
-                        } else {
-                            break;
-                        }
-                    }
-                    Expr::FunctionCall { name: s, args }
-                } else {
-                    resolved
-                }
-            }
-            Token::True => {
-                self.advance();
-                Expr::BoolLit(true)
-            }
-            Token::False => {
-                self.advance();
-                Expr::BoolLit(false)
-            }
-            Token::Identifier(name) => {
-                self.advance();
-                Expr::Identifier(name)
-            }
-            Token::The => {
-                self.advance();
-                self.skip_noise();
-                if let Token::Identifier(name) = self.current().clone() {
-                    self.advance();
-                    Expr::Identifier(name)
-                } else {
-                    return Err(self.err("Expected identifier after 'the' in append"));
-                }
-            }
-            _ => return Err(self.err("Expected value to append")),
-        };
-        
+        // Parse just the value, then any arithmetic that applies to it
+        // (`append i multiply i to s`). The operator walk never treats `to`
+        // as an operator, so it always stops at the append separator.
+        let mut value = self.parse_append_value_primary()?;
+        value = self.parse_append_value_ops(value, 0)?;
+
         self.skip_noise();
 
         // Stage 1c: a type predicate as the append value, e.g.
@@ -4171,7 +4248,7 @@ impl Parser {
             self.skip_noise();
             
             // Check for loop expansion: "function" of each X from Y [treating X as Y]
-            if let Some((variable, collection, treating)) = self.try_parse_each_from()? {
+            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                 // Create the argument expression, with optional treating substitution
                 let arg_expr = if let Some((match_val, replacement)) = treating {
                     Expr::TreatingAs {
@@ -5110,6 +5187,10 @@ impl Parser {
                                 Token::Identifier(ref prop_name) => {
                                     match prop_name.to_lowercase().as_str() {
                                         "start" => ObjectProperty::StartTime,
+                                        // bare `end` - site 2 (unquoted name)
+                                        // has always had this arm; the quoted
+                                        // and `the ...` paths dropped it
+                                        "end" => ObjectProperty::EndTime,
                                         "start time" => ObjectProperty::StartTime,
                                         "end time" => ObjectProperty::EndTime,
                                         "duration" => ObjectProperty::Duration,
@@ -5121,7 +5202,18 @@ impl Parser {
                                 _ => return Err(self.err_expected("property name", self.current())),
                             };
                             self.advance();
-                            
+
+                            // `start time` / `end time`: `time` is a reserved
+                            // word and lexes as Token::Time, so it can never
+                            // match a property name above - consume it when it
+                            // directly follows `start`/`end`.
+                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                self.skip_noise();
+                                if *self.current() == Token::Time {
+                                    self.advance();
+                                }
+                            }
+
                             // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
                             if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
                                 self.skip_noise();
@@ -5504,6 +5596,17 @@ impl Parser {
                             };
                             self.advance();
 
+                            // `start time` / `end time`: `time` is a reserved
+                            // word and lexes as Token::Time, so it can never
+                            // match a property name above - consume it when it
+                            // directly follows `start`/`end`.
+                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                self.skip_noise();
+                                if *self.current() == Token::Time {
+                                    self.advance();
+                                }
+                            }
+
                             // Timer duration/elapsed may be followed by a unit,
                             // e.g. "t's duration in seconds". This matches the
                             // handling already present for quoted variable and
@@ -5697,6 +5800,11 @@ impl Parser {
                                         Token::Identifier(ref prop_name) => {
                                             match prop_name.to_lowercase().as_str() {
                                                 "start" => ObjectProperty::StartTime,
+                                                // bare `end` - site 2 (unquoted
+                                                // name) has always had this arm;
+                                                // the quoted and `the ...` paths
+                                                // dropped it
+                                                "end" => ObjectProperty::EndTime,
                                                 "start time" => ObjectProperty::StartTime,
                                                 "end time" => ObjectProperty::EndTime,
                                                 "duration" => ObjectProperty::Duration,
@@ -5708,7 +5816,19 @@ impl Parser {
                                         _ => return Err(self.err_expected("property name", self.current())),
                                     };
                                     self.advance();
-                                    
+
+                                    // `start time` / `end time`: `time` is a
+                                    // reserved word and lexes as Token::Time,
+                                    // so it can never match a property name
+                                    // above - consume it when it directly
+                                    // follows `start`/`end`.
+                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                        self.skip_noise();
+                                        if *self.current() == Token::Time {
+                                            self.advance();
+                                        }
+                                    }
+
                                     return Ok(Expr::PropertyAccess { object: name, property });
                                 }
                             }
@@ -5751,6 +5871,11 @@ impl Parser {
                                         Token::Identifier(ref prop_name) => {
                                             match prop_name.to_lowercase().as_str() {
                                                 "start" => ObjectProperty::StartTime,
+                                                // bare `end` - site 2 (unquoted
+                                                // name) has always had this arm;
+                                                // the quoted and `the ...` paths
+                                                // dropped it
+                                                "end" => ObjectProperty::EndTime,
                                                 "start time" => ObjectProperty::StartTime,
                                                 "end time" => ObjectProperty::EndTime,
                                                 "duration" => ObjectProperty::Duration,
@@ -5762,7 +5887,19 @@ impl Parser {
                                         _ => return Err(self.err_expected("property name", self.current())),
                                     };
                                     self.advance();
-                                    
+
+                                    // `start time` / `end time`: `time` is a
+                                    // reserved word and lexes as Token::Time,
+                                    // so it can never match a property name
+                                    // above - consume it when it directly
+                                    // follows `start`/`end`.
+                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                        self.skip_noise();
+                                        if *self.current() == Token::Time {
+                                            self.advance();
+                                        }
+                                    }
+
                                     // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
                                     if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
                                         self.skip_noise();
