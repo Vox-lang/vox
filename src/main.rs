@@ -36,10 +36,30 @@ fn resolve_core_env_override(
     (vox.or(ec).map(PathBuf::from), deprecated_only)
 }
 
+/// Resolve which XDG config file to read, purely from the two candidates, so
+/// the precedence rule is unit-testable without touching the filesystem. Each
+/// argument is `Some(path)` when that file exists and `None` when it does not —
+/// the caller computes that with `exists()`.
+///
+/// `~/.config/vox/config` is the documented path; `~/.config/ec/config` is the
+/// pre-rename fallback (the `ec` → `vox` rename left existing installs with the
+/// old file, and a hard rename would silently drop their config). When both
+/// exist, `vox` wins. The returned flag is true when only the deprecated file
+/// was the source, so the caller can emit a one-line note — consistent with
+/// `resolve_core_env_override`; these two read as one decision.
+fn resolve_config_file_path(
+    vox_config: Option<PathBuf>,
+    ec_config: Option<PathBuf>,
+) -> (Option<PathBuf>, bool) {
+    let deprecated_only = vox_config.is_none() && ec_config.is_some();
+    (vox_config.or(ec_config), deprecated_only)
+}
+
 /// Find the coreasm library directory using industry-standard resolution order:
 /// 1. VOX_CORE_PATH environment variable (user override; the documented name),
 ///    with EC_CORE_PATH accepted as a deprecated alias (see below)
-/// 2. XDG config file (~/.config/vox/config)
+/// 2. XDG config file (~/.config/vox/config; ~/.config/ec/config is a
+///    deprecated alias — see `get_config_lib_path`)
 /// 3. System paths (/usr/local/share/vox, /usr/share/vox)
 /// 4. Executable-relative paths (for portable installs)
 /// 5. Current working directory fallback (for development)
@@ -117,9 +137,17 @@ fn find_coreasm_path() -> Option<PathBuf> {
     None
 }
 
-/// Read lib_path from XDG config file
+/// Read lib_path from the XDG config file.
+///
+/// `~/.config/vox/config` is the documented path; `~/.config/ec/config` is the
+/// pre-rename path kept as a deprecated fallback (the `ec` → `vox` rename left
+/// existing installs with the old file, and a hard rename would silently drop
+/// their config — surfacing as an inscrutable "coreasm not found"). When both
+/// exist, `vox` wins. When only the deprecated file is found, a one-line note
+/// points the author at the new path. Consistent with `resolve_core_env_override`
+/// — these two read as one decision.
 fn get_config_lib_path() -> Option<PathBuf> {
-    // XDG Base Directory: ~/.config/vox/config
+    // XDG Base Directory: $XDG_CONFIG_HOME, else ~/.config
     let config_dir = env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -127,9 +155,25 @@ fn get_config_lib_path() -> Option<PathBuf> {
                 .map(|h| PathBuf::from(h).join(".config"))
                 .unwrap_or_default()
         });
-    
-    let config_file = config_dir.join("ec").join("config");
-    
+
+    // ~/.config/vox/config is the documented path; ~/.config/ec/config is the
+    // pre-rename fallback. vox wins when both exist.
+    let vox_cfg = config_dir.join("vox").join("config");
+    let ec_cfg = config_dir.join("ec").join("config");
+    let (config_file, deprecate) = resolve_config_file_path(
+        vox_cfg.exists().then_some(vox_cfg),
+        ec_cfg.exists().then_some(ec_cfg),
+    );
+    if deprecate {
+        eprintln!(
+            "note: ~/.config/ec/config is deprecated; use ~/.config/vox/config \
+             instead (still read as a fallback for now)."
+        );
+    }
+    let Some(config_file) = config_file else {
+        return None;
+    };
+
     if let Ok(file) = fs::File::open(&config_file) {
         let reader = BufReader::new(file);
         for line in reader.lines().map_while(Result::ok) {
@@ -661,6 +705,46 @@ mod tests {
     #[test]
     fn empty_values_are_treated_as_unset() {
         let (path, deprecate) = resolve_core_env_override(Some(""), Some(""));
+        assert_eq!(path, None);
+        assert!(!deprecate);
+    }
+
+    // D6: ~/.config/vox/config is the documented path and is chosen when present.
+    #[test]
+    fn vox_config_file_resolves() {
+        let (path, deprecate) =
+            resolve_config_file_path(Some(PathBuf::from("/home/u/.config/vox/config")), None);
+        assert_eq!(path, Some(PathBuf::from("/home/u/.config/vox/config")));
+        assert!(!deprecate);
+    }
+
+    // D6: ~/.config/ec/config still works as a deprecated fallback.
+    #[test]
+    fn ec_config_file_still_resolves() {
+        let (path, deprecate) =
+            resolve_config_file_path(None, Some(PathBuf::from("/home/u/.config/ec/config")));
+        assert_eq!(path, Some(PathBuf::from("/home/u/.config/ec/config")));
+        // Only the deprecated file was present: the caller should note it.
+        assert!(deprecate);
+    }
+
+    // D6: when both exist, ~/.config/vox/config takes precedence and no
+    // deprecation note is warranted (the author already uses the new path).
+    #[test]
+    fn vox_config_file_takes_precedence_over_ec_config_file() {
+        let (path, deprecate) = resolve_config_file_path(
+            Some(PathBuf::from("/home/u/.config/vox/config")),
+            Some(PathBuf::from("/home/u/.config/ec/config")),
+        );
+        assert_eq!(path, Some(PathBuf::from("/home/u/.config/vox/config")));
+        assert!(!deprecate);
+    }
+
+    // D6: with neither file present, there is no config override and nothing
+    // to note.
+    #[test]
+    fn neither_config_file_present_is_no_override() {
+        let (path, deprecate) = resolve_config_file_path(None, None);
         assert_eq!(path, None);
         assert!(!deprecate);
     }
