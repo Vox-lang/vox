@@ -64,14 +64,16 @@
       }
     },
     "function-definition": {
-      "match": "\\b(To)\\s+(\"[^\"]+\")",
+      "comment": "Function definition: To <name>. Names are bare or single-quoted identifiers (double quotes are string literals, never names).",
+      "match": "\\b(To)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
         "1": { "name": "storage.type.function.vox" },
         "2": { "name": "entity.name.function.definition.vox" }
       }
     },
     "function-call": {
-      "match": "(\"[^\"]+\")\\s+(?i:(of|on))(?![\\w-])",
+      "comment": "Function call in expression position: 'add up' of 3. Only the quoted form is matched here, so bare element-access like 'element N of list' is not mis-coloured as a call.",
+      "match": "('[^']{2,}')\\s+(?i:(of|on))(?![\\w-])",
       "captures": {
         "1": { "name": "entity.name.function.call.vox" },
         "2": { "name": "punctuation.accessor.vox" }
@@ -79,6 +81,24 @@
     },
     "strings": {
       "patterns": [
+        {
+          "comment": "Character literal: exactly one char between single quotes ('A'). A one-character quoted token is never a name.",
+          "name": "constant.character.vox",
+          "match": "'[^']'"
+        },
+        {
+          "comment": "Possessive marker on a bare name: person's length. Must run BEFORE the quoted-identifier rule, or its greedy [^']+ would swallow from this apostrophe to the next single quote anywhere later in the line.",
+          "name": "punctuation.accessor.vox",
+          "match": "'s(?![A-Za-z0-9_])"
+        },
+        {
+          "comment": "Quoted identifier (two or more chars): 'multi word'. An immediately-following possessive s ('name's length) is captured as the accessor so it does not render as plain text.",
+          "match": "('[^']{2,}')(s(?![A-Za-z0-9_]))?",
+          "captures": {
+            "1": { "name": "variable.other.vox" },
+            "2": { "name": "punctuation.accessor.vox" }
+          }
+        },
         {
           "name": "string.quoted.double.vox",
           "begin": "\"",
@@ -97,10 +117,6 @@
               "match": "\\\\."
             }
           ]
-        },
-        {
-          "name": "variable.other.readwrite.vox",
-          "match": "'[^']+'"
         }
       ]
     },
