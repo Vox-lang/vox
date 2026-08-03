@@ -25,7 +25,9 @@
     { "include": "#operators" },
     { "include": "#property-keywords" },
     { "include": "#properties" },
-    { "include": "#articles" }
+    { "include": "#articles" },
+    { "include": "#function-call-bare" },
+    { "include": "#bare-identifier" }
   ],
   "repository": {
     "comments": {
@@ -64,14 +66,16 @@
       }
     },
     "function-definition": {
-      "match": "\\b(To)\\s+(\"[^\"]+\")",
+      "comment": "Function definition: To <name>. Names are bare or single-quoted identifiers (double quotes are string literals, never names).",
+      "match": "\\b(To)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
         "1": { "name": "storage.type.function.vox" },
         "2": { "name": "entity.name.function.definition.vox" }
       }
     },
     "function-call": {
-      "match": "(\"[^\"]+\")\\s+(?i:(of|on))(?![\\w-])",
+      "comment": "Function call in expression position: 'add up' of 3. Only the quoted form is matched here, so bare element-access like 'element N of list' is not mis-coloured as a call.",
+      "match": "('[^']{2,}')\\s+(?i:(of|on))(?![\\w-])",
       "captures": {
         "1": { "name": "entity.name.function.call.vox" },
         "2": { "name": "punctuation.accessor.vox" }
@@ -79,6 +83,24 @@
     },
     "strings": {
       "patterns": [
+        {
+          "comment": "Character literal: exactly one char between single quotes ('A'). A one-character quoted token is never a name.",
+          "name": "constant.character.vox",
+          "match": "'[^']'"
+        },
+        {
+          "comment": "Possessive marker on a bare name: person's length. Must run BEFORE the quoted-identifier rule, or its greedy [^']+ would swallow from this apostrophe to the next single quote anywhere later in the line.",
+          "name": "punctuation.accessor.vox",
+          "match": "'s(?![A-Za-z0-9_])"
+        },
+        {
+          "comment": "Quoted identifier (two or more chars): 'multi word'. An immediately-following possessive s ('name's length) is captured as the accessor so it does not render as plain text.",
+          "match": "('[^']{2,}')(s(?![A-Za-z0-9_]))?",
+          "captures": {
+            "1": { "name": "variable.other.vox" },
+            "2": { "name": "punctuation.accessor.vox" }
+          }
+        },
         {
           "name": "string.quoted.double.vox",
           "begin": "\"",
@@ -97,10 +119,6 @@
               "match": "\\\\."
             }
           ]
-        },
-        {
-          "name": "variable.other.readwrite.vox",
-          "match": "'[^']+'"
         }
       ]
     },
@@ -199,6 +217,19 @@
       "comment": "Grammatical particles and range markers (articles, prepositions, collection quantifiers) - muted so they do not compete with real keywords. Lexer groups these as Range/Collection.",
       "name": "punctuation.definition.vox",
       "match": "(?<![\\w-])(?i:(inside|into|within|with|starting|between|called|named|from|the|all|an|at|on|of|up|to|in|a))(?![\\w-])"
+    },
+    "function-call-bare": {
+      "comment": "Bare function call in expression position: addup of 3. Runs AFTER every keyword rule, so the only bare words that reach it are identifiers — keywords (element, byte, first, length, ...) are already consumed. The negative lookbehind still guards the two element-access idioms whose INDEX is a bare identifier: 'element N of list' and 'byte i of buffer'. Without it, N/i would be mis-coloured as a function call. Placed before #bare-identifier so a real callee takes the function-call scope, not the variable scope.",
+      "match": "(?<!(?i:element|byte)\\s+)([A-Za-z_][A-Za-z0-9_]*)\\s+(?i:(of|on))(?![\\w-])",
+      "captures": {
+        "1": { "name": "entity.name.function.call.vox" },
+        "2": { "name": "punctuation.accessor.vox" }
+      }
+    },
+    "bare-identifier": {
+      "comment": "Catch-all for bare identifiers (variables, bare callees without of/on, indices): total in 'called total', addup in 'print addup.', N in 'element N of list'. Runs LAST so every lexer keyword (the grammar covers all of them — check-grammar.sh enforces 0 missing) is matched by its own rule first; only leftover bare words are identifiers. This is what makes the common case — bare names, 767 of 788 after migration — render as names instead of grey, matching the quoted form's variable.other.vox scope.",
+      "name": "variable.other.vox",
+      "match": "(?<![\\w-])[A-Za-z_][A-Za-z0-9_]*(?![\\w-])"
     }
   }
 }
