@@ -1,0 +1,13 @@
+{
+  "name": "vox-tm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-engine TextMate tokenizer harness for the Vox grammar (vscode-textmate + vscode-oniguruma). Not published; install deps with `npm install` in this directory.",
+  "scripts": {
+    "tokenize": "node tokenize.js ../syntaxes/vox.tmLanguage.json"
+  },
+  "dependencies": {
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  }
+}

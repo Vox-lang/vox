@@ -1,0 +1,18 @@
+a number called total is 5.
+a number called 'total items' is 5.
+Set 'total items' to 9.
+print 'total items's length.
+print "text".
+print 'A'.
+print 'multi word'.
+
+To 'add up' with a number called 'first one' and a number called 'second one'.
+  Return a number, the 'first one' add the 'second one'.
+print 'add up' of 3 and 4.
+
+Library 'math kit' version "1.0".
+see 'math kit' version "1.0" from "./libmathkit.lib".
+see "./utils.vox".
+
+a map called person is {"name": "Ada"}.
+print person's "name".
