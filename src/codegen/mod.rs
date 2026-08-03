@@ -48,6 +48,16 @@ pub struct CodeGenerator {
     // declaration is seen — `collect_library_identity` runs a pre-pass so
     // the order of `Library` vs `To` in the source does not matter).
     current_library: Option<(String, String)>,
+    // Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    // "...lib".`, resolved and .dynsym-verified by the driver. A call to an
+    // imported name targets the import's mangled `<lib>_<ver>_<func>` symbol
+    // and the link line gets the `.so` + an rpath. Local definitions shadow
+    // imports (the analyzer warns), so a call always prefers the locally
+    // defined label. Ambiguity between imports is an analyzer error, so at
+    // most one import claimant reaches codegen per authored name.
+    imports: Vec<crate::lib_file::ImportedFunction>,
+    import_labels: HashMap<String, String>,
+    imported_symbols: Vec<String>,
     // Feature tracking for conditional includes
     uses_ints: bool,
     uses_floats: bool,
@@ -454,6 +464,9 @@ impl CodeGenerator {
             exported_functions: Vec::new(),
             library_blocks: Vec::new(),
             current_library: None,
+            imports: Vec::new(),
+            import_labels: HashMap::new(),
+            imported_symbols: Vec::new(),
             uses_ints: false,
             uses_floats: false,
             uses_files: false,
@@ -900,11 +913,11 @@ impl CodeGenerator {
         // When the callee's signature is unknown (e.g. an extern/builtin),
         // assume every parameter is scalar — preserving the original ABI for
         // statically-typed calls (criterion 6). The signature tables are keyed
-        // by the function's mangled label (`<lib>_<ver>_<func>` in shared
-        // mode, `mangle_symbol(name)` otherwise), so the lookup goes through
-        // `function_label` — which reads the current library, the one whose
-        // function body we are generating.
-        let label = self.function_label(name);
+        // by the resolution target (a local `<lib>_<ver>_<func>` label in
+        // shared mode, an import's mangled symbol, or `mangle_symbol(name)`),
+        // so the lookup goes through `resolved_call_label` — the same target
+        // the `call` below emits.
+        let label = self.resolved_call_label(name);
         let param_types = self.function_param_types.get(&label).cloned().unwrap_or_default();
         let is_value_param = |i: usize| -> bool {
             param_types.get(i) == Some(&Type::Value)
@@ -957,14 +970,13 @@ impl CodeGenerator {
         // shared builds take the plain path unconditionally (`label` is
         // already `mangle_symbol(name)` there), so their output is byte-
         // identical to today.
-        let func_label = if self.shared_lib_mode
-            && self.function_return_types.contains_key(&label)
-        {
-            label
-        } else {
-            mangle_symbol(name)
-        };
-        self.emit_indent(&format!("call {}", func_label));
+        //
+        // A4: `label` was computed by `resolved_call_label`, which prefers
+        // the local definition (present in the tables), then an import's
+        // mangled extern symbol, then the plain mangled fallback. The call
+        // and the signature lookup above therefore always agree, for local,
+        // imported, and runtime-helper targets alike.
+        self.emit_indent(&format!("call {}", label));
 
         // Clean up stack words + pad (caller cleanup in SysV). The return tag
         // for a `value`-returning function rides in r11; `add rsp` does not
@@ -977,6 +989,46 @@ impl CodeGenerator {
 
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
         self.shared_lib_mode = enabled;
+    }
+
+    /// Stage A4: register the resolved, .dynsym-verified imports from the
+    /// program's `see ... from "*.lib"` statements. Stored pre-`generate`;
+    /// `collect_function_signatures` merges their signatures into the tables
+    /// (which it clears), keyed by each import's mangled label, and `generate`
+    /// emits one `extern <label>` per imported symbol.
+    pub fn set_imports(&mut self, imports: Vec<crate::lib_file::ImportedFunction>) {
+        self.import_labels.clear();
+        self.imported_symbols.clear();
+        for imp in &imports {
+            // Ambiguity is an analyzer error: at most one claimant per
+            // authored name can reach here. `or_insert` keeps that guarantee
+            // locally rather than re-deriving it.
+            self.import_labels
+                .entry(imp.name.clone())
+                .or_insert_with(|| imp.mangled.clone());
+            if !self.imported_symbols.contains(&imp.mangled) {
+                self.imported_symbols.push(imp.mangled.clone());
+            }
+        }
+        self.imports = imports;
+    }
+
+    /// The label a call to `name` actually targets. A locally defined function
+    /// wins (its label is in the signature tables — the same test the shared-
+    /// mode call path already uses), then an import's mangled `<lib>_<ver>_`
+    /// `<func>` symbol, then the historical plain `mangle_symbol` fallback for
+    /// runtime helpers and other tables-missing calls. Keying everything off
+    /// the signature tables keeps this ONE rule for both call emission and
+    /// return-type inference.
+    fn resolved_call_label(&self, name: &str) -> String {
+        let local = self.function_label(name);
+        if self.function_return_types.contains_key(&local) {
+            return local;
+        }
+        if let Some(mangled) = self.import_labels.get(name) {
+            return mangled.clone();
+        }
+        mangle_symbol(name)
     }
 
     /// Resolve the assembly label for a function DEFINED in this compilation.
@@ -1165,6 +1217,32 @@ impl CodeGenerator {
                 _ => {}
             }
         }
+
+        // Stage A4: imported signatures, keyed by each import's own
+        // `<lib>_<ver>_<func>` symbol (never the plain authored name, so a
+        // shadowing LOCAL definition — a different key — still wins at the
+        // call site). `resolved_call_label` consults these tables, so the
+        // call, the return type, and the value-parameter word count all read
+        // this same entry. A `value` return is Mixed for the same reason a
+        // local one is (the tag rides home in r11).
+        for imp in &self.imports {
+            let vt = match imp.return_type {
+                Type::Integer => VarType::Integer,
+                Type::Float => VarType::Float,
+                Type::String => VarType::String,
+                Type::Boolean => VarType::Boolean,
+                Type::Buffer => VarType::Buffer,
+                Type::List(_) => VarType::List,
+                Type::Value => VarType::Mixed,
+                _ => VarType::Unknown,
+            };
+            self.function_return_types.insert(imp.mangled.clone(), vt);
+            self.function_param_types.insert(
+                imp.mangled.clone(),
+                imp.params.iter().map(|(_, t)| t.clone()).collect(),
+            );
+        }
+
         self.library_blocks = lib_blocks;
     }
 
@@ -2307,7 +2385,7 @@ impl CodeGenerator {
     fn expr_leaves_tag_in_r11(&self, e: &Expr) -> bool {
         match e {
             Expr::FunctionCall { name, .. } => {
-                self.function_return_types.get(&self.function_label(name)) == Some(&VarType::Mixed)
+                self.function_return_types.get(&self.resolved_call_label(name)) == Some(&VarType::Mixed)
             }
             Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
                 self.list_expr_is_mixed(list)
@@ -2440,7 +2518,19 @@ impl CodeGenerator {
             result.push_str(&format!("%include \"coreasm/{}/map.asm\"\n", self.target_arch));
         }
         result.push('\n');
-        
+
+        // Stage A4: one NASM extern per imported symbol. These are the
+        // mangled <lib>_<ver>_<func> names resolve_see_import verified
+        // against the .so's .dynsym; the .so itself is on the link line
+        // (`main` adds it plus an rpath). No `see`, no imports, no lines —
+        // non-importing builds are byte-identical.
+        if !self.imported_symbols.is_empty() {
+            for sym in &self.imported_symbols {
+                result.push_str(&format!("extern {}\n", sym));
+            }
+            result.push('\n');
+        }
+
         result.push_str("section .data\n");
         result.push_str(&self.data_section);
         result.push('\n');
@@ -7170,7 +7260,7 @@ impl CodeGenerator {
             Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
             Expr::Identifier(name) => self.variable_types.get(name).cloned(),
             Expr::FunctionCall { name, .. } => {
-                self.function_return_types.get(&self.function_label(name)).cloned()
+                self.function_return_types.get(&self.resolved_call_label(name)).cloned()
             }
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type

@@ -2,7 +2,9 @@ mod lexer;
 mod parser;
 mod analyzer;
 mod codegen;
+mod elf;
 mod errors;
+mod lib_file;
 #[cfg(test)]
 mod compile_fail_tests;
 
@@ -333,6 +335,11 @@ fn main() {
     let mut combined_statements: Vec<Statement> = Vec::new();
     // (library, version, filename) per input, to reject duplicate identities.
     let mut identities: Vec<(String, String, String)> = Vec::new();
+    // Stage A4: imports resolved from `see "<lib>" version "<ver>" from
+    // "...lib".` across every input — verified signatures for the analyzer
+    // and codegen, and the .so paths for the link line.
+    let mut all_imported_functions: Vec<lib_file::ImportedFunction> = Vec::new();
+    let mut imported_sos: Vec<PathBuf> = Vec::new();
     for source_path in &source_paths {
         let source = match fs::read_to_string(source_path) {
             Ok(s) => s,
@@ -368,6 +375,34 @@ fn main() {
                 .unwrap_or(source_path_buf.clone()),
         );
         process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
+
+        // Stage A4: resolve this input's `see ... from "*.lib"` imports NOW,
+        // while this input's directory is in hand (the .lib resolves relative
+        // to the source, then --lib-path; Location relative to the .lib,
+        // then --lib-path). Resolution parses the .lib, selects the
+        // <lib,version> block, verifies every promised symbol against the
+        // .so's .dynsym, and yields the signatures calls type-check against.
+        // Each failure mode has its own message naming the file and what was
+        // expected; they are fatal — the analyzer can only type-check calls
+        // against signatures it actually holds.
+        let source_dir = source_path_buf
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        match lib_file::resolve_program_imports(&program, &source_dir, &lib_paths) {
+            Ok(imports) => {
+                for import in imports {
+                    all_imported_functions.extend(import.functions);
+                    if !imported_sos.contains(&import.so_path) {
+                        imported_sos.push(import.so_path);
+                    }
+                }
+            }
+            Err(message) => {
+                eprintln!("Error: {}", message);
+                std::process::exit(1);
+            }
+        }
 
         // Multi-input --shared: every input must carry its own `Library`
         // declaration (its symbols are mangled by it), and no two inputs may
@@ -435,8 +470,15 @@ fn main() {
     let first_source_content = fs::read_to_string(&first_source).unwrap_or_default();
     let mut analyzer = Analyzer::new()
         .with_source(&first_source, &first_source_content)
-        .with_shared_mode(build_shared);
+        .with_shared_mode(build_shared)
+        .with_imports(all_imported_functions.clone());
     analyzer.analyze(&mut program);
+
+    // Stage A4 warnings (a local definition shadowing an imported name) are
+    // non-fatal but never silent: print them whether or not errors follow.
+    for warning in &analyzer.warnings {
+        eprintln!("warning: {}", warning);
+    }
 
     if !analyzer.errors.is_empty() {
         for err in &analyzer.errors {
@@ -448,6 +490,7 @@ fn main() {
     let mut codegen = CodeGenerator::new();
     codegen.set_shared_lib_mode(build_shared);
     codegen.set_target_arch(&target_arch);
+    codegen.set_imports(all_imported_functions);
     let assembly = codegen.generate(&program);
     
     let base_name = Path::new(&first_source)
@@ -562,6 +605,38 @@ fn main() {
         None
     };
 
+    // Stage A4: every imported .so goes on the link line. It is named by
+    // EXACT filename (`-l:<name>.so`, found through a `-L` on its directory)
+    // rather than by raw path so the recorded DT_NEEDED stays slash-free:
+    // with no SONAME, `ld` would otherwise bake the build-time path into the
+    // binary, and the loader would key on that instead of the rpath. The
+    // rpath (the .so's canonical directory) is where the loader then finds
+    // it. All `-L` entries precede all `-l:` entries so a same-directory
+    // pair never relies on argument order.
+    let mut import_ld_args: Vec<String> = Vec::new();
+    let mut import_rpaths: Vec<String> = Vec::new();
+    {
+        let mut so_dirs: Vec<String> = Vec::new();
+        let mut so_names: Vec<String> = Vec::new();
+        for so in &imported_sos {
+            let dir = so
+                .parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            let dir = dir.canonicalize().unwrap_or(dir);
+            let dir_s = dir.display().to_string();
+            if !so_dirs.contains(&dir_s) {
+                so_dirs.push(dir_s.clone());
+                import_ld_args.push(format!("-L{}", dir_s));
+                import_rpaths.push(dir_s);
+            }
+            if let Some(fname) = so.file_name().and_then(|f| f.to_str()) {
+                so_names.push(format!("-l:{}", fname));
+            }
+        }
+        import_ld_args.extend(so_names);
+    }
+
     let ld_result = if build_shared {
         // An anonymous version script restricts the dynamic symbol table to
         // exactly the library's exported functions. coreasm declares ~54 of
@@ -595,6 +670,15 @@ fn main() {
         for l in link_libs.iter().map(|l| format!("-l{}", l)) {
             all_args.push(l);
         }
+        // Stage A4: a library can itself `see` another library's .lib; the
+        // imported .so becomes a DT_NEEDED of this one, found the same way.
+        for a in &import_ld_args {
+            all_args.push(a.clone());
+        }
+        for r in &import_rpaths {
+            all_args.push("-rpath".to_string());
+            all_args.push(r.clone());
+        }
 
         let arg_refs: Vec<&str> = all_args.iter().map(|s| s.as_str()).collect();
         Command::new("ld")
@@ -617,11 +701,11 @@ fn main() {
         // A static executable has no PT_INTERP and no runtime dependencies, so
         // it execs directly. But an executable linked against a shared library
         // needs the dynamic loader to map the .so in at runtime, and an rpath so
-        // the loader finds it. Add both ONLY when there are link libs, so plain
-        // static builds are untouched — the default Vox output stays a flat
-        // static binary with no loader dependency.
+        // the loader finds it. Add both ONLY when there are link libs or .lib
+        // imports, so plain static builds are untouched — the default Vox
+        // output stays a flat static binary with no loader dependency.
         let mut dynamic_args: Vec<String> = Vec::new();
-        if !link_libs.is_empty() {
+        if !link_libs.is_empty() || !imported_sos.is_empty() {
             // FIXME(x86-64, M6): this loader path is hard-coded for x86-64.
             // `target_arch` is in scope here (it is threaded down from the
             // --arch flag / TARGET_ARCH at line ~249), so M6's port can derive
@@ -635,6 +719,10 @@ fn main() {
                 dynamic_args.push("-rpath".to_string());
                 dynamic_args.push(p.clone());
             }
+            for r in &import_rpaths {
+                dynamic_args.push("-rpath".to_string());
+                dynamic_args.push(r.clone());
+            }
         }
 
         let mut all_args: Vec<&str> = ld_args;
@@ -646,6 +734,9 @@ fn main() {
         }
         for l in &link_args {
             all_args.push(l);
+        }
+        for a in &import_ld_args {
+            all_args.push(a);
         }
 
         Command::new("ld")

@@ -607,6 +607,18 @@ pub struct Analyzer {
     /// "Unknown function" error (cross-library calls are out of scope for A2).
     /// `None` outside shared mode, where the key is plain `mangle_symbol(name)`.
     current_library: Option<(String, String)>,
+    /// Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    /// "...lib".`, resolved against the filesystem by the driver (parse +
+    /// .dynsym verification) and handed here for name resolution and call
+    /// checking. A call resolves local-first (a local definition SHADOWS a
+    /// same-named import, with a warning naming the library), then by import
+    /// (exactly one exporting <lib,version>), then ambiguity (two imports
+    /// exporting the same name — an error by design, never a pick).
+    imports: Vec<crate::lib_file::ImportedFunction>,
+    /// Non-fatal diagnostics (currently: local-definitions-shadow-imports).
+    /// Printed by the driver with a `warning:` prefix; they never stop a
+    /// build, but shadowing is never silent either.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -664,6 +676,8 @@ impl Analyzer {
             loop_depth: 0,
             shared_mode: false,
             current_library: None,
+            imports: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -674,6 +688,16 @@ impl Analyzer {
 
     pub fn with_shared_mode(mut self, enabled: bool) -> Self {
         self.shared_mode = enabled;
+        self
+    }
+
+    /// Register the functions imported by the program's `see ... from
+    /// "*.lib"` statements (already parsed and .dynsym-verified by the
+    /// driver). Names are authorship-level here: `imports` is matched by the
+    /// authored name, and the `<lib>_<ver>_<func>` label only matters to the
+    /// codegen, which gets the same list.
+    pub fn with_imports(mut self, imports: Vec<crate::lib_file::ImportedFunction>) -> Self {
+        self.imports = imports;
         self
     }
 
@@ -838,6 +862,33 @@ impl Analyzer {
                     explicit_parse_seen = true;
                 }
                 _ => {}
+            }
+        }
+
+        // Stage A4 shadow rule: a local definition wins over a same-named
+        // import — but never silently. Warn once per (function, library)
+        // pair, naming the shadowed library, so adding a `see` can never
+        // redirect an existing call without a diagnostic. Order-independent:
+        // functions and imports are both fully collected before this runs.
+        if !self.imports.is_empty() {
+            let mut warned: HashSet<(String, String, String)> = HashSet::new();
+            for stmt in &program.statements {
+                if let Statement::FunctionDef { name, .. } = stmt {
+                    for imp in &self.imports {
+                        if imp.name != *name {
+                            continue;
+                        }
+                        let key = (name.clone(), imp.lib.clone(), imp.version.clone());
+                        if warned.insert(key) {
+                            self.warnings.push(format!(
+                                "'{}' is defined in this program and also exported by \
+                                 library \"{}\" version \"{}\"; the local definition wins — \
+                                 calls to '{}' resolve to it, not to the library.",
+                                name, imp.lib, imp.version, name
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -1081,6 +1132,184 @@ impl Analyzer {
                     Some(name),
                 );
             }
+        }
+    }
+
+    /// How a call to `name` resolves under Stage A4's import rules.
+    /// Local-first is deliberate: adding an unrelated `see` must never
+    /// silently redirect an existing call, so a local definition shadows a
+    /// same-named import (a pre-pass warning names the shadowed library).
+    /// Two imports exporting the same name are ambiguous by identity — a
+    /// re-see of the SAME <lib,version> is one import, but two different
+    /// libraries, or two versions of one library, are two.
+    fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
+        let mut providers: Vec<&crate::lib_file::ImportedFunction> = Vec::new();
+        for imp in &self.imports {
+            if imp.name != name {
+                continue;
+            }
+            if !providers
+                .iter()
+                .any(|p| p.lib == imp.lib && p.version == imp.version)
+            {
+                providers.push(imp);
+            }
+        }
+        providers
+    }
+
+    fn is_local_function(&self, name: &str) -> bool {
+        self.functions.contains(&self.func_key(name))
+    }
+
+    /// Resolve and validate a call site shared by `Statement::FunctionCall`
+    /// and `Expr::FunctionCall`: local definition, then a single import (with
+    /// the same arity message as any other call, plus argument-type checks,
+    /// which an import needs at the call site because it has no body to fail
+    /// in), then ambiguity, then the existing unknown-function error.
+    fn check_function_call(&mut self, name: &str, args: &[Expr]) {
+        let providers = self.imported_providers(name);
+        if self.is_local_function(name) {
+            self.validate_function_call_args(name, args);
+        } else if providers.len() == 1 {
+            let import = providers[0].clone();
+            self.validate_import_call_args(&import, name, args);
+        } else if providers.len() > 1 {
+            let both = providers
+                .iter()
+                .map(|p| format!("library \"{}\" version \"{}\"", p.lib, p.version))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            self.push_error(
+                format!(
+                    "Call to '{}' is ambiguous: it is exported by {}. Vox never picks \
+                     one by import order or by highest version — resolve it by defining \
+                     a local '{}' (which shadows the imports, with a warning), or by \
+                     renaming one library's export.",
+                    name, both, name
+                ),
+                Some(name),
+            );
+        } else {
+            let mut err = format!("Unknown function: {}", name);
+            if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
+                err.push_str(&format!(" (did you mean '{}'?)", suggestion));
+            }
+            self.push_error(err, Some(name));
+        }
+    }
+
+    /// Arity and argument-type validation for a call to an imported function.
+    /// The arity message is the same one any Vox call gets. Type validation
+    /// is static-only: an argument whose category is provably incompatible
+    /// with the declared parameter type is an error (an import has no body
+    /// whose arithmetic check would catch it, so the call site is the only
+    /// place it can be caught); a dynamically-typed argument is trusted, as
+    /// it is for local calls.
+    fn validate_import_call_args(
+        &mut self,
+        imp: &crate::lib_file::ImportedFunction,
+        name: &str,
+        args: &[Expr],
+    ) {
+        let expected = imp.params.len();
+        if args.len() != expected {
+            self.push_error(
+                format!(
+                    "Function '{}' expects {} argument{} but was called with {}.",
+                    name,
+                    expected,
+                    if expected == 1 { "" } else { "s" },
+                    args.len()
+                ),
+                Some(name),
+            );
+            return;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let (pname, ptype) = &imp.params[i];
+            let Some(actual) = self.static_expr_category(arg) else {
+                continue; // dynamically typed — trusted, as local calls are
+            };
+            if !Self::param_accepts(ptype, &actual) {
+                self.push_error(
+                    format!(
+                        "Function '{}' (library \"{}\" version \"{}\") expects a {} \
+                         for argument {} (\"{}\") but was called with {}.",
+                        name,
+                        imp.lib,
+                        imp.version,
+                        Self::type_noun(ptype),
+                        i + 1,
+                        pname,
+                        Self::type_noun(&actual)
+                    ),
+                    Some(name),
+                );
+            }
+        }
+    }
+
+    /// The provable type category of an argument expression, if there is one:
+    /// literals always, identifiers only when their tracked category is
+    /// definite. Anything dynamic (a `value`, a call result, an expression)
+    /// is `None` and skipped by the import type check.
+    fn static_expr_category(&self, e: &Expr) -> Option<Type> {
+        match e {
+            Expr::IntegerLit(_) => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::StringLit(_) => Some(Type::String),
+            Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::Identifier(name) => {
+                if let Some(t) = self.scalar_types.get(name) {
+                    return Some(t.clone());
+                }
+                if self.buffer_variables.contains(name.as_str()) {
+                    Some(Type::Buffer)
+                } else if self.list_variables.contains(name.as_str()) {
+                    Some(Type::List(Box::new(Type::Unknown)))
+                } else if self.map_variables.contains(name.as_str()) {
+                    Some(Type::Map(Box::new(Type::Unknown)))
+                } else if self.file_variables.contains(name.as_str()) {
+                    Some(Type::File)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a statically-known argument category may go to a parameter of
+    /// the declared type. Booleans ride as numbers in the ABI (0/1) and file
+    /// parameters accept number-like handles, so the rejects are the true
+    /// category clashes: pointers where scalars are expected and the reverse.
+    fn param_accepts(param: &Type, actual: &Type) -> bool {
+        use Type::*;
+        match param {
+            Integer | Float => !matches!(actual, String | File | Buffer | List(_) | Map(_)),
+            String => matches!(actual, String),
+            Boolean => !matches!(actual, String | File | Buffer | List(_) | Map(_)),
+            File => !matches!(actual, String | Boolean | Buffer | List(_) | Map(_)),
+            Buffer => matches!(actual, Buffer),
+            List(_) => matches!(actual, List(_)),
+            Map(_) => matches!(actual, Map(_)),
+            // A `value` parameter takes any category (its tag rides alongside).
+            Value | Void | Unknown | Time | Timer => true,
+        }
+    }
+
+    fn type_noun(t: &Type) -> &'static str {
+        match t {
+            Type::Integer | Type::Float => "number",
+            Type::String => "text",
+            Type::Boolean => "boolean",
+            Type::File => "file",
+            Type::Buffer => "buffer",
+            Type::List(_) => "list",
+            Type::Map(_) => "map",
+            Type::Value => "value",
+            _ => "value",
         }
     }
 
@@ -1943,15 +2172,7 @@ impl Analyzer {
             
             Statement::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(&self.func_key(name)) {
-                    let mut err = format!("Unknown function: {}", name);
-                    if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
-                        err.push_str(&format!(" (did you mean '{}'?)", suggestion));
-                    }
-                    self.push_error(err, Some(name));
-                } else {
-                    self.validate_function_call_args(name, args);
-                }
+                self.check_function_call(name, args);
                 for arg in args {
                     self.analyze_expr(arg);
                 }
@@ -2708,15 +2929,7 @@ impl Analyzer {
             
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
-                if !self.functions.contains(&self.func_key(name)) {
-                    let mut err = format!("Unknown function: {}", name);
-                    if let Some(suggestion) = find_similar_keyword(name, ENGLISH_KEYWORDS) {
-                        err.push_str(&format!(" (did you mean '{}'?)", suggestion));
-                    }
-                    self.push_error(err, Some(name));
-                } else {
-                    self.validate_function_call_args(name, args);
-                }
+                self.check_function_call(name, args);
                 for arg in args {
                     self.analyze_expr(arg);
                 }
