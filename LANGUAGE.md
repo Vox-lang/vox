@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.1.24**
+**Version 0.2.0**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -2854,7 +2854,7 @@ names a non-Vox caller needs.
 > produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
 > consumes it from Vox, export names are mangled, and multi-input `--shared`
 > links several libraries (and several versions of one library) into one `.so`.
-> Every output below is real, captured from this compiler (vox v0.1.24). A
+> Every output below is real, captured from this compiler (vox v0.2.0). A
 > foreign host can also call the `.so` directly — see
 > [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 

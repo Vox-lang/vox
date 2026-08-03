@@ -7,7 +7,7 @@
 > and `~/.config/ec/config` names still work as deprecated aliases
 > (`src/main.rs:74-86`, `:149-172`). The `vox` name wins when both are set, and a
 > one-line deprecation note is printed when only the old name is found.
-> _(assessed 2026-08, vox v0.1.24)_
+> _(assessed 2026-08, vox v0.2.0)_
 
 This document describes how to install `vox` and its runtime assembly macros (`coreasm`) so it works from *any* directory.
 

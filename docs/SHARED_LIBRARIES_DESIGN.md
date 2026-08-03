@@ -6,7 +6,7 @@
 > 230, Stages A1–A5); the earlier direct-`.so` model (plan 220) and per-version
 > runtime-state mangling (plan 230 explicit non-goal) are abandoned. The
 > library-export `<lib>_<ver>_<func>` composition is live (`nm -D` shows e.g.
-> `mathkit_1_0_add_two_numbers`). _(assessed 2026-08, vox v0.1.24)_
+> `mathkit_1_0_add_two_numbers`). _(assessed 2026-08, vox v0.2.0)_
 
 ## Overview
 

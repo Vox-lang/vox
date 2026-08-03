@@ -4,7 +4,7 @@
 > function-label rule is the adopted standard and is emitted by the compiler
 > (`nm -D` shows e.g. `mathkit_1_0_add_two_numbers`); per-version runtime-state
 > mangling is an explicit non-goal, superseded by plan 230. _(assessed 2026-08,
-> vox v0.1.24)_
+> vox v0.2.0)_
 
 Vox emits a flat assembly symbol namespace. Compiler-generated names, runtime
 internals, author-written function names, and — once shared libraries land —
