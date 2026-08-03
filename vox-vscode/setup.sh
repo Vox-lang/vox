@@ -176,7 +176,10 @@ install_extension() {
     for ide in "${!IDE_FOUND[@]}"; do
         if [ "${IDE_FOUND[$ide]}" = true ]; then
             install_for_ide "$ide" "${IDE_PATHS[$ide]}"
-            ((installed++))
+            # Assignment, not ((...)): `((installed++))` returns exit status 1
+            # while installed is 0, which under `set -e` would abort the script
+            # before the first IDE is ever recorded as installed.
+            installed=$((installed + 1))
         fi
     done
     
