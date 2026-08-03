@@ -10,18 +10,18 @@ Reproduce each entry yourself before acting on it. Every reproduction below was
 run against the shipped binary in a temp directory (never in the repo). Severity
 tags: **crash / wrong output / bad diagnostic / cosmetic**.
 
-The three findings marked **fixed** are small, unambiguous, and touched only
-diagnostics or the test harness — never parser structure, codegen, or the ABI.
-A regression test was added for each compiler fix; the baseline
-(`cargo build` 0 warnings, `cargo test` 149, `./test.sh` 208 / 0 / 6 exactly)
-holds after them. The five findings marked **reported** are left for the
-release decision — they touch parser/codegen/ABI territory or are the known
-design boundary, and a clever fix hours from a release is a worse risk than a
-known bug.
+All five findings are now **fixed**. F3, F4, F5 were small and touched only
+diagnostics or the test harness; F1 and F2 (the two originally left reported)
+were subsequently approved for the same class of fix — F1 widens a diagnostic
+trigger in the driver (no mangling-scheme change), F2 threads intermediate-file
+cleanup through the failure paths. None touched parser structure, codegen, or
+the ABI. A regression test was added for each compiler fix; the baseline
+(`cargo build` 0 warnings, `cargo test` 157 — 149 lib + 8 integration,
+`./test.sh` 208 / 0 / 6 exactly) holds after them.
 
 ---
 
-## F1. Mangling collision across libraries/versions falls through to a raw NASM error  — bad diagnostic  (reported)
+## F1. Mangling collision across libraries/versions falls through to a raw NASM error  — bad diagnostic  (fixed)
 
 The library mangling `mangle_library_symbol(lib, version, func)` applies the
 per-character `sanitize_symbol` to each component (every char outside
@@ -88,12 +88,25 @@ with a clean diagnostic ("Functions 'b.c' and 'b_c' both become the assembly
 symbol '...'; rename one so they stay distinct."), so the analyzer already
 holds the pieces; the cross-library branch is the gap.
 
-**Not fixed** — touches the analyzer's collision check / codegen keying. Report
-only.
+**Fixed** in `main.rs`: the duplicate-identity check now compares what the
+identities become — `mangle_library_symbol(lib, ver, "")`, the symbol prefix
+every function in the library will share — instead of the raw strings. Two
+inputs whose `<lib, version>` pair sanitises to the same prefix are rejected
+with a diagnostic naming both files, both raw identities, and the colliding
+prefix (e.g. `a-b`/`1.0` and `a_b`/`1.0` → `a_b_1_0_`), so the author sees why
+the distinct-looking names are the same to the linker. The exact-duplicate
+case (the same raw identity twice) keeps the original message's shape — the
+trigger is widened, not the message rewritten. The mangling scheme itself is
+unchanged (sanitisation is load-bearing and this is hours before release).
+Regression tests: `tests/p260_identity_collision.rs` —
+`colliding_library_names_rejected_with_diagnostic`,
+`colliding_versions_rejected_with_diagnostic`,
+`exact_duplicate_keeps_original_message_shape`,
+`distinct_identities_still_build`.
 
 ---
 
-## F2. A failed build leaks the `<stem>.asm` file into the working directory  — cosmetic  (reported)
+## F2. A failed build leaks the `<stem>.asm` file into the working directory  — cosmetic  (fixed)
 
 `main.rs` writes `<base_name>.asm` (the assembly it is about to assemble) to
 the cwd before invoking nasm. On nasm failure it does `eprintln!("NASM
@@ -120,9 +133,20 @@ path).
 **Expected:** no stray `dash.asm` after a failed build. **What happened:**
 `dash.asm` remains. **Severity: cosmetic.**
 
-**Not fixed** — the cleanup belongs on every exit path (nasm-fail, ld-fail, and
-the two `exit(1)` branches between them), and threading that needs care not to
-delete a file the user asked to `--keep-asm`. Report only.
+**Fixed** in `main.rs`: a `cleanup_asm_on_failure` helper now runs before every
+`exit(1)` after the asm is written — the `.lib`-already-exists guard, the two
+nasm-failure exits, the version-script-write failure, and the two ld-failure
+exits — removing `<stem>.asm` unless `--keep-asm` is set, the same flag the
+success path honours. `--emit-asm` returns before any of these exits, so its
+assembly is untouched. Nothing else in the codebase relied on the `.asm`
+surviving a failure for debugging (all `*.asm` references in the tree are
+coreasm/ sources or `tests/runtime/` driver files; `test.sh` already ran a
+belt-and-braces `rm -f *.asm` after each compile, which was cleaning up this
+leak on the *next* run — now the leak is gone at the source). Regression
+tests: `tests/p260_asm_cleanup_on_failure.rs` —
+`failed_build_leaves_no_asm` (ld failure leaves no `prog.asm`),
+`emit_asm_still_writes_asm` (`--emit-asm` still produces it),
+`keep_asm_preserves_asm_on_failure` (`--keep-asm` honoured on a failed build).
 
 ---
 

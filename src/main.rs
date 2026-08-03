@@ -19,7 +19,7 @@ use lexer::Lexer;
 use parser::Parser;
 use parser::ast::{Program, Statement};
 use analyzer::Analyzer;
-use codegen::{CodeGenerator, render_lib_file};
+use codegen::{CodeGenerator, mangle_library_symbol, render_lib_file};
 
 /// Resolve the core-path environment override purely from its two inputs, so
 /// the precedence rule can be unit-tested without touching process-global env.
@@ -418,8 +418,15 @@ fn main() {
     // Each input is lexed/parsed on its own so a parse error names its own file
     // and a `see` of a .vox resolves relative to that file's directory.
     let mut combined_statements: Vec<Statement> = Vec::new();
-    // (library, version, filename) per input, to reject duplicate identities.
-    let mut identities: Vec<(String, String, String)> = Vec::new();
+    // (mangled identity prefix, raw library, raw version, filename) per input,
+    // to reject duplicate identities. The mangler folds every character
+    // outside [A-Za-z0-9_] to '_', so two inputs whose `<library, version>`
+    // pairs *look* distinct (`a-b`/`1.0` vs `a_b`/`1.0`) become the same symbol
+    // prefix and would emit colliding labels in the .so. The check therefore
+    // compares what the identities become — `mangle_library_symbol(lib, ver, "")`
+    // — not what was written, and the diagnostic names both raw identities so
+    // the author can see why `a-b` and `a_b` are the same to the linker.
+    let mut identities: Vec<(String, String, String, String)> = Vec::new();
     // Stage A4: imports resolved from `see "<lib>" version "<ver>" from
     // "...lib".` across every input — verified signatures for the analyzer
     // and codegen, and the .so paths for the link line.
@@ -506,23 +513,52 @@ fn main() {
             });
             match identity {
                 Some((lib, ver)) => {
-                    if let Some((_, prev_file)) = identities.iter().find_map(|(l, v, f)| {
-                        if l == &lib && v == &ver {
-                            Some(((), f.clone()))
+                    // The symbol prefix every function in this library will
+                    // share; two inputs that sanitise to the same prefix emit
+                    // colliding labels in the .so, so this — not the raw
+                    // strings — is what must be distinct.
+                    let prefix = mangle_library_symbol(&lib, &ver, "");
+                    if let Some((plib, pver, prev_file)) = identities
+                        .iter()
+                        .find_map(|(p, l, v, f)| {
+                            if p == &prefix {
+                                Some((l.clone(), v.clone(), f.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        if plib == lib && pver == ver {
+                            // Same raw identity (e.g. the same file passed
+                            // twice): keep the existing diagnostic's shape.
+                            eprintln!(
+                                "Duplicate library identity: '{}' and '{}' both declare \
+                                 Library \"{}\" version \"{}\". Two sources linked into one \
+                                 .so must each name a distinct library and version, or the \
+                                 second's signatures silently overwrite the first's. Rename \
+                                 one.",
+                                prev_file, source_path, lib, ver
+                            );
                         } else {
-                            None
+                            // Different raw identities that sanitise to the
+                            // same symbol prefix. Name both files and both raw
+                            // identities plus the colliding prefix, so the
+                            // author sees why their distinct-looking names are
+                            // the same to the linker.
+                            eprintln!(
+                                "Duplicate library identity: '{}' declares Library \"{}\" \
+                                 version \"{}\" and '{}' declares Library \"{}\" version \"{}\", \
+                                 but both mangle to the symbol prefix '{}'. The mangler folds \
+                                 every character outside [A-Za-z0-9_] to '_', so these are the \
+                                 same to the linker and the second's signatures silently \
+                                 overwrite the first's. Rename one so the library and version \
+                                 stay distinct after mangling.",
+                                prev_file, plib, pver, source_path, lib, ver, prefix
+                            );
                         }
-                    }) {
-                        eprintln!(
-                            "Duplicate library identity: '{}' and '{}' both declare \
-                             Library \"{}\" version \"{}\". Two sources linked into one .so \
-                             must each name a distinct library and version, or the second's \
-                             signatures silently overwrite the first's. Rename one.",
-                            prev_file, source_path, lib, ver
-                        );
                         std::process::exit(1);
                     }
-                    identities.push((lib, ver, source_path.clone()));
+                    identities.push((prefix, lib, ver, source_path.clone()));
                 }
                 None => {
                     eprintln!(
@@ -605,6 +641,21 @@ fn main() {
         return;
     }
 
+    // `<stem>.asm` is an intermediate. On the success path it is removed below
+    // (unless --keep-asm); until F2 a failure path left it in the user's
+    // directory — a temp file they never asked to see. Every failure exit
+    // after this point calls `cleanup_asm_on_failure()` first. It honours the
+    // same `keep_asm` flag as the success path (a user who passed --keep-asm
+    // asked to keep the assembly, even from a failed build); --emit-asm has
+    // already returned above, so its assembly is untouched. The `let _ =`
+    // swallows a missing-file error from an earlier write failure that left no
+    // file behind.
+    let cleanup_asm_on_failure = || {
+        if !keep_asm {
+            let _ = fs::remove_file(&asm_path);
+        }
+    };
+
     // A3: a `--shared` build writes `<stem>.lib` beside the `.so`. Never
     // clobber a file this build did not create — plan 210's P1 was exactly this
     // class, where `--shared` silently destroyed a user's `.map`. If the .lib
@@ -620,6 +671,7 @@ fn main() {
             eprintln!("Error: not overwriting existing file: {}", p.display());
             eprintln!("       `vox --shared` writes this .lib beside the .so;");
             eprintln!("       remove it first if you want it regenerated.");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
         Some(p)
@@ -663,11 +715,13 @@ fn main() {
         Ok(status) if status.success() => {}
         Ok(_) => {
             eprintln!("NASM assembly failed");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("Failed to run NASM: {}", e);
             eprintln!("Make sure NASM is installed: sudo apt install nasm");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
     }
@@ -739,6 +793,7 @@ fn main() {
         script.push_str(" local:*; };\n");
         if let Err(e) = fs::write(&map_path, &script) {
             eprintln!("Error writing version script: {}", e);
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
 
@@ -843,10 +898,12 @@ fn main() {
         Ok(status) if status.success() => {}
         Ok(_) => {
             eprintln!("Linking failed");
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
         Err(e) => {
             eprintln!("Failed to run ld: {}", e);
+            cleanup_asm_on_failure();
             std::process::exit(1);
         }
     }
