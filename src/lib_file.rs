@@ -565,7 +565,13 @@ pub fn resolve_see_import(
     // every mangled name the ToC promises must be a defined dynamic symbol.
     // A miss is the stale-.lib case: the library was rebuilt with different
     // exports (or the .lib was hand-edited) and the pair now disagree.
-    let dynsym = crate::elf::defined_dynamic_symbols(&so_path)
+    // The elf reader formats the path it is given into its own error, so pass
+    // the normalised display path (the missing-.so error below already does).
+    // Without this the same `.so` that reads as `bad.so` in the not-found
+    // diagnostic read as `././bad.so` here — `normalise_display` strips only
+    // the no-op `.` components `Path::join` layers on, so `fs::read` of the
+    // normalised path finds the same file.
+    let dynsym = crate::elf::defined_dynamic_symbols(&normalise_display(&so_path))
         .map_err(|e| format!("checking the library binary: {}", e))?;
     let mut functions = Vec::new();
     for f in &block.funcs {
@@ -620,9 +626,35 @@ pub fn resolve_program_imports(
                 path,
                 lib_name,
                 lib_version,
-            } if path.ends_with(".lib") => (path, lib_name, lib_version),
+            } => (path, lib_name, lib_version),
             _ => continue,
         };
+        // A `see` carrying a library name AND version is the canonical library
+        // import shape, and a library import names a `.lib` interface file. A
+        // `.so` path is already rejected at parse time and a `.vox` path is
+        // inlined (and so removed) before this runs, so a `see` reaching here
+        // with name+version but a non-`.lib` path is a malformed import — a
+        // typo'd or extensionless path the user clearly meant as a `.lib`.
+        // Silently dropping it (the old behaviour) left a program that
+        // compiled with the import missing, exactly the trap stage A5 closed
+        // for the direct-`.so` form but not for an arbitrary non-`.lib` path.
+        if !path.ends_with(".lib") {
+            if lib_name.is_some() && lib_version.is_some() {
+                return Err(format!(
+                    "see \"{}\" version \"{}\" from \"{}\": a library import names a \
+                     .lib interface file, but \"{}\" is not one. Did you forget the \
+                     .lib extension?\n\
+                     Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".",
+                    lib_name.as_deref().unwrap_or(""),
+                    lib_version.as_deref().unwrap_or(""),
+                    path,
+                    path
+                ));
+            }
+            // A bare `see "<path>"` with no name/version that is not a .vox
+            // include (those are inlined) is not a library import; skip it.
+            continue;
+        }
         let (name, version) = match (lib_name, lib_version) {
             (Some(n), Some(v)) => (n.as_str(), v.as_str()),
             _ => {
@@ -791,5 +823,71 @@ Table of Contents:\n\
             mangle_library_symbol(&blocks[1].lib, &blocks[1].version, "hasflag"),
             "flags_0_1_hasflag"
         );
+    }
+
+    // A canonical-form `see` (name AND version) whose path is not a `.lib` is a
+    // malformed import — a typo'd or extensionless path the user meant as a
+    // `.lib`. It used to be silently dropped (the import simply missing), the
+    // same trap the direct-`.so` form posed; it now errors with the canonical
+    // form. A `.vox` include is inlined before this runs and a `.so` is rejected
+    // at parse time, so a `see` reaching `resolve_program_imports` with
+    // name+version but a non-`.lib` path is unambiguously malformed.
+    #[test]
+    fn canonical_see_with_non_lib_path_is_an_error() {
+        use crate::parser::ast::{Program, Statement};
+        let prog = Program::new(vec![Statement::See {
+            path: "./libmathkit.lib.txt".to_string(),
+            lib_name: Some("mathkit".to_string()),
+            lib_version: Some("1.0".to_string()),
+        }]);
+        let err = resolve_program_imports(&prog, std::path::Path::new("."), &[])
+            .unwrap_err();
+        assert!(err.contains("not one"), "got: {}", err);
+        assert!(err.contains("libmathkit.lib.txt"), "got: {}", err);
+        assert!(err.contains("Canonical form"), "got: {}", err);
+    }
+
+    // A bare `see "<path>"` with no name/version and a non-`.lib` path is not a
+    // library import; it is skipped, not errored. This pins the line between
+    // the new malformed-import error and the bare-include path.
+    #[test]
+    fn bare_see_with_non_lib_path_is_skipped_not_errored() {
+        use crate::parser::ast::{Program, Statement};
+        let prog = Program::new(vec![Statement::See {
+            path: "./notes.txt".to_string(),
+            lib_name: None,
+            lib_version: None,
+        }]);
+        let resolved = resolve_program_imports(&prog, std::path::Path::new("."), &[])
+            .unwrap();
+        assert!(resolved.is_empty());
+    }
+
+    // The "checking the library binary" error renders the `.so` path the same
+    // way the missing-`.so` error does: normalised, with no `././` that
+    // `Path::join` layers on. A `.lib` whose `Location` points at a non-ELF
+    // file reaches the elf reader, so its error path is the one this exercises.
+    #[test]
+    fn elf_error_path_is_normalised_no_double_dot_slash() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("vox-elf-path-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        // `see ... from "./sub/good.lib"` resolves the .lib relative to the
+        // source dir, then the .so relative to the .lib's dir, so the .so path
+        // the elf reader sees would carry a `./` component without normalising.
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let lib_text = "Library \"x\" version \"1.0\".\n\
+                        Location \"./notelf.so\".\n\
+                        \n\
+                        Table of Contents:\n\
+                            To \"f\".\n";
+        fs::write(sub.join("good.lib"), lib_text).unwrap();
+        fs::write(sub.join("notelf.so"), b"not an elf file").unwrap();
+        let err = resolve_see_import("x", "1.0", "./good.lib", &sub, &[]).unwrap_err();
+        // The missing-.so path is normalised; the elf-error path must be too.
+        assert!(!err.contains("././"), "elf error path leaked a '././': {}", err);
+        assert!(err.contains("notelf.so"), "got: {}", err);
+        fs::remove_dir_all(&dir).ok();
     }
 }
