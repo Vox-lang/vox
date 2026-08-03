@@ -708,7 +708,72 @@ impl Parser {
             Ok(())
         }
     }
-    
+
+    /// Whether a string is a legal *bare* identifier (plan 270 §2:
+    /// `[A-Za-z_][A-Za-z0-9_]*`). Used to pick the `help:` suggestion form.
+    fn is_bare_legal_name(s: &str) -> bool {
+        let mut chars = s.chars();
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+            _ => return false,
+        }
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// Build the `help:` text for the §S1.5 diagnostic: bare when the name is
+    /// bare-legal, `'quoted'` (plus an underscore alternative) when it has
+    /// spaces, `'quoted'` alone otherwise.
+    fn suggest_name_form(s: &str) -> String {
+        if Self::is_bare_legal_name(s) {
+            format!("write `{}`", s)
+        } else {
+            let underscored: String = s
+                .chars()
+                .map(|c| if c == ' ' { '_' } else { c })
+                .collect();
+            if s.contains(' ') && Self::is_bare_legal_name(&underscored) {
+                format!("write `'{}'` (it contains spaces), or `{}`", s, underscored)
+            } else {
+                format!("write `'{}'`", s)
+            }
+        }
+    }
+
+    /// The plan-270 §S1.5 diagnostic: a string literal was found where a name
+    /// is expected. The underline spans the whole `"..."` token; the `help:`
+    /// line suggests the right replacement.
+    fn err_string_as_name(&self, s: &str) -> Box<CompileError> {
+        let mut err = CompileError::new("expected a name, found a string literal");
+        if let Some(loc) = self.current_location() {
+            err = err.with_location(loc);
+        }
+        // The lexer records the column of the opening `"`. Span the whole
+        // literal: content chars + the two quote characters.
+        let span = s.chars().count() + 2;
+        err = err
+            .with_underline_note(span, "strings are data; names are bare or 'single-quoted'")
+            .with_help_line(&Self::suggest_name_form(s));
+        Box::new(err)
+    }
+
+    /// Parse a name in an identifier position (plan 270 §S1.5). Accepts a bare
+    /// or quoted identifier (both lex as `Token::Identifier`); rejects a
+    /// string literal with the teaching diagnostic; rejects reserved
+    /// keywords (unchanged behaviour). Use this everywhere a *name* is
+    /// expected — declarations, callees, targets, parameters.
+    fn parse_name(&mut self) -> Result<String, Box<CompileError>> {
+        // Reserved keywords remain rejected as names.
+        self.check_not_keyword(self.current())?;
+        match self.current().clone() {
+            Token::Identifier(n) => {
+                self.advance();
+                Ok(n)
+            }
+            Token::StringLiteral(s) => Err(self.err_string_as_name(&s)),
+            other => Err(self.err_expected("a name", &other)),
+        }
+    }
+
     fn peek(&self, offset: usize) -> &Token {
         self.tokens.get(self.pos + offset).map(|t| &t.token).unwrap_or(&Token::EOF)
     }
@@ -904,7 +969,13 @@ impl Parser {
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
             Token::Identifier(_) => self.parse_identifier_statement(),
-            Token::StringLiteral(_) => self.parse_function_call_statement(),
+            // A statement cannot start with a string literal: the old
+            // `"get five".` / `"calc" of 3.` forms are gone (plan 270). A
+            // string is data; a callee must be a bare or quoted identifier.
+            Token::StringLiteral(s) => {
+                let s = s.clone();
+                Err(self.err_string_as_name(&s))
+            }
             _ => Err(self.err_expected("a statement", self.current())),
         }
     }
@@ -948,16 +1019,19 @@ impl Parser {
             return self.wrap_in_loop_expansion(variable, collection, print_stmt);
         }
         
-        // Check for function call with loop expansion: "print "func" of each X from Y"
-        if let Token::StringLiteral(func_name) = self.current().clone() {
+        // Check for function call with loop expansion: "print func of each X from Y"
+        // The callee is a bare or quoted identifier (plan 270). A string
+        // literal here is data, not a callee; it is left for parse_expression
+        // to handle as a value (and reject if followed by `of/with/to/on`).
+        if let Token::Identifier(func_name) = self.current().clone() {
             let saved_pos = self.pos;
             self.advance();
             self.skip_noise();
-            
+
             if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
                 self.advance();
                 self.skip_noise();
-                
+
                 // Check if next is "each" for loop expansion
                 if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
                     // Create function call with loop variable as argument
@@ -970,9 +1044,9 @@ impl Parser {
                     } else {
                         Expr::Identifier(variable.clone())
                     };
-                    let func_call = Expr::FunctionCall { 
-                        name: func_name, 
-                        args: vec![arg_expr] 
+                    let func_call = Expr::FunctionCall {
+                        name: func_name,
+                        args: vec![arg_expr]
                     };
                     let print_stmt = Statement::Print { value: func_call, without_newline: false };
                     return self.wrap_in_loop_expansion(variable, collection, print_stmt);
@@ -1114,11 +1188,8 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let buffer = match self.current().clone() {
-                Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => { self.advance(); n }
-                _ => return Err(self.err("Expected buffer name after 'of'")),
-            };
+            let buffer = self.parse_name()?;
+            self.skip_noise();
             self.skip_noise();
             if *self.current() != Token::To {
                 return Err(self.err("Expected 'to' after buffer name"));
@@ -1140,11 +1211,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let list = match self.current().clone() {
-                Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => { self.advance(); n }
-                _ => return Err(self.err("Expected list name after 'of'")),
-            };
+            let list = self.parse_name()?;
             self.skip_noise();
             if *self.current() != Token::To {
                 return Err(self.err("Expected 'to' after list name"));
@@ -1161,7 +1228,7 @@ impl Parser {
         // followed by `to`. Otherwise we restore position and let the
         // generic declaration/assignment path below handle it (e.g.
         // `Set x to 5.`). (stage 1e2, tag 5)
-        if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+        if matches!(self.current(), Token::Identifier(_)) {
             let saved = self.pos;
             let target = self.parse_primary();
             if let Ok(Expr::MapAccess { map, key }) = target {
@@ -1193,16 +1260,12 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            
-            let name = match self.current().clone() {
-                Token::StringLiteral(n) => { self.advance(); n }
-                Token::Identifier(n) => { self.advance(); n }
-                _ => return Err(self.err("Expected timer name after 'called'")),
-            };
-            
+
+            let name = self.parse_name()?;
+
             return Ok(Statement::TimerDecl { name });
         }
-        
+
         let var_type = if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::Buffer) {
             let t = match self.current() {
                 Token::Number => Type::Integer,
@@ -1217,50 +1280,16 @@ impl Parser {
         } else {
             None
         };
-        
+
         // If we have "called", get name from there
         let name = if *self.current() == Token::Called {
             self.advance();
             self.skip_noise();
-            // Check for keyword used as variable name (both token and string content)
-            self.check_not_keyword(self.current())?;
-            match self.current().clone() {
-                Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => {
-                    // Also check if the string content is a keyword
-                    if let Some(kw) = Token::string_is_keyword(&n) {
-                        return Err(self.make_error(&format!(
-                            "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
-                             Tip: Try a more descriptive name like '{}_value' or 'my_{}'",
-                            n, kw, kw
-                        )));
-                    }
-                    self.advance(); n
-                }
-                _ => return Err(self.err("Expected variable name after 'called'")),
-            }
+            self.parse_name()
         } else {
-            // Check for keyword used as variable name
-            self.check_not_keyword(self.current())?;
-            // Otherwise expect identifier or quoted name directly
-            match self.current().clone() {
-                Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => {
-                    // Also check if the string content is a keyword
-                    if let Some(kw) = Token::string_is_keyword(&n) {
-                        return Err(self.make_error(&format!(
-                            "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
-                             Tip: Try a more descriptive name like '{}_value' or 'my_{}'",
-                            n, kw, kw
-                        )));
-                    }
-                    self.advance();
-                    n
-                }
-                _ => return Err(self.err("Expected variable name")),
-            }
-        };
-        
+            self.parse_name()
+        }?;
+
         self.skip_noise();
         
         // Handle buffer creation with size: "Create a buffer called X with/of size N"
@@ -1305,22 +1334,14 @@ impl Parser {
         self.expect(&Token::Called);
         self.skip_noise();
 
-        let name = match self.current().clone() {
-            Token::StringLiteral(n) => {
-                self.advance();
-                n
-            }
-            Token::Identifier(n) => {
-                self.advance();
-                n
-            }
-            _ => return Err(self.err("Expected flag variable name after 'called'")),
-        };
+        let name = self.parse_name()?;
 
         self.skip_noise();
         self.expect(&Token::Is);
         self.skip_noise();
 
+        // Flag aliases are string literals (plan 270 §9): `-n`/`--number`
+        // are data, not names. The flag *name* above is an identifier.
         let short = match self.current().clone() {
             Token::StringLiteral(v) => {
                 self.advance();
@@ -1456,29 +1477,12 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
-                
+
                 // Check for keyword used as buffer name
                 self.check_not_keyword(self.current())?;
-                
-                let name = match self.current().clone() {
-                    Token::StringLiteral(n) => {
-                        if let Some(kw) = Token::string_is_keyword(&n) {
-                            return Err(self.make_error(&format!(
-                                "Cannot use '{}' as a buffer name - it's a reserved keyword.\n  \
-                                 Tip: Try a more descriptive name like '{}_buffer' or 'my_{}'",
-                                n, kw, kw
-                            )));
-                        }
-                        self.advance(); n
-                    }
-                    Token::Identifier(n) => { self.advance(); n }
-                    _ => return Err(self.err(
-                        "Missing buffer name after 'called'\n  \
-                         Syntax: a buffer called \"name\".\n  \
-                         Example: a buffer called \"content\"."
-                    )),
-                };
-                
+
+                let name = self.parse_name()?;
+
                 self.skip_noise();
                 
                 // Parse first, classify second - check for "is" clause
@@ -1570,22 +1574,15 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
-                
-                let name = match self.current().clone() {
-                    Token::StringLiteral(n) => { self.advance(); n }
-                    Token::Identifier(n) => { self.advance(); n }
-                    _ => return Err(self.err(
-                        "Missing timer name after 'called'\n  \
-                         Syntax: a timer called \"name\"."
-                    )),
-                };
-                
+
+                let name = self.parse_name()?;
+
                 return Ok(Statement::TimerDecl { name });
             }
             Token::Time => {
                 self.advance();
                 self.skip_noise();
-                
+
                 if *self.current() != Token::Called {
                     return Err(self.err(
                         "Missing 'called' after 'time'\n  \
@@ -1594,13 +1591,9 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
-                
-                let name = match self.current().clone() {
-                    Token::StringLiteral(n) => { self.advance(); n }
-                    Token::Identifier(n) => { self.advance(); n }
-                    _ => return Err(self.err("Missing time variable name after 'called'")),
-                };
-                
+
+                let name = self.parse_name()?;
+
                 self.skip_noise();
                 
                 // Parse "is current time" or similar
@@ -1624,31 +1617,14 @@ impl Parser {
         self.skip_noise();
         self.expect(&Token::Called);
         self.skip_noise();
-        
+
         // Check for keyword used as variable name
         self.check_not_keyword(self.current())?;
-        
-        // Get variable name (quoted string)
-        let name = match self.current().clone() {
-            Token::StringLiteral(n) => {
-                // Check if the string content is a keyword
-                if let Some(kw) = Token::string_is_keyword(&n) {
-                    return Err(self.make_error(&format!(
-                        "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
-                         Tip: Try a more descriptive name like '{}_value' or 'my_{}'",
-                        n, kw, kw
-                    )));
-                }
-                self.advance(); n
-            }
-            Token::Identifier(n) => { self.advance(); n }
-            _ => return Err(self.err(
-                "Missing variable name after 'called'\n  \
-                 Syntax: a <type> called \"<name>\" is <value>.\n  \
-                 Example: a number called \"x\" is 5."
-            )),
-        };
-        
+
+        // Get variable name (plan 270: bare or quoted identifier, never a
+        // string literal).
+        let name = self.parse_name()?;
+
         self.skip_noise();
         
         // Parse value if present: "is <value>"
@@ -1673,8 +1649,6 @@ impl Parser {
         
         // Could be "the <name> is <value>" (assignment) or just a reference
         let name = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
             // Handle "the number called <name>" or "the number" (loop iterator)
             Token::Number | Token::Text | Token::Boolean | Token::Buffer => {
                 self.advance(); // consume type
@@ -1682,21 +1656,16 @@ impl Parser {
                 if *self.current() == Token::Called {
                     self.advance();
                     self.skip_noise();
-                    match self.current().clone() {
-                        Token::StringLiteral(n) => { self.advance(); n }
-                        Token::Identifier(n) => { self.advance(); n }
-                        _ => return Err(self.err("Expected variable name after 'called'")),
-                    }
-                } else if let Token::Identifier(n) = self.current().clone() {
-                    self.advance();
-                    n
+                    self.parse_name()?
+                } else if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+                    self.parse_name()?
                 } else {
                     // "the number" without "called" - could be loop iterator reference
                     // But as a statement, this needs "is" to be an assignment
                     "_iter".to_string()
                 }
             }
-            _ => return Err(self.err_expected("identifier after 'the'", self.current())),
+            _ => self.parse_name()?,
         };
         
         self.skip_noise();
@@ -1846,6 +1815,7 @@ impl Parser {
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
+            Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
             _ => return Err(self.err(
                 "Missing loop variable after 'for each'\n  \
                  Syntax: For each <variable> from <start> to <end>, <action>.\n  \
@@ -2130,49 +2100,38 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
-        let name = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected variable name to free")),
-        };
-        
+        let name = self.parse_name()?;
+
         Ok(Statement::Free { name })
     }
-    
+
     fn parse_increment(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
         // Skip optional "the"
         if *self.current() == Token::The {
             self.advance();
             self.skip_noise();
         }
-        
-        let name = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected variable name after 'increment'")),
-        };
-        
+
+        let name = self.parse_name()?;
+
         Ok(Statement::Increment { name })
     }
-    
+
     fn parse_decrement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
         // Skip optional "the"
         if *self.current() == Token::The {
             self.advance();
             self.skip_noise();
         }
-        
-        let name = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected variable name after 'decrement'")),
-        };
-        
+
+        let name = self.parse_name()?;
+
         Ok(Statement::Decrement { name })
     }
     
@@ -2239,7 +2198,7 @@ impl Parser {
                     self.advance();
                     self.skip_noise();
                     name = Some(match self.current().clone() {
-                        Token::StringLiteral(n) => { self.advance(); n }
+                        Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
                         Token::Identifier(n) => { self.advance(); n }
                         Token::File => { self.advance(); "File".to_string() }
                         Token::Input => { self.advance(); "input".to_string() }
@@ -2495,6 +2454,7 @@ impl Parser {
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
+            Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
             _ => return Err(self.err(
                 "Missing loop variable after 'each'\n  \
                  Syntax: each <variable> from <collection>\n  \
@@ -2694,15 +2654,15 @@ impl Parser {
             "stdin".to_string()
         } else {
             match self.current().clone() {
+                Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
                 Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => { self.advance(); n }
                 Token::Input => { self.advance(); "input".to_string() }
                 _ => return Err(self.err_expected("file name or 'standard input' after 'from'", self.current())),
             }
         };
-        
+
         self.skip_noise();
-        
+
         // Expect "into"
         if !self.expect(&Token::Into) {
             return Err(self.err_expected("'into' after read source", self.current()));
@@ -2714,13 +2674,9 @@ impl Parser {
             self.advance();
             self.skip_noise();
         }
-        
+
         // Get buffer name
-        let buffer = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected buffer name after 'into'")),
-        };
+        let buffer = self.parse_name()?;
         
         if line_mode {
             Ok(Statement::FileReadLine { source, buffer })
@@ -2735,17 +2691,13 @@ impl Parser {
         self.advance(); // consume 'seek'
         self.skip_noise();
 
-        let file = match self.current().clone() {
-            Token::Identifier(n) => {
-                self.advance();
-                n
+        let file = self.parse_name().or_else(|e| {
+            if matches!(self.current(), Token::StringLiteral(_)) {
+                Err(e)
+            } else {
+                Err(self.err_expected("file name after 'seek'", self.current()))
             }
-            Token::StringLiteral(n) => {
-                self.advance();
-                n
-            }
-            _ => return Err(self.err_expected("file name after 'seek'", self.current())),
-        };
+        })?;
 
         self.skip_noise();
         if !self.expect(&Token::To) {
@@ -2821,11 +2773,11 @@ impl Parser {
                     // Get file name
                     let file = match self.current().clone() {
                         Token::Identifier(n) => { self.advance(); n }
-                        Token::StringLiteral(n) => { self.advance(); n }
+                        Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                         Token::File => { self.advance(); "File".to_string() }
                         _ => return Err(self.err("Expected file name after 'to'")),
                     };
-                    
+
                     return Ok(Statement::FileWriteNewline { file });
                 }
             }
@@ -2895,11 +2847,11 @@ impl Parser {
         // Get file name
         let file = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::File => { self.advance(); "File".to_string() }
             _ => return Err(self.err_expected("file name after 'to'", self.current())),
         };
-        
+
         Ok(Statement::FileWrite { file, value })
     }
     
@@ -2917,7 +2869,7 @@ impl Parser {
         // Get file name (can be identifier or keywords used as names)
         let file = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::File => { self.advance(); "File".to_string() }
             Token::Input => { self.advance(); "input".to_string() }
             _ => return Err(self.err_expected("file name after 'close'", self.current())),
@@ -3566,6 +3518,10 @@ impl Parser {
                 Ok(Expr::FloatLit(n))
             }
             Token::StringLiteral(s) => {
+                // Plan 270 §S1.5: a string literal is data, not a name, so it
+                // cannot be a callee. Capture the literal's location now (before
+                // advancing) so the §S1.5 underline can still point at it.
+                let s_loc = self.current_location();
                 self.advance();
                 self.skip_noise();
                 // A format string can't be a function name - resolve it first.
@@ -3573,24 +3529,16 @@ impl Parser {
                 if matches!(resolved, Expr::FormatString { .. }) {
                     Ok(resolved)
                 } else if matches!(self.current(), Token::Of | Token::With | Token::On) {
-                    self.advance();
-                    self.skip_noise();
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.parse_expression()?);
-                        self.skip_noise();
-                        if *self.current() == Token::Comma {
-                            // Comma belongs to the enclosing sentence.
-                            break;
-                        }
-                        if *self.current() == Token::And {
-                            self.advance();
-                            self.skip_noise();
-                        } else {
-                            break;
-                        }
+                    // `append "<name>" of 3 to s` — a string used as a callee.
+                    let mut err = CompileError::new("expected a name, found a string literal");
+                    if let Some(loc) = s_loc {
+                        err = err.with_location(loc);
                     }
-                    Ok(Expr::FunctionCall { name: s, args })
+                    let span = s.chars().count() + 2;
+                    err = err
+                        .with_underline_note(span, "strings are data; names are bare or 'single-quoted'")
+                        .with_help_line(&Self::suggest_name_form(&s));
+                    Err(Box::new(err))
                 } else {
                     Ok(resolved)
                 }
@@ -3676,13 +3624,13 @@ impl Parser {
             
             let list_name = match self.current().clone() {
                 Token::Identifier(n) => { self.advance(); n }
-                Token::StringLiteral(n) => { self.advance(); n }
+                Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                 Token::The => {
                     self.advance();
                     self.skip_noise();
                     match self.current().clone() {
                         Token::Identifier(n) => { self.advance(); n }
-                        Token::StringLiteral(n) => { self.advance(); n }
+                        Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                         _ => return Err(self.err("Expected list name after 'the'")),
                     }
                 }
@@ -3747,19 +3695,19 @@ impl Parser {
         // Get list name
         let list = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
-            Token::StringLiteral(n) => { self.advance(); n }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
                     Token::Identifier(n) => { self.advance(); n }
-                    Token::StringLiteral(n) => { self.advance(); n }
+                    Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected list name after 'the'")),
                 }
             }
             _ => return Err(self.err("Expected list name after 'to'")),
         };
-        
+
         Ok(Statement::ListAppend { list, value })
     }
 
@@ -3824,10 +3772,7 @@ impl Parser {
                 self.advance();
                 n
             }
-            Token::StringLiteral(n) => {
-                self.advance();
-                n
-            }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
@@ -3836,10 +3781,7 @@ impl Parser {
                         self.advance();
                         n
                     }
-                    Token::StringLiteral(n) => {
-                        self.advance();
-                        n
-                    }
+                    Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected destination buffer name after 'the'")),
                 }
             }
@@ -3859,10 +3801,7 @@ impl Parser {
                 self.advance();
                 n
             }
-            Token::StringLiteral(n) => {
-                self.advance();
-                n
-            }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
@@ -3871,10 +3810,7 @@ impl Parser {
                         self.advance();
                         n
                     }
-                    Token::StringLiteral(n) => {
-                        self.advance();
-                        n
-                    }
+                    Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected buffer name after 'the'")),
                 }
             }
@@ -3885,20 +3821,18 @@ impl Parser {
     }
     
     fn parse_library_decl(&mut self) -> Result<Statement, Box<CompileError>> {
-        // Library "name" version "1.0".
+        // Library 'name' version "1.0".
+        // Plan 270 §6: the library *name* is an identifier (bare or quoted);
+        // the *version* is a string literal (data, not a name).
         self.advance(); // consume 'library'
         self.skip_noise();
-        
-        // Get library name
-        let name = match self.current().clone() {
-            Token::StringLiteral(n) => { self.advance(); n }
-            Token::Identifier(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected library name")),
-        };
-        
+
+        // Get library name (a bare or quoted identifier, never a string).
+        let name = self.parse_name()?;
+
         self.skip_noise();
-        
-        // Parse version
+
+        // Parse version — a string literal.
         let version = if *self.current() == Token::Version {
             self.advance();
             self.skip_noise();
@@ -3909,7 +3843,7 @@ impl Parser {
         } else {
             "1.0".to_string() // Default version
         };
-        
+
         Ok(Statement::LibraryDecl { name, version })
     }
     
@@ -3949,9 +3883,25 @@ impl Parser {
             }
         };
 
-        // First token is the library name (canonical form) or the path
-        // (source include / retired forms).
-        let first = get_name_or_string(self.current())
+        // First token is the library name (canonical form: a bare/quoted
+        // identifier followed by `version`) or the path (a string literal —
+        // the `see "<path>.vox"` source include). Plan 270 §S1.5: a string
+        // literal where a *name* is expected is rejected with the teaching
+        // diagnostic, so the old `see "<lib>" version ...` form now points
+        // the user at `see '<lib>' version "..."`. Detect this *before*
+        // advancing so the underline lands on the offending string.
+        let first_tok = self.current().clone();
+        if let Token::StringLiteral(s) = &first_tok {
+            // Look ahead past noise (newlines) for `version`.
+            let mut k = 1;
+            while matches!(self.peek(k), Token::Newline) {
+                k += 1;
+            }
+            if matches!(self.peek(k), Token::Version) {
+                return Err(self.err_string_as_name(s));
+            }
+        }
+        let first = get_name_or_string(&first_tok)
             .ok_or_else(|| self.err(
                 "Missing path or library name after 'see'\n  \
                  Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".\n  \
@@ -3961,7 +3911,8 @@ impl Parser {
         self.skip_noise();
 
         if *self.current() == Token::Version {
-            // see "<lib>" version "<ver>" from "<path>.lib".
+            // see '<lib>' version "<ver>" from "<path>.lib".
+            // `first` is the library name (an identifier in canonical form).
             lib_name = Some(first);
             self.advance();
             self.skip_noise();
@@ -4019,16 +3970,59 @@ impl Parser {
             Token::Identifier(n) => { self.advance(); n }
             _ => return Err(self.err("Expected identifier")),
         };
-        
+
         self.skip_noise();
-        
+
+        // Assignment: `name is value` / `name = value`.
         if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();
             self.skip_noise();
             let value = self.parse_expression()?;
             return Ok(Statement::Assignment { name, value });
         }
-        
+
+        // Call with arguments: `name of/with/to/on args ...` (plan 270 G1).
+        // A bare or quoted identifier callee is accepted; a string literal
+        // callee is rejected at the statement dispatch above.
+        if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
+            self.advance();
+            self.skip_noise();
+
+            // Loop-expansion: `name of each X from Y [treating X as Y]`.
+            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
+                let arg_expr = if let Some((match_val, replacement)) = treating {
+                    Expr::TreatingAs {
+                        value: Box::new(Expr::Identifier(variable.clone())),
+                        match_value: Box::new(match_val),
+                        replacement: Box::new(replacement),
+                    }
+                } else {
+                    Expr::Identifier(variable.clone())
+                };
+                let call_stmt = Statement::FunctionCall {
+                    name: name.clone(),
+                    args: vec![arg_expr],
+                };
+                return self.wrap_in_loop_expansion(variable, collection, call_stmt);
+            }
+
+            let mut args = Vec::new();
+            loop {
+                let arg = self.parse_expression()?;
+                args.push(arg);
+
+                self.skip_noise();
+                if *self.current() == Token::And {
+                    self.advance();
+                    self.skip_noise();
+                } else {
+                    break;
+                }
+            }
+            return Ok(Statement::FunctionCall { name, args });
+        }
+
+        // Zero-argument call: `name.`
         Ok(Statement::FunctionCall {
             name,
             args: vec![],
@@ -4039,16 +4033,23 @@ impl Parser {
         self.advance(); // consume 'To'
         self.skip_noise();
         
-        // Get function name (quoted string or single-word identifier)
-        let name = match self.current().clone() {
-            Token::StringLiteral(n) => { self.advance(); n }
-            Token::Identifier(n) => { self.advance(); n }
-            _ => return Err(self.err(
-                "Missing function name after 'To'\n  \
-                 Syntax: To \"function name\" with parameters. Return a type, expression.\n  \
-                 Example: To \"add\" with a number called \"x\" and a number called \"y\". Return a number, x add y."
-            )),
-        };
+        // Get function name: a bare or quoted identifier (plan 270). A string
+        // literal here is rejected with the §S1.5 diagnostic.
+        let name = self.parse_name().or_else(|e| {
+            // Distinguish "missing name entirely" from "used a string literal":
+            // parse_name already gives the teaching diagnostic for a string;
+            // for anything else (e.g. a keyword or `with`) produce the
+            // syntax-hint message.
+            if matches!(self.current(), Token::StringLiteral(_)) {
+                Err(e)
+            } else {
+                Err(self.err(
+                    "Missing function name after 'To'\n  \
+                     Syntax: To 'function name' with parameters. Return a type, expression.\n  \
+                     Example: To 'add' with a number called x and a number called y. Return a number, x add y."
+                ))
+            }
+        })?;
         
         self.skip_noise();
         
@@ -4060,7 +4061,12 @@ impl Parser {
             
             loop {
                 self.skip_noise();
-                
+
+                // A string literal is never a parameter name (plan 270 §S1.5).
+                if let Token::StringLiteral(s) = self.current().clone() {
+                    return Err(self.err_string_as_name(&s));
+                }
+
                 // Check for simple parameter: just an identifier
                 if let Token::Identifier(n) = self.current().clone() {
                     // Simple parameter without type
@@ -4095,16 +4101,8 @@ impl Parser {
                         self.skip_noise();
                     }
                     
-                    let param_name = match self.current().clone() {
-                        Token::StringLiteral(n) => { self.advance(); n }
-                        Token::Identifier(n) => { self.advance(); n }
-                        _ => return Err(self.err(
-                            "Missing parameter name\n  \
-                             Syntax: a <type> called \"<name>\"\n  \
-                             Example: a number called \"x\""
-                        )),
-                    };
-                    
+                    let param_name = self.parse_name()?;
+
                     params.push((param_name, param_type));
                 }
                 
@@ -4242,58 +4240,7 @@ impl Parser {
             body,
         })
     }
-    
-    fn parse_function_call_statement(&mut self) -> Result<Statement, Box<CompileError>> {
-        let name = match self.current().clone() {
-            Token::StringLiteral(n) => { self.advance(); n }
-            _ => return Err(self.err("Expected function name")),
-        };
-        
-        self.skip_noise();
-        
-        let mut args = Vec::new();
-        // Allow 'of', 'to', 'with', 'on' as function call connectors
-        if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
-            self.advance();
-            self.skip_noise();
-            
-            // Check for loop expansion: "function" of each X from Y [treating X as Y]
-            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-                // Create the argument expression, with optional treating substitution
-                let arg_expr = if let Some((match_val, replacement)) = treating {
-                    Expr::TreatingAs {
-                        value: Box::new(Expr::Identifier(variable.clone())),
-                        match_value: Box::new(match_val),
-                        replacement: Box::new(replacement),
-                    }
-                } else {
-                    Expr::Identifier(variable.clone())
-                };
-                let call_stmt = Statement::FunctionCall { 
-                    name: name.clone(),
-                    args: vec![arg_expr]
-                };
-                return self.wrap_in_loop_expansion(variable, collection, call_stmt);
-            }
-            
-            // Parse arguments separated by 'and'
-            loop {
-                let arg = self.parse_expression()?;
-                args.push(arg);
-                
-                self.skip_noise();
-                if *self.current() == Token::And {
-                    self.advance();
-                    self.skip_noise();
-                } else {
-                    break;
-                }
-            }
-        }
-        
-        Ok(Statement::FunctionCall { name, args })
-    }
-    
+
     fn parse_block(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
         
@@ -5117,169 +5064,26 @@ impl Parser {
                 Ok(Expr::FloatLit(n))
             }
             Token::StringLiteral(s) => {
+                let s_owned = s.clone();
                 self.advance();
                 self.skip_noise();
-                
-                // A format string can't be a function name - resolve it first
-                if let expr @ Expr::FormatString { .. } = self.string_value_expr(s.clone()) {
+
+                // A format string is always data.
+                if let expr @ Expr::FormatString { .. } = self.string_value_expr(s_owned.clone()) {
                     return Ok(expr);
                 }
 
-                // Check if this is a function call: "name" of/to/with/on args
-                if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
-                    self.advance();
-                    self.skip_noise();
-                    
-                    let mut args = Vec::new();
-                    loop {
-                        let arg = self.parse_expression()?;
-                        args.push(arg);
-                        
-                        self.skip_noise();
-
-                        if *self.current() == Token::Comma {
-                            // Comma belongs to the enclosing sentence; do not consume it
-                            // as expression continuation.
-                            break;
-                        }
-                        
-                        if *self.current() == Token::And {
-                            self.advance();
-                            self.skip_noise();
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    Ok(Expr::FunctionCall { name: s, args })
-                } else if *self.current() == Token::Apostrophe {
-                    // Property access on quoted variable: "job timer"'s duration
-                    self.advance();
-                    if let Token::Identifier(prop_s) = self.current().clone() {
-                        if prop_s.to_lowercase() == "s" {
-                            self.advance();
-                            self.skip_noise();
-                            
-                            let property = match self.current() {
-                                // Buffer properties
-                                Token::Size => ObjectProperty::Size,
-                                Token::Capacity => ObjectProperty::Capacity,
-                                Token::Empty => ObjectProperty::Empty,
-                                Token::Full => ObjectProperty::Full,
-                                // Map properties
-                                Token::Keys => ObjectProperty::Keys,
-                                Token::Values => ObjectProperty::Values,
-                                // Time properties
-                                Token::Hour => ObjectProperty::Hour,
-                                Token::Minute => ObjectProperty::Minute,
-                                Token::Second => ObjectProperty::Second,
-                                Token::Day => ObjectProperty::Day,
-                                Token::Month => ObjectProperty::Month,
-                                Token::Year => ObjectProperty::Year,
-                                Token::Unix => ObjectProperty::Unix,
-                                // Timer properties
-                                Token::Duration => ObjectProperty::Duration,
-                                Token::Elapsed => ObjectProperty::Elapsed,
-                                Token::Running => ObjectProperty::Running,
-                                // Map key access on a quoted variable: "person"'s "name"
-                                // (text key). A quoted key with `{...}` interpolation
-                                // materializes a fresh text. (stage 1e2)
-                                Token::StringLiteral(k) => {
-                                    let k = k.clone();
-                                    self.advance();
-                                    self.skip_noise();
-                                    return Ok(Expr::MapAccess {
-                                        map: s,
-                                        key: Box::new(self.string_value_expr(k)),
-                                    });
-                                }
-                                // Handle single-quoted multi-word property names and 'start'
-                                Token::Identifier(ref prop_name) => {
-                                    match prop_name.to_lowercase().as_str() {
-                                        "start" => ObjectProperty::StartTime,
-                                        // bare `end` - site 2 (unquoted name)
-                                        // has always had this arm; the quoted
-                                        // and `the ...` paths dropped it
-                                        "end" => ObjectProperty::EndTime,
-                                        "start time" => ObjectProperty::StartTime,
-                                        "end time" => ObjectProperty::EndTime,
-                                        "duration" => ObjectProperty::Duration,
-                                        "elapsed" => ObjectProperty::Elapsed,
-                                        "running" => ObjectProperty::Running,
-                                        _ => return Err(self.err_expected("property name", self.current())),
-                                    }
-                                }
-                                _ => return Err(self.err_expected("property name", self.current())),
-                            };
-                            self.advance();
-
-                            // `start time` / `end time`: `time` is a reserved
-                            // word and lexes as Token::Time, so it can never
-                            // match a property name above - consume it when it
-                            // directly follows `start`/`end`.
-                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
-                                self.skip_noise();
-                                if *self.current() == Token::Time {
-                                    self.advance();
-                                }
-                            }
-
-                            // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
-                            if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
-                                self.skip_noise();
-                                // Handle both "elapsed in seconds" and "elapsed seconds"
-                                if *self.current() == Token::In {
-                                    self.advance();
-                                    self.skip_noise();
-                                }
-                                // Now check for unit
-                                if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
-                                    let unit = match self.current() {
-                                        Token::Seconds | Token::Second => {
-                                            self.advance();
-                                            ast::TimeUnit::Seconds
-                                        }
-                                        Token::Milliseconds | Token::Millisecond => {
-                                            self.advance();
-                                            ast::TimeUnit::Milliseconds
-                                        }
-                                        _ => unreachable!(),
-                                    };
-                                    return Ok(Expr::DurationCast {
-                                        value: Box::new(Expr::PropertyAccess { object: s, property }),
-                                        unit,
-                                    });
-                                }
-                            }
-                            
-                            return Ok(Expr::PropertyAccess { object: s, property });
-                        }
-                    }
-                    // Handle "start time" and "end time" as multi-word properties
-                    if let Token::Identifier(ref id) = self.current() {
-                        if id == "start" {
-                            self.advance();
-                            self.skip_noise();
-                            if *self.current() == Token::Time {
-                                self.advance();
-                                return Ok(Expr::PropertyAccess { object: s, property: ObjectProperty::StartTime });
-                            }
-                        }
-                    }
-                    if let Token::Identifier(ref id) = self.current() {
-                        if id.to_lowercase() == "end" {
-                            self.advance();
-                            self.skip_noise();
-                            if *self.current() == Token::Time {
-                                self.advance();
-                                return Ok(Expr::PropertyAccess { object: s, property: ObjectProperty::EndTime });
-                            }
-                        }
-                    }
-                    Err(self.err("Expected 's after apostrophe for property access"))
-                } else {
-                    Ok(self.string_value_expr(s))
+                // Plan 270: a string literal is data, never a callee or an
+                // object name. The old `"f" of args`, `"x"'s prop`, and
+                // `"x"'s "key"` overloads are rejected with the §S1.5
+                // diagnostic. (Map key access on a *real* identifier —
+                // `person's "name"` — is handled in the Identifier arm below,
+                // where the string literal is the key, not the object.)
+                if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On | Token::Apostrophe) {
+                    return Err(self.err_string_as_name(&s_owned));
                 }
+
+                Ok(self.string_value_expr(s_owned))
             }
             Token::True => {
                 self.advance();
@@ -5469,7 +5273,37 @@ impl Parser {
             Token::Identifier(name) => {
                 self.advance();
                 self.skip_noise();
-                
+
+                // Call with arguments: `name of/with/to/on args` (plan 270 G1).
+                // A bare or quoted identifier is the callee; this is the
+                // expression-level counterpart of the statement-level call.
+                if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
+                    self.advance();
+                    self.skip_noise();
+
+                    let mut args = Vec::new();
+                    loop {
+                        let arg = self.parse_expression()?;
+                        args.push(arg);
+
+                        self.skip_noise();
+
+                        if *self.current() == Token::Comma {
+                            // Comma belongs to the enclosing sentence.
+                            break;
+                        }
+
+                        if *self.current() == Token::And {
+                            self.advance();
+                            self.skip_noise();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    return Ok(Expr::FunctionCall { name, args });
+                }
+
                 // Check for property access: identifier's property
                 if *self.current() == Token::Apostrophe {
                     self.advance();
@@ -5847,140 +5681,22 @@ impl Parser {
                         
                         Ok(Expr::Identifier(name))
                     }
-                    Token::StringLiteral(name) => {
-                        self.advance();
-                        self.skip_noise();
-                        
-                        // Check for property access: "the "job timer"'s duration"
-                        if *self.current() == Token::Apostrophe {
-                            self.advance();
-                            if let Token::Identifier(prop_s) = self.current().clone() {
-                                if prop_s.to_lowercase() == "s" {
-                                    self.advance();
-                                    self.skip_noise();
-                                    
-                                    let property = match self.current() {
-                                        // Time properties
-                                        Token::Hour => ObjectProperty::Hour,
-                                        Token::Minute => ObjectProperty::Minute,
-                                        Token::Second => ObjectProperty::Second,
-                                        Token::Day => ObjectProperty::Day,
-                                        Token::Month => ObjectProperty::Month,
-                                        Token::Year => ObjectProperty::Year,
-                                        Token::Unix => ObjectProperty::Unix,
-                                        // Timer properties
-                                        Token::Duration => ObjectProperty::Duration,
-                                        Token::Elapsed => ObjectProperty::Elapsed,
-                                        Token::Running => ObjectProperty::Running,
-                                        // Other properties
-                                        Token::Size => ObjectProperty::Size,
-                                        Token::Capacity => ObjectProperty::Capacity,
-                                        Token::Empty => ObjectProperty::Empty,
-                                        Token::Full => ObjectProperty::Full,
-                                        // Handle single-quoted multi-word property names and 'start'
-                                        Token::Identifier(ref prop_name) => {
-                                            match prop_name.to_lowercase().as_str() {
-                                                "start" => ObjectProperty::StartTime,
-                                                // bare `end` - site 2 (unquoted
-                                                // name) has always had this arm;
-                                                // the quoted and `the ...` paths
-                                                // dropped it
-                                                "end" => ObjectProperty::EndTime,
-                                                "start time" => ObjectProperty::StartTime,
-                                                "end time" => ObjectProperty::EndTime,
-                                                "duration" => ObjectProperty::Duration,
-                                                "elapsed" => ObjectProperty::Elapsed,
-                                                "running" => ObjectProperty::Running,
-                                                _ => return Err(self.err_expected("property name", self.current())),
-                                            }
-                                        }
-                                        _ => return Err(self.err_expected("property name", self.current())),
-                                    };
-                                    self.advance();
-
-                                    // `start time` / `end time`: `time` is a
-                                    // reserved word and lexes as Token::Time,
-                                    // so it can never match a property name
-                                    // above - consume it when it directly
-                                    // follows `start`/`end`.
-                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
-                                        self.skip_noise();
-                                        if *self.current() == Token::Time {
-                                            self.advance();
-                                        }
-                                    }
-
-                                    // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
-                                    if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
-                                        self.skip_noise();
-                                        // Handle both "elapsed in seconds" and "elapsed seconds"
-                                        if *self.current() == Token::In {
-                                            self.advance();
-                                            self.skip_noise();
-                                        }
-                                        // Now check for unit
-                                        if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
-                                            let unit = match self.current() {
-                                                Token::Seconds | Token::Second => {
-                                                    self.advance();
-                                                    ast::TimeUnit::Seconds
-                                                }
-                                                Token::Milliseconds | Token::Millisecond => {
-                                                    self.advance();
-                                                    ast::TimeUnit::Milliseconds
-                                                }
-                                                _ => unreachable!(),
-                                            };
-                                            return Ok(Expr::DurationCast {
-                                                value: Box::new(Expr::PropertyAccess { object: name, property }),
-                                                unit,
-                                            });
-                                        }
-                                    }
-                                    
-                                    return Ok(Expr::PropertyAccess { object: name, property });
-                                }
-                            }
-                            // Handle "start time" and "end time" as multi-word properties
-                            if let Token::Identifier(ref id) = self.current() {
-                                if id == "start" {
-                                    self.advance();
-                                    self.skip_noise();
-                                    if *self.current() == Token::Time {
-                                        self.advance();
-                                        return Ok(Expr::PropertyAccess { object: name, property: ObjectProperty::StartTime });
-                                    }
-                                }
-                            }
-                            if let Token::Identifier(ref id) = self.current() {
-                                if id.to_lowercase() == "end" {
-                                    self.advance();
-                                    self.skip_noise();
-                                    if *self.current() == Token::Time {
-                                        self.advance();
-                                        return Ok(Expr::PropertyAccess { object: name, property: ObjectProperty::EndTime });
-                                    }
-                                }
-                            }
-                            return Err(self.err("Expected 's after apostrophe for property access"));
-                        }
-                        
-                        Ok(Expr::Identifier(name))
-                    }
+                    // Plan 270 §S1.5: a string literal cannot be an object name.
+                    // `the "job timer"'s duration` -> write `the 'job timer''s
+                    // duration` (a quoted identifier). Reject before advancing so
+                    // the underline lands on the offending string.
+                    Token::StringLiteral(name) => Err(self.err_string_as_name(&name)),
                     Token::Number | Token::Text | Token::Boolean => {
                         self.advance(); // consume type
                         self.skip_noise();
-                        
+
                         // "the number called x" -> variable reference
                         // "the number" alone -> loop iterator reference
                         if *self.current() == Token::Called {
                             self.advance();
                             self.skip_noise();
                             match self.current().clone() {
-                                Token::StringLiteral(name) => {
-                                    self.advance();
-                                    Ok(Expr::Identifier(name))
-                                }
+                                Token::StringLiteral(name) => Err(self.err_string_as_name(&name)),
                                 Token::Identifier(name) => {
                                     self.advance();
                                     Ok(Expr::Identifier(name))
@@ -6054,13 +5770,13 @@ impl Parser {
         self.expect(&Token::The);
         self.skip_noise();
         
-        // Timer name (string literal or identifier)
+        // Timer name (a bare or quoted identifier, never a string)
         let name = match self.current().clone() {
-            Token::StringLiteral(n) => { self.advance(); n }
             Token::Identifier(n) => { self.advance(); n }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             _ => return Err(self.err("Expected timer name after 'start'")),
         };
-        
+
         Ok(Statement::TimerStart { name })
     }
     
@@ -6072,13 +5788,13 @@ impl Parser {
         self.expect(&Token::The);
         self.skip_noise();
         
-        // Timer name (string literal or identifier)
+        // Timer name (a bare or quoted identifier, never a string)
         let name = match self.current().clone() {
-            Token::StringLiteral(n) => { self.advance(); n }
             Token::Identifier(n) => { self.advance(); n }
+            Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             _ => return Err(self.err("Expected timer name after 'stop'")),
         };
-        
+
         Ok(Statement::TimerStop { name })
     }
     
@@ -6100,11 +5816,11 @@ impl Parser {
                     self.skip_noise();
                     
                     let name = match self.current().clone() {
-                        Token::StringLiteral(n) => { self.advance(); n }
                         Token::Identifier(n) => { self.advance(); n }
+                        Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                         _ => return Err(self.err("Expected variable name after 'into'")),
                     };
-                    
+
                     return Ok(Statement::GetTime { into: name });
                 }
             }

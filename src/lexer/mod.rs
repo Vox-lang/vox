@@ -1,6 +1,16 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
+/// Whether a character may continue a bare identifier (`[A-Za-z0-9_]`).
+/// Used by the possessive rule (plan §5) to decide what counts as a
+/// "non-identifier character" following the `s` of `'s`. Note this is the
+/// lexical identifier class from the plan (`[A-Za-z_][A-Za-z0-9_]*`), which
+/// intentionally excludes `-` even though `read_word` admits `-` as a word
+/// character for keywords like `bit-and`.
+fn is_ident_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Actions
@@ -82,6 +92,11 @@ pub enum Token {
 impl Token {
     /// Check if a string matches any reserved keyword.
     /// Returns the canonical keyword name if it matches.
+    ///
+    /// After plan 270 a string literal is never a name, so the parser no
+    /// longer consults this to reject `"flag"`-style names; it remains for
+    /// tests and as a general lexical utility.
+    #[allow(dead_code)]
     pub fn string_is_keyword(s: &str) -> Option<&'static str> {
         let lower = s.to_lowercase();
         match lower.as_str() {
@@ -567,10 +582,19 @@ impl<'a> Lexer<'a> {
     }
     
     fn is_single_quoted_identifier(&self) -> bool {
-        // Check if the content after ' looks like a single-quoted identifier
-        // NOT possessive 's (which is just apostrophe followed by 's' and whitespace)
+        // Check if the content after ' looks like a single-quoted identifier.
+        // NOT a standalone possessive `'s` (an apostrophe followed by `s` and
+        // a non-identifier char) — that is the bare-identifier possessive form
+        // (`name's`) and must lex as Apostrophe + Identifier("s"), not as a
+        // quoted identifier whose content happens to start with `s`.
+        //
+        // This lookahead is the bare-`'s` path. It is NOT subsumed by
+        // `peek_is_possessive_s_after_quote` (plan §5), which handles the
+        // *quoted*-identifier possessive `'my nums's` where the `'` is the
+        // closing quote fused with `s`. Both rules are required; tests pin
+        // each.
         let mut input = self.input.clone();
-        
+
         // Check for possessive pattern: 's followed by non-letter
         if let Some(&first) = input.peek() {
             if first == 's' || first == 'S' {
@@ -585,7 +609,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        
+
         // Reset and check for proper single-quoted identifier
         let mut input = self.input.clone();
         let mut count = 0;
@@ -602,6 +626,27 @@ impl<'a> Lexer<'a> {
         false
     }
     
+    /// After a single-quoted identifier's closing quote has been consumed,
+    /// detect the possessive marker of plan §5: an `s`/`S` *immediately*
+    /// following the closing quote (no space) and itself followed by a
+    /// non-identifier character. When this holds, the closing quote and the
+    /// `s` together form the possessive; we emit an `Apostrophe` token here
+    /// and let the main loop lex the `s` as `Identifier("s")`, producing the
+    /// same token stream as the doubled-apostrophe form (`'name''s`).
+    fn peek_is_possessive_s_after_quote(&mut self) -> bool {
+        let mut input = self.input.clone();
+        if let Some(&s) = input.peek() {
+            if s == 's' || s == 'S' {
+                input.next();
+                return match input.peek() {
+                    None => true, // EOF after 's
+                    Some(&after) => !is_ident_continue(after),
+                };
+            }
+        }
+        false
+    }
+
     fn read_number(&mut self, first: char) -> Token {
         // Check for hex (0x) or binary (0b) prefix
         if first == '0' {
@@ -932,11 +977,32 @@ impl<'a> Lexer<'a> {
                     '}' => Token::CloseBrace,
                     '-' => Token::Minus,
                     '\'' => {
-                        // Check if this is a character literal ('A'), single-quoted identifier, or apostrophe
+                        // Check if this is a character literal ('A'),
+                        // a single-quoted identifier, or an apostrophe
+                        // (the bare-`'s` possessive marker).
                         if self.is_char_literal() {
                             self.read_char_literal()
                         } else if self.is_single_quoted_identifier() {
-                            Token::Identifier(self.read_single_quoted_string())
+                            let content = self.read_single_quoted_string();
+                            tokens.push(TokenInfo {
+                                token: Token::Identifier(content),
+                                line,
+                                column,
+                            });
+                            // Plan §5: a closing identifier quote fused
+                            // with a trailing `s` + non-identifier char is
+                            // the possessive marker. Emit an Apostrophe;
+                            // the `s` is lexed next as Identifier("s"),
+                            // matching the `'name''s` doubled-apostrophe
+                            // stream so the parser needs no new path.
+                            if self.peek_is_possessive_s_after_quote() {
+                                tokens.push(TokenInfo {
+                                    token: Token::Apostrophe,
+                                    line: self.line,
+                                    column: self.column,
+                                });
+                            }
+                            continue;
                         } else {
                             Token::Apostrophe
                         }
