@@ -409,45 +409,63 @@ run_two_version_library_test() {
 }
 run_two_version_library_test
 
-# A3 clobber-refusal test (plan 230 stage A3; the same hazard class as plan 210
-# P1, where `--shared` silently destroyed a user's `.map`). A `--shared` build
-# writes `<stem>.lib` beside the `.so`; if that `.lib` already exists, vox must
-# refuse to overwrite it and abort *before* building, rather than silently
-# destroying a file it did not create. Pre-creates a sentinel `.lib`, runs a
-# shared build that would target it, and asserts the build errored, the
-# sentinel is untouched, and no `.so` was produced (so the pair cannot disagree).
-# It must never report "skipped": clobbering a file the user owns is the one
-# silent failure most worth a loud test.
-run_lib_clobber_refusal_test() {
-    local work lib_src sentinel rc fail_msg
+# A library can be rebuilt. A `--shared` build writes `<stem>.lib` as a
+# declared output — derived from `-o`, like the `.so` and `.asm`, and
+# overwritten on a rebuild. The earlier refusal (plan 230 A3, borrowed from
+# plan 210 P1's source-derived `.map` collision) made a library buildable
+# once and then never again: every edit-build loop hit "not overwriting
+# existing file". The `.lib` name comes from `-o`, which the user chose, so
+# overwriting is correct (the `.map` hazard was a *source*-derived name that
+# could collide with an unrelated file). This builds the same library twice
+# and asserts the second run succeeds and the `.lib` matches `nm -D` of the
+# `.so` afterwards — the pair must never disagree, which is what the
+# `.dynsym` verification exists to catch. It also pre-seeds a hand-written
+# sentinel `.lib` to confirm it is overwritten, not refused. It must never
+# report "skipped": a library that can't be rebuilt is a loud failure.
+run_lib_rebuild_test() {
+    local work lib_src fail_msg fail_log nm_count toc_count
     lib_src="$SCRIPT_DIR/tests/shared/libmath.vox"
     work="$(mktemp -d)"
-    sentinel="THIS IS A HAND-WRITTEN .lib — DO NOT OVERWRITE"
-    printf '%s\n' "$sentinel" > "$work/libmath.lib"
+    fail_msg=""; fail_log=""
 
-    "$VOX_BIN" "$lib_src" --shared -o "$work/libmath.so" >"$work/build.log" 2>&1
-    rc=$?
+    # Seed a hand-written sentinel .lib. The old code refused to overwrite it;
+    # the new code treats it as a declared output and replaces it.
+    printf 'THIS IS A HAND-WRITTEN .lib — DO NOT OVERWRITE\n' > "$work/libmath.lib"
 
-    fail_msg=""
-    if [[ $rc -eq 0 ]]; then
-        fail_msg="clobber-refusal (build succeeded instead of refusing)"
-    elif ! diff -q <(printf '%s\n' "$sentinel") "$work/libmath.lib" >/dev/null 2>&1; then
-        fail_msg="clobber-refusal (sentinel .lib was modified)"
-    elif [[ -e "$work/libmath.so" ]]; then
-        fail_msg="clobber-refusal (.so created despite .lib clobber)"
+    # First build: overwrites the sentinel, writes the .so.
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libmath.so" >"$work/build1.log" 2>&1; then
+        fail_msg="rebuild (first build failed)"; fail_log="$work/build1.log"
+    elif grep -q "not overwriting" "$work/build1.log"; then
+        fail_msg="rebuild (first build refused the .lib)"; fail_log="$work/build1.log"
+    elif [[ ! -e "$work/libmath.so" ]]; then
+        fail_msg="rebuild (no .so after first build)"; fail_log="$work/build1.log"
+    # Second build: the real test — a rebuild into the existing .lib must succeed.
+    elif ! "$VOX_BIN" "$lib_src" --shared -o "$work/libmath.so" >"$work/build2.log" 2>&1; then
+        fail_msg="rebuild (second build failed)"; fail_log="$work/build2.log"
+    elif grep -q "not overwriting" "$work/build2.log"; then
+        fail_msg="rebuild (second build refused — library not rebuildable)"; fail_log="$work/build2.log"
+    else
+        # The .lib must match the .so: ToC entry count == nm -D defined count.
+        nm_count=$(nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | grep -c .)
+        toc_count=$(grep -c '^    To ' "$work/libmath.lib")
+        if [[ -z "$nm_count" || -z "$toc_count" || "$nm_count" != "$toc_count" || "$nm_count" -eq 0 ]]; then
+            fail_msg="rebuild (.lib ToC ${toc_count:-?} != nm -D ${nm_count:-?})"
+            { echo "nm -D --defined-only:"; nm -D --defined-only "$work/libmath.so" | awk '{print $3}' | sort | sed 's/^/  /'; echo ".lib ToC:"; grep '^    To ' "$work/libmath.lib" | sed 's/^/  /'; } >"$work/diff.log"
+            fail_log="$work/diff.log"
+        fi
     fi
 
     if [[ -n "$fail_msg" ]]; then
         echo -e "  ${RED}FAIL${NC} $fail_msg"
-        [ -s "$work/build.log" ] && sed 's/^/      /' "$work/build.log" | head -20
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -30
         ((FAILED++))
     else
-        echo -e "  ${GREEN}PASS${NC} clobber-refusal/lib"
+        echo -e "  ${GREEN}PASS${NC} rebuild/lib (second build ok, .lib == nm -D: $nm_count)"
         ((PASSED++))
     fi
     rm -rf "$work"
 }
-run_lib_clobber_refusal_test
+run_lib_rebuild_test
 
 # A3 table-of-contents completeness (plan 230). A bodyless function —
 # `To "greet".` with no body and no separating blank line — used to absorb the
