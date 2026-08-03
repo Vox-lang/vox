@@ -1,0 +1,21 @@
+(Test append value forms - plan 250 D2: the value slot used a restricted
+ rule that rejected arithmetic and braced expressions)
+
+a list called "s" is [].
+a number called "i" is 2.
+
+(Test 1: arithmetic expression value)
+append i multiply i to s.
+
+(Test 2: braced expression value - braces force the general parser)
+append {i multiply i add 1} to s.
+
+(Test 3: operator precedence matches the general expression parser)
+append 1 add 2 multiply 3 to s.
+
+(Test 4: literal and bare variable values still work)
+append 7 to s.
+append i to s.
+
+For each n in s,
+  print the n.
