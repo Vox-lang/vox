@@ -5187,6 +5187,10 @@ impl Parser {
                                 Token::Identifier(ref prop_name) => {
                                     match prop_name.to_lowercase().as_str() {
                                         "start" => ObjectProperty::StartTime,
+                                        // bare `end` - site 2 (unquoted name)
+                                        // has always had this arm; the quoted
+                                        // and `the ...` paths dropped it
+                                        "end" => ObjectProperty::EndTime,
                                         "start time" => ObjectProperty::StartTime,
                                         "end time" => ObjectProperty::EndTime,
                                         "duration" => ObjectProperty::Duration,
@@ -5198,7 +5202,18 @@ impl Parser {
                                 _ => return Err(self.err_expected("property name", self.current())),
                             };
                             self.advance();
-                            
+
+                            // `start time` / `end time`: `time` is a reserved
+                            // word and lexes as Token::Time, so it can never
+                            // match a property name above - consume it when it
+                            // directly follows `start`/`end`.
+                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                self.skip_noise();
+                                if *self.current() == Token::Time {
+                                    self.advance();
+                                }
+                            }
+
                             // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
                             if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
                                 self.skip_noise();
@@ -5581,6 +5596,17 @@ impl Parser {
                             };
                             self.advance();
 
+                            // `start time` / `end time`: `time` is a reserved
+                            // word and lexes as Token::Time, so it can never
+                            // match a property name above - consume it when it
+                            // directly follows `start`/`end`.
+                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                self.skip_noise();
+                                if *self.current() == Token::Time {
+                                    self.advance();
+                                }
+                            }
+
                             // Timer duration/elapsed may be followed by a unit,
                             // e.g. "t's duration in seconds". This matches the
                             // handling already present for quoted variable and
@@ -5774,6 +5800,11 @@ impl Parser {
                                         Token::Identifier(ref prop_name) => {
                                             match prop_name.to_lowercase().as_str() {
                                                 "start" => ObjectProperty::StartTime,
+                                                // bare `end` - site 2 (unquoted
+                                                // name) has always had this arm;
+                                                // the quoted and `the ...` paths
+                                                // dropped it
+                                                "end" => ObjectProperty::EndTime,
                                                 "start time" => ObjectProperty::StartTime,
                                                 "end time" => ObjectProperty::EndTime,
                                                 "duration" => ObjectProperty::Duration,
@@ -5785,7 +5816,19 @@ impl Parser {
                                         _ => return Err(self.err_expected("property name", self.current())),
                                     };
                                     self.advance();
-                                    
+
+                                    // `start time` / `end time`: `time` is a
+                                    // reserved word and lexes as Token::Time,
+                                    // so it can never match a property name
+                                    // above - consume it when it directly
+                                    // follows `start`/`end`.
+                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                        self.skip_noise();
+                                        if *self.current() == Token::Time {
+                                            self.advance();
+                                        }
+                                    }
+
                                     return Ok(Expr::PropertyAccess { object: name, property });
                                 }
                             }
@@ -5828,6 +5871,11 @@ impl Parser {
                                         Token::Identifier(ref prop_name) => {
                                             match prop_name.to_lowercase().as_str() {
                                                 "start" => ObjectProperty::StartTime,
+                                                // bare `end` - site 2 (unquoted
+                                                // name) has always had this arm;
+                                                // the quoted and `the ...` paths
+                                                // dropped it
+                                                "end" => ObjectProperty::EndTime,
                                                 "start time" => ObjectProperty::StartTime,
                                                 "end time" => ObjectProperty::EndTime,
                                                 "duration" => ObjectProperty::Duration,
@@ -5839,7 +5887,19 @@ impl Parser {
                                         _ => return Err(self.err_expected("property name", self.current())),
                                     };
                                     self.advance();
-                                    
+
+                                    // `start time` / `end time`: `time` is a
+                                    // reserved word and lexes as Token::Time,
+                                    // so it can never match a property name
+                                    // above - consume it when it directly
+                                    // follows `start`/`end`.
+                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+                                        self.skip_noise();
+                                        if *self.current() == Token::Time {
+                                            self.advance();
+                                        }
+                                    }
+
                                     // Check for "in seconds" / "in milliseconds" or just "seconds"/"milliseconds" for duration/elapsed
                                     if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
                                         self.skip_noise();
