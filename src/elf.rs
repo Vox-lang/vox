@@ -108,7 +108,15 @@ pub fn defined_dynamic_symbols_from_bytes(b: &[u8]) -> Result<Vec<String>, Strin
         let sh_type = u32_le(b, base + 4).unwrap();
         let sh_offset = u64_le(b, base + 24).unwrap();
         let sh_size = u64_le(b, base + 32).unwrap();
-        let sh_link = u32_le(b, base + 48).unwrap();
+        // Elf64_Shdr: sh_name u32 @0, sh_type u32 @4, sh_flags u64 @8,
+        // sh_addr u64 @16, sh_offset u64 @24, sh_size u64 @32, sh_link u32
+        // @40, sh_info u32 @44, sh_addralign u64 @48, sh_entsize u64 @56.
+        // sh_link (the .dynsym's string-table section index) is at +40 —
+        // not +48, which is sh_info. Reading sh_info here points the string
+        // table at the wrong section (.text) and every name reads as junk,
+        // so every import looks absent. The field offset is the load-bearing
+        // part of this reader; keep it with the layout comment.
+        let sh_link = u32_le(b, base + 40).unwrap();
         let sh_entsize = u64_le(b, base + 56).unwrap();
         Ok((sh_type, sh_offset, sh_size, sh_link, sh_entsize))
     };
@@ -232,7 +240,9 @@ mod tests {
         sh[4..8].copy_from_slice(&SHT_DYNSYM.to_le_bytes());
         sh[24..32].copy_from_slice(&(EHDR_SIZE as u64).to_le_bytes()); // offset
         sh[32..40].copy_from_slice(&(syms.len() as u64).to_le_bytes()); // size
-        sh[48..52].copy_from_slice(&2u32.to_le_bytes()); // sh_link -> section 2
+        // sh_link @40 -> section 2 (the string table). Real ELF puts this
+        // field at offset 40, not 48 (that is sh_info); the reader reads +40.
+        sh[40..44].copy_from_slice(&2u32.to_le_bytes());
         sh[56..64].copy_from_slice(&SYM_SIZE.to_le_bytes()); // sh_entsize
         b.extend_from_slice(&sh);
 

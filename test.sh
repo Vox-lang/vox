@@ -492,6 +492,402 @@ run_lib_toc_count_test() {
 }
 run_lib_toc_count_test
 
+# Stage A4 consumer tests (plan 230). The producer side (A1-A3: mangle,
+# multi-input, emit .lib) is proven above; these prove the consumer side —
+# a pure-Vox program `see`s a `.lib` the compiler itself produced, the
+# promised symbols are verified against the `.so`'s `.dynsym`, the signatures
+# register so calls type-check, and the `.so` plus `-rpath` land on the link
+# line. This is the goal of plans 200 and 230; until it passes, nothing before
+# it delivered its purpose.
+
+# A4.1 — the goal: a pure-Vox program calls a pure-Vox library through `see`
+# and prints the right answer. Builds tests/shared/mathkit_lib.vox into a
+# .so/.lib pair, then a consumer `see`s the `.lib` and calls `add two numbers`
+# of 3 and 4, which must print 7. Every link in the chain is exercised:
+# .lib resolution, block selection by name AND version, .dynsym verification,
+# signature registration, `extern <mangled>`, and the .so + -rpath on the link
+# line. It must never report "skipped".
+run_see_consumer_test() {
+    local work lib_src
+    lib_src="$SCRIPT_DIR/tests/shared/mathkit_lib.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libmathkit.so" >"$work/build.log" 2>&1; then
+        fail_msg="see/consumer (library build)"; fail_log="$work/build.log"
+    elif [[ ! -f "$work/libmathkit.lib" ]]; then
+        fail_msg="see/consumer (.lib not emitted beside the .so)"
+    else
+        # The consumer sits in the same dir as the .lib so `see` resolves
+        # relative to the source, and Location resolves relative to the .lib.
+        cat >"$work/use_mathkit.vox" <<'EOF'
+see "mathkit" version "1.0" from "./libmathkit.lib".
+
+A number called "sum" is "add two numbers" of 3 and 4.
+Print the sum.
+EOF
+        if ! "$VOX_BIN" "$work/use_mathkit.vox" -o "$work/use_mathkit" >"$work/consumer.log" 2>&1; then
+            fail_msg="see/consumer (consumer build)"; fail_log="$work/consumer.log"
+        else
+            local out
+            out=$("$work/use_mathkit" 2>"$work/run.log")
+            if [[ "$out" != "7" ]]; then
+                fail_msg="see/consumer (add two numbers of 3 and 4 printed '$out', not 7)"
+                { echo "stdout: $out"; cat "$work/run.log"; } >"$work/out.log"
+                fail_log="$work/out.log"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/consumer (3 + 4 = 7 through a .lib)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_consumer_test
+
+# A4.2 — two versions of one library in one .so, each consumed from its own
+# program. Reuses the A2 flags .so (flags 0.1 and 1.0 in one binary); two
+# consumers `see` different versions and call hasflag(5), which must print 6
+# from 0.1 and 105 from 1.0 — proving the .dynsym verification and the `extern`
+# emission pick the version's OWN mangled symbol (flags_0_1_hasflag vs
+# flags_1_0_hasflag), not a shared one. Both consumers read the SAME .lib
+# (one file, two blocks); the version selects the block. Must never skip.
+run_see_two_version_test() {
+    local work src0 src1
+    src0="$SCRIPT_DIR/tests/shared/flags_0_1.vox"
+    src1="$SCRIPT_DIR/tests/shared/flags_1_0.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$src0" "$src1" --shared -o "$work/libflags.so" >"$work/build.log" 2>&1; then
+        fail_msg="see/two-version (library build)"; fail_log="$work/build.log"
+    elif [[ ! -f "$work/libflags.lib" ]]; then
+        fail_msg="see/two-version (.lib not emitted)"
+    else
+        cat >"$work/use_0_1.vox" <<'EOF'
+see "flags" version "0.1" from "./libflags.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+        cat >"$work/use_1_0.vox" <<'EOF'
+see "flags" version "1.0" from "./libflags.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+        local out01 out10
+        if ! "$VOX_BIN" "$work/use_0_1.vox" -o "$work/use_0_1" >"$work/c01.log" 2>&1; then
+            fail_msg="see/two-version (0.1 consumer build)"; fail_log="$work/c01.log"
+        elif ! out01=$("$work/use_0_1" 2>/dev/null) || [[ "$out01" != "6" ]]; then
+            fail_msg="see/two-version (hasflag(5) from 0.1 printed '$out01', not 6)"
+        elif ! "$VOX_BIN" "$work/use_1_0.vox" -o "$work/use_1_0" >"$work/c10.log" 2>&1; then
+            fail_msg="see/two-version (1.0 consumer build)"; fail_log="$work/c10.log"
+        elif ! out10=$("$work/use_1_0" 2>/dev/null) || [[ "$out10" != "105" ]]; then
+            fail_msg="see/two-version (hasflag(5) from 1.0 printed '$out10', not 105)"
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/two-version (6 from 0.1, 105 from 1.0)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_two_version_test
+
+# A4.3 — the six diagnostics. Each failure mode must have its OWN message
+# naming the file and what was expected; they are half the deliverable. Built
+# off the flags .so/.lib so the good state is known. Each sub-check is its own
+# assertion with its own fail_msg, so a regression names exactly which one
+# broke. The diagnostics, in order: missing .lib (paths tried, --lib-path
+# exists); absent library (lists what the .lib does contain); version mismatch
+# (lists the versions on offer); missing .so at Location (the resolved path);
+# symbol absent from .dynsym (names the symbol — the stale-.lib case); wrong
+# arity and wrong type at a call site (compile errors). Must never skip.
+run_see_diagnostics_test() {
+    local work src0 src1
+    src0="$SCRIPT_DIR/tests/shared/flags_0_1.vox"
+    src1="$SCRIPT_DIR/tests/shared/flags_1_0.vox"
+    work="$(mktemp -d)"
+
+    local sub_msg=""
+    local err=""
+
+    # Known-good .so/.lib pair to diagnose against.
+    "$VOX_BIN" "$src0" "$src1" --shared -o "$work/libflags.so" >"$work/build.log" 2>&1 \
+        || sub_msg="diagnostics (library build)"
+
+    # Each sub-case runs from its own subdir so `see` paths and Location
+    # resolve relative to it. $1 = subdir name, $2 = consumer body on stdin.
+    # Sets $err to the combined stderr and leaves prog.vox in the subdir.
+    run_case() {
+        local name="$1" d="$work/$1"
+        mkdir -p "$d"
+        cat >"$d/prog.vox"
+        err=$( { cd "$d" && "$VOX_BIN" prog.vox -o prog ; } 2>&1 )
+    }
+
+    if [[ -z "$sub_msg" ]]; then
+
+    # 1. missing .lib — names the path tried and mentions --lib-path. The
+    #    consumer's own dir has no .lib, so the search fails immediately.
+    run_case missing_lib <<'EOF'
+see "flags" version "0.1" from "./nonexistent.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+    if [[ "$err" != *"could not find the library interface file"* ]] \
+        || [[ "$err" != *"nonexistent.lib"* ]] || [[ "$err" != *"--lib-path"* ]]; then
+        sub_msg="diagnostics (missing .lib)"; printf '%s\n' "$err" >"$work/missing_lib.fail"
+    fi
+
+    # 2. absent library — lists what the .lib DOES contain.
+    mkdir -p "$work/absent_lib"
+    cp "$work/libflags.lib" "$work/absent_lib/libflags.lib"
+    run_case absent_lib <<'EOF'
+see "nope" version "0.1" from "./libflags.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+    if [[ "$err" != *'has no library named "nope"'* ]] \
+        || [[ "$err" != *'It declares'* ]] \
+        || [[ "$err" != *'"flags" version "0.1"'* ]]; then
+        sub_msg="diagnostics (absent library)"; printf '%s\n' "$err" >"$work/absent_lib.fail"
+    fi
+
+    # 3. version mismatch — lists the versions on offer.
+    mkdir -p "$work/ver_mismatch"
+    cp "$work/libflags.lib" "$work/ver_mismatch/libflags.lib"
+    run_case ver_mismatch <<'EOF'
+see "flags" version "2.0" from "./libflags.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+    if [[ "$err" != *'not version "2.0"'* ]] \
+        || [[ "$err" != *"available versions"* ]] \
+        || [[ "$err" != *'"0.1"'* ]] || [[ "$err" != *'"1.0"'* ]]; then
+        sub_msg="diagnostics (version mismatch)"; printf '%s\n' "$err" >"$work/ver_mismatch.fail"
+    fi
+
+    # 4. missing .so at Location — names the resolved path. The .lib is
+    #    alone in a dir with no .so, so Location "./libflags.so" misses there.
+    mkdir -p "$work/missing_so"
+    cp "$work/libflags.lib" "$work/missing_so/libflags.lib"
+    run_case missing_so <<'EOF'
+see "flags" version "0.1" from "./libflags.lib".
+A number called "r" is "hasflag" of 5.
+Print the r.
+EOF
+    if [[ "$err" != *"does not exist at the resolved path"* ]] \
+        || [[ "$err" != *"./libflags.so"* ]]; then
+        sub_msg="diagnostics (missing .so)"; printf '%s\n' "$err" >"$work/missing_so.fail"
+    fi
+
+    # 5. stale ToC — a hand-edited .lib promises a symbol the .so does not
+    #    export. The diagnostic NAMES THE SYMBOL (flags_0_1_ghostflag).
+    mkdir -p "$work/stale"
+    cp "$work/libflags.so" "$work/stale/libflags.so"
+    sed 's/To "hasflag"/To "ghostflag"/' "$work/libflags.lib" >"$work/stale/libflags.lib"
+    run_case stale <<'EOF'
+see "flags" version "0.1" from "./libflags.lib".
+A number called "r" is "ghostflag" of 5.
+Print the r.
+EOF
+    if [[ "$err" != *"does not export it"* ]] \
+        || [[ "$err" != *"flags_0_1_ghostflag"* ]] || [[ "$err" != *"stale"* ]]; then
+        sub_msg="diagnostics (stale ToC)"; printf '%s\n' "$err" >"$work/stale.fail"
+    fi
+
+    # 6a. wrong arity — an imported function called with the wrong count is a
+    #     compile error (the .lib's signature is the authority here). The .so
+    #     must be present: arity is checked in the analyzer, AFTER resolution
+    #     and .dynsym verification succeed.
+    mkdir -p "$work/arity"
+    cp "$work/libflags.so" "$work/arity/libflags.so"
+    cp "$work/libflags.lib" "$work/arity/libflags.lib"
+    run_case arity <<'EOF'
+see "flags" version "0.1" from "./libflags.lib".
+A number called "r" is "hasflag" of 5 and 6.
+Print the r.
+EOF
+    if [[ "$err" != *"expects 1 argument"* ]] || [[ "$err" != *"called with 2"* ]]; then
+        sub_msg="diagnostics (wrong arity)"; printf '%s\n' "$err" >"$work/arity.fail"
+    fi
+
+    # 6b. wrong type — a text argument to a number parameter is a compile
+    #     error naming the function, the expected type, and the actual type.
+    #     As with arity, the .so must be present (this is an analyzer error).
+    mkdir -p "$work/wrongtype"
+    cp "$work/libflags.so" "$work/wrongtype/libflags.so"
+    cp "$work/libflags.lib" "$work/wrongtype/libflags.lib"
+    run_case wrongtype <<'EOF'
+see "flags" version "0.1" from "./libflags.lib".
+A number called "r" is "hasflag" of "hello".
+Print the r.
+EOF
+    if [[ "$err" != *"expects a number"* ]] \
+        || [[ "$err" != *"argument 1"* ]] || [[ "$err" != *"called with text"* ]]; then
+        sub_msg="diagnostics (wrong type)"; printf '%s\n' "$err" >"$work/wrongtype.fail"
+    fi
+    fi
+
+    if [[ -n "$sub_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} see/$sub_msg"
+        local cand
+        for cand in "$work/missing_lib.fail" "$work/absent_lib.fail" \
+                    "$work/ver_mismatch.fail" "$work/missing_so.fail" \
+                    "$work/stale.fail" "$work/arity.fail" "$work/wrongtype.fail"; do
+            [[ -f "$cand" ]] && { echo "      --- $(basename "$cand") ---"; sed 's/^/      /' "$cand" | head -15; }
+        done
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/diagnostics (all six named)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_diagnostics_test
+
+# A4.4 — name resolution. `see` puts foreign names into scope for the first
+# time, so two collisions become possible and each has a rule (plan 230, "Name
+# resolution"): a LOCAL definition wins over an import, but never silently
+# (a warning names the shadowed library); two imports exporting the same name
+# are ambiguous and a compile error names the call, both libraries and both
+# versions; and a name present in only ONE of two imported versions resolves
+# correctly and does not warn (ambiguity is per-name, not per-import). The
+# first two are acceptance; the third is the dual that proves the per-name
+# rule. Must never skip.
+run_see_name_resolution_test() {
+    local work math_src other_src p0 p1
+    math_src="$SCRIPT_DIR/tests/shared/mathkit_lib.vox"
+    other_src="$SCRIPT_DIR/tests/shared/other_lib.vox"
+    p0="$SCRIPT_DIR/tests/shared/parts_0_1.vox"
+    p1="$SCRIPT_DIR/tests/shared/parts_1_0.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    # Build the three .so/.lib pairs the cases need.
+    "$VOX_BIN" "$math_src" --shared -o "$work/libmathkit.so" >"$work/b1.log" 2>&1 || \
+        { fail_msg="name-res (mathkit build)"; fail_log="$work/b1.log"; }
+    if [[ -z "$fail_msg" ]]; then
+    "$VOX_BIN" "$other_src" --shared -o "$work/libother.so" >"$work/b2.log" 2>&1 || \
+        { fail_msg="name-res (other build)"; fail_log="$work/b2.log"; }
+    fi
+    if [[ -z "$fail_msg" ]]; then
+    "$VOX_BIN" "$p0" "$p1" --shared -o "$work/libparts.so" >"$work/b3.log" 2>&1 || \
+        { fail_msg="name-res (parts build)"; fail_log="$work/b3.log"; }
+    fi
+
+    if [[ -z "$fail_msg" ]]; then
+    # 1. Shadowing: a local `greet` wins over the imported one. The build
+    #    must WARN naming the shadowed library, and the program must call its
+    #    OWN greet (print "local greet wins"), not the library's.
+    cat >"$work/shadow.vox" <<'EOF'
+see "mathkit" version "1.0" from "./libmathkit.lib".
+
+To "greet".
+  Print "local greet wins".
+
+greet.
+EOF
+    if ! "$VOX_BIN" "$work/shadow.vox" -o "$work/shadow" >"$work/shadow_build.log" 2>&1; then
+        fail_msg="name-res (shadow build)"; fail_log="$work/shadow_build.log"
+    else
+        local sb out
+        sb=$(cat "$work/shadow_build.log")
+        out=$("$work/shadow" 2>/dev/null)
+        if [[ "$sb" != *"warning"* ]] || [[ "$sb" != *'library "mathkit" version "1.0"'* ]]; then
+            fail_msg="name-res (shadow must WARN naming mathkit 1.0)"
+            { echo "build stderr:"; echo "$sb"; } >"$work/shadow.fail"
+            fail_log="$work/shadow.fail"
+        elif [[ "$out" != "local greet wins" ]]; then
+            fail_msg="name-res (shadow called the library, printed '$out')"
+            { echo "stdout: $out"; } >"$work/shadow.fail"
+            fail_log="$work/shadow.fail"
+        fi
+    fi
+    fi
+
+    if [[ -z "$fail_msg" ]]; then
+    # 2. Ambiguity: two imports both exporting `greet` is a compile error
+    #    naming both libraries AND both versions.
+    cat >"$work/ambig.vox" <<'EOF'
+see "mathkit" version "1.0" from "./libmathkit.lib".
+see "other" version "1.0" from "./libother.lib".
+
+greet.
+EOF
+    local aerr
+    aerr=$("$VOX_BIN" "$work/ambig.vox" -o "$work/ambig" 2>&1)
+    local arc=$?
+    if [[ $arc -eq 0 ]]; then
+        fail_msg="name-res (ambiguity compiled instead of erroring)"
+        { echo "built; stdout:"; "$work/ambig" 2>&1; } >"$work/ambig.fail"
+        fail_log="$work/ambig.fail"
+    elif [[ "$aerr" != *"Call to 'greet' is ambiguous"* ]] \
+        || [[ "$aerr" != *'library "mathkit" version "1.0"'* ]] \
+        || [[ "$aerr" != *'library "other" version "1.0"'* ]]; then
+        fail_msg="name-res (ambiguity error must name both libraries/versions)"
+        printf '%s\n' "$aerr" >"$work/ambig.fail"
+        fail_log="$work/ambig.fail"
+    fi
+    fi
+
+    if [[ -z "$fail_msg" ]]; then
+    # 3. Function present in only ONE of two imported versions resolves
+    #    correctly and does not warn. `only one` is in parts 1.0 only.
+    cat >"$work/onlyone.vox" <<'EOF'
+see "parts" version "0.1" from "./libparts.lib".
+see "parts" version "1.0" from "./libparts.lib".
+A number called "x" is "only one" of 0.
+Print the x.
+EOF
+    if ! "$VOX_BIN" "$work/onlyone.vox" -o "$work/onlyone" >"$work/onlyone_build.log" 2>&1; then
+        fail_msg="name-res (only-one build)"; fail_log="$work/onlyone_build.log"
+    else
+        local ob out
+        ob=$(cat "$work/onlyone_build.log")
+        out=$("$work/onlyone" 2>/dev/null)
+        # Must NOT warn (no local definition, no ambiguity), and must print 42.
+        if [[ -n "$ob" ]]; then
+            fail_msg="name-res (only-one emitted unexpected output: '$ob')"
+            printf 'build stderr: %s\n' "$ob" >"$work/onlyone.fail"
+            fail_log="$work/onlyone.fail"
+        elif [[ "$out" != "42" ]]; then
+            fail_msg="name-res (only-one printed '$out', not 42)"
+            { echo "stdout: $out"; } >"$work/onlyone.fail"
+            fail_log="$work/onlyone.fail"
+        fi
+    fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -20
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/name-res (shadow warns, ambiguity errors, only-one resolves)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_name_resolution_test
+
 # Summary
 echo ""
 echo -e "${BOLD}=== Summary ===${NC}"
