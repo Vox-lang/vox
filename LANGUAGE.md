@@ -957,12 +957,12 @@ print person's "name".   (prints: Ada)
 print person's "age".    (prints: 36)
 ```
 
-Insert or replace an entry with `Set map's key to value` (mirroring
+Insert or replace an entry with `Set map's "key" to value` (mirroring
 `Set element N of list to …`). The map may reallocate on growth, so the
 returned pointer is stored back into the variable automatically:
 
 ```
-set person's age to 37.
+set person's "age" to 37.
 print person's "age".    (prints: 37)
 print person's length.   (prints: 2 — replace, not insert)
 ```
@@ -989,7 +989,7 @@ on error print "missing". (prints: missing)
 A map value may be a list or another map, and printing is recursive:
 `_map_print` renders `{"key": value, …}` and shares the same 64-deep
 `_print_depth` budget as `_list_print`, so a mixed map/list tree is
-cycle-safe. A self-referential map (`set m's self to m.`) prints 64
+cycle-safe. A self-referential map (`set m's "self" to m.`) prints 64
 levels deep, then `...`, sets the error flag, and unwinds safely.
 
 The `is a map` predicate recognises a map (runtime tag 5): it folds to
@@ -2135,7 +2135,7 @@ Change directory to "/newroot".
 
 ```
 Mount "proc" at "/proc" with type "proc".
-Mount "tmpfs" at "/dev/shm" with type tmpfs with options "size=64m".
+Mount "tmpfs" at "/dev/shm" with type "tmpfs" with options "size=64m".
 On error print "mount failed", exit 1.
 
 Unmount "/dev/shm".
@@ -2144,7 +2144,7 @@ On error print "unmount failed".
 ```
 
 **Rules:**
-- `Mount "<source>" at '<target>' with type "<fstype>" [with options "<options>"].`
+- `Mount "<source>" at "<target>" with type "<fstype>" [with options "<options>"].`
   lowers directly to `mount(2)`. `source`/`target`/`fstype`/`options` accept
   string literals, text variables, or buffers (including format-string-built
   buffers).
@@ -2867,12 +2867,12 @@ see mathkit version "1.0" from "./libmathkit.lib".
 ```
 
 There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
-`see lib version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
+`see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
 version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF:
 it carries mangled symbol *names* but no Vox type information, so the compiler
 cannot check a call against it. Those forms are retired: `see` of a `.so`
 errors and directs you to the `.lib`, and the `see ... for ...` form has its
-own diagnostic — both name the canonical form `see "<lib>" version "<x.y>" from
+own diagnostic — both name the canonical form `see '<lib>' version "<x.y>" from
 "<path>.lib".`. `see` of a `.vox` source is unchanged.
 
 **Search paths.** `see` resolves the path by its shape:

@@ -53,14 +53,14 @@ Print cwd.
 | `fstat` | 5 | Get file info by fd | `Get info about myfile into fileinfo.` |
 | `lstat` | 6 | Get symlink info | `Get link info about "link" into linkinfo.` |
 | `access` | 21 | Check file permissions | `If "file.txt" is readable then...` |
-| `chmod` | 90 | Change permissions | `Set permissions of 'script.sh' to executable.` |
-| `chown` | 92 | Change ownership | `Set owner of 'file.txt' to "user".` |
-| `rename` | 82 | Rename/move file | `Rename 'old.txt' to "new.txt".` |
+| `chmod` | 90 | Change permissions | `Set permissions of "script.sh" to executable.` |
+| `chown` | 92 | Change ownership | `Set owner of "file.txt" to "user".` |
+| `rename` | 82 | Rename/move file | `Rename "old.txt" to "new.txt".` |
 | `unlink` | 87 | Delete file | `Delete "temp.txt".` |
 | `link` | 86 | Create hard link | `Link original to "hardlink".` |
 | `symlink` | 88 | Create symbolic link | `Create symbolic link from target to "link".` |
 | `readlink` | 89 | Read symlink target | `Read link "symlink" into target.` |
-| `truncate` | 76 | Resize file | `Truncate 'file.txt' to 0 bytes.` |
+| `truncate` | 76 | Resize file | `Truncate "file.txt" to 0 bytes.` |
 
 **Example:**
 ```vox

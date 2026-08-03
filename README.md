@@ -218,3 +218,51 @@ vox example.vox --run
 # Compile only
 vox example.vox
 ```
+
+---
+
+## Roadmap
+
+Vox is under active development. Planned work includes:
+
+1. **Shared Libraries**
+   Versioned shared libraries with explicit naming, symbol scoping, and backward compatibility guarantees.
+
+2. **User-Defined Types**
+   Structs and custom types with compile-time layout and predictable memory semantics.
+
+3. **Networking Abstractions**
+   High-level interfaces built on top of system calls, provided via libraries (e.g. HTTP/1.0 reference implementation).
+
+4. **Additional Architectures**
+   Planned targets include Win64, AArch64, ARM64, MIPS, and RISC-V.
+
+5. **Expanded System Interfaces**
+   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, basic process control (`fork`/`reap`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
+
+6. **Math and Numeric Optimization**
+   Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.
+
+7. **Structured Data and Serialization**
+   Lists, maps, nesting, and `nothing` are implemented — the pieces a JSON/YAML value needs. Remaining: the parser and emitter themselves, plus matrices and tuples. See [docs/COLLECTIONS_ROADMAP.md](docs/COLLECTIONS_ROADMAP.md).
+
+---
+
+## Non-Goals
+
+* Free-form natural language interpretation
+* JIT compilation or runtime reflection
+* *Implicit* dynamic typing or implicit control flow. Types are static by
+  default; the dynamic `value` type is an opt-in, declared escape hatch,
+  and the compiler refuses to use one in arithmetic until you have checked
+  what it holds
+* Hiding system behavior behind opaque abstractions
+* Language-level runtime systems or background memory management
+
+---
+
+## Status
+
+Vox is experimental but functional.
+Core language features are implemented and exercised by real programs, with additional capabilities under active development.
+

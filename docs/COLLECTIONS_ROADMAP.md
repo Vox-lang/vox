@@ -121,7 +121,7 @@ on it, and `is a map` recognises it; tag 6 remains reserved for null.
     in an insertion-ordered array alongside an FNV-1a hash table (linear
     probing over power-of-two capacity, grow at load ≤ 1/2, allocate-copy-
     do-not-free-old-block like `_list_append`) for O(1) lookup. Map
-    literals `{"k": v}`, `map's "k"` access, `set map's k to v`
+    literals `{"k": v}`, `map's "k"` access, `set map's "k" to v`
     insert/replace (store-back on realloc), `map's keys`/`values` (fresh
     lists, insertion-ordered), `map's length`/`empty`, `for each key in
     … keys` / `for each v in … values`, `is a map` (folds on a static map,
@@ -143,7 +143,7 @@ one file per stage, following the project plan template.
 
 ### Known limitations to burn down (tracked, not hidden)
 
-**A dynamic map key costs a 4 KiB page.** `set m's 'key{i}' to v` builds the
+**A dynamic map key costs a 4 KiB page.** `set m's "key{i}" to v` builds the
 key by allocating a fresh buffer per evaluation, and `_alloc_buffer` mmaps —
 which is page-granular whatever size is requested. 10 000 dynamic keys
 measure at 41 MB peak RSS for ~80 KB of key text, and the pages are never

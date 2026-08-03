@@ -45,11 +45,11 @@ Create a directory called "/proc".
 **Current Syntax:**
 ```
 Mount "proc" at "/proc" with type "proc".
-Mount "devpts" at "/dev/pts" with type devpts with options "gid=5,mode=620".
+Mount "devpts" at "/dev/pts" with type "devpts" with options "gid=5,mode=620".
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Mount "<source>" at '<target>' with type "<fstype>" [with options "<opts>"]`
+- Parser: Recognize `Mount "<source>" at "<target>" with type "<fstype>" [with options "<opts>"]`
 - Codegen: Generate syscall 165 with:
   - source string (or NULL for "none" type)
   - target string
@@ -72,7 +72,7 @@ Create a device node called "/dev/null" with type "c" major 1 minor 3.
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Create a device node called '<path>' with type "<type>" major <maj> minor <min>`
+- Parser: Recognize `Create a device node called "<path>" with type "<type>" major <maj> minor <min>`
   - Type can be "c" (character) or "b" (block)
 - Codegen: Generate syscall 133 with:
   - path string
@@ -122,7 +122,7 @@ Pivot root to "/newroot" with old root "/newroot/oldroot".
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Pivot root to '<new_root>' with old root "<put_old>"`
+- Parser: Recognize `Pivot root to "<new_root>" with old root "<put_old>"`
 - Codegen: Generate syscall 155 with new_root and put_old path strings
 - Error handling: Set error flag on failure
 - **Important**: Requires that put_old is under new_root
