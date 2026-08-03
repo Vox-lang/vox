@@ -50,7 +50,7 @@ pub struct ImportedFunction {
     pub return_type: Type,
 }
 
-/// The result of resolving one `see "<lib>" version "<ver>" from "<path>".`:
+/// The result of resolving one `see '<lib>' version "<ver>" from "<path>".`:
 /// the verified signatures and the `.so` to put on the link line.
 #[derive(Debug, Clone)]
 pub struct ResolvedImport {
@@ -121,19 +121,42 @@ impl LibParser {
         }
     }
 
-    /// A quoted (or bare single-word) string operand: library names, versions,
-    /// paths, and parameter names are all quoted in the emitted format, but a
-    /// bare identifier is accepted anywhere one appears.
-    fn take_name(&mut self, what: &str) -> Result<String, String> {
+    /// An identifier position in a `.lib` (library name, function name,
+    /// parameter name). Plan 270: a name is a bare word or a `'quoted'`
+    /// identifier — both lex as `Token::Identifier`. A `"double-quoted"`
+    /// token is a string literal, never a name; rejecting it here (rather
+    /// than accepting it "for safety") is what keeps the reader and the
+    /// writer in lock-step — there is no backwards compatibility to honour.
+    fn take_identifier(&mut self, what: &str) -> Result<String, String> {
+        match self.current().clone() {
+            Token::Identifier(s) => {
+                self.advance();
+                Ok(s)
+            }
+            Token::StringLiteral(_) => Err(self.err(format!(
+                "expected {} here, found a string literal — names are bare or \
+                 'single-quoted', not \"double-quoted\" (strings are data)",
+                what
+            ))),
+            _ => Err(self.err(format!("expected {} here, found {:?}", what, self.current()))),
+        }
+    }
+
+    /// A string-literal position in a `.lib` (the version, the `Location`
+    /// path). Plan 270 keeps these as string literals — a version is data,
+    /// not a name; a path is data. A bare or `'quoted'` identifier is not
+    /// accepted here.
+    fn take_string(&mut self, what: &str) -> Result<String, String> {
         match self.current().clone() {
             Token::StringLiteral(s) => {
                 self.advance();
                 Ok(s)
             }
-            Token::Identifier(s) => {
-                self.advance();
-                Ok(s)
-            }
+            Token::Identifier(_) => Err(self.err(format!(
+                "expected {} here, found a name — a version/path is a \
+                 \"double-quoted\" string literal, not an identifier",
+                what
+            ))),
             _ => Err(self.err(format!("expected {} here, found {:?}", what, self.current()))),
         }
     }
@@ -206,7 +229,7 @@ impl LibParser {
     }
 
     /// One table-of-contents entry, which is exactly one physical line:
-    /// `To "name" [with a <type> called "p" and ...] [, returning a <type>].`
+    /// `To 'name' [with a <type> called 'p' and ...] [, returning a <type>].`
     /// After the closing period the next token MUST end the line — the
     /// emitter never wraps entries, so a wrapped hand edit is a parse error
     /// here rather than a silently mis-split entry.
@@ -223,7 +246,7 @@ impl LibParser {
 
     fn parse_toc_entry(&mut self) -> Result<LibFunction, String> {
         self.advance(); // consume 'To'
-        let name = self.take_name("a function name after 'To'")?;
+        let name = self.take_identifier("a function name after 'To'")?;
 
         let mut params: Vec<(String, Type)> = Vec::new();
         let mut return_type = Type::Void;
@@ -243,7 +266,7 @@ impl LibParser {
                         name
                     )));
                 }
-                let pname = self.take_name("a parameter name after 'called'")?;
+                let pname = self.take_identifier("a parameter name after 'called'")?;
                 params.push((pname, ptype));
                 if *self.current() == Token::And {
                     self.advance();
@@ -268,8 +291,8 @@ impl LibParser {
             return_type = self.take_type("return")?;
         } else if self.at_word("returning") {
             return Err(self.err(format!(
-                "the entry for \"{}\" has 'returning' without the comma that \
-                 introduces it — a .lib entry reads 'To \"name\" ..., returning a <type>.'",
+                "the entry for '{}' has 'returning' without the comma that \
+                 introduces it — a .lib entry reads 'To 'name' ..., returning a <type>.'",
                 name
             )));
         }
@@ -312,22 +335,22 @@ impl LibParser {
     /// Contents:` header, then entries until the next `Library` or EOF.
     fn parse_block(&mut self) -> Result<LibFileBlock, String> {
         self.advance(); // consume 'Library'
-        let lib = self.take_name("a library name after 'Library'")?;
+        let lib = self.take_identifier("a library name after 'Library'")?;
         if *self.current() == Token::Version {
             self.advance();
         } else {
             return Err(self.err(format!(
-                "library \"{}\" has no version — a .lib block reads \
-                 'Library \"<name>\" version \"<x.y>\".'",
+                "library '{}' has no version — a .lib block reads \
+                 'Library '<name>' version \"<x.y>\".'",
                 lib
             )));
         }
-        let version = self.take_name("a version string")?;
+        let version = self.take_string("a version string")?;
         self.expect_period("Library line")?;
 
         self.skip_blank_lines();
         self.expect_word("location", "a Library block")?;
-        let location = self.take_name("a path after 'Location'")?;
+        let location = self.take_string("a path after 'Location'")?;
         self.expect_period("Location line")?;
 
         self.skip_blank_lines();
@@ -353,7 +376,7 @@ impl LibParser {
                 other => {
                     return Err(self.err(format!(
                         "unexpected {:?} in the table of contents for library \
-                         \"{}\" — entries are 'To \"name\" ... .' lines only; \
+                         '{}' — entries are 'To 'name' ... .' lines only; \
                          a .lib file cannot carry executable statements",
                         other, lib
                     )));
@@ -379,7 +402,7 @@ impl LibParser {
                 other => {
                     return Err(self.err(format!(
                         "unexpected {:?} at the top level of a .lib file — a \
-                         .lib contains only 'Library \"<name>\" version \
+                         .lib contains only 'Library '<name>' version \
                          \"<x.y>\".' blocks",
                         other
                     )));
@@ -501,7 +524,7 @@ fn resolve_location(location: &str, lib_dir: &Path, lib_paths: &[String]) -> Res
     })
 }
 
-/// Resolve one canonical `see "<lib>" version "<ver>" from "<path>.lib".`
+/// Resolve one canonical `see '<lib>' version "<ver>" from "<path>.lib".`
 /// against the filesystem: find and parse the `.lib`, select the block
 /// matching name AND version, resolve its `Location`, and verify every
 /// mangled ToC symbol against the `.so`'s `.dynsym`.
@@ -578,7 +601,7 @@ pub fn resolve_see_import(
         let mangled = mangle_library_symbol(&block.lib, &block.version, &f.name);
         if !dynsym.iter().any(|s| s == &mangled) {
             return Err(format!(
-                "the .lib entry 'To \"{}\" ...' promises the symbol '{}', but \
+                "the .lib entry 'To '{}' ...' promises the symbol '{}', but \
                  '{}' does not export it (not in .dynsym).\n\
                  The .lib is stale: it does not match the library binary. \
                  Rebuild the library with `vox --shared` to regenerate the pair.",
@@ -641,10 +664,10 @@ pub fn resolve_program_imports(
         if !path.ends_with(".lib") {
             if lib_name.is_some() && lib_version.is_some() {
                 return Err(format!(
-                    "see \"{}\" version \"{}\" from \"{}\": a library import names a \
+                    "see '{}' version \"{}\" from \"{}\": a library import names a \
                      .lib interface file, but \"{}\" is not one. Did you forget the \
                      .lib extension?\n\
-                     Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".",
+                     Canonical form: see '<lib>' version \"<x.y>\" from \"<path>.lib\".",
                     lib_name.as_deref().unwrap_or(""),
                     lib_version.as_deref().unwrap_or(""),
                     path,
@@ -661,7 +684,7 @@ pub fn resolve_program_imports(
                 return Err(format!(
                     "see \"{}\": a .lib import must name the library and its \
                      version, so the right block can be selected.\n\
-                     Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".",
+                     Canonical form: see '<lib>' version \"<x.y>\" from \"<path>.lib\".",
                     path
                 ));
             }
@@ -683,18 +706,18 @@ pub fn resolve_program_imports(
 mod tests {
     use super::*;
 
-    const TWO_BLOCKS: &str = "Library \"mathkit\" version \"1.0\".\n\
+    const TWO_BLOCKS: &str = "Library mathkit version \"1.0\".\n\
 Location \"./libmathkit.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"add two numbers\" with a number called \"a\" and a number called \"b\", returning a number.\n\
-    To \"greet\".\n\
+    To 'add two numbers' with a number called aa and a number called bb, returning a number.\n\
+    To greet.\n\
 \n\
-Library \"flags\" version \"0.1\".\n\
+Library flags version \"0.1\".\n\
 Location \"./libflags.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"hasflag\" with a number called \"n\", returning a number.\n";
+    To hasflag with a number called n, returning a number.\n";
 
     #[test]
     fn parses_two_blocks_with_their_own_locations() {
@@ -708,8 +731,8 @@ Table of Contents:\n\
         assert_eq!(
             blocks[0].funcs[0].params,
             vec![
-                ("a".to_string(), Type::Integer),
-                ("b".to_string(), Type::Integer)
+                ("aa".to_string(), Type::Integer),
+                ("bb".to_string(), Type::Integer)
             ]
         );
         assert_eq!(blocks[0].funcs[0].return_type, Type::Integer);
@@ -727,13 +750,13 @@ Table of Contents:\n\
         // The exact text A3 renders for libmath.vox (test.sh pins it); the
         // round trip is the stage contract — the parser consumes what the
         // emitter writes. `makebuf` has no return clause.
-        let text = "Library \"mathkit\" version \"1.0\".\n\
+        let text = "Library mathkit version \"1.0\".\n\
 Location \"./libmath.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"add two numbers\" with a number called \"n\", returning a number.\n\
-    To \"greet\".\n\
-    To \"makebuf\".\n";
+    To 'add two numbers' with a number called n, returning a number.\n\
+    To greet.\n\
+    To makebuf.\n";
         let blocks = parse_lib_text(text).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].funcs.len(), 3);
@@ -742,12 +765,12 @@ Table of Contents:\n\
 
     #[test]
     fn value_and_collection_nouns_parse() {
-        let text = "Library \"dyn\" version \"1.0\".\n\
+        let text = "Library dyn version \"1.0\".\n\
 Location \"./libdyn.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"echo\" with a value called \"v\", returning a value.\n\
-    To \"stash\" with a buffer called \"b\" and a list called \"l\" and a map called \"m\".\n";
+    To echo with a value called v, returning a value.\n\
+    To stash with a buffer called b and a list called l and a map called m.\n";
         let blocks = parse_lib_text(text).unwrap();
         assert_eq!(blocks[0].funcs[0].return_type, Type::Value);
         assert_eq!(blocks[0].funcs[0].params[0].1, Type::Value);
@@ -758,11 +781,11 @@ Table of Contents:\n\
 
     #[test]
     fn returning_with_no_params_parses() {
-        let text = "Library \"n\" version \"1.0\".\n\
+        let text = "Library n version \"1.0\".\n\
 Location \"./n.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"makebuf\", returning a number.\n";
+    To makebuf, returning a number.\n";
         let blocks = parse_lib_text(text).unwrap();
         assert_eq!(blocks[0].funcs[0].return_type, Type::Integer);
         assert!(blocks[0].funcs[0].params.is_empty());
@@ -770,11 +793,11 @@ Table of Contents:\n\
 
     #[test]
     fn unsupported_return_type_is_named() {
-        let text = "Library \"n\" version \"1.0\".\n\
+        let text = "Library n version \"1.0\".\n\
 Location \"./n.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"f\", returning a buffer.\n";
+    To f, returning a buffer.\n";
         let err = parse_lib_text(text).unwrap_err();
         assert!(err.contains("unsupported type"), "got: {}", err);
         assert!(err.contains("'buffer'"), "got: {}", err);
@@ -782,11 +805,11 @@ Table of Contents:\n\
 
     #[test]
     fn executable_statements_are_rejected_structurally() {
-        let text = "Library \"n\" version \"1.0\".\n\
+        let text = "Library n version \"1.0\".\n\
 Location \"./n.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"f\".\n\
+    To f.\n\
     Print \"surprise\".\n";
         let err = parse_lib_text(text).unwrap_err();
         assert!(
@@ -798,12 +821,12 @@ Table of Contents:\n\
 
     #[test]
     fn a_wrapped_entry_is_an_error() {
-        let text = "Library \"n\" version \"1.0\".\n\
+        let text = "Library n version \"1.0\".\n\
 Location \"./n.so\".\n\
 \n\
 Table of Contents:\n\
-    To \"f\" with a number called \"a\",\n\
-    and a number called \"b\", returning a number.\n";
+    To f with a number called aa,\n\
+    and a number called bb, returning a number.\n";
         let err = parse_lib_text(text).unwrap_err();
         assert!(err.contains("one line"), "got: {}", err);
     }
@@ -877,11 +900,11 @@ Table of Contents:\n\
         // the elf reader sees would carry a `./` component without normalising.
         let sub = dir.join("sub");
         fs::create_dir_all(&sub).unwrap();
-        let lib_text = "Library \"x\" version \"1.0\".\n\
+        let lib_text = "Library x version \"1.0\".\n\
                         Location \"./notelf.so\".\n\
                         \n\
                         Table of Contents:\n\
-                            To \"f\".\n";
+                            To f.\n";
         fs::write(sub.join("good.lib"), lib_text).unwrap();
         fs::write(sub.join("notelf.so"), b"not an elf file").unwrap();
         let err = resolve_see_import("x", "1.0", "./good.lib", &sub, &[]).unwrap_err();

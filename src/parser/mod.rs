@@ -45,7 +45,7 @@ mod buffer_copy_statement_tests {
     #[test]
     fn test_parse_the_buffer_assignment_format_string() {
         let input = r#"
-            a buffer called "out" is "".
+            a buffer called out is "".
             the buffer out is "line {n:06}".
         "#;
         let result = parse_input(input).expect("the buffer assignment should parse");
@@ -119,7 +119,7 @@ mod buffer_copy_statement_tests {
 
     #[test]
     fn test_parse_append_to_quoted_name() {
-        let input = r#"append "hello" to "staged output"."#;
+        let input = r#"append "hello" to 'staged output'."#;
         let result = parse_input(input).expect("append to quoted destination should parse");
         assert_eq!(result.statements.len(), 1);
 
@@ -134,7 +134,7 @@ mod buffer_copy_statement_tests {
 
     #[test]
     fn test_parse_copy_to_quoted_destination() {
-        let input = r#"copy source to "staged output"."#;
+        let input = r#"copy source to 'staged output'."#;
         let result = parse_input(input).expect("copy to quoted destination should parse");
         assert_eq!(result.statements.len(), 1);
 
@@ -149,7 +149,7 @@ mod buffer_copy_statement_tests {
 
     #[test]
     fn test_parse_clear_quoted_name() {
-        let input = r#"clear "staged output"."#;
+        let input = r#"clear 'staged output'."#;
         let result = parse_input(input).expect("clear quoted destination should parse");
         assert_eq!(result.statements.len(), 1);
 
@@ -294,7 +294,7 @@ mod file_line_read_and_seek_tests {
     fn test_on_error_sentence_can_return_to_parent_if_block() {
         let input = r#"
             If arguments's empty then,
-                Open a file for reading called "source" at "/dev/stdin",
+                Open a file for reading called source at "/dev/stdin",
                 On error print "cat: /dev/stdin: No such file or directory", exit 1.
                 Read line from source into content,
                 While content is not empty,
@@ -319,8 +319,8 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_function_call_expression_curly_grouping_parses() {
         let input = r#"
-            To "fib" with a number called "n".
-                Return a number, {"fibonacci" of n subtract 1} add {"fibonacci" of n subtract 2}.
+            To fib with a number called n.
+                Return a number, {fibonacci of n subtract 1} add {fibonacci of n subtract 2}.
         "#;
 
         let result = parse_input(input).expect("function-call expression with curly grouping should parse");
@@ -343,8 +343,8 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_function_call_expression_comma_add_is_rejected() {
         let input = r#"
-            To "fib" with a number called "n".
-                Return a number, "fibonacci" of n subtract 1, add "fibonacci" of n subtract 2.
+            To fib with a number called n.
+                Return a number, fibonacci of n subtract 1, add fibonacci of n subtract 2.
         "#;
 
         let err = parse_input(input).expect_err("comma-delimited arithmetic should be rejected");
@@ -358,7 +358,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_curly_grouping_changes_arithmetic_shape() {
         let input = r#"
-            To "math" with a number called "n".
+            To math with a number called n.
                 Return a number, {n add 1} multiply {n subtract 1}.
         "#;
 
@@ -391,9 +391,9 @@ mod file_line_read_and_seek_tests {
     fn test_function_call_in_comma_separated_if_block() {
         let input = r#"
             If arguments's empty then,
-                Open a file for reading called "source" at 0,
+                Open a file for reading called source at 0,
                 On error print "cat: /dev/stdin: Could not open pipe", exit 1.
-                a buffer called "staged_output" is "read the file" with "source",
+                a buffer called staged_output is 'read the file' with source,
                 Write staged_output to output,
                 Clear staged_output,
                 Exit 0.
@@ -419,7 +419,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_zero_param_function_def_with_comma_signature() {
         let input = r#"
-            To "show version",
+            To 'show version',
                 Exit 0.
         "#;
 
@@ -439,7 +439,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_function_def_with_buffer_parameter_type() {
         let input = r#"
-            To "handle content" with a buffer called "content",
+            To 'handle content' with a buffer called content,
                 Clear content.
         "#;
 
@@ -462,7 +462,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_function_def_with_file_and_buffer_parameters() {
         let input = r#"
-            To "copy line" with a file called source and a buffer called destination,
+            To 'copy line' with a file called source and a buffer called destination,
                 Read line from source into destination.
         "#;
 
@@ -485,10 +485,10 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_zero_param_function_call_statement() {
         let input = r#"
-            To "show version",
+            To 'show version',
                 Exit 0.
 
-            "show version".
+            'show version'.
         "#;
 
         let result = parse_input(input).expect("zero-parameter function definition and call should parse");
@@ -506,7 +506,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_function_def_with_file_parameter_type() {
         let input = r#"
-            To "handle file" with a file called source,
+            To 'handle file' with a file called source,
                 Read line from source into content.
         "#;
 
@@ -529,8 +529,8 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_set_assignment_supports_quoted_variable_name() {
         let input = r#"
-            A boolean called "failed to open a file" is false.
-            Set "failed to open a file" to true.
+            A boolean called 'failed to open a file' is false.
+            Set 'failed to open a file' to true.
         "#;
 
         let result = parse_input(input).expect("quoted variable assignment with set should parse");
@@ -547,7 +547,7 @@ mod file_line_read_and_seek_tests {
 
     #[test]
     fn test_parse_flag_schema_boolean_required() {
-        let input = r#"a flag called "numbering" is "-n" or "--number", it is a boolean and is required."#;
+        let input = r#"a flag called numbering is "-n" or "--number", it is a boolean and is required."#;
         let result = parse_input(input).expect("flag schema should parse");
         assert_eq!(result.statements.len(), 1);
 
@@ -566,7 +566,7 @@ mod file_line_read_and_seek_tests {
 
     #[test]
     fn test_parse_flag_schema_text_with_default() {
-        let input = r#"a flag called "output" is "-o" or "--output", it is a text with default "out.txt"."#;
+        let input = r#"a flag called 'output' is "-o" or "--output", it is a text with default "out.txt"."#;
         let result = parse_input(input).expect("flag schema with default should parse");
         assert_eq!(result.statements.len(), 1);
 
@@ -584,7 +584,7 @@ mod file_line_read_and_seek_tests {
     #[test]
     fn test_parse_parse_flags_statement() {
         let input = r#"
-            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            a flag called verbose is "-v" or "--verbose", it is a boolean.
             parse flags.
         "#;
         let result = parse_input(input).expect("parse flags statement should parse");
@@ -690,7 +690,7 @@ impl Parser {
         eprintln!(
             "Warning: Buffer \"{}\" declared without size or initializer.\n  \
              This creates a zero-capacity buffer which may not be useful.\n  \
-             Consider: a buffer called \"{}\" is 1024 bytes.",
+             Consider: a buffer called '{}' is 1024 bytes.",
             buffer_name, buffer_name
         );
     }
@@ -772,6 +772,43 @@ impl Parser {
             Token::StringLiteral(s) => Err(self.err_string_as_name(&s)),
             other => Err(self.err_expected("a name", &other)),
         }
+    }
+
+    /// After a callee name (bare or quoted identifier) has been advanced past,
+    /// parse a call connector (`of`/`with`/`on`, and `to` when `allow_to`)
+    /// and its argument list into a `FunctionCall` (plan 270 G1). Returns
+    /// `None` when the next token is not a call connector, so the caller falls
+    /// through to other postfix forms (property access, a bare identifier) or,
+    /// in append-value position, the `to` separator. `allow_to` is false
+    /// there: `to` is the append separator and must not read as a connector.
+    fn parse_call_tail(&mut self, name: String, allow_to: bool) -> Result<Option<Expr>, Box<CompileError>> {
+        let is_conn = match self.current() {
+            Token::Of | Token::With | Token::On => true,
+            Token::To => allow_to,
+            _ => false,
+        };
+        if !is_conn {
+            return Ok(None);
+        }
+        self.advance();
+        self.skip_noise();
+        let mut args = Vec::new();
+        loop {
+            let arg = self.parse_expression()?;
+            args.push(arg);
+            self.skip_noise();
+            if *self.current() == Token::Comma {
+                // Comma belongs to the enclosing sentence.
+                break;
+            }
+            if *self.current() == Token::And {
+                self.advance();
+                self.skip_noise();
+            } else {
+                break;
+            }
+        }
+        Ok(Some(Expr::FunctionCall { name, args }))
     }
 
     fn peek(&self, offset: usize) -> &Token {
@@ -1471,8 +1508,8 @@ impl Parser {
                 if *self.current() != Token::Called {
                     return Err(self.err(
                         "Missing 'called' after 'buffer'\n  \
-                         Syntax: a buffer called \"name\".\n  \
-                         Example: a buffer called \"content\"."
+                         Syntax: a buffer called name.\n  \
+                         Example: a buffer called content."
                     ));
                 }
                 self.advance();
@@ -1514,7 +1551,7 @@ impl Parser {
                                     return Err(self.error_invalid_buffer_size(
                                         &name,
                                         "Buffer size must be a positive integer",
-                                        "a buffer called \"buf\" is 1024 bytes."
+                                        "a buffer called buf is 1024 bytes."
                                     ));
                                 }
                                 // Check for unreasonably large buffer sizes (prevent DoS via memory exhaustion)
@@ -1529,14 +1566,14 @@ impl Parser {
                             }
                             Expr::Identifier(_var_name) => {
                                 // Allow variable references for size - will be validated at compile time
-                                // This enables patterns like: a buffer called "buf" is config_size bytes.
+                                // This enables patterns like: a buffer called buf is config_size bytes.
                                 // The type checker must verify this is a compile-time constant integer
                             }
                             _ => {
                                 return Err(self.error_invalid_buffer_size(
                                     &name,
                                     "Buffer size must be a numeric literal or constant variable",
-                                    "a buffer called \"buf\" is 1024 bytes."
+                                    "a buffer called buf is 1024 bytes."
                                 ));
                             }
                         }
@@ -1568,8 +1605,8 @@ impl Parser {
                 if *self.current() != Token::Called {
                     return Err(self.err(
                         "Missing 'called' after 'timer'\n  \
-                         Syntax: a timer called \"name\".\n  \
-                         Example: Create a timer called \"job timer\"."
+                         Syntax: a timer called name.\n  \
+                         Example: Create a timer called 'job timer'."
                     ));
                 }
                 self.advance();
@@ -1586,7 +1623,7 @@ impl Parser {
                 if *self.current() != Token::Called {
                     return Err(self.err(
                         "Missing 'called' after 'time'\n  \
-                         Syntax: a time called \"name\" is current time."
+                         Syntax: a time called name is current time."
                     ));
                 }
                 self.advance();
@@ -3553,6 +3590,14 @@ impl Parser {
             }
             Token::Identifier(name) => {
                 self.advance();
+                self.skip_noise();
+                // A bare or quoted callee with `of/with/on` is a call (plan 270
+                // G1). `to` is the append separator here, so it is NOT treated
+                // as a call connector (else `append f to x to items` could
+                // never resolve).
+                if let Some(call) = self.parse_call_tail(name.clone(), false)? {
+                    return Ok(call);
+                }
                 Ok(Expr::Identifier(name))
             }
             Token::The => {
@@ -3850,7 +3895,7 @@ impl Parser {
     fn parse_see(&mut self) -> Result<Statement, Box<CompileError>> {
         // Stage A5 retired the abandoned direct-`.so` syntax. The one library
         // import that survives is the canonical form:
-        //   see "<lib>" version "<ver>" from "<path>.lib".
+        //   see '<lib>' version "<ver>" from "<path>.lib".
         // A bare `see "<path>.vox".` is a source include — spliced in by the
         // frontend before compilation, never part of the library system — and
         // is unchanged here. Every other `see` form is retired: it gets a
@@ -3887,7 +3932,7 @@ impl Parser {
         // identifier followed by `version`) or the path (a string literal —
         // the `see "<path>.vox"` source include). Plan 270 §S1.5: a string
         // literal where a *name* is expected is rejected with the teaching
-        // diagnostic, so the old `see "<lib>" version ...` form now points
+        // diagnostic, so the old `see '<lib>' version ...` form now points
         // the user at `see '<lib>' version "..."`. Detect this *before*
         // advancing so the underline lands on the offending string.
         let first_tok = self.current().clone();
@@ -3904,7 +3949,7 @@ impl Parser {
         let first = get_name_or_string(&first_tok)
             .ok_or_else(|| self.err(
                 "Missing path or library name after 'see'\n  \
-                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".\n  \
+                 Canonical form: see '<lib>' version \"<x.y>\" from \"<path>.lib\".\n  \
                  (A source include is: see \"<path>.vox\".)"
             ))?;
         self.advance();
@@ -3940,7 +3985,7 @@ impl Parser {
             let form = if *self.current() == Token::From { "from" } else { "for" };
             return Err(self.err(&format!(
                 "The `see ... {} ...` form is no longer supported.\n  \
-                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\".",
+                 Canonical form: see '<lib>' version \"<x.y>\" from \"<path>.lib\".",
                 form
             )));
         } else {
@@ -3953,12 +3998,12 @@ impl Parser {
         // that made the stale documentation hazardous rather than merely
         // untidy. It now errors, directing the user to the `.lib` interface
         // file that is the canonical way to consume a library. This catches a
-        // bare `see "x.so"` and a `see "lib" version "1" from "x.so"` alike.
+        // bare `see "x.so"` and a `see 'lib' version "1" from "x.so"` alike.
         if path.ends_with(".so") {
             return Err(self.err(
                 "see of a .so is not supported. A .so is a binary; consume it \
                  through its .lib interface file.\n  \
-                 Canonical form: see \"<lib>\" version \"<x.y>\" from \"<path>.lib\"."
+                 Canonical form: see '<lib>' version \"<x.y>\" from \"<path>.lib\"."
             ));
         }
 
@@ -4182,8 +4227,8 @@ impl Parser {
         // contains another function definition or a Library declaration —
         // `Token::To` and `Token::Library` always begin a NEW top-level
         // construct, so they terminate the body just like a paragraph break.
-        // Without this, a bodyless function (`To "greet".` with no Return and
-        // no separating blank line) silently absorbed the following `To "f".`
+        // Without this, a bodyless function (`To greet.` with no Return and
+        // no separating blank line) silently absorbed the following `To f.`
         // as a *nested* FunctionDef: the nested function was still emitted (so
         // it appeared in `nm -D`) but was invisible to any walk of top-level
         // statements — notably the Stage A3 `.lib` signature collector, which
@@ -5277,31 +5322,8 @@ impl Parser {
                 // Call with arguments: `name of/with/to/on args` (plan 270 G1).
                 // A bare or quoted identifier is the callee; this is the
                 // expression-level counterpart of the statement-level call.
-                if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
-                    self.advance();
-                    self.skip_noise();
-
-                    let mut args = Vec::new();
-                    loop {
-                        let arg = self.parse_expression()?;
-                        args.push(arg);
-
-                        self.skip_noise();
-
-                        if *self.current() == Token::Comma {
-                            // Comma belongs to the enclosing sentence.
-                            break;
-                        }
-
-                        if *self.current() == Token::And {
-                            self.advance();
-                            self.skip_noise();
-                        } else {
-                            break;
-                        }
-                    }
-
-                    return Ok(Expr::FunctionCall { name, args });
+                if let Some(call) = self.parse_call_tail(name.clone(), true)? {
+                    return Ok(call);
                 }
 
                 // Check for property access: identifier's property
@@ -5848,7 +5870,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_with_string_initializer() {
-        let input = r#"a buffer called "byte_buf" is "Hello"."#;
+        let input = r#"a buffer called byte_buf is "Hello"."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();
@@ -5865,7 +5887,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_with_size_clause() {
-        let input = r#"a buffer called "log" is 2048 bytes."#;
+        let input = r#"a buffer called log is 2048 bytes."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();
@@ -5881,7 +5903,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_with_size_in_size_suffix() {
-        let input = r#"a buffer called "buf" is 1024 bytes in size."#;
+        let input = r#"a buffer called buf is 1024 bytes in size."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();
@@ -5897,7 +5919,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_non_numeric_size_error() {
-        let input = r#"a buffer called "bad" is "Hello" bytes."#;
+        let input = r#"a buffer called bad is "Hello" bytes."#;
         let result = parse_input(input);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -5906,7 +5928,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_negative_size_error() {
-        let input = r#"a buffer called "bad" is -100 bytes."#;
+        let input = r#"a buffer called bad is -100 bytes."#;
         let result = parse_input(input);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -5915,7 +5937,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_zero_size_error() {
-        let input = r#"a buffer called "bad" is 0 bytes."#;
+        let input = r#"a buffer called bad is 0 bytes."#;
         let result = parse_input(input);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -5924,7 +5946,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_excessive_size_error() {
-        let input = r#"a buffer called "huge" is 9999999999999 bytes."#;
+        let input = r#"a buffer called huge is 9999999999999 bytes."#;
         let result = parse_input(input);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -5933,7 +5955,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_with_variable_size() {
-        let input = r#"a buffer called "dynamic" is config_size bytes."#;
+        let input = r#"a buffer called dynamic is config_size bytes."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();
@@ -5950,7 +5972,7 @@ mod buffer_declaration_tests {
     #[test]
     fn test_buffer_with_numeric_initializer() {
         // Without "bytes" keyword, this should be an initializer, not a size
-        let input = r#"a buffer called "data" is 42."#;
+        let input = r#"a buffer called data is 42."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();
@@ -5967,7 +5989,7 @@ mod buffer_declaration_tests {
 
     #[test]
     fn test_buffer_without_initializer_warning() {
-        let input = r#"a buffer called "empty_buf"."#;
+        let input = r#"a buffer called empty_buf."#;
         let result = parse_input(input);
         assert!(result.is_ok());
         let program = result.unwrap();

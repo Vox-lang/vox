@@ -19,7 +19,7 @@ pub struct CodeGenerator {
     // the statically-typed fast path unchanged.
     mixed_lists: std::collections::HashSet<String>,
     // Scalar variables whose stored value the pre-scan could not prove a type
-    // for (e.g. `a text called "s" is element 3 of <mixed list>.`). Their
+    // for (e.g. `a text called s is element 3 of <mixed list>.`). Their
     // declared type states the author's intent, not what the slot actually
     // holds, so `emit_time_expr_tag` must not claim a tag for them - a
     // TAG_STRING written over a non-pointer makes a tag-dispatching reader
@@ -40,7 +40,7 @@ pub struct CodeGenerator {
     // builds. `main.rs` renders this beside the `.so` after a successful link.
     library_blocks: Vec<LibBlock>,
     // The identity of the library currently being compiled, set by a
-    // `Library "name" version "x.y".` declaration. In shared library mode
+    // `Library name version "x.y".` declaration. In shared library mode
     // this prefixes every exported label (and every intra-library call) as
     // `<lib>_<ver>_<func>` so two libraries linked into one .so can both
     // define `greet` without a duplicate-label collision. `None` outside
@@ -48,7 +48,7 @@ pub struct CodeGenerator {
     // declaration is seen — `collect_library_identity` runs a pre-pass so
     // the order of `Library` vs `To` in the source does not matter).
     current_library: Option<(String, String)>,
-    // Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    // Stage A4: functions imported by `see '<lib>' version "<ver>" from
     // "...lib".`, resolved and .dynsym-verified by the driver. A call to an
     // imported name targets the import's mangled `<lib>_<ver>_<func>` symbol
     // and the link line gets the `.so` + an rpath. Local definitions shadow
@@ -289,26 +289,50 @@ fn return_type_noun(t: &Type) -> Option<&'static str> {
     }
 }
 
+/// Render a name as its canonical identifier form (plan 270): a bare word when
+/// it is bare-legal (`[A-Za-z_][A-Za-z0-9_]*`) and not a reserved keyword, else
+/// a `'single-quoted'` identifier. The compiler only ever registers names that
+/// are already legal, so the keyword check is defensive against a future
+/// hand-edited `LibBlock`; the writer and reader agree on exactly this form —
+/// no dual parsing, no backwards compatibility.
+fn format_lib_name(name: &str) -> String {
+    fn is_bare_legal(s: &str) -> bool {
+        let mut chars = s.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && crate::lexer::Token::string_is_keyword(s).is_none()
+    }
+    if is_bare_legal(name) {
+        name.to_string()
+    } else {
+        format!("'{}'", name)
+    }
+}
+
 /// Render the `.lib` text for `blocks` (one per library identity, in order)
 /// whose `.so` is named `so_filename` (basename only — the `.lib` sits beside
 /// it, so the `Location` is `./<so_filename>`, relative to the `.lib`). Each
 /// table-of-contents entry is exactly one line, however long; entries are never
-/// wrapped. A parameterless, void-returning function reads `To "name".`; a
-/// `value` parameter or return needs only its type name (`a value called "v"`,
-/// `, returning a value`).
+/// wrapped. A parameterless, void-returning function reads `To 'name'.`; a
+/// `value` parameter or return needs only its type name (`a value called 'v'`,
+/// `, returning a value`). Names are identifiers (bare or `'quoted'`); the
+/// version and `Location` path remain `"string literals"` — they are data.
 pub fn render_lib_file(blocks: &[LibBlock], so_filename: &str) -> String {
     let mut out = String::new();
     for (i, block) in blocks.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("Library \"{}\" version \"{}\".\n", block.lib, block.version));
+        out.push_str(&format!(
+            "Library {} version \"{}\".\n",
+            format_lib_name(&block.lib),
+            block.version
+        ));
         out.push_str(&format!("Location \"./{}\".\n", so_filename));
         out.push_str("\nTable of Contents:\n");
         for func in &block.funcs {
-            out.push_str("    To \"");
-            out.push_str(&func.name);
-            out.push('"');
+            out.push_str("    To ");
+            out.push_str(&format_lib_name(&func.name));
             if !func.params.is_empty() {
                 out.push_str(" with ");
                 let joined = func
@@ -322,7 +346,7 @@ pub fn render_lib_file(blocks: &[LibBlock], so_filename: &str) -> String {
                         // should type their exports; see the A3 report for the
                         // caveat.
                         let noun = param_type_noun(ptype).unwrap_or("number");
-                        format!("a {} called \"{}\"", noun, pname)
+                        format!("a {} called {}", noun, format_lib_name(pname))
                     })
                     .collect::<Vec<_>>()
                     .join(" and ");
@@ -369,7 +393,7 @@ fn vartype_to_tag(vt: VarType) -> Option<u8> {
 /// Map a declared `Type` to the list slot tag a value of that type would
 /// carry. Used to seed the pre-scan env from a variable's declared type
 /// (a static proof) when the initializer's own type can't be inferred — e.g.
-/// `a buffer called "b" is 4 bytes in size.` (the size expr is opaque, but
+/// `a buffer called b is 4 bytes in size.` (the size expr is opaque, but
 /// the declared type `buffer` proves the slot tag is `TAG_STRING`). Returns
 /// `None` for non-scalar, non-list types (File/Time/Timer/Void/Unknown). A
 /// `List` value carries tag 4 (stage 1e1) — this arm is load-bearing for the
@@ -506,7 +530,7 @@ impl CodeGenerator {
     }
 
     /// Assign bss mirror labels to every definitely-declared main-line
-    /// name (see collect_definite_decls): an `Open ... called "output"`
+    /// name (see collect_definite_decls): an `Open ... called 'output'`
     /// present in BOTH arms of an if/otherwise still executes in _start's
     /// frame on every path, so functions must be able to reach it via its
     /// mirror global exactly like a top-level declaration. Uses the same
@@ -1058,6 +1082,23 @@ impl CodeGenerator {
         }
     }
 
+    /// Plan 270 G4: a bare or quoted identifier in *expression* position
+    /// that names a zero-argument function is a call, not a variable lookup.
+    /// Returns the function's return type iff `name` resolves (locally or via
+    /// an import) to a function declaring zero parameters. A name that is a
+    /// variable in scope is handled by the caller *before* consulting this —
+    /// a variable shadows a same-named zero-arg function, matching the
+    /// analyzer's "variable first" resolution. `resolved_call_label` returns
+    /// `mangle_symbol(name)` for an unknown name, which is absent from the
+    /// signature tables, so this never false-positives on an unknown.
+    fn zero_arg_func_return_type(&self, name: &str) -> Option<VarType> {
+        let label = self.resolved_call_label(name);
+        match self.function_param_types.get(&label) {
+            Some(params) if params.is_empty() => self.function_return_types.get(&label).cloned(),
+            _ => None,
+        }
+    }
+
     /// The mangled labels of functions exported by a `--shared` compile, in
     /// emission order. Populated during `generate`; the linker's version
     /// script names exactly these as the library's public symbols.
@@ -1138,7 +1179,7 @@ impl CodeGenerator {
     // its generic "Integer for anything unrecognized" default. Without
     // this, reassigning an EXISTING variable from a function call (`the x
     // is "some func" of y.`) silently corrupted the variable's tracked
-    // type to Integer - a fresh `a text called "x" is ...` declaration
+    // type to Integer - a fresh `a text called x is ...` declaration
     // happened to read the correct type from a different code path and
     // was unaffected, which is what made this easy to miss.
     fn collect_function_signatures(&mut self, program: &Program) {
@@ -1803,7 +1844,7 @@ impl CodeGenerator {
     /// (e.g. a function result without a declared return type) widens the
     /// list to `Mixed` so elements are never silently reinterpreted. Lists
     /// whose every write is provably one type keep the untagged fast path.
-    /// Aliasing a mixed list (`a list called "b" is the a.`) propagates
+    /// Aliasing a mixed list (`a list called b is the a.`) propagates
     /// mixedness.
     fn prescan_mixed_lists(&mut self, statements: &[Statement]) {
         // Iterate to a fixed point so aliases and later evidence propagate
@@ -1869,7 +1910,7 @@ impl CodeGenerator {
                 Statement::VarDecl { name, value, var_type, .. } => {
                     // A declared scalar type is a static proof of the slot tag
                     // and seeds `env` even when the initializer is opaque (e.g.
-                    // `a buffer called "b" is 4 bytes in size.` — the size expr
+                    // `a buffer called b is 4 bytes in size.` — the size expr
                     // is unknowable, but the declared `buffer` type proves the
                     // tag is `TAG_STRING`, so appending it doesn't widen).
                     let declared_tag = var_type.as_ref().and_then(type_to_tag);
@@ -1897,7 +1938,7 @@ impl CodeGenerator {
                                 list_seen_tags.insert(name.clone(), *t);
                             }
                         }
-                        // Alias: `a list called "b" is the a.` inherits
+                        // Alias: `a list called b is the a.` inherits
                         // mixedness (both names refer to the same block).
                         Some(Expr::Identifier(src)) | Some(Expr::StringLit(src)) => {
                             if self.mixed_lists.contains(src) {
@@ -1922,12 +1963,12 @@ impl CodeGenerator {
                             // The initializer decides, not the declaration: a
                             // declared type is the author's intent, while the
                             // tag must describe the bits that actually land in
-                            // the slot. `a text called "s" is element 3 of m.`
+                            // the slot. `a text called s is element 3 of m.`
                             // (m mixed) stores whatever element 3 holds, which
                             // may not be a string pointer - trusting `text`
                             // here would write TAG_STRING over an integer and
                             // make a tag-dispatching reader dereference it.
-                            // (`a buffer called "b" is 4 bytes in size.` does
+                            // (`a buffer called b is 4 bytes in size.` does
                             // not reach this arm; it parses to BufferDecl,
                             // handled below.)
                             let info = self.prescan_expr_tag(other, env, list_seen_tags);
@@ -2316,6 +2357,12 @@ impl CodeGenerator {
                             && self.global_var_label(name).is_none()
                         {
                             Some(TAG_STRING) // a genuine string literal
+                        } else if let Some(vt) = self.zero_arg_func_return_type(name) {
+                            // Plan 270 G4: an identifier naming a zero-argument
+                            // function is a call; its result tag is the
+                            // function's declared return type. Mixed/Unknown map
+                            // to None (runtime tag, like a written call).
+                            vartype_to_tag(vt)
                         } else {
                             // An identifier not in variable_types and not a
                             // genuine string literal. Every declared variable
@@ -2386,6 +2433,20 @@ impl CodeGenerator {
         match e {
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name)) == Some(&VarType::Mixed)
+            }
+            // Plan 270 G4: a zero-argument function name used as an identifier
+            // in expression position emits a call (see `generate_expr`), so a
+            // `value`-returning one leaves its result tag in r11 just like a
+            // written `Expr::FunctionCall`. Only consult this when the name is
+            // NOT a variable — a variable identifier never calls.
+            Expr::Identifier(name)
+                if self.variables.contains_key(name)
+                    || self.global_var_label(name).is_some() =>
+            {
+                false
+            }
+            Expr::Identifier(name) => {
+                self.zero_arg_func_return_type(name) == Some(VarType::Mixed)
             }
             Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
                 self.list_expr_is_mixed(list)
@@ -2706,7 +2767,7 @@ impl CodeGenerator {
                     }
                     // Initializing from another variable: inherit its type
                     // (and element type, for lists) unless the declaration
-                    // already pinned one. Without this, `a list called "b"
+                    // already pinned one. Without this, `a list called b
                     // is the a.` left "b" untyped and property access
                     // misrouted to the file fallback (_file_size).
                     else if var_type.is_none() || matches!(var_type, Some(Type::List(_))) {
@@ -2850,7 +2911,7 @@ impl CodeGenerator {
             
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
-                    // A `value` local (declared `a value called "r"`) keeps its
+                    // A `value` local (declared `a value called r`) keeps its
                     // Mixed type across reassignment — overwriting it with the
                     // assigned value's static type would drop the shadow-tag
                     // discipline and mis-classify later reads.
@@ -5054,7 +5115,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
             }
             
-            Expr::Identifier(name) => {
+            Expr::Identifier(name)
+                if self.get_var(name).is_some()
+                    || self.global_var_label(name).is_some()
+                    || name == "_iter" =>
+            {
                 if self.emit_load_named_var_into_rax(name) {
                     self.emit_indent("mov rdi, rax");
                     let var_type = self.variable_types.get(name).cloned();
@@ -5274,7 +5339,7 @@ impl CodeGenerator {
     /// `rax`. A quoted key (`"name"`) is ALWAYS the literal text, even when a
     /// variable with that name exists — otherwise the key would silently
     /// become the variable's value (e.g. `{"inner": ...}` colliding with a
-    /// later `a map called "inner"` stored the variable's pointer as the key
+    /// later `a map called inner` stored the variable's pointer as the key
     /// and crashed `_map_print`'s C-string read). A non-literal key (a bare
     /// variable holding text) is evaluated normally. (stage 1e2)
     fn generate_text_key(&mut self, key: &Expr) {
@@ -5342,7 +5407,17 @@ impl CodeGenerator {
             
             Expr::Identifier(name) => {
                 if self.emit_load_named_var_into_rax(name) {
+                    // loaded as a variable
+                } else if self.zero_arg_func_return_type(name).is_some() {
+                    // Plan 270 G4: a zero-argument function name in expression
+                    // position is a call, not a variable lookup. The result
+                    // is left in rax (and, for a `value` return, its tag in r11)
+                    // exactly as a written `Expr::FunctionCall` would be.
+                    self.uses_funcs = true;
+                    self.emit_function_call(name, &[]);
                 }
+                // else: the analyzer reported "Unknown variable"; a rejected
+                // program never reaches codegen, so rax is left undefined.
             }
             
             Expr::BinaryOp { left, op, right } => {
@@ -6954,7 +7029,7 @@ impl CodeGenerator {
             // or a function argument): materialize it into a fresh dynamic
             // buffer and yield a pointer to the data area - a NUL-terminated
             // C string usable anywhere a text is. Previously this returned 0,
-            // so `a text called "t" is "{buf}"` silently produced a NULL
+            // so `a text called t is "{buf}"` silently produced a NULL
             // text that printed as empty and crashed execve argv arrays.
             Expr::FormatString { parts } => {
                 self.uses_buffers = true;
@@ -7258,7 +7333,11 @@ impl CodeGenerator {
             Expr::EnvironmentVariableCount | Expr::EnvironmentVariableExists { .. }
             | Expr::EnvironmentVariableEmpty => Some(VarType::Integer),
             Expr::ArgumentAll | Expr::ArgumentRaw => Some(VarType::List),
-            Expr::Identifier(name) => self.variable_types.get(name).cloned(),
+            Expr::Identifier(name) => self
+                .variable_types
+                .get(name)
+                .cloned()
+                .or_else(|| self.zero_arg_func_return_type(name)),
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name)).cloned()
             }
@@ -7390,7 +7469,7 @@ mod tests {
 
     #[test]
     fn whole_list_print_routes_to_list_print() {
-        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint xs.\n");
+        let asm = compile_to_asm("a list called xs is [1, 2, 3].\nprint xs.\n");
         assert!(
             asm.contains("call _list_print"),
             "a whole-list print must route to _list_print, not PRINT_INT"
@@ -7405,7 +7484,7 @@ mod tests {
 
     #[test]
     fn list_format_interpolation_routes_to_list_print() {
-        let asm = compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint \"xs: {xs}\".\n");
+        let asm = compile_to_asm("a list called xs is [1, 2, 3].\nprint \"xs: {xs}\".\n");
         assert!(
             asm.contains("call _list_print"),
             "a {{list}} interpolation must route to _list_print"
@@ -7419,14 +7498,14 @@ mod tests {
         // is tracked separately in list_element_types), so the whole-list
         // print must still take the _list_print branch - not the per-element
         // Mixed dispatch, which would print a single pointer.
-        let asm = compile_to_asm("a list called \"m\" is [1, \"two\", 3.5].\nprint m.\n");
+        let asm = compile_to_asm("a list called m is [1, \"two\", 3.5].\nprint m.\n");
         assert!(asm.contains("call _list_print"));
         assert_eq!(asm.matches("call _list_print").count(), 1);
     }
 
     #[test]
     fn non_list_print_does_not_route_to_list_print() {
-        let asm = compile_to_asm("a number called \"n\" is 5.\nprint n.\n");
+        let asm = compile_to_asm("a number called n is 5.\nprint n.\n");
         assert!(
             !asm.contains("call _list_print"),
             "a non-list print must not route to _list_print"
@@ -7437,7 +7516,7 @@ mod tests {
     fn multiple_list_prints_each_route_to_list_print() {
         // Two whole-list prints (one direct, one interpolated) -> two calls.
         let asm = compile_to_asm(
-            "a list called \"xs\" is [1, 2, 3].\nprint xs.\nprint \"xs: {xs}\".\n",
+            "a list called xs is [1, 2, 3].\nprint xs.\nprint \"xs: {xs}\".\n",
         );
         assert_eq!(asm.matches("call _list_print").count(), 2);
     }
@@ -7453,7 +7532,7 @@ mod tests {
         // Acceptance criterion 1: a list built only from integer literals
         // emits no tag writes and no runtime-tag dispatch.
         let asm =
-            compile_to_asm("a list called \"xs\" is [1, 2, 3].\nprint element 1 of xs.\n");
+            compile_to_asm("a list called xs is [1, 2, 3].\nprint element 1 of xs.\n");
         assert!(
             !asm.contains("mixp_"),
             "a homogeneous int list must not emit mixed-dispatch labels"
@@ -7468,7 +7547,7 @@ mod tests {
     fn mixed_list_emits_dispatch() {
         // Contrast: a genuinely mixed list DOES dispatch on tags.
         let asm =
-            compile_to_asm("a list called \"m\" is [1, \"two\"].\nprint element 1 of m.\n");
+            compile_to_asm("a list called m is [1, \"two\"].\nprint element 1 of m.\n");
         assert!(
             asm.contains("mixp_"),
             "a mixed list read must emit mixed-dispatch labels"
@@ -7481,10 +7560,10 @@ mod tests {
         // appended alongside an integer is tagged STRING (not the old
         // TAG_INTEGER guess), and the list widens to Mixed.
         let asm = compile_to_asm(
-            "To \"greet\" with a number called \"x\".\n  Return a text, \"hi\".\n\
-             a list called \"items\" is [].\n\
+            "To greet with a number called x.\n  Return a text, \"hi\".\n\
+             a list called items is [].\n\
              append 1 to items.\n\
-             append \"greet\" of 0 to items.\n\
+             append greet of 0 to items.\n\
              print element 1 of items.\n\
              print element 2 of items.\n",
         );
@@ -7507,9 +7586,9 @@ mod tests {
         // Unknowable - otherwise the destination stays on the fast path while
         // holding a value of the wrong type.
         let asm = compile_to_asm(
-            "a list called \"m\" is [1, 2].\n\
+            "a list called m is [1, 2].\n\
              append \"hi\" to m.\n\
-             a list called \"out\" is [0, 0].\n\
+             a list called out is [0, 0].\n\
              set element 1 of out to element 3 of m.\n\
              print element 1 of out.\n",
         );
@@ -7525,10 +7604,10 @@ mod tests {
         // that land in the slot. Tagging an unprovable value TAG_STRING makes
         // the tag-dispatching printer dereference whatever integer is there.
         let asm = compile_to_asm(
-            "a list called \"m\" is [\"a\", \"b\"].\n\
+            "a list called m is [\"a\", \"b\"].\n\
              append 42 to m.\n\
-             a text called \"s\" is element 3 of m.\n\
-             a list called \"out\" is [].\n\
+             a text called s is element 3 of m.\n\
+             a list called out is [].\n\
              append s to out.\n",
         );
         assert!(
@@ -7543,8 +7622,8 @@ mod tests {
         // string tag must still be written, or homogeneous text lists would
         // print pointers.
         let asm = compile_to_asm(
-            "a text called \"s\" is \"hello\".\n\
-             a list called \"out\" is [].\n\
+            "a text called s is \"hello\".\n\
+             a list called out is [].\n\
              append s to out.\n",
         );
         assert!(
@@ -7560,10 +7639,10 @@ mod tests {
         // the compiler, so appending its result widens the list to Mixed and
         // reads dispatch on tags (the flip from 1a's optimistic default).
         let asm = compile_to_asm(
-            "To \"five\" with a number called \"x\".\n  Return x add 1.\n\
-             a list called \"items\" is [].\n\
+            "To five with a number called x.\n  Return x add 1.\n\
+             a list called items is [].\n\
              append \"hello\" to items.\n\
-             append \"five\" of 4 to items.\n\
+             append five of 4 to items.\n\
              print element 1 of items.\n\
              print element 2 of items.\n",
         );
@@ -7585,7 +7664,7 @@ mod tests {
         // tag lives in its shadow slot. `item is a text` must load that tag
         // and compare it against TAG_STRING (1) at runtime.
         let asm = compile_to_asm(
-            "a list called \"m\" is [1, \"x\"].\n\
+            "a list called m is [1, \"x\"].\n\
              For each item in m, if item is a text, print item.\n",
         );
         assert!(
@@ -7649,10 +7728,10 @@ mod tests {
         // declaration plus the three exports. In --shared mode every defined
         // label becomes <lib>_<ver>_<func>.
         let src = "\
-Library \"mathkit\" version \"1.0\".\n\
-To \"add two numbers\" with a number called \"n\".\n  Return n add 2.\n\
-To \"greet\".\n  Print \"hello from libmath\".\n\
-To \"makebuf\".\n  Create a buffer called \"b\".\n  Append \"hello\" to b.\n  Return b's size.\n";
+Library mathkit version \"1.0\".\n\
+To 'add two numbers' with a number called n.\n  Return n add 2.\n\
+To greet.\n  Print \"hello from libmath\".\n\
+To makebuf.\n  Create a buffer called b.\n  Append \"hello\" to b.\n  Return b's size.\n";
         let asm = compile_to_asm_shared(src);
         // The three definitions emit the mangled labels...
         assert!(
@@ -7699,9 +7778,9 @@ To \"makebuf\".\n  Create a buffer called \"b\".\n  Append \"hello\" to b.\n  Re
         // mathkit_1_0_greet while the call branches to greet, which the
         // version script does not export.
         let src = "\
-Library \"mathkit\" version \"1.0\".\n\
-To \"double\" with a number called \"n\".\n  Return n add n.\n\
-To \"run\".\n  Print \"double\" of 21.\n";
+Library mathkit version \"1.0\".\n\
+To double with a number called n.\n  Return n add n.\n\
+To run.\n  Print double of 21.\n";
         let asm = compile_to_asm_shared(src);
         assert!(
             asm.contains("call mathkit_1_0_double"),
@@ -7735,10 +7814,10 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // resolve to its own body; here we assert the definitions survive
         // side by side rather than the second overwriting the first.
         let src = "\
-Library \"flags\" version \"0.1\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return n add 1.\n\
-Library \"flags\" version \"1.0\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return n add 100.\n";
+Library flags version \"0.1\".\n\
+To hasflag with a number called n.\n  Return n add 1.\n\
+Library flags version \"1.0\".\n\
+To hasflag with a number called n.\n  Return n add 100.\n";
         let asm = compile_to_asm_shared(src);
         assert!(
             asm.contains("flags_0_1_hasflag:"),
@@ -7781,12 +7860,12 @@ To \"hasflag\" with a number called \"n\".\n  Return n add 100.\n";
         // tables make work. This is the wrong-code bug A1 warned about: with
         // name-keyed tables both calls would resolve against one signature.
         let src = "\
-Library \"flags\" version \"0.1\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return n add 1.\n\
-To \"call0\".\n  Return \"hasflag\" of 5.\n\
-Library \"flags\" version \"1.0\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return n add 100.\n\
-To \"call1\".\n  Return \"hasflag\" of 5.\n";
+Library flags version \"0.1\".\n\
+To hasflag with a number called n.\n  Return n add 1.\n\
+To call0.\n  Return hasflag of 5.\n\
+Library flags version \"1.0\".\n\
+To hasflag with a number called n.\n  Return n add 100.\n\
+To call1.\n  Return hasflag of 5.\n";
         let asm = compile_to_asm_shared(src);
         // `call0` lives in the 0.1 library, so its `hasflag` call targets the
         // 0.1 mangled label; `call1` lives in 1.0, so its call targets 1.0.
@@ -7853,12 +7932,12 @@ To \"call1\".\n  Return \"hasflag\" of 5.\n";
     #[test]
     fn two_versions_differing_signatures_resolve_per_library() {
         let src = "\
-Library \"sig\" version \"0.1\".\n\
-To \"get\" with a number called \"n\".\n  Return a number, n add 1.\n\
-To \"useit\" with a number called \"n\".\n  Print \"get\" of n.\n\n\
-Library \"sig\" version \"1.0\".\n\
-To \"get\" with a number called \"n\".\n  Return a text, \"hello\".\n\
-To \"useit2\" with a number called \"n\".\n  Print \"get\" of n.\n";
+Library sig version \"0.1\".\n\
+To 'get' with a number called n.\n  Return a number, n add 1.\n\
+To useit with a number called n.\n  Print 'get' of n.\n\n\
+Library sig version \"1.0\".\n\
+To 'get' with a number called n.\n  Return a text, \"hello\".\n\
+To useit2 with a number called n.\n  Print 'get' of n.\n";
         let asm = compile_to_asm_shared(src);
         // The call inside each library targets its own `get` (the property
         // A2 scoped; restated here because this is the case that also carries
@@ -7923,10 +8002,10 @@ To \"useit2\" with a number called \"n\".\n  Print \"get\" of n.\n";
         // return type. The emitted `.lib` is pasted in the A3 report; this test
         // pins it to the normative format so a formatting drift fails here.
         let src = "\
-Library \"flags\" version \"0.1\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return a number, n add 1.\n\
-Library \"flags\" version \"1.0\".\n\
-To \"hasflag\" with a number called \"n\".\n  Return a number, n add 100.\n";
+Library flags version \"0.1\".\n\
+To hasflag with a number called n.\n  Return a number, n add 1.\n\
+Library flags version \"1.0\".\n\
+To hasflag with a number called n.\n  Return a number, n add 100.\n";
         let (blocks, exports) = compile_shared_with_libs(src);
 
         // Two Library blocks, one per version, in source order.
@@ -7965,7 +8044,7 @@ To \"hasflag\" with a number called \"n\".\n  Return a number, n add 100.\n";
         // requires, so the entry lines are kept on their `\n` continuation
         // line instead of split across one.
         let lib = super::render_lib_file(&blocks, "libflags.so");
-        let expected = "Library \"flags\" version \"0.1\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n\nLibrary \"flags\" version \"1.0\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To \"hasflag\" with a number called \"n\", returning a number.\n";
+        let expected = "Library flags version \"0.1\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n\nLibrary flags version \"1.0\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n";
         assert_eq!(lib, expected, "emitted .lib must match the normative format");
     }
 
@@ -7976,13 +8055,13 @@ To \"hasflag\" with a number called \"n\".\n  Return a number, n add 100.\n";
         // ` and `, and the return type as `, returning a value` (the `value` ABI
         // is fixed, so the type name alone is complete — no extra fields).
         let src = "\
-Library \"m\" version \"2.0\".\n\
-To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\".\n  Return a value, v.\n";
+Library m version \"2.0\".\n\
+To f with a number called aa and a text called s and a value called v.\n  Return a value, v.\n";
         let (blocks, _exports) = compile_shared_with_libs(src);
         assert_eq!(blocks.len(), 1);
         let lib = super::render_lib_file(&blocks, "libm.so");
         assert!(
-            lib.contains("To \"f\" with a number called \"a\" and a text called \"s\" and a value called \"v\", returning a value."),
+            lib.contains("To f with a number called aa and a text called s and a value called v, returning a value."),
             "multi-param entry joined with ` and `, value param/return by type name only; got:\n{}",
             lib
         );
@@ -7990,33 +8069,33 @@ To \"f\" with a number called \"a\" and a text called \"s\" and a value called \
 
     #[test]
     fn lib_file_parameterless_and_void_return_omits_clauses() {
-        // `To "greet".` — no params, void return — reads as a bare entry with
+        // `To greet.` — no params, void return — reads as a bare entry with
         // no `with` clause and no `, returning` clause. A parameterless function
-        // with a return reads `To "makebuf", returning a number.`. This is the
+        // with a return reads `To makebuf, returning a number.`. This is the
         // parameterless / value-parameter readability the steer asked to settle.
         let src = "\
-Library \"m\" version \"1.0\".\n\
-To \"greet\".\n  Print \"hi\".\n\n\
-To \"makebuf\".\n  Return a number, 7.\n";
+Library m version \"1.0\".\n\
+To greet.\n  Print \"hi\".\n\n\
+To makebuf.\n  Return a number, 7.\n";
         let (blocks, _exports) = compile_shared_with_libs(src);
         let lib = super::render_lib_file(&blocks, "libm.so");
         assert!(
-            lib.contains("To \"greet\"."),
-            "a parameterless void-return function reads `To \"greet\".`; got:\n{}",
+            lib.contains("To greet."),
+            "a parameterless void-return function reads `To greet.`; got:\n{}",
             lib
         );
         assert!(
-            lib.contains("To \"makebuf\", returning a number."),
-            "a parameterless function with a return reads `To \"makebuf\", returning a number.`; got:\n{}",
+            lib.contains("To makebuf, returning a number."),
+            "a parameterless function with a return reads `To makebuf, returning a number.`; got:\n{}",
             lib
         );
     }
 
     #[test]
     fn bodyless_function_does_not_absorb_successor() {
-        // A3 round-trip regression: a bodyless function (`To "greet".` with no
+        // A3 round-trip regression: a bodyless function (`To greet.` with no
         // body and no separating blank line) used to absorb the following
-        // `To "c" ...` as a *nested* FunctionDef. The nested function was still
+        // `To c ...` as a *nested* FunctionDef. The nested function was still
         // emitted (so it appeared in `nm -D`) but was invisible to the top-level
         // walk that collects `.lib` signatures, so the ToC dropped it while the
         // `.so` still exported it — a silent `.lib`/`.so` mismatch and the one
@@ -8025,15 +8104,15 @@ To \"makebuf\".\n  Return a number, 7.\n";
         // successor is collected (not absorbed) and that the ToC count equals
         // the export count — the class-wide invariant, not a name check.
         let src = "\
-Library \"toc\" version \"1.0\".\n\
-To \"a\". Return a number, 1.\n\
-To \"greet\".\n\
-To \"c\". Return a number, 3.\n";
+Library toc version \"1.0\".\n\
+To aa. Return a number, 1.\n\
+To greet.\n\
+To c. Return a number, 3.\n";
         let (blocks, exports) = compile_shared_with_libs(src);
         assert_eq!(blocks.len(), 1);
         let names: Vec<&str> = blocks[0].funcs.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
-            names, vec!["a", "greet", "c"],
+            names, vec!["aa", "greet", "c"],
             "a bodyless `greet` must not absorb `c` into its body"
         );
         // ToC count == export count: each ToC entry, mangled by its block's
@@ -8056,9 +8135,9 @@ To \"c\". Return a number, 3.\n";
         // today. The same source without --shared emits the bare mangled
         // name, no library prefix, no `:function` export.
         let src = "\
-To \"greet\".\n  Print \"hi\".\n\
-To \"double\" with a number called \"n\".\n  Return n add n.\n\
-To \"run\".\n  Print \"double\" of 21.\n";
+To greet.\n  Print \"hi\".\n\
+To double with a number called n.\n  Return n add n.\n\
+To run.\n  Print double of 21.\n";
         let asm = compile_to_asm(src);
         assert!(
             asm.contains("greet:"),
@@ -8085,10 +8164,10 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // truthful. Suppressing it would write the integer tag and print the
         // nested list as a pointer instead of its contents.
         let asm = compile_to_asm(
-            "a list called \"one\" is [1, 2].\n\
-             a list called \"two\" is [3].\n\
+            "a list called one is [1, 2].\n\
+             a list called two is [3].\n\
              set two to one.\n\
-             a list called \"outer\" is [].\n\
+             a list called outer is [].\n\
              append two to outer.\n",
         );
         assert!(
@@ -8105,8 +8184,8 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // produced it has already clobbered r11 - comparing against it would
         // read garbage. The predicate must answer statically instead.
         let asm = compile_to_asm(
-            "To \"opaque\" with a number called \"n\".\n  Return n add 1.\n\
-             if \"opaque\" of 4 is a text, print \"t\".\n",
+            "To opaque with a number called n.\n  Return n add 1.\n\
+             if opaque of 4 is a text, print \"t\".\n",
         );
         assert!(
             !asm.contains("cmp r11,"),
@@ -8121,9 +8200,9 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // tag. It must still fold on the declared type rather than fall
         // through to a runtime compare against an unset r11.
         let asm = compile_to_asm(
-            "a list called \"m\" is [\"a\", \"b\"].\n\
+            "a list called m is [\"a\", \"b\"].\n\
              append 42 to m.\n\
-             a text called \"s\" is element 3 of m.\n\
+             a text called s is element 3 of m.\n\
              print \"sep\".\n\
              if s is a text, print \"t\".\n",
         );
@@ -8135,11 +8214,11 @@ To \"run\".\n  Print \"double\" of 21.\n";
 
     #[test]
     fn type_predicate_static_folds() {
-        // A declared `a number called "x"` is statically integer, so
+        // A declared `a number called x` is statically integer, so
         // `x is a number` folds to true (no runtime compare) and `x is a
         // text` folds to false (a static-false jump, no cmp r11).
         let asm_true = compile_to_asm(
-            "a number called \"x\" is 5.\nif x is a number, print \"n\".\n",
+            "a number called x is 5.\nif x is a number, print \"n\".\n",
         );
         assert!(
             !asm_true.contains("cmp r11,"),
@@ -8147,7 +8226,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         );
 
         let asm_false = compile_to_asm(
-            "a number called \"x\" is 5.\nif x is a text, print \"t\".\n",
+            "a number called x is 5.\nif x is a text, print \"t\".\n",
         );
         assert!(
             !asm_false.contains("cmp r11,"),
@@ -8168,8 +8247,8 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // of prescan_expr_tag / emit_time_expr_tag and the append
         // element-type classifier reached only via `append <value> is a ...`.
         let asm = compile_to_asm(
-            "a list called \"m\" is [1, 2, 3].\n\
-             a list called \"flags\" is [].\n\
+            "a list called m is [1, 2, 3].\n\
+             a list called flags is [].\n\
              For each item in m, append item is a number to flags.\n\
              For each f in flags, if f is a boolean, print \"B\".\n",
         );
@@ -8203,10 +8282,10 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // and the caller pushes a 2nd (tag) word for it. Inside the callee, a
         // predicate classifies by comparing the loaded tag to TAG_INTEGER (0).
         let asm = compile_to_asm(
-            "To \"describe\" with a value called \"v\".\n\
+            "To describe with a value called v.\n\
              If v is a number, print \"N\". Otherwise print \"T\".\n\
-             a list called \"m\" is [1, \"two\"].\n\
-             For each item in m, \"describe\" of item.\n",
+             a list called m is [1, \"two\"].\n\
+             For each item in m, describe of item.\n",
         );
         // Caller pushes the value param's tag word (payload pushed after, on top).
         assert!(
@@ -8232,10 +8311,10 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // and `_dec_call_depth` clobber neither r11 nor the saved words — no
         // r11 spill is needed across the return.
         let asm = compile_to_asm(
-            "To \"id\" with a value called \"v\". Return a value, v.\n\
-             a list called \"m\" is [1, \"two\"].\n\
-             a list called \"out\" is [].\n\
-             For each item in m, append \"id\" of item to out.\n",
+            "To id with a value called v. Return a value, v.\n\
+             a list called m is [1, \"two\"].\n\
+             a list called out is [].\n\
+             For each item in m, append id of item to out.\n",
         );
         // The return path loads the tag from the shadow slot, then the existing
         // `push rax / call _dec_call_depth / pop rax` epilogue. (This sequence
@@ -8260,11 +8339,11 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // and the 7th spills to the stack; an odd stack-word count needs the
         // alignment pad (`sub rsp, 8`), cleaned up by `add rsp, 16` (1 word + pad).
         let asm = compile_to_asm(
-            "To \"f\" with a number called \"a\" and a number called \"b\" and \
-             a number called \"c\" and a number called \"d\" and a number called \
-             \"e\" and a value called \"v\".\n\
+            "To f with a number called aa and a number called b and \
+             a number called c and a number called d and a number called \
+             e and a value called v.\n\
              If v is a text, print \"T\". Otherwise print \"N\".\n\
-             \"f\" of 1 and 2 and 3 and 4 and 5 and \"hi\".\n",
+             f of 1 and 2 and 3 and 4 and 5 and \"hi\".\n",
         );
         // The value arg pushes a tag word then its payload (2 words for 1 param).
         assert!(
@@ -8295,10 +8374,10 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // must forward that tag into the list slot, not zero it. Previously the
         // append None-branch did `xor edx, edx`, dropping the tag.
         let asm = compile_to_asm(
-            "To \"id\" with a value called \"v\". Return a value, v.\n\
-             a list called \"m\" is [1, \"two\"].\n\
-             a list called \"out\" is [].\n\
-             For each item in m, append \"id\" of item to out.\n",
+            "To id with a value called v. Return a value, v.\n\
+             a list called m is [1, \"two\"].\n\
+             a list called out is [].\n\
+             For each item in m, append id of item to out.\n",
         );
         // The append forwards the runtime tag from r11 into the slot.
         assert!(
@@ -8318,7 +8397,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
     #[test]
     fn nested_list_literal_tags_slot_4() {
         let asm = compile_to_asm(
-            "a list called \"nested\" is [1, [2, 3], \"four\"].\n\
+            "a list called nested is [1, [2, 3], \"four\"].\n\
              print element 2 of nested.\n",
         );
         // The nested element is index 1 -> "slot 2"; its slot tag is 4.
@@ -8347,7 +8426,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
     #[test]
     fn homogeneous_list_of_lists_not_mixed() {
         let asm = compile_to_asm(
-            "a list called \"lol\" is [[1, 2], [3, 4]].\n\
+            "a list called lol is [[1, 2], [3, 4]].\n\
              for each row in lol, print row.\n",
         );
         assert!(
@@ -8369,7 +8448,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
     fn is_a_list_predicate_compiles_to_cmp_4() {
         // Runtime path: a mixed-list element read leaves its tag in r11.
         let asm = compile_to_asm(
-            "a list called \"m\" is [1, [2, 3], \"x\"].\n\
+            "a list called m is [1, [2, 3], \"x\"].\n\
              if element 2 of m is a list, print \"L\".\n",
         );
         assert!(
@@ -8381,7 +8460,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // `is a number` (tag 0) is statically false and jumps to the else
         // branch with a comment naming the folded static tag.
         let asm = compile_to_asm(
-            "a list called \"xs\" is [1, 2, 3].\n\
+            "a list called xs is [1, 2, 3].\n\
              if xs is a number\n\
                print \"yes\"\n\
              otherwise\n\
@@ -8402,8 +8481,8 @@ To \"run\".\n  Print \"double\" of 21.\n";
     #[test]
     fn append_list_value_forwards_tag_4() {
         let asm = compile_to_asm(
-            "a list called \"inner\" is [9, 8].\n\
-             a list called \"outer\" is [].\n\
+            "a list called inner is [9, 8].\n\
+             a list called outer is [].\n\
              append inner to outer.\n",
         );
         assert!(
@@ -8447,7 +8526,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
 
     #[test]
     fn map_literal_emits_map_insert() {
-        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\n");
+        let asm = compile_to_asm("a map called m is {\"a\": 1, \"b\": 2}.\n");
         assert!(
             asm.contains("call _map_new"),
             "a map literal must allocate via _map_new"
@@ -8466,7 +8545,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
 
     #[test]
     fn map_literal_empty_emits_map_new() {
-        let asm = compile_to_asm("a map called \"m\" is {}.\nprint m.\n");
+        let asm = compile_to_asm("a map called m is {}.\nprint m.\n");
         assert!(
             asm.contains("call _map_new"),
             "an empty map literal must still allocate via _map_new"
@@ -8504,7 +8583,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // time, so `is a map` folds to constant true and emits NO runtime
         // `cmp r11, 5` - the taken-branch print runs unconditionally.
         let asm = compile_to_asm(
-            "a map called \"m\" is {\"a\": 1}.\nif m is a map, print \"yes\".\n",
+            "a map called m is {\"a\": 1}.\nif m is a map, print \"yes\".\n",
         );
         assert!(
             !asm.contains("cmp r11, 5"),
@@ -8518,7 +8597,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
 
     #[test]
     fn map_access_emits_map_lookup_and_sets_r11() {
-        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's \"a\".\n");
+        let asm = compile_to_asm("a map called m is {\"a\": 1}.\nprint m's \"a\".\n");
         assert!(
             asm.contains("call _map_lookup"),
             "map key access must call _map_lookup"
@@ -8536,7 +8615,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // special path (the runtime owns the flag), but the lookup must be
         // emitted and the error flag must be observable.
         let asm = compile_to_asm(
-            "a map called \"m\" is {\"a\": 1}.\nprint m's \"nope\".\non error print \"miss\".\n",
+            "a map called m is {\"a\": 1}.\nprint m's \"nope\".\non error print \"miss\".\n",
         );
         assert!(asm.contains("call _map_lookup"));
         // The on-error handler reads _last_error.
@@ -8553,7 +8632,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // carries the map with its tag in a shadow slot, and `print v`
         // dispatches on it.
         let asm = compile_to_asm(
-            "To \"show\" with a value called \"v\".\n  print v.\n\na map called \"m\" is {\"a\": 1}.\n\"show\" of m.\n",
+            "To 'show' with a value called v.\n  print v.\n\na map called m is {\"a\": 1}.\n'show' of m.\n",
         );
         assert!(
             asm.contains("cmp r11, 5") && asm.contains("call _map_print"),
@@ -8600,7 +8679,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // A whole-map print routes straight to _map_print (which reads each
         // entry's stored tag); it must NOT emit the mixp_ dispatch for the
         // whole-map print itself.
-        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1, \"b\": 2}.\nprint m.\n");
+        let asm = compile_to_asm("a map called m is {\"a\": 1, \"b\": 2}.\nprint m.\n");
         assert!(
             asm.contains("call _map_print"),
             "whole-map print must route to _map_print"
@@ -8615,7 +8694,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
     fn keys_values_sets_uses_lists() {
         // `map's keys`/`values` build a fresh list, so both list.asm and
         // map.asm must be included.
-        let asm = compile_to_asm("a map called \"m\" is {\"a\": 1}.\nprint m's keys.\n");
+        let asm = compile_to_asm("a map called m is {\"a\": 1}.\nprint m's keys.\n");
         assert!(
             asm.contains("%include \"coreasm/x86_64/map.asm\""),
             "keys/values must include map.asm"
@@ -8643,7 +8722,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // A nothing literal inside a mixed list literal threads tag 6 via
         // prescan_expr_tag / emit_time_expr_tag: the element payload is 0
         // (`xor rax, rax`) and its slot tag byte is written as 6.
-        let asm = compile_to_asm("a list called \"xs\" is [1, nothing, 2].\n");
+        let asm = compile_to_asm("a list called xs is [1, nothing, 2].\n");
         assert!(
             asm.contains("xor rax, rax  ; nothing literal, payload 0"),
             "a nothing literal must emit payload 0 with the nothing-literal comment"
@@ -8661,9 +8740,9 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // through to the numeric `cmp rax, rbx` payload compare (which
         // would make `0 is nothing` true, since a nothing payload is 0).
         let asm = compile_to_asm(
-            "To \"check\" with a value called \"v\".\n\
+            "To check with a value called v.\n\
              If v is nothing, print \"y\".\n\
-             \"check\" of nothing.\n",
+             check of nothing.\n",
         );
         assert!(
             asm.contains("cmp r11, 6"),
@@ -8675,7 +8754,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
         );
         // The static fold: `0 is nothing` is statically false (tag 0) and
         // jumps to the else branch with a comment naming the folded tag.
-        let asm_fold = compile_to_asm("a number called \"n\" is 0.\nif n is nothing, print \"bug\".\n");
+        let asm_fold = compile_to_asm("a number called n is 0.\nif n is nothing, print \"bug\".\n");
         assert!(
             asm_fold.contains("is not nothing folded (static tag 0)"),
             "a static integer (tag 0) must fold `is nothing` to false"
@@ -8692,8 +8771,8 @@ To \"run\".\n  Print \"double\" of 21.\n";
         // tag and must branch on tag 6 to a nothing arm that prints the
         // `nothing` rodata string (mirrors the map/list dispatch arms).
         let asm = compile_to_asm(
-            "To \"show\" with a value called \"v\".\n  print v.\n\n\
-             a map called \"m\" is {\"k\": nothing}.\n\"show\" of m's \"k\".\n",
+            "To 'show' with a value called v.\n  print v.\n\n\
+             a map called m is {\"k\": nothing}.\n'show' of m's \"k\".\n",
         );
         assert!(
             asm.contains("cmp r11, 6") && asm.contains("mixp_nothing"),
@@ -8771,8 +8850,13 @@ To \"run\".\n  Print \"double\" of 21.\n";
         assert_eq!(Token::string_is_keyword("nil"), Some("nothing"));
         assert_eq!(Token::string_is_keyword("empty"), Some("empty"));
 
-        // Using `nothing` as a variable name is rejected at parse time
-        // (both the bare and quoted forms), proving the word is reserved.
+        // Using `nothing` as a variable name: the BARE form is rejected
+        // (reserved keyword). The QUOTED form `'nothing'` is a legal — if
+        // non-canonical — single-word quoted identifier (plan 270 §point 4),
+        // and the S4 codemod relies on this: it rewrites `called "nothing"` to
+        // `'nothing'`, so rejecting the quoted form would make the codemod
+        // emit invalid code. Only the bare keyword is reserved; quoting escapes
+        // it. (A keyword-named function `To 'show'` works the same way.)
         use crate::parser::Parser;
         fn parse_snippet(src: &str) -> Result<(), String> {
             let toks = Lexer::new(src).tokenize();
@@ -8787,11 +8871,7 @@ To \"run\".\n  Print \"double\" of 21.\n";
             bare.unwrap_err().to_lowercase().contains("reserved"),
             "the error must call `nothing` a reserved keyword"
         );
-        let quoted = parse_snippet("a number called \"nothing\" is 1.");
-        assert!(quoted.is_err(), "quoted \"nothing\" as a name must be rejected");
-        assert!(
-            quoted.unwrap_err().to_lowercase().contains("reserved"),
-            "the quoted-form error must call `nothing` a reserved keyword"
-        );
+        let quoted = parse_snippet("a number called 'nothing' is 1.");
+        assert!(quoted.is_ok(), "quoted 'nothing' is a legal non-canonical name; only the bare form is reserved");
     }
 }
