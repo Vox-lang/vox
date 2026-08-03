@@ -66,10 +66,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Use the in-repo coreasm library so local runtime changes are exercised
 # without requiring a system install. The compiler reads VOX_CORE_PATH
-# (with EC_CORE_PATH kept as a deprecated alias) and expects the coreasm
-# directory itself, so point it at $SCRIPT_DIR/coreasm. Without this the
-# override was a no-op and a present system install at
-# /usr/local/share/vox/coreasm would shadow the in-repo runtime.
+# (the documented name; EC_CORE_PATH is a deprecated fallback that prints
+# a note on every run) and expects the coreasm directory itself, so point
+# it at $SCRIPT_DIR/coreasm. Without this the override was a no-op and a
+# present system install at /usr/local/share/vox/coreasm would shadow
+# the in-repo runtime. VOX_CORE_PATH (not EC_CORE_PATH) is used here so
+# the deprecation note does not pollute the output that the name-res
+# "only-one" subcase (and any test asserting empty stderr) captures.
 export VOX_CORE_PATH="$SCRIPT_DIR/coreasm"
 
 VOX_BIN="$SCRIPT_DIR/target/release/vox"
