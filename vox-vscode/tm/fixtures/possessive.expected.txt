@@ -16,25 +16,26 @@
   4: "print"  ->  keyword.other.vox
   4: "'third one'"  ->  variable.other.vox
   4: "s"  ->  punctuation.accessor.vox
-  4: " value "  ->  (none)
+  4: "value"  ->  variable.other.vox
   4: "is"  ->  keyword.operator.vox
   4: "'tall'"  ->  variable.other.vox
   4: "."  ->  (none)
-  5: "person"  ->  (none)
+  5: "person"  ->  variable.other.vox
   5: "'s"  ->  punctuation.accessor.vox
   5: "length"  ->  variable.other.property.vox
   5: "is"  ->  keyword.operator.vox
   5: "'big'"  ->  variable.other.vox
   5: "."  ->  (none)
   6: "print"  ->  keyword.other.vox
-  6: " person"  ->  (none)
+  6: "person"  ->  variable.other.vox
   6: "'s"  ->  punctuation.accessor.vox
   6: "\""  ->  string.quoted.double.vox
   6: "name"  ->  string.quoted.double.vox
   6: "\""  ->  string.quoted.double.vox
   6: "and"  ->  keyword.operator.vox
   6: "'other'"  ->  variable.other.vox
-  6: " too."  ->  (none)
+  6: "too"  ->  variable.other.vox
+  6: "."  ->  (none)
   7: "print"  ->  keyword.other.vox
   7: "'my nums'"  ->  variable.other.vox
   7: "s"  ->  punctuation.accessor.vox
