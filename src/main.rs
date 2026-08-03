@@ -19,15 +19,52 @@ use parser::ast::Statement;
 use analyzer::Analyzer;
 use codegen::CodeGenerator;
 
+/// Resolve the core-path environment override purely from its two inputs, so
+/// the precedence rule can be unit-tested without touching process-global env.
+///
+/// Returns the chosen path (if any env var was set to a non-empty value) and a
+/// flag that is true when only the deprecated `EC_CORE_PATH` was the source —
+/// the caller uses that to emit a one-line deprecation note. `VOX_CORE_PATH`
+/// wins when both are set; an empty value is treated as unset.
+fn resolve_core_env_override(
+    vox_core_path: Option<&str>,
+    ec_core_path: Option<&str>,
+) -> (Option<PathBuf>, bool) {
+    let vox = vox_core_path.filter(|s| !s.is_empty());
+    let ec = ec_core_path.filter(|s| !s.is_empty());
+    let deprecated_only = vox.is_none() && ec.is_some();
+    (vox.or(ec).map(PathBuf::from), deprecated_only)
+}
+
 /// Find the coreasm library directory using industry-standard resolution order:
-/// 1. EC_CORE_PATH environment variable (user override)
+/// 1. VOX_CORE_PATH environment variable (user override; the documented name),
+///    with EC_CORE_PATH accepted as a deprecated alias (see below)
 /// 2. XDG config file (~/.config/vox/config)
 /// 3. System paths (/usr/local/share/vox, /usr/share/vox)
 /// 4. Executable-relative paths (for portable installs)
 /// 5. Current working directory fallback (for development)
+///
+/// The `ec` → `vox` rename left `EC_CORE_PATH` in shell profiles and CI
+/// pipelines; a hard rename would break those silently, surfacing as an
+/// inscrutable "coreasm not found" far from the cause. So `VOX_CORE_PATH` is
+/// the documented name and `EC_CORE_PATH` keeps working as a fallback alias.
+/// When both are set, `VOX_CORE_PATH` wins. When only the deprecated name is
+/// set, a one-line note points the author at the new name so they can migrate
+/// without being nagged mid-build (one line, once, at compile start).
 fn find_coreasm_path() -> Option<PathBuf> {
-    // 1. Environment variable - highest priority
-    if let Ok(core_path) = env::var("EC_CORE_PATH") {
+    // 1. Environment variable - highest priority. VOX_CORE_PATH is the
+    //    documented name; EC_CORE_PATH is the pre-rename alias kept working.
+    let (env_path, deprecate) = resolve_core_env_override(
+        env::var("VOX_CORE_PATH").ok().as_deref(),
+        env::var("EC_CORE_PATH").ok().as_deref(),
+    );
+    if deprecate {
+        eprintln!(
+            "note: EC_CORE_PATH is deprecated; set VOX_CORE_PATH instead \
+             (still read as a fallback for now)."
+        );
+    }
+    if let Some(core_path) = env_path {
         let path = PathBuf::from(&core_path);
         if path.exists() {
             return Some(path);
@@ -38,7 +75,7 @@ fn find_coreasm_path() -> Option<PathBuf> {
             return Some(coreasm);
         }
     }
-    
+
     // 2. XDG config file (~/.config/vox/config)
     if let Some(config_path) = get_config_lib_path() {
         if config_path.exists() {
@@ -379,7 +416,7 @@ fn main() {
             }
         }
         None => {
-            eprintln!("Warning: coreasm library not found. Set EC_CORE_PATH or install to /usr/local/share/vox/");
+            eprintln!("Warning: coreasm library not found. Set VOX_CORE_PATH (or the deprecated EC_CORE_PATH) or install to /usr/local/share/vox/");
             "-I./".to_string()
         }
     };
@@ -578,5 +615,53 @@ fn main() {
         if let Ok(status) = run_result {
             std::process::exit(status.code().unwrap_or(0));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // D5: VOX_CORE_PATH is the documented name and resolves the core path.
+    #[test]
+    fn vox_core_path_resolves() {
+        let (path, deprecate) = resolve_core_env_override(Some("/opt/vox"), None);
+        assert_eq!(path, Some(PathBuf::from("/opt/vox")));
+        assert!(!deprecate);
+    }
+
+    // D5: EC_CORE_PATH still works as a deprecated alias.
+    #[test]
+    fn ec_core_path_still_resolves() {
+        let (path, deprecate) = resolve_core_env_override(None, Some("/opt/ec"));
+        assert_eq!(path, Some(PathBuf::from("/opt/ec")));
+        // Only the deprecated name was present: the caller should note it.
+        assert!(deprecate);
+    }
+
+    // D5: when both are set, VOX_CORE_PATH takes precedence and no
+    // deprecation note is warranted (the author already uses the new name).
+    #[test]
+    fn vox_core_path_takes_precedence_over_ec_core_path() {
+        let (path, deprecate) = resolve_core_env_override(Some("/opt/vox"), Some("/opt/ec"));
+        assert_eq!(path, Some(PathBuf::from("/opt/vox")));
+        assert!(!deprecate);
+    }
+
+    // D5: with neither set, there is no override and nothing to note.
+    #[test]
+    fn neither_env_set_is_no_override() {
+        let (path, deprecate) = resolve_core_env_override(None, None);
+        assert_eq!(path, None);
+        assert!(!deprecate);
+    }
+
+    // D5: an empty value is treated as unset, so a stray `EC_CORE_PATH=`
+    // in the environment does not spuriously trigger the deprecation note.
+    #[test]
+    fn empty_values_are_treated_as_unset() {
+        let (path, deprecate) = resolve_core_env_override(Some(""), Some(""));
+        assert_eq!(path, None);
+        assert!(!deprecate);
     }
 }
