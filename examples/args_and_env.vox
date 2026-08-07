@@ -203,7 +203,7 @@ Print "Shell: ".
 Print the shell.
 
 (Check if variable exists)
-If the environment variable DEBUG exists then,
+If the environment variable "DEBUG" exists then,
     Print "Debug mode is enabled via environment.".
 Otherwise,
     Print "DEBUG environment variable not set.".
