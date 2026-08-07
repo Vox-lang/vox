@@ -1,0 +1,148 @@
+(======================================================================)
+(  VOX // CONWAY'S GAME OF LIFE  --  written as English sentences,     )
+(======================================================================)
+
+a number called WIDTH is 40.
+a number called HEIGHT is 20.
+a number called GENERATIONS is 14.
+
+a buffer called grid is 800 bytes in size.
+a buffer called grid2 is 800 bytes in size.
+
+To wrap with a number called c and a number called d and a number called m.
+  Return a number, {{{c subtract 1} add d add m} modulo m} add 1.
+
+To 'cell index' with a number called r and a number called c.
+  Return a number, {{r subtract 1} multiply WIDTH} add c.
+
+To 'alive neighbors' with a number called r and a number called c.
+  a number called tally is 0.
+  a number called nr is 0.
+  a number called nc is 0.
+  a number called v is 0.
+  a number called idx is 0.
+  the nr is wrap of r and -1 and HEIGHT.
+  the nc is wrap of c and -1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and -1 and HEIGHT.
+  the nc is wrap of c and 0 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and -1 and HEIGHT.
+  the nc is wrap of c and 1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and 0 and HEIGHT.
+  the nc is wrap of c and -1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and 0 and HEIGHT.
+  the nc is wrap of c and 1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and 1 and HEIGHT.
+  the nc is wrap of c and -1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and 1 and HEIGHT.
+  the nc is wrap of c and 0 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  the nr is wrap of r and 1 and HEIGHT.
+  the nc is wrap of c and 1 and WIDTH.
+  the idx is 'cell index' of nr and nc.
+  the v is byte idx of grid.
+  If v is equal to 1 then, the tally is tally add 1.
+  Return a number, tally.
+
+(print row is single-argument (row) -- a loop-expansion candidate.)
+(Each cell is appended straight into a line buffer rather than printed)
+(character-by-character: "but if" is print-only -- confirmed by testing,)
+(it rejects "append" -- and printing per-character can't suppress the)
+(newline inside a but-if chain either, so building the row as one buffer)
+(and printing it once sidesteps both limits at once.)
+
+To 'print row' with a number called row.
+  a buffer called line is 64 bytes in size.
+  For each col from 1 to WIDTH,
+      a number called idx is 'cell index' of row and col,
+      a number called v is byte idx of grid,
+      If v is equal to 1 then, Append "#" to line. Otherwise, Append "." to line.
+      the v is v add 0.
+  Print line.
+
+(step row is also single-argument -- the other loop-expansion candidate.)
+
+To 'step row' with a number called row.
+  For each col from 1 to WIDTH,
+      a number called idx is 'cell index' of row and col,
+      a number called n is 'alive neighbors' of row and col,
+      a number called cur is byte idx of grid,
+      a number called nextval is 0,
+      If cur is equal to 1 and n is equal to 2 then, the nextval is 1.
+      If cur is equal to 1 and n is equal to 3 then, the nextval is 1.
+      If cur is equal to 0 and n is equal to 3 then, the nextval is 1.
+      Set byte idx of grid2 to nextval.
+
+(run generation is single-argument (gen) -- folds header/render/step/copy)
+(into one homemade function, which is what lets the entire simulation)
+(drive loop collapse into a single loop-expansion statement below.)
+
+To 'run generation' with a number called gen.
+  Print "-- Generation {gen} of {GENERATIONS} --".
+  'print row' of each row from 1 to HEIGHT.
+  'step row' of each row from 1 to HEIGHT.
+  copy grid2 to grid.
+
+a number called seedIdx is 0.
+
+(--- Seed: an R-pentomino (chaotic for ~1100 gens in an infinite grid) ---)
+the seedIdx is 'cell index' of 9 and 20.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 9 and 21.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 10 and 19.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 10 and 20.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 11 and 20.
+Set byte seedIdx of grid to 1.
+
+(--- Seed: a glider drifting diagonally in the corner ---)
+the seedIdx is 'cell index' of 2 and 3.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 3 and 4.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 4 and 2.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 4 and 3.
+Set byte seedIdx of grid to 1.
+the seedIdx is 'cell index' of 4 and 4.
+Set byte seedIdx of grid to 1.
+
+Print "========================================".
+Print "  VOX -- Conway's Game of Life".
+Print "  40x20 toroidal grid, R-pentomino + glider".
+Print "========================================".
+
+Create a timer called clock.
+Start the clock.
+
+(The entire simulation drive loop, collapsed to one line: loop expansion)
+(calling a homemade function once per generation, no manual counter.)
+
+'run generation' of each gen from 1 to GENERATIONS.
+
+Stop the clock.
+Print "========================================".
+Print "Ran {GENERATIONS} generations on an 800-cell grid in:".
+Print the clock's duration in milliseconds.
+Print "milliseconds -- native assembly, no VM, no GC, no interpreter.".
