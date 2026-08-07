@@ -5,7 +5,7 @@ consumer is a C driver (driver.c), pinning LANGUAGE.md's "or from C" and
 SYMBOL_MANGLING.md's "must be callable from C" promises. Mangles to
 math_kit_1_0_add_two; add_two(40) must be 42.)
 
-Library "math kit" version "1.0".
+Library 'math kit' version "1.0".
 
-To "add two" with a number called "x".
+To 'add two' with a number called x.
   Return a number, x add 2.
