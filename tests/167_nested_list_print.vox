@@ -3,6 +3,6 @@
  prints recursively with brackets, and `element N of` yields a usable
  child list.)
 
-a list called "nested" is [1, [2, 3], "four"].
+a list called nested is [1, [2, 3], "four"].
 print nested.
 print element 2 of nested.

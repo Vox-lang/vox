@@ -4,7 +4,7 @@
  bit pattern - silent data corruption. Per-slot runtime type tags fix
  this; booleans print as 1/0, matching homogeneous boolean lists.)
 
-a list called "m" is [1, "two", 3.5, yes].
+a list called m is [1, "two", 3.5, yes].
 
 (Iteration dispatches per element)
 For each item in m, print item.
@@ -29,11 +29,11 @@ Set element 2 of m to 22.
 Print element 2 of m.
 
 (Aliases share the same tagged block)
-a list called "alias" is the m.
+a list called alias is the m.
 For each av in alias, print av.
 
 (Homogeneous lists are untouched by all of this)
-a list called "nums" is [10, 20, 30].
+a list called nums is [10, 20, 30].
 For each n in nums, print n.
-a list called "names" is ["ada", "bob"].
+a list called names is ["ada", "bob"].
 For each nm in names, print nm.

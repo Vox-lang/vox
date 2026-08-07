@@ -6,9 +6,9 @@
  live — a fast-path int list would print "hello"'s pointer, not "hello".
  Acceptance criterion 3.)
 
-To "five" with a number called "x". Return x add 1.
-a list called "items" is [].
+To five with a number called x. Return x add 1.
+a list called items is [].
 append "hello" to items.
-append "five" of 4 to items.
+append five of 4 to items.
 print element 1 of items.
 print element 2 of items.

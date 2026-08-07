@@ -1,8 +1,8 @@
 (Test format string precision and floating point expressions)
 
 (Float precision with expressions)
-a float called "pi" is 3.14159265358979.
-a float called "half" is 0.5.
+a float called pi is 3.14159265358979.
+a float called half is 0.5.
 Print "pi: {pi:.2}".
 Print "pi: {pi:.4}".
 Print "pi: {pi:.0}".
@@ -10,15 +10,15 @@ Print "pi/2: {pi divide 2:.3}".
 Print "pi*2: {pi multiply 2:.3}".
 
 (Expressions with formatting)
-a number called "price" is 19.
-a number called "tax_rate" is 0.08.
+a number called price is 19.
+a number called tax_rate is 0.08.
 Print "Price: ${price}".
 Print "Tax: ${price multiply tax_rate:.2}".
 Print "Total: ${price add price multiply tax_rate:.2}".
 
 (Percentage calculations)
-a float called "ratio" is 0.756.
-a float called "completion" is 0.333333.
+a float called ratio is 0.756.
+a float called completion is 0.333333.
 Print "Progress: {ratio multiply 100:.1}%".
 Print "Complete: {completion multiply 100:.0}%".
 Print "Remaining: {100 subtract completion multiply 100:.1}%".

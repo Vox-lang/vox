@@ -7,7 +7,7 @@ call's meaning depend on unrelated lines or change silently on upgrade — the
 exact outcome multi-version support exists to prevent. `other` is a separate
 `.so`/`.lib` pair from `mathkit` so the two imports genuinely disagree.)
 
-Library "other" version "1.0".
+Library other version "1.0".
 
-To "greet".
+To greet.
   Print "hi from other".

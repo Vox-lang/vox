@@ -1,6 +1,6 @@
 (Resizing a dynamic buffer must keep it dynamic so it can auto-grow)
 
-a buffer called "b".
+a buffer called b.
 Resize b to 10 bytes.
 Append "12345678901234567890" to b.
 On error Print "error".

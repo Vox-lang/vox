@@ -2,8 +2,8 @@
  read `from source to dest` as a range and swallow the destination)
 
 (Test 1: Append each element from a list held in a variable)
-a list called "source" is [10, 20, 30].
-a list called "dest" is [].
+a list called source is [10, 20, 30].
+a list called dest is [].
 append each x from source to dest.
 print "After append each from list variable:".
 print dest's length.
@@ -12,7 +12,7 @@ For each n in dest,
 
 (Test 2: The range source form must keep working - it is why D1 was
  ambiguous rather than merely missing)
-a list called "rl" is [].
+a list called rl is [].
 append each n from 1 to 5 to rl.
 print "After append each from range:".
 print rl's length.

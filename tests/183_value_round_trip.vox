@@ -2,9 +2,9 @@
  receives the map payload with tag 5 in its shadow slot, and printing the
  parameter dispatches to _map_print. Acceptance: the map, then done.)
 
-To "show" with a value called "v".
+To 'show' with a value called v.
   print v.
 
-a map called "m" is {"name": "Ada", "age": 36}.
-"show" of m.
+a map called m is {"name": "Ada", "age": 36}.
+'show' of m.
 print "done".

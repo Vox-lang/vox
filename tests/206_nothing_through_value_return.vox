@@ -4,13 +4,13 @@
  read back by the caller), and reading the result must dispatch on that tag
  rather than on the call's static type.)
 
-To "echo" with a value called "v". Return a value, v.
+To echo with a value called v. Return a value, v.
 
-print "echo" of nothing.
-If "echo" of nothing is nothing, print "return round-trip ok".
+print echo of nothing.
+If echo of nothing is nothing, print "return round-trip ok".
 Otherwise print "return round-trip LOST".
 
-a value called "slot" is "echo" of nothing.
+a value called slot is echo of nothing.
 print slot.
 If slot is nothing, print "local ok".
 Otherwise print "local LOST".
@@ -19,7 +19,7 @@ set slot to 5.
 If slot is nothing, print "retag LOST".
 Otherwise print "retag ok".
 
-a list called "L" is [].
-append "echo" of nothing to L.
+a list called L is [].
+append echo of nothing to L.
 append 0 to L.
 print L.

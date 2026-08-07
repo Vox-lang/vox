@@ -8,10 +8,10 @@
  zero byte immediately and printed nothing, even though the buffer's
  own size/length fields and equality checks were completely correct.)
 
-a buffer called "greeting" is "hello".
+a buffer called greeting is "hello".
 Print "embedded: {greeting}".
 
-a buffer called "roomy" is 4096 bytes in size.
+a buffer called roomy is 4096 bytes in size.
 copy "sized buffer content" to roomy.
 Print "embedded sized buffer: {roomy}".
 

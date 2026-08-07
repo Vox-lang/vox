@@ -268,11 +268,11 @@ run_shared_library_test() {
         #     exact content — a drift in the emitted format fails here, not at
         #     A4. `makebuf` is a multi-statement body, so the parser does not
         #     capture its return type (a known A3 gap, see the report); its ToC
-        #     entry reads `To "makebuf".` with no `, returning` clause. The
+        #     entry reads `To makebuf.` with no `, returning` clause. The
         #     other two are single-line defs whose typed `Return a number, ...`
         #     is captured, so they carry `, returning a number`.
         local lib_exp
-        lib_exp=$(printf 'Library "mathkit" version "1.0".\nLocation "./libmath.so".\n\nTable of Contents:\n    To "add two numbers" with a number called "n", returning a number.\n    To "greet".\n    To "makebuf".\n')
+        lib_exp=$(printf 'Library mathkit version "1.0".\nLocation "./libmath.so".\n\nTable of Contents:\n    To '\''add two numbers'\'' with a number called n, returning a number.\n    To greet.\n    To makebuf.\n')
         if ! diff -u <(printf '%s\n' "$lib_exp") "$work/libmath.lib" >"$work/libdiff.log" 2>&1; then
             fail_msg="shared/libmath (.lib content mismatch)"; fail_log="$work/libdiff.log"
         elif [[ "$got" != "$exp" ]]; then
@@ -436,7 +436,7 @@ run_two_version_library_test() {
         #     (`To ... . Return a number, ...`), so each carries `, returning a
         #     number`; one Library block per version, `Location` relative.
         local lib_exp
-        lib_exp=$(printf 'Library "flags" version "0.1".\nLocation "./libflags.so".\n\nTable of Contents:\n    To "hasflag" with a number called "n", returning a number.\n\nLibrary "flags" version "1.0".\nLocation "./libflags.so".\n\nTable of Contents:\n    To "hasflag" with a number called "n", returning a number.\n')
+        lib_exp=$(printf 'Library flags version "0.1".\nLocation "./libflags.so".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n\nLibrary flags version "1.0".\nLocation "./libflags.so".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n')
         if ! diff -u <(printf '%s\n' "$lib_exp") "$work/libflags.lib" >"$work/libdiff.log" 2>&1; then
             fail_msg="two-version flags (.lib content mismatch)"; fail_log="$work/libdiff.log"
         elif [[ "$got" != "$exp" ]]; then
@@ -543,8 +543,8 @@ run_lib_rebuild_test() {
 run_lib_rebuild_test
 
 # A3 table-of-contents completeness (plan 230). A bodyless function —
-# `To "greet".` with no body and no separating blank line — used to absorb the
-# following `To "c" ...` as a nested definition, so `c` was exported by the .so
+# `To greet.` with no body and no separating blank line — used to absorb the
+# following `To c ...` as a nested definition, so `c` was exported by the .so
 # but missing from the .lib ToC: a silent .lib/.so mismatch and the one property
 # this stage exists for. This builds tests/shared/toc_count.vox (a bodyless
 # function in the middle and two bodyless in a row, no blank lines between them
@@ -616,9 +616,9 @@ run_see_consumer_test() {
         # The consumer sits in the same dir as the .lib so `see` resolves
         # relative to the source, and Location resolves relative to the .lib.
         cat >"$work/use_mathkit.vox" <<'EOF'
-see "mathkit" version "1.0" from "./libmathkit.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
 
-A number called "sum" is "add two numbers" of 3 and 4.
+A number called sum is 'add two numbers' of 3 and 4.
 Print the sum.
 EOF
         if ! "$VOX_BIN" "$work/use_mathkit.vox" -o "$work/use_mathkit" >"$work/consumer.log" 2>&1; then
@@ -668,13 +668,13 @@ run_see_two_version_test() {
         fail_msg="see/two-version (.lib not emitted)"
     else
         cat >"$work/use_0_1.vox" <<'EOF'
-see "flags" version "0.1" from "./libflags.lib".
-A number called "r" is "hasflag" of 5.
+see flags version "0.1" from "./libflags.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
         cat >"$work/use_1_0.vox" <<'EOF'
-see "flags" version "1.0" from "./libflags.lib".
-A number called "r" is "hasflag" of 5.
+see flags version "1.0" from "./libflags.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
         local out01 out10
@@ -738,8 +738,8 @@ run_see_diagnostics_test() {
     # 1. missing .lib — names the path tried and mentions --lib-path. The
     #    consumer's own dir has no .lib, so the search fails immediately.
     run_case missing_lib <<'EOF'
-see "flags" version "0.1" from "./nonexistent.lib".
-A number called "r" is "hasflag" of 5.
+see flags version "0.1" from "./nonexistent.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
     if [[ "$err" != *"could not find the library interface file"* ]] \
@@ -752,8 +752,8 @@ EOF
     mkdir -p "$work/absent_lib"
     cp "$work/libflags.lib" "$work/absent_lib/libflags.lib"
     run_case absent_lib <<'EOF'
-see "nope" version "0.1" from "./libflags.lib".
-A number called "r" is "hasflag" of 5.
+see nope version "0.1" from "./libflags.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
     if [[ "$err" != *'has no library named "nope"'* ]] \
@@ -766,8 +766,8 @@ EOF
     mkdir -p "$work/ver_mismatch"
     cp "$work/libflags.lib" "$work/ver_mismatch/libflags.lib"
     run_case ver_mismatch <<'EOF'
-see "flags" version "2.0" from "./libflags.lib".
-A number called "r" is "hasflag" of 5.
+see flags version "2.0" from "./libflags.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
     if [[ "$err" != *'not version "2.0"'* ]] \
@@ -781,8 +781,8 @@ EOF
     mkdir -p "$work/missing_so"
     cp "$work/libflags.lib" "$work/missing_so/libflags.lib"
     run_case missing_so <<'EOF'
-see "flags" version "0.1" from "./libflags.lib".
-A number called "r" is "hasflag" of 5.
+see flags version "0.1" from "./libflags.lib".
+A number called r is hasflag of 5.
 Print the r.
 EOF
     if [[ "$err" != *"does not exist at the resolved path"* ]] \
@@ -794,10 +794,10 @@ EOF
     #    export. The diagnostic NAMES THE SYMBOL (flags_0_1_ghostflag).
     mkdir -p "$work/stale"
     cp "$work/libflags.so" "$work/stale/libflags.so"
-    sed 's/To "hasflag"/To "ghostflag"/' "$work/libflags.lib" >"$work/stale/libflags.lib"
+    sed 's/To hasflag/To ghostflag/' "$work/libflags.lib" >"$work/stale/libflags.lib"
     run_case stale <<'EOF'
-see "flags" version "0.1" from "./libflags.lib".
-A number called "r" is "ghostflag" of 5.
+see flags version "0.1" from "./libflags.lib".
+A number called r is ghostflag of 5.
 Print the r.
 EOF
     if [[ "$err" != *"does not export it"* ]] \
@@ -814,8 +814,8 @@ EOF
     cp "$work/libflags.so" "$work/arity/libflags.so"
     cp "$work/libflags.lib" "$work/arity/libflags.lib"
     run_case arity <<'EOF'
-see "flags" version "0.1" from "./libflags.lib".
-A number called "r" is "hasflag" of 5 and 6.
+see flags version "0.1" from "./libflags.lib".
+A number called r is hasflag of 5 and 6.
 Print the r.
 EOF
     if [[ "$err" != *"expects 1 argument"* ]] || [[ "$err" != *"called with 2"* ]]; then
@@ -829,8 +829,8 @@ EOF
     cp "$work/libflags.so" "$work/wrongtype/libflags.so"
     cp "$work/libflags.lib" "$work/wrongtype/libflags.lib"
     run_case wrongtype <<'EOF'
-see "flags" version "0.1" from "./libflags.lib".
-A number called "r" is "hasflag" of "hello".
+see flags version "0.1" from "./libflags.lib".
+A number called r is hasflag of "hello".
 Print the r.
 EOF
     if [[ "$err" != *"expects a number"* ]] \
@@ -914,7 +914,7 @@ EOF
     #    this would have compiled silently under the old `process_includes`
     #    marker path. The .so check must still fire.
     run_case canonical_so_path <<'EOF'
-see "flags" version "0.1" from "./libflags.so".
+see flags version "0.1" from "./libflags.so".
 Print "hi".
 EOF
     if [[ -f "$work/canonical_so_path/prog" ]] || [[ "$err" != *"see of a .so"* ]] \
@@ -925,11 +925,11 @@ EOF
     # 5. .vox source include is unaffected — compiles, runs, prints the value.
     mkdir -p "$work/vox_ok"
     cat >"$work/vox_ok/helper.vox" <<'EOF'
-To "inc" with a number called "n". Return a number, n add 1.
+To inc with a number called n. Return a number, n add 1.
 EOF
     cat >"$work/vox_ok/prog.vox" <<'EOF'
 see "./helper.vox".
-A number called "r" is "inc" of 41.
+A number called r is inc of 41.
 Print the r.
 EOF
     if ! ( cd "$work/vox_ok" && "$VOX_BIN" prog.vox -o prog >"$work/vox_ok/log" 2>&1 ); then
@@ -994,9 +994,9 @@ run_see_name_resolution_test() {
     #    must WARN naming the shadowed library, and the program must call its
     #    OWN greet (print "local greet wins"), not the library's.
     cat >"$work/shadow.vox" <<'EOF'
-see "mathkit" version "1.0" from "./libmathkit.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
 
-To "greet".
+To greet.
   Print "local greet wins".
 
 greet.
@@ -1023,8 +1023,8 @@ EOF
     # 2. Ambiguity: two imports both exporting `greet` is a compile error
     #    naming both libraries AND both versions.
     cat >"$work/ambig.vox" <<'EOF'
-see "mathkit" version "1.0" from "./libmathkit.lib".
-see "other" version "1.0" from "./libother.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
+see other version "1.0" from "./libother.lib".
 
 greet.
 EOF
@@ -1048,9 +1048,9 @@ EOF
     # 3. Function present in only ONE of two imported versions resolves
     #    correctly and does not warn. `only one` is in parts 1.0 only.
     cat >"$work/onlyone.vox" <<'EOF'
-see "parts" version "0.1" from "./libparts.lib".
-see "parts" version "1.0" from "./libparts.lib".
-A number called "x" is "only one" of 0.
+see parts version "0.1" from "./libparts.lib".
+see parts version "1.0" from "./libparts.lib".
+A number called x is 'only one' of 0.
 Print the x.
 EOF
     if ! "$VOX_BIN" "$work/onlyone.vox" -o "$work/onlyone" >"$work/onlyone_build.log" 2>&1; then

@@ -11,10 +11,10 @@ This example builds a small record, mutates it, iterates its keys and
 values, nests a list and another map, and round-trips the map through a
 `value` parameter to show the tag survives the call.)
 
-To "show" with a value called "v".
+To 'show' with a value called v.
   print v.
 
-a map called "person" is {"name": "Ada", "age": 36, "city": "London"}.
+a map called person is {"name": "Ada", "age": 36, "city": "London"}.
 
 print "record:"
 print person.
@@ -35,18 +35,18 @@ print "values:"
 for each v in person's values
   print v.
 
-a map called "nested" is {"tags": ["a", "b"], "meta": {"id": 1}}.
+a map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
 print "nested:"
 print nested.
-a list called "taglist" is nested's "tags".
+a list called taglist is nested's "tags".
 print "tags:"
 print taglist.
-a map called "meta" is nested's "meta".
+a map called meta is nested's "meta".
 print "meta id:"
 print meta's "id".
 
 print "round-trip through a value param:"
-"show" of person.
+'show' of person.
 
 print person's "nope".
 on error print "looked up a missing key".

@@ -37,7 +37,7 @@ Create a directory called "/proc".
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Create a directory called "<path>"` pattern
+- Parser: Recognize `Create a directory called '<path>'` pattern
 - Codegen: Generate syscall 83 with path argument and mode 0755 (rwxr-xr-x)
 - Error handling: Set error flag on failure
 
@@ -87,7 +87,7 @@ Create symbolic link from "/proc/self/fd" to "/dev/fd".
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Create symbolic link from "<target>" to "<linkpath>"`
+- Parser: Recognize `Create symbolic link from '<target>' to "<linkpath>"`
 - Codegen: Generate syscall 88 with target and linkpath strings
 - Error handling: Set error flag on failure
 
@@ -145,7 +145,7 @@ Execute "/sbin/init" with arguments [].
 ```
 
 **Implementation Requirements:**
-- Parser: Recognize `Execute "<path>" with arguments [<list>]`
+- Parser: Recognize `Execute '<path>' with arguments [<list>]`
 - Codegen: Generate syscall 59 with:
   - path string
   - argv array (program name + arguments + NULL terminator)

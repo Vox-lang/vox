@@ -4,22 +4,22 @@
 Print "=== Hexadecimal Literals ===".
 
 (Numbers can be written in hex using 0x prefix)
-a number called "red" is 0xFF.
-a number called "green" is 0x80.
-a number called "blue" is 0x40.
+a number called red is 0xFF.
+a number called green is 0x80.
+a number called blue is 0x40.
 Print "Red component: {red} ({red:02X})".
 Print "Green component: {green} ({green:02X})".
 Print "Blue component: {blue} ({blue:02X})".
 
 (Combine into RGB value)
-a number called "rgb" is red multiply 65536 add green multiply 256 add blue.
+a number called rgb is red multiply 65536 add green multiply 256 add blue.
 Print "Combined RGB: {rgb:06X}".
 
 Print "".
 Print "=== Binary Literals ===".
 
 (Numbers can be written in binary using 0b prefix)
-a number called "flags" is 0b10110100.
+a number called flags is 0b10110100.
 Print "Flags: {flags} (binary: {flags:b})".
 Print "Flags padded: {flags:08b}".
 
@@ -27,7 +27,7 @@ Print "".
 Print "=== Buffer Byte Manipulation ===".
 
 (Create a buffer for binary data)
-Create a buffer called "data" of size 16.
+Create a buffer called data of size 16.
 
 (Set individual bytes by position - 1-indexed like natural English)
 Set byte 1 of data to 0x48.
@@ -37,7 +37,7 @@ Set byte 4 of data to 0x6C.
 Set byte 5 of data to 0x6F.
 
 (Read individual bytes)
-a number called "first_byte" is byte 1 of data.
+a number called first_byte is byte 1 of data.
 Print "First byte: {first_byte:02X}".
 
 (Print buffer as string - shows "Hello")
@@ -58,11 +58,11 @@ Set byte 6 of data to 0.
 Print "".
 Print "=== Bitwise Operations ===".
 
-a number called "val_a" is 0b11110000.
-a number called "val_b" is 0b10101010.
+a number called val_a is 0b11110000.
+a number called val_b is 0b10101010.
 
 (Bitwise AND)
-a number called "result" is val_a bit-and val_b.
+a number called result is val_a bit-and val_b.
 Print "{val_a:08b} AND {val_b:08b} = {result:08b}".
 
 (Bitwise OR)
@@ -98,9 +98,9 @@ Set byte 7 of data to 0xBA.
 Set byte 8 of data to 0xBE.
 
 Print "Hex dump of first 8 bytes:".
-a number called "i" is 1.
+a number called i is 1.
 While i is less than or equal to 8,
-    a number called "byte_val" is byte i of data,
+    a number called byte_val is byte i of data,
     Print "{byte_val:02X} " without newline,
     increment i.
 Print "".
@@ -109,15 +109,15 @@ Print "".
 Print "=== Practical: Patching a Binary Value ===".
 
 (Read a 32-bit value from buffer - little endian)
-a number called "b0" is byte 1 of data.
-a number called "b1" is byte 2 of data.
-a number called "b2" is byte 3 of data.
-a number called "b3" is byte 4 of data.
-a number called "value32" is b0 add b1 multiply 256 add b2 multiply 65536 add b3 multiply 16777216.
+a number called b0 is byte 1 of data.
+a number called b1 is byte 2 of data.
+a number called b2 is byte 3 of data.
+a number called b3 is byte 4 of data.
+a number called value32 is b0 add b1 multiply 256 add b2 multiply 65536 add b3 multiply 16777216.
 Print "32-bit value at offset 0: {value32:08X}".
 
 (Write a new 32-bit value - little endian)
-a number called "newval" is 0x12345678.
+a number called newval is 0x12345678.
 Set byte 1 of data to newval bit-and 0xFF.
 Set byte 2 of data to newval bit-shift-right 8 bit-and 0xFF.
 Set byte 3 of data to newval bit-shift-right 16 bit-and 0xFF.
@@ -131,7 +131,7 @@ While i is less than or equal to 4,
     increment i.
 Print "".
 
-a buffer called "buf" is "data".
+a buffer called buf is data.
 Print "Buffer contents: ".
 Print buf.
 set byte 1 of buf to 'A'. (Add security restraints, CANNOT access out of bounds, should be impossible)

@@ -7,7 +7,7 @@ For each x in [],
 print "After empty loop".
 
 (Test 2: Append each from empty list - should do nothing)
-a list called "result" is [100].
+a list called result is [100].
 append each x from [] to result.
 print "After append from empty:".
 print result's length.
@@ -19,7 +19,7 @@ For each n from 1 to 3,
   print the n.
 
 (Test 4: Variable shadowing - loop variable shadows outer)
-a number called "x" is 999.
+a number called x is 999.
 print "Before loop x:".
 print the x.
 For each x in [1, 2, 3],
@@ -28,7 +28,7 @@ print "After loop x:".
 print the x.
 
 (Test 5: Append each from range)
-a list called "range_nums" is [].
+a list called range_nums is [].
 append each n from 1 to 4 to range_nums.
 print "Range append result:".
 print range_nums's length.

@@ -4,7 +4,7 @@
  safely (no stack overflow). The `on error` handler observes the flag.
  Acceptance: 64 nested levels, then ..., then truncated.)
 
-a map called "m" is {"a": 1}.
+a map called m is {"a": 1}.
 set m's "self" to m.
 print m.
 on error print "truncated".

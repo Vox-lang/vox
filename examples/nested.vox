@@ -2,11 +2,11 @@
  extracts a child, and classifies elements with `is a list`.
  Demonstrates Collections stage 1e1: a list element may be a list.)
 
-a list called "data" is [1, [2, 3], "four", [5, [6, 7]]].
+a list called data is [1, [2, 3], "four", [5, [6, 7]]].
 print data.
 
 (Extract a child list and use it as a list.)
-a list called "child" is element 2 of data.
+a list called child is element 2 of data.
 print child.
 print child's length.
 for each y in child, print y.

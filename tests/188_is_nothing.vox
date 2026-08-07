@@ -8,7 +8,7 @@ if nothing is nothing, print "nothing is nothing".
 if 0 is nothing, print "0 is nothing (BUG)".
 if 0 is not nothing, print "0 is not nothing".
 
-To "check" with a value called "v".
+To check with a value called v.
   if v is nothing, print "v is nothing".
 
-"check" of nothing.
+check of nothing.

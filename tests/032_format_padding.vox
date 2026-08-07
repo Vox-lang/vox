@@ -1,17 +1,17 @@
 (Test format string padding and alignment with expressions)
 
 (Integer padding with expressions)
-a number called "small" is 42.
-a number called "big" is 1234.
+a number called small is 42.
+a number called big is 1234.
 Print "Padded: [{small:6}]".
 Print "Zero-pad: [{small:06}]".
 Print "Big padded: [{big:8}]".
 Print "Sum padded: [{small add big:8}]".
 Print "Diff padded: [{big subtract small:8}]".
 (Number bases with expressions)
-a number called "aa" is 10.
-a number called "bb" is 6.
-a number called "cc" is 60
+a number called aa is 10.
+a number called bb is 6.
+a number called cc is 60
 Print "Decimal: {aa}".
 Print "Hex: {aa:x}".
 Print "Binary: {aa:b}".

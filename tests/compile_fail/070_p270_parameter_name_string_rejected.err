@@ -1,0 +1,3 @@
+expected a name, found a string literal
+strings are data; names are bare or 'single-quoted'
+help: write `x`

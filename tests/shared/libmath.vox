@@ -25,15 +25,15 @@ returns here are typed rather than bare. That is byte-identical for the `.so`
 return type without it. `greet` has no Return and stays void, exercising the
 parameterless-void entry `To "greet".` in the ToC.)
 
-Library "mathkit" version "1.0".
+Library mathkit version "1.0".
 
-To "add two numbers" with a number called "n".
+To 'add two numbers' with a number called n.
   Return a number, n add 2.
 
-To "greet".
+To greet.
   Print "hello from libmath".
 
-To "makebuf".
-  Create a buffer called "b".
+To makebuf.
+  Create a buffer called b.
   Append "hello" to b.
   Return a number, b's size.

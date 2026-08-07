@@ -27,6 +27,14 @@ pub struct CompileError {
     pub hint_location: Option<(usize, usize)>,  // (column, length) for visual connector
     pub suggestion: Option<String>,
     pub error_code: Option<String>,
+    /// Plan 270 §S1.5: a labelled underline for the "string in identifier
+    /// position" diagnostic. Replaces the bare `^--- here` pointer with
+    /// `^^^…^^^ {note}` spanning the offending token.
+    pub underline_note: Option<(usize, String)>,
+    /// Plan 270 §S1.5: a `help:` line rendered after the pointer (and a blank
+    /// gutter line), carrying the migration suggestion. Rendered as plain
+    /// text so `.err` fixtures can assert on it verbatim.
+    pub help_line: Option<String>,
 }
 
 impl CompileError {
@@ -38,6 +46,8 @@ impl CompileError {
             hint_location: None,
             suggestion: None,
             error_code: None,
+            underline_note: None,
+            help_line: None,
         }
     }
 
@@ -51,7 +61,7 @@ impl CompileError {
         self.hint = Some(hint.to_string());
         self
     }
-    
+
     #[allow(dead_code)]
     pub fn with_hint_location(mut self, column: usize, length: usize) -> Self {
         self.hint_location = Some((column, length));
@@ -66,6 +76,19 @@ impl CompileError {
     #[allow(dead_code)]
     pub fn with_code(mut self, code: &str) -> Self {
         self.error_code = Some(code.to_string());
+        self
+    }
+
+    /// Plan 270 §S1.5: attach a labelled underline (`^^^ {note}`) spanning
+    /// `length` characters starting at the error's location column.
+    pub fn with_underline_note(mut self, length: usize, note: &str) -> Self {
+        self.underline_note = Some((length, note.to_string()));
+        self
+    }
+
+    /// Plan 270 §S1.5: attach a `help:` line with the migration suggestion.
+    pub fn with_help_line(mut self, help: &str) -> Self {
+        self.help_line = Some(help.to_string());
         self
     }
 }
@@ -122,9 +145,16 @@ impl fmt::Display for CompileError {
             // Pointer line
             let pointer_offset = if loc.column > 0 { loc.column - 1 } else { 0 };
             let spaces = " ".repeat(pointer_offset);
-            write!(f, "  {:width$} {}| {}{}^--- here{}\n", 
-                "", BLUE, spaces, RED, RESET, width = line_num_width)?;
-            
+            if let Some((len, ref note)) = self.underline_note {
+                // Plan 270 §S1.5: labelled underline spanning the token.
+                let carets = "^".repeat(len);
+                write!(f, "  {:width$} {}| {}{}{} {}\n",
+                    "", BLUE, spaces, RED, carets, note, width = line_num_width)?;
+            } else {
+                write!(f, "  {:width$} {}| {}{}^--- here{}\n",
+                    "", BLUE, spaces, RED, RESET, width = line_num_width)?;
+            }
+
             // Draw connector to hint if we have a hint_location
             if let (Some(ref hint), Some((hint_col, hint_len))) = (&self.hint, self.hint_location) {
                 let hint_offset = if hint_col > 0 { hint_col - 1 } else { 0 };
@@ -140,6 +170,14 @@ impl fmt::Display for CompileError {
                     " ".repeat(hint_offset), BLUE, underline, CYAN, RESET, hint)?;
                 
                 return Ok(());  // Skip normal hint display
+            }
+
+            // Plan 270 §S1.5: a dedicated `help:` line, rendered after the
+            // pointer with a blank gutter line. Plain text (no colour) so
+            // `tests/compile_fail/*.err` fixtures can assert it verbatim.
+            if let Some(ref help) = self.help_line {
+                write!(f, "  {:width$} {}|\n", "", BLUE, width = line_num_width)?;
+                write!(f, "  help: {}\n", help)?;
             }
         }
 

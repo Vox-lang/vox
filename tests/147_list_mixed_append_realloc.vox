@@ -4,12 +4,12 @@
  the new block alongside the values - otherwise the early string and
  float elements would print as raw integers after growth.)
 
-a list called "stuff" is [].
+a list called stuff is [].
 append 10 to stuff.
 append "eleven" to stuff.
 append 12.5 to stuff.
 append yes to stuff.
-a number called "i" is 1.
+a number called i is 1.
 While i is less than or equal to 9, append i to stuff, increment i.
 
 Print "len: {stuff's length}".

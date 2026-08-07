@@ -1,0 +1,2 @@
+a list called items is [1, 2, 3].
+print element 1 of "items".

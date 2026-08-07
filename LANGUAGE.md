@@ -11,22 +11,23 @@ This document defines the syntax and semantics of Vox (sentence based code).
 1. [Basics](#basics)
 2. [Types](#types)
 3. [Variables](#variables)
-4. [Functions](#functions)
-5. [Expressions](#expressions)
-6. [Control Flow](#control-flow)
-7. [Lists and Collections](#lists-and-collections)
-8. [Input/Output](#inputoutput)
-9. [File I/O](#file-io)
-10. [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
-11. [Time and Timers](#time-and-timers)
-12. [Command-Line Arguments](#command-line-arguments)
-13. [Environment Variables](#environment-variables)
-14. [Operators](#operators)
-15. [Keywords](#keywords)
-16. [Examples](#examples)
-17. [Libraries and Imports](#libraries-and-imports)
-18. [Compiler Usage](#compiler-usage)
-19. [Grammar Summary](#grammar-summary)
+4. [Names and strings](#names-and-strings)
+5. [Functions](#functions)
+6. [Expressions](#expressions)
+7. [Control Flow](#control-flow)
+8. [Lists and Collections](#lists-and-collections)
+9. [Input/Output](#inputoutput)
+10. [File I/O](#file-io)
+11. [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
+12. [Time and Timers](#time-and-timers)
+13. [Command-Line Arguments](#command-line-arguments)
+14. [Environment Variables](#environment-variables)
+15. [Operators](#operators)
+16. [Keywords](#keywords)
+17. [Examples](#examples)
+18. [Libraries and Imports](#libraries-and-imports)
+19. [Compiler Usage](#compiler-usage)
+20. [Grammar Summary](#grammar-summary)
 
 ---
 
@@ -56,7 +57,7 @@ print "Hello".
 
 print "World". (end of line comment)
 
-a number (the counter) called "x" is 5.
+a number (the counter) called x is 5.
 
 (Multi-line comments
 work naturally across
@@ -158,7 +159,7 @@ print each number from [1, 2, 3].
 print each number from 1 to 15.
 
 (Call a user function for each item)
-"process" of each item from mylist, print "done".
+process of each item from mylist, print "done".
 
 (Open a file for each argument)
 open a file for reading called source at each filename from arguments's all,
@@ -173,7 +174,7 @@ The action executes once per item in the collection or range, with the loop vari
 
 **Works with:**
 - `print each X from Y` - print each item
-- `"function" of each X from Y` - call function for each item  
+- `function of each X from Y` - call function for each item  
 - `open ... at each X from Y` - open file for each path
 - Any action that takes an argument
 
@@ -200,7 +201,7 @@ print each number from 1 to 10,
 (With for-each loop)
 For each number from 1 to 15,
   print the number,
-    but if "divisible" of the number and 3 is true print "divisible by 3".
+    but if divisible of the number and 3 is true print "divisible by 3".
 ```
 
 **Syntax:** `print each <var> from <collection>, but if <condition> print <value>, but if <condition> print <value>.`
@@ -222,7 +223,7 @@ For each number from 1 to 15,
 The `treating X as Y` clause performs inline value substitution - like bash's `${var//X/Y}` but readable.
 
 ```
-(Replace "-" with "/dev/stdin" for each filename)
+(Replace '-' with "/dev/stdin" for each filename)
 open a file for reading called source at each filename from arguments's all treating "-" as "/dev/stdin",
   read from source into content,
   write content to output,
@@ -232,7 +233,7 @@ open a file for reading called source at each filename from arguments's all trea
 print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
-"process" of each file from files treating "-" as "/dev/stdin".
+process of each file from files treating "-" as "/dev/stdin".
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
@@ -265,11 +266,11 @@ If the loop variable equals `<match>`, it's replaced with `<replacement>` for th
 Use `a` or `an` before the type to declare a new variable:
 
 ```
-a number called "x" is 5.
-a text called "name" is "Alice".
-a boolean called "done" is true.
-a list called "nums" is [1, 2, 3].
-a map called "person" is {"name": "Alice", "age": 30}.
+a number called x is 5.
+a text called name is "Alice".
+a boolean called done is true.
+a list called nums is [1, 2, 3].
+a map called person is {"name": "Alice", "age": 30}.
 ```
 
 ### Declaration with Set/Create
@@ -290,9 +291,62 @@ the counter is the counter add 1.
 
 ### Naming Rules
 
-- Variable names are enclosed in **quotes** when declared: `called "variableName"`
-- When referenced, use the name without quotes: `the x`, `the counter`
-- Names can contain spaces: `called "my variable"`
+A name is an **identifier**, never a string literal. Three forms, no overlap,
+no context-sensitivity:
+
+| Form | Meaning | Example |
+|---|---|---|
+| `"..."` | **String literal. Always. Everywhere.** | `print "hello".` |
+| `bare_word` | Identifier, single word | `a number called total is 5.` |
+| `'multi word'` | Identifier, contains spaces | `a number called 'total items' is 5.` |
+
+1. **`"..."` is never an identifier**, in any position. Where an identifier is
+   expected and a string literal is found, that is a compile error.
+2. A **bare identifier** matches `[A-Za-z_][A-Za-z0-9_]*` and is not a reserved
+   keyword. Reserved keywords remain rejected as names — so a flag named
+   `number` or `version` must be written `'number'` / `'version'`.
+3. A **quoted identifier** is `'` … `'` containing **two or more characters**
+   and no newline. Exactly one character between single quotes remains a
+   **character literal** (`'A'`) — that is why single-character quoted
+   identifiers do not exist. Write `x`, not `'x'`.
+4. Single-word quoted identifiers (`'total'`) are legal but non-canonical; they
+   lex identically to the bare form. Prefer bare.
+5. **Possessive.** `'name's length` is canonical: after a closing identifier
+   quote, an `s` immediately following (no space) and itself followed by a
+   non-identifier character lexes as the possessive marker. `'name''s` also
+   works; both are accepted.
+6. **These are data, not names, and stay double-quoted:** map keys
+   (`person's "name"`), file paths (`see "./utils.vox"`), flag aliases
+   (`"-v"`), and versions (`version "1.0"`).
+
+See [Names and strings](#names-and-strings) for why one token cannot mean two
+things.
+
+---
+
+## Names and strings
+
+Before 0.3.0, a double-quoted token was *both* a string literal and an
+identifier, decided by position. That single overload is the root of a family
+of silent wrong answers. This is the one that decided the change:
+
+```vox fragment
+a number called "x" is "get five".
+print x.                              (prints: 4198480)
+```
+
+The author meant to call the function `get five` and store its result in `x`.
+But `"get five"` in expression position was read as a string literal — a
+pointer to the function's code — and `x` quietly received that pointer as a
+number. A function pointer, printed as a number, silently. No error, no
+warning; the program runs and gives a wrong answer that looks like data.
+
+That is what one token meaning two things costs. So in 0.3.0 the two are
+split: `"..."` is a string literal everywhere, and a name is a bare or
+single-quoted identifier. The program above is now a compile error — `is
+"get five"` rejects the string in identifier position and points you at
+`'get five'`. The cost is that every program written before 0.3.0 must be
+migrated; the payoff is that this class of silent wrong answer is gone.
 
 ---
 
@@ -300,14 +354,14 @@ the counter is the counter add 1.
 
 ### Definition
 
-```
-To "<function name>" with a <type> called "<param1>" and a <type> called "<param2>". Return a <type>, <expression>.
+```vox fragment
+To <function name> with a <type> called <param1> and a <type> called <param2>. Return a <type>, <expression>.
 ```
 
 No-parameter functions are also valid:
 
 ```
-To "show version".
+To 'show version'.
   Print "1.0.0".
 
 To ping.
@@ -316,15 +370,15 @@ To ping.
 
 **Examples:**
 ```
-To "add numbers" with a number called "x" and a number called "y". Return a number, the x add y.
+To 'add numbers' with a number called x and a number called y. Return a number, the x add y.
 
-To "check divisibility" of a number called "divisor" and a number called "dividend". Return a boolean, the divisor modulo the dividend is 0.
+To 'check divisibility' of a number called divisor and a number called dividend. Return a boolean, the divisor modulo the dividend is 0.
 ```
 
 **Rules:**
-- Function name can be quoted (`"add numbers"`) or unquoted single word (`add`)
+- Function name is a bare single word (`add`) or a single-quoted multi-word name (`'add numbers'`)
 - Parameters are optional. If present, introduce them with `with` or `of` (both work identically)
-- Parameters use `a <type> called "<name>"` syntax (name can be unquoted if single word)
+- Parameters use `a <type> called <name>` syntax (bare if single-word, `'single-quoted'` if it contains spaces)
 - Multiple parameters joined with `and`
 - Return type follows `Return a <type>,`
 
@@ -345,10 +399,10 @@ its payload across the call (a map rides this as payload + tag 5); see
 below.
 
 ```
-To "contains token" of a buffer called "hay" and a text called "devname".
-  a buffer called "needle" is " {devname}\n".
-  a number called "H" is hay's size.
-  a number called "b" is byte 1 of hay.
+To 'contains token' of a buffer called hay and a text called devname.
+  a buffer called needle is " {devname}\n".
+  a number called H is hay's size.
+  a number called b is byte 1 of hay.
   ...
 ```
 
@@ -361,7 +415,7 @@ Key points:
   initializer form, including format strings (`is " {devname}\n"`).
 - A function call's declared return type is tracked through
   assignment: reassigning an existing variable from a call
-  (`the label is "classify" of n.`) preserves the correct type.
+  (`the label is classify of n.`) preserves the correct type.
 
 (All three of the above were fixed in v0.1.16 - in earlier versions,
 buffer-typed parameters and function-local buffer declarations with
@@ -372,28 +426,28 @@ function call silently corrupted the variable's tracked type.)
 
 In expressions, use the function name followed by `of`, `to`, `with`, or `on` and arguments:
 
-```
-"add numbers" of 3 and 5
-"check divisibility" of the number and 6
+```vox fragment
+'add numbers' of 3 and 5
+'check divisibility' of the number and 6
 calculate with x and y
 ```
 
 **Rules:**
-- Function name can be quoted (`"add numbers"`) or unquoted single word (`calculate`)
+- Function name is a bare single word (`calculate`) or a single-quoted multi-word name (`'add numbers'`)
 - For calls with arguments, use `of`, `to`, `with`, or `on`
 - Multiple arguments separated by `and`
 
 Calls with no arguments can be written directly:
 
-```
-"show version".
+```vox fragment
+'show version'.
 ping.
 ```
 
 ### Calling as Statement
 
-```
-Print "add numbers" of x and y.
+```vox fragment
+Print 'add numbers' of x and y.
 ```
 
 ---
@@ -423,20 +477,20 @@ Print "add numbers" of x and y.
 
 ### Variable Reference
 
-- `the x` - references variable named "x"
+- `the x` - references the variable `x`
 - `the number` - references loop iterator (inside `for each`)
 - `x` - direct identifier reference
 
 ### Arithmetic
 
-```
+```vox fragment
 the x add 5
 y subtract 3
 the lhs multiply rhs
 total divide 2
 x modulo 3
 {x add y} multiply z
-{"fibonacci" of n subtract 1} add {"fibonacci" of n subtract 2}
+{fibonacci of n subtract 1} add {fibonacci of n subtract 2}
 ```
 
 Note: `the` is optional before variable names in expressions.
@@ -447,7 +501,7 @@ Comma-separated arithmetic continuation (for example `..., add ...`) is not vali
 
 ### Comparisons
 
-```
+```vox fragment
 the x is greater than 5
 y is less than 10
 lhs is equal to rhs
@@ -458,7 +512,7 @@ Note: `the` is optional before variable names in comparisons.
 
 ### Property Checks
 
-```
+```vox fragment
 the x is even
 the y is odd
 the z is positive
@@ -469,7 +523,7 @@ the list is empty
 
 ### Logical Operators
 
-```
+```vox fragment
 <condition> and <condition>    ; true if both conditions are true
 <condition> or <condition>     ; true if either condition is true
 not <condition>                ; true if condition is false
@@ -479,18 +533,18 @@ not <condition>                ; true if condition is false
 
 Test multiple variables against the same value using comma-separated subjects:
 
-```
+```vox fragment
 if x, y, and z are true
 if a, b, and c are not false
-if "door open", lift_moving, and lift_full are not true
+if 'door open', lift_moving, and lift_full are not true
 ```
 
 **Expansion:**
-```
+```vox fragment
 if x, y, and z are true
 ```
 expands internally to:
-```
+```vox fragment
 if x is true and y is true and z is true
 ```
 
@@ -505,7 +559,7 @@ if x is true and y is true and z is true
 Convert values between types using the `as` or `in` keywords.
 
 **Syntax:**
-```
+```vox fragment
 <value> as a <type>
 <value> as <type>
 <value> in <unit>
@@ -549,19 +603,19 @@ character-per-digit representation.
 
 ```
 (Hex string to number)
-a text called "hexstr" is "3fa2c1e4".
-a number called "n" is hexstr as a hex number.
+a text called hexstr is "3fa2c1e4".
+a number called n is hexstr as a hex number.
 
 (Arbitrary base, fused or spaced form - both work)
-a text called "s" is "6543".
-a number called "n2" is s as a base7 number.
-a number called "n3" is s as a base 7 number.
+a text called s is "6543".
+a number called n2 is s as a base7 number.
+a number called n3 is s as a base 7 number.
 
 (Negative numbers and uppercase hex digits both work)
-a text called "neg" is "-1a".
-a number called "n4" is neg as a hex number.   (-26)
-a text called "upper" is "FF".
-a number called "n5" is upper as a hex number. (255)
+a text called neg is "-1a".
+a number called n4 is neg as a hex number.   (-26)
+a text called upper is "FF".
+a number called n5 is upper as a hex number. (255)
 ```
 
 Like the base-10 case, parsing **stops at the first character invalid
@@ -574,20 +628,20 @@ first character (e.g. `"abc" as a base5 number`, since `a`'s value of
 
 ```
 (Float to number - truncates)
-a float called "pi" is 3.14159.
-a number called "pi truncated" is pi as a number.
+a float called pi is 3.14159.
+a number called 'pi truncated' is pi as a number.
 
 (Number to text)
-a number called "age" is 25.
-a text called "agestr" is the age as text.
+a number called age is 25.
+a text called agestr is the age as text.
 
 (Text to number - parsing)
-a text called "userinput" is "123".
-a number called "parsed" is the userinput as a number.
+a text called userinput is "123".
+a number called parsed is the userinput as a number.
 
 (Boolean to number)
-a boolean called "done" is true.
-a number called "done num" is the done as a number.
+a boolean called done is true.
+a number called 'done num' is the done as a number.
 
 (Inline casting)
 Print 3.14159 as a number.
@@ -615,8 +669,8 @@ zero-pad format specifier:
 
 ```
 (Pad to 2 digits - for times like 09:05)
-a number called "h" is 9.
-a text called "hpadded" is "{h:02}".
+a number called h is 9.
+a text called hpadded is "{h:02}".
 Print the hpadded.  (prints "09")
 ```
 
@@ -639,17 +693,17 @@ Print the hpadded.  (prints "09")
 
 ### If Statement
 
-```
+```vox fragment
 If <condition> then, <statement>.
 ```
 
 **With else:**
-```
+```vox fragment
 If <condition> then, <statement>. Otherwise, <statement>.
 ```
 
 **With else-if:**
-```
+```vox fragment
 If <condition> then, <statement>. But if <condition> then, <statement>. Otherwise, <statement>.
 ```
 
@@ -659,7 +713,7 @@ If <condition> then, <statement>. But if <condition> then, <statement>. Otherwis
 - Use a period to end the full `if` sentence.
 - A period before `but if`/`otherwise` is treated as part of the same if-chain when the chain continues.
 
-```
+```vox fragment
 If ready then, print "a", print "b", print "c".
 ```
 
@@ -669,26 +723,26 @@ If ready then, print "a", print "b", print "c".
 
 ### While Loop
 
-```
+```vox fragment
 While <condition>, <statements>.
 ```
 
 **Single-line example:**
-```
+```vox fragment
 While the counter is less than 10, print the counter, increment the counter.
 ```
 
 **Multi-action loops** are comma-separated actions within one sentence:
  
-```
+```vox fragment
 While x is less than 5, print x, increment x, print "looping".
 ```
 
 **Loops inside functions** work naturally:
 ```
-To "sum" of a number called "n".
-  a number called "total" is 0.
-  a number called "i" is 1.
+To sum of a number called n.
+  a number called total is 0.
+  a number called i is 1.
   While i is less than or equal to n, total is total add i, i is i add 1.
   Return a number, total.
 ```
@@ -696,7 +750,7 @@ To "sum" of a number called "n".
 ### For Each Loop
 
 **Range-based:**
-```
+```vox fragment
 For each number from <start> to <end>, <statement>.
 ```
 
@@ -709,19 +763,19 @@ For each number from 1 to 10, print the number.
 - `the number` refers to the current iteration value
 
 **List-based:**
-```
+```vox fragment
 For each <variable> in <list>, <statement>.
 ```
 
 **Example:**
 ```
-a list called "nums" is [1, 2, 3].
+a list called nums is [1, 2, 3].
 For each n in nums, print the n.
 ```
 
 ### Loop Control
 
-```
+```vox fragment
 Break.
 Continue.
 ```
@@ -730,7 +784,7 @@ Continue.
 
 Immediately exit the program with an exit code:
 
-```
+```vox fragment
 Exit <code>.
 ```
 
@@ -765,10 +819,10 @@ Decrement the value.
 Create lists with square brackets containing comma-separated values:
 
 ```
-a list called "nums" is [1, 2, 3].
-a list called "names" is ["Alice", "Bob", "Charlie"].
-a list called "mixed" is [1, "two", 3].
-a list called "emptylist" is [].
+a list called nums is [1, 2, 3].
+a list called names is ["Alice", "Bob", "Charlie"].
+a list called mixed is [1, "two", 3].
+a list called emptylist is [].
 ```
 
 **Key points:**
@@ -786,7 +840,7 @@ elements carry a small per-slot type tag at runtime, so every element
 prints and reads back as what it is:
 
 ```
-a list called "m" is [1, "two", 3.5, yes].
+a list called m is [1, "two", 3.5, yes].
 For each item in m, print item.
 (prints: 1, two, 3.5, 1)
 ```
@@ -802,10 +856,10 @@ widens the list to mixed, so the element is always read back as what it
 is rather than silently reinterpreted:
 
 ```
-To "five" with a number called "x". Return x add 1.
-a list called "items" is [].
-append "hello" to items.
-append "five" of 4 to items.
+To five with a number called x. Return x add 1.
+a list called items is [].
+append hello to items.
+append five of 4 to items.
 print element 1 of items.   (prints: hello)
 print element 2 of items.   (prints: 5)
 ```
@@ -829,11 +883,11 @@ prints exactly as written, and a homogeneous list-of-lists like
 `[[1, 2], [3, 4]]` keeps the statically-typed fast path (it is not mixed):
 
 ```
-a list called "nested" is [1, [2, 3], "four"].
+a list called nested is [1, [2, 3], "four"].
 print nested.                       (prints: [1, [2, 3], "four"])
 print element 2 of nested.          (prints: [2, 3])
 
-a list called "deep" is [1, [2, [3, 4]], 5].
+a list called deep is [1, [2, [3, 4]], 5].
 print element 2 of element 2 of deep.   (prints: [3, 4])
 ```
 
@@ -842,7 +896,7 @@ a usable child list, so an extracted child behaves as a list — its
 `length`, its own `element N of`, and a `For each` over it all work:
 
 ```
-a list called "inner" is element 2 of [1, [2, 3], "four"].
+a list called inner is element 2 of [1, [2, 3], "four"].
 print inner's length.        (prints: 2)
 For each y in inner, print y.   (prints: 2, then 3)
 ```
@@ -858,13 +912,13 @@ For each item in [1, [2, 3], "x"],
 ```
 
 Printing is recursive and **cycle-safe**: a list that contains itself
-(for example `a list called "x" is []. append x to x.`) would recurse
+(for example `a list called x is []. append x to x.`) would recurse
 forever, so printing is capped at a depth of 64. When the limit is hit
 the over-deep subtree prints as `...`, the error flag is set, and printing
 unwinds safely instead of overflowing the stack. Use `on error` to react:
 
 ```
-a list called "x" is [].
+a list called x is [].
 append x to x.
 print x.
 on error print "cyclic".    (prints: [[...]] then cyclic)
@@ -887,8 +941,8 @@ be any type (number, text, decimal, boolean, list, or another map). A map
 literal uses braces with `"key": value` pairs, and an empty map is `{}`:
 
 ```
-a map called "person" is {"name": "Ada", "age": 36}.
-a map called "emptymap" is {}.
+a map called person is {"name": "Ada", "age": 36}.
+a map called emptymap is {}.
 print person.            (prints: {"name": "Ada", "age": 36})
 print emptymap.          (prints: {})
 ```
@@ -958,7 +1012,7 @@ predicate `is a <type-noun>` compares the value's runtime type tag, so it
 works on a mixed-list element whose type is only known at run time:
 
 ```
-a list called "m" is [1, "two", 3.5, yes].
+a list called m is [1, "two", 3.5, yes].
 For each item in m,
   if item is a text, print "text: {item}",
   otherwise if item is a decimal, print "decimal: {item}",
@@ -979,7 +1033,7 @@ if item is not a number, print "not a number".
 `is a boolean` and `is a number` are distinct even though both print as
 numbers: a boolean carries tag 3, a number tag 0, and the predicate reads
 that tag. On a **statically-typed** value the predicate folds at compile
-time — `if x is a number` for a declared `a number called "x"` costs
+time — `if x is a number` for a declared `a number called x` costs
 nothing and is always true — so the sentence is legal on any value, not
 just mixed ones.
 
@@ -1004,19 +1058,19 @@ fixes this: it is a declared dynamic type that carries its runtime tag
 *alongside* its payload across the call, so a single function can accept
 "whatever this slot holds" and ask `is a ...` inside to find out which.
 
-Declare a `value` parameter with `with a value called "x"`, return one
+Declare a `value` parameter with `with a value called x`, return one
 with `Return a value, <expr>`, and a `value` local with
-`a value called "r"`:
+`a value called r`:
 
 ```
-To "describe" with a value called "item".
+To describe with a value called item.
   If item is a number, print "number".
   Otherwise if item is a text, print "text".
   Otherwise print "decimal".
 
-a list called "m" is [1, "two", 3.5].
+a list called m is [1, "two", 3.5].
 For each item in m,
-  "describe" of item.
+  describe of item.
 (prints: number / text / decimal)
 ```
 
@@ -1026,12 +1080,12 @@ or append it back into a list with the tag preserved. A function returning
 `a value` carries its tag back out, so this round-trips:
 
 ```
-To "echo" with a value called "v". Return a value, v.
+To echo with a value called v. Return a value, v.
 
-a list called "data" is [1, "two", 3.5].
-a list called "out" is [].
+a list called data is [1, "two", 3.5].
+a list called out is [].
 For each item in data,
-  append "echo" of item to out.
+  append echo of item to out.
 ```
 
 After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
@@ -1039,16 +1093,16 @@ After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
 
 **`value` is not a reserved word.** It is recognized only where a type is
 expected: a parameter type, a return type, or directly before `called` in
-`a value called "x"`. Everywhere else it is an ordinary identifier, so
+`a value called x`. Everywhere else it is an ordinary identifier, so
 `a value is 5.` still declares a variable named `value`.
 
 A `value` local keeps its tag through reassignment, so `set r to 7.`
 retags it as a number:
 
 ```
-To "echo" with a value called "v". Return a value, v.
+To echo with a value called v. Return a value, v.
 
-a value called "r" is "echo" of "hello".
+a value called r is echo of "hello".
 print r.                      (prints: hello)
 set r to 7.
 If r is a number, print "now a number".
@@ -1059,7 +1113,7 @@ Because a `value` might hold a string or a decimal, the compiler rejects
 bare arithmetic on it and points you at the predicate idiom:
 
 ```
-To "bump" with a value called "v". Return a number, v add 1.
+To bump with a value called v. Return a number, v add 1.
 (compile error: Cannot use a value v in arithmetic; check its type with
  'is a number'/'is a text' first.)
 ```
@@ -1075,7 +1129,7 @@ correctly at any depth. `value` parameters compose: a `value` passed
 straight to another `value` function round-trips its tag.
 
 **One limitation to know.** A *conditional* `value` return — using the
-"factorial pattern" of `If ... return a value, <expr>. Otherwise ...` inside
+*factorial pattern* (`If ... return a value, <expr>. Otherwise ...`) inside
 a function whose `To` line has no `Return` — does not track the return
 type, so the value would print as a number. Use the single-expression
 `Return a value, <expr>.` form on the `To` line for `value` returns.
@@ -1091,11 +1145,11 @@ in other languages. It can sit in a list slot, a map value, or a `value`
 parameter or return, and it prints as the word `nothing`:
 
 ```
-a list called "L" is [1, nothing, "x"].
+a list called L is [1, nothing, "x"].
 print L.
 (prints: [1, nothing, "x"])
 
-a map called "m" is {"found": 4, "absent": nothing}.
+a map called m is {"found": 4, "absent": nothing}.
 print m.
 (prints: {"found": 4, "absent": nothing})
 ```
@@ -1127,9 +1181,9 @@ never set sets the error flag; it does not silently hand back `nothing`.
 So "the key is absent" and "the key holds nothing" stay distinguishable:
 
 ```
-a map called "m" is {"k": nothing}.
+a map called m is {"k": nothing}.
 If m's "k" is nothing, print "k is present and holds nothing".
-a number called "x" is m's "never_set".
+a number called x is m's "never_set".
 on error print "never_set is absent".
 ```
 
@@ -1137,7 +1191,7 @@ on error print "never_set is absent".
 literally is a compile error:
 
 ```
-a number called "n" is nothing add 1.
+a number called n is nothing add 1.
 (compile error: Cannot use nothing in arithmetic; check it with
  'is nothing' first.)
 ```
@@ -1147,8 +1201,8 @@ map or a mixed list — the compiler cannot catch it, so the operation sets
 the error flag instead:
 
 ```
-a map called "m" is {"absent": nothing}.
-a number called "bad" is m's "absent" add 1.
+a map called m is {"absent": nothing}.
+a number called bad is m's "absent" add 1.
 on error print "cannot do arithmetic on nothing".
 ```
 
@@ -1170,8 +1224,8 @@ Printing a list variable directly renders its contents rather than its
 heap address:
 
 ```
-a list called "nums" is [1, 2, 3].
-a list called "m" is [1, "two", 3.5, yes].
+a list called nums is [1, 2, 3].
+a list called m is [1, "two", 3.5, yes].
 print nums.               (prints: [1, 2, 3])
 print m.                  (prints: [1, "two", 3.5, 1])
 print "list: {nums}".     (prints: list: [1, 2, 3])
@@ -1193,7 +1247,7 @@ format interpolation (`print "{xs}"`); the *expression* form (`print
 Access list properties using the `'s` syntax:
 
 ```
-a list called "items" is [10, 20, 30].
+a list called items is [10, 20, 30].
 
 print items's length.      (prints 3)
 print items's size.        (same as length)
@@ -1215,7 +1269,7 @@ print items's empty.       (prints 0)
 Access elements by index (1-indexed):
 
 ```
-a list called "nums" is [10, 20, 30].
+a list called nums is [10, 20, 30].
 
 Print element 1 of nums.   (prints 10)
 Print element 2 of nums.   (prints 20)
@@ -1223,7 +1277,7 @@ Print nums's first.        (prints 10)
 Print nums's last.         (prints 30)
 
 (Using variable index)
-a number called "i" is 2.
+a number called i is 2.
 Print element i of nums.   (prints 20)
 ```
 
@@ -1232,8 +1286,8 @@ Print element i of nums.   (prints 20)
 - Errors can be caught with `On error`
 
 ```
-a list called "items" is [1, 2, 3].
-a number called "bad" is element 100 of items.
+a list called items is [1, 2, 3].
+a number called bad is element 100 of items.
 On error print "Cannot access element 100 - out of bounds!".
 ```
 
@@ -1242,7 +1296,7 @@ On error print "Cannot access element 100 - out of bounds!".
 Add elements to the end of a list using the `append` keyword:
 
 ```
-a list called "nums" is [1, 2, 3].
+a list called nums is [1, 2, 3].
 append 4 to nums.
 append 5 to nums.
 print nums's length.       (prints 5)
@@ -1264,22 +1318,22 @@ Use `clear <buffer>` to reset a buffer to empty while preserving capacity.
 
 ```
 (Append integers)
-a list called "nums" is [].
+a list called nums is [].
 append 10 to nums.
 append 20 to nums.
 
 (Append strings)
-a list called "words" is [].
-append "hello" to words.
-append "world" to words.
+a list called words is [].
+append hello to words.
+append world to words.
 
 (Append from variables)
-a number called "x" is 42.
+a number called x is 42.
 append x to nums.
 
 (Append in loops)
-a list called "squares" is [].
-a number called "i" is 1.
+a list called squares is [].
+a number called i is 1.
 While i is less than or equal to 5,
   append i multiply i to squares,
   increment i.
@@ -1297,11 +1351,11 @@ print each number from [1, 2, 3].
 print each number from 1 to 10.
 
 (Call a function for each item)
-"double" of each n from [1, 2, 3].
+double of each n from [1, 2, 3].
 
 (Append each item from a collection)
-a list called "source" is [1, 2, 3].
-a list called "dest" is [].
+a list called source is [1, 2, 3].
+a list called dest is [].
 append each x from source to dest.
 ```
 
@@ -1314,7 +1368,7 @@ append each x from source to dest.
 
 **Works with any action:**
 - `print each X from Y` - print each item
-- `"function" of each X from Y` - call function for each item
+- `function of each X from Y` - call function for each item
 - `append each X from Y to Z` - append each item to a list
 - `open ... at each X from Y` - open file for each path
 
@@ -1328,18 +1382,18 @@ print each n from [10, 20, 30].
 print each n from 1 to 5.
 
 (Function call with loop expansion)
-To "double" of a number called "x".
+To double of a number called x.
   Return a number, x multiply 2.
 
-print "double" of each n from [1, 2, 3].
+print double of each n from [1, 2, 3].
 
 (Append from range)
-a list called "range_list" is [].
+a list called range_list is [].
 append each n from 1 to 5 to range_list.
 
 (Append from list)
-a list called "source" is [10, 20, 30].
-a list called "dest" is [].
+a list called source is [10, 20, 30].
+a list called dest is [].
 append each x from source to dest.
 
 (Empty collection - does nothing)
@@ -1351,7 +1405,7 @@ print each n from [].
 Loop variables shadow outer variables with the same name. After the loop, the variable retains the value from the last iteration:
 
 ```
-a number called "x" is 100.
+a number called x is 100.
 print the x.                  (prints 100)
 
 print each x from [1, 2, 3].  (prints 1, 2, 3)
@@ -1392,7 +1446,7 @@ print each number from 1 to 10,
 The `treating X as Y` clause performs inline value substitution:
 
 ```
-(Replace "-" with "/dev/stdin" for each filename)
+(Replace '-' with "/dev/stdin" for each filename)
 open a file for reading called source at each filename from arguments's all treating "-" as "/dev/stdin",
   read from source into content,
   write content to output,
@@ -1402,7 +1456,7 @@ open a file for reading called source at each filename from arguments's all trea
 print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
-"process" of each file from files treating "-" as "/dev/stdin".
+process of each file from files treating "-" as "/dev/stdin".
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
@@ -1418,7 +1472,7 @@ If the loop variable equals `<match>`, it's replaced with `<replacement>` for th
 ```
 Print "Hello, World!".
 Print the x.
-Print "add numbers" of 3 and 5.
+Print 'add numbers' of 3 and 5.
 ```
 
 **Print without newline:**
@@ -1433,8 +1487,8 @@ Print "%".
 Embed variables and expressions directly in strings using curly braces `{}`:
 
 ```
-a text called "name" is "Alice".
-a number called "age" is 25.
+a text called name is "Alice".
+a number called age is 25.
 Print "Hello, {name}! You are {age} years old.".
 ```
 
@@ -1454,14 +1508,14 @@ Print "Hello, {name}! You are {age} years old.".
 
 The value inside `{}` must be a variable or expression, not a bare literal —
 `{255:x}` is rejected (`255` is read as a variable name). The examples above
-assume a declared `a number called "n" is 255.` (set `n` to 5 or 8 for the
+assume a declared `a number called n is 255.` (set `n` to 5 or 8 for the
 binary and octal rows).
 
 #### Expressions in Format Strings
 
 ```
-a number called "x" is 10.
-a number called "y" is 3.
+a number called x is 10.
+a number called y is 3.
 Print "Sum: {x add y}".
 Print "Product: {x multiply y}".
 Print "Arguments: {arguments's count}".
@@ -1475,13 +1529,13 @@ so it works as a text initializer or assignment and survives being
 carried through lists (e.g. into an `Execute` argument list):
 
 ```
-a buffer called "word" is 64 bytes in size.
-copy "hello" to word.
+a buffer called word is 64 bytes in size.
+copy hello to word.
 
-a text called "tok" is "{word}".        (text from buffer contents)
-a text called "path" is "/bin/{tok}".   (text from another text)
+a text called tok is "{word}".        (text from buffer contents)
+a text called path is "/bin/{tok}".   (text from another text)
 
-a list called "cmdargs" is [].
+a list called cmdargs is [].
 append tok to cmdargs.
 Execute "/bin/echo" with arguments cmdargs.
 ```
@@ -1511,10 +1565,10 @@ declaration. A name declared in only SOME branches remains scoped to
 its condition, and cross-condition use is still a compile error.
 
 ```
-if "output file" is empty then,
-  Open a file for writing called "output" at 1.
+if 'output file' is empty then,
+  Open a file for writing called output at 1.
 Otherwise,
-  Open a file for writing called "output" at "output file".
+  Open a file for writing called output at 'output file'.
 
 (output exists on every path - usable here and in functions)
 write "hello\n" to output.
@@ -1539,12 +1593,12 @@ Print "Line1\nLine2".
 
 ### Conditional Print
 
-```
+```vox fragment
 Print <default>, but if <condition> print <value>.
 ```
 
 **Chained conditions:**
-```
+```vox fragment
 Print the number, but if <cond1> print "fizz buzz" but if <cond2> print "fizz" but if <cond3> print "buzz".
 ```
 
@@ -1564,8 +1618,8 @@ Buffers are memory blocks for I/O operations. They come in two types:
 #### Dynamic Buffers (default)
 
 ```
-a buffer called "inputbuf".
-a buffer called "data".
+a buffer called inputbuf.
+a buffer called data.
 ```
 
 **Features:**
@@ -1576,8 +1630,8 @@ a buffer called "data".
 #### Fixed-Size Buffers
 
 ```
-a buffer called "small" is 256 bytes in size.
-a buffer called "large" is 8192 bytes in size.
+a buffer called small is 256 bytes in size.
+a buffer called large is 8192 bytes in size.
 ```
 
 **Features:**
@@ -1599,7 +1653,7 @@ When reading into a fixed buffer that becomes full:
 Access properties of objects using the `'s` syntax:
 
 ```
-a number called "len" is mybuffer's size.
+a number called len is mybuffer's size.
 print myfile's size.
 
 If mybuffer's size is equal to mybuffer's capacity then,
@@ -1618,7 +1672,7 @@ If mybuffer's size is equal to mybuffer's capacity then,
 
 **Example:**
 ```
-a buffer called "data" is 256 bytes in size.
+a buffer called data is 256 bytes in size.
 Read from file into data.
 
 If data's full then,
@@ -1633,7 +1687,7 @@ If data's empty then,
 Resize a buffer to a new capacity:
 
 ```
-a buffer called "buf" is 64 bytes in size.
+a buffer called buf is 64 bytes in size.
 resize buf to 256 bytes.
 resize buf to 128.
 ```
@@ -1651,27 +1705,29 @@ Read and write individual bytes in buffers and strings by position. Positions ar
 
 **Reading bytes:**
 ```
-a number called "first" is byte 1 of data.
-a number called "byte value" is byte i of buffer.
+a number called 'first' is byte 1 of data.
+a number called 'byte value' is byte i of buf.
 ```
 
 **Writing bytes:**
 ```
 Set byte 1 of data to 0x48.
 Set byte 2 of data to 'A'.
-Set byte 3 of buffer to value.
+Set byte 3 of buf to value.
 ```
 
 **Creating buffer from string:**
 ```
-a buffer called "buf" is "Hello".
+a buffer called buf is "Hello".
 Set byte 1 of buf to 'J'.
 Print buf.  (prints "Jello")
 ```
 
 **Modifying string bytes:**
 ```
-Set byte 1 of "Hello World" to 'J'.
+a buffer called msg is "Hello World".
+Set byte 1 of msg to 'J'.
+Print msg.  (prints "Jello")
 ```
 
 **Bounds Checking:**
@@ -1689,7 +1745,7 @@ copy source to destination.
 clear destination.
 
 set destination to "line {n:06}\t{content}".
-a buffer called "destination" is "line {n:06}\t{content}".
+a buffer called destination is "line {n:06}\t{content}".
 append "line {n:06}\t{content}" to destination.
 copy "line {n:06}\t{content}" to destination.
 ```
@@ -1706,17 +1762,17 @@ copy "line {n:06}\t{content}" to destination.
 
 **Example:**
 ```
-Create a buffer called "data" with size 16.
+Create a buffer called data with size 16.
 Set byte 1 of data to 0xDE.
 Set byte 2 of data to 0xAD.
 Set byte 3 of data to 0xBE.
 Set byte 4 of data to 0xEF.
 
-a number called "b1" is byte 1 of data.
+a number called b1 is byte 1 of data.
 Print "First byte: {b1:02X}".
 
 (Out of bounds - caught by error handler)
-a number called "bad" is byte 100 of data.
+a number called bad is byte 100 of data.
 On error print "Index out of bounds!".
 ```
 
@@ -1756,7 +1812,7 @@ If src's size is greater than 1048576 then,
 
 **Example:**
 ```
-a list called "names" is ["Alice", "Bob", "Charlie"].
+a list called names is ["Alice", "Bob", "Charlie"].
 
 print names's length.
 
@@ -1770,12 +1826,12 @@ Access list elements by index. Indexes are **1-indexed** (like natural language:
 
 **By index:**
 ```
-a list called "nums" is [10, 20, 30].
+a list called nums is [10, 20, 30].
 
 Print element 1 of nums.   (prints 10)
 Print element 2 of nums.   (prints 20)
 
-a number called "i" is 2.
+a number called i is 2.
 Print element i of nums.   (prints 20)
 ```
 
@@ -1791,9 +1847,9 @@ Print nums's last.         (prints 30)
 
 **Example with error handling:**
 ```
-a list called "items" is [1, 2, 3].
+a list called items is [1, 2, 3].
 
-a number called "bad" is element 100 of items.
+a number called bad is element 100 of items.
 On error print "Cannot access element 100 - out of bounds!".
 ```
 
@@ -1811,7 +1867,7 @@ On error print "Cannot access element 100 - out of bounds!".
 
 **Example:**
 ```
-a number called "x" is -42.
+a number called x is -42.
 
 If x's negative then,
     print "x is negative".
@@ -1872,7 +1928,7 @@ High-level behavior:
 Read from files or standard input into a buffer:
 
 ```
-Read from standard input into buffer.
+Read from standard input into buf.
 Read from source into contents.
 ```
 
@@ -1911,7 +1967,7 @@ Write strings, buffers, or special values to files:
 
 ```
 Write "Hello, World!" to output.
-Write buffer to output.
+Write buf to output.
 Write a newline to output.
 ```
 
@@ -1961,7 +2017,7 @@ Operations that can fail (file reads, buffer operations, out-of-bounds access) s
 Check for errors after specific operations with `On error`:
 
 ```
-Read from source into buffer.
+Read from source into buf.
 On error print "Read failed or buffer overflow!".
 ```
 
@@ -1978,7 +2034,7 @@ Read from file into buffer.
 On error print "Read failed!", exit 1.
 
 (Handle out-of-bounds access)
-a number called "item" is element 100 of mylist.
+a number called item is element 100 of mylist.
 On error print "Index out of bounds!".
 
 (Check buffer state manually)
@@ -2004,7 +2060,7 @@ If buffer's size is equal to buffer's capacity then,
 All resources are automatically cleaned up on program exit:
 
 ```
-a buffer called "data".                    (Auto-freed on exit)
+a buffer called data.                    (Auto-freed on exit)
 open a file for writing called log at "x". (Auto-closed on exit)
 (Even if you forget to close - it's handled!)
 ```
@@ -2014,7 +2070,7 @@ open a file for writing called log at "x". (Auto-closed on exit)
 Buffers start at 4KB and grow automatically. No size specification needed:
 
 ```
-a buffer called "inputbuf".     (Grows as needed - never overflows)
+a buffer called inputbuf.     (Grows as needed - never overflows)
 Read from source into inputbuf. (Safe regardless of file size)
 ```
 
@@ -2035,7 +2091,7 @@ This works correctly even with conditional file operations:
 
 ```
 If condition is true then,
-    open a file for writing called log at "debug.log".
+    open a file for writing called log at "debug.log",
     Write "Debug info" to log.
     (Close might be forgotten here - still safe!)
 ```
@@ -2068,9 +2124,9 @@ Change directory to "/newroot".
 ```
 
 **Rules:**
-- `Create a directory called "<path>".` - `mkdir(2)`, mode `0755`. The article
+- `Create a directory called '<path>'.` - `mkdir(2)`, mode `0755`. The article
   (`a`) is optional; `called` is required.
-- `Remove the directory called "<path>".` / `Delete the directory "<path>".` -
+- `Remove the directory called '<path>'.` / `Delete the directory "<path>".` -
   `rmdir(2)`. Both `Remove` and `Delete` work; `the` and `called` are optional.
 - `Change directory to "<path>".` - `chdir(2)`.
 - All three set the error flag on failure - use `On error` to catch it.
@@ -2123,7 +2179,7 @@ the registry of standard values). Sets the error flag on failure.
 Create symbolic link from "/proc/self/fd" to "/dev/fd".
 ```
 
-`symlink(2)`: `Create symbolic link from "<target>" to "<linkpath>".` Sets
+`symlink(2)`: `Create symbolic link from '<target>' to "<linkpath>".` Sets
 the error flag on failure.
 
 ### Switching the Root Filesystem
@@ -2145,7 +2201,7 @@ program has `chdir`'d away from it. Sets the error flag on failure.
 Execute "/bin/sh".
 Execute "/bin/echo" with arguments ["hello", "world"].
 
-a list called "cmdargs" is ["hello", "world"].
+a list called cmdargs is ["hello", "world"].
 Execute "/bin/echo" with arguments cmdargs.
 
 On error print "execve failed", exit 1.
@@ -2155,9 +2211,9 @@ On error print "execve failed", exit 1.
 
 - **No arguments**: `Execute "<path>".` synthesizes `argv = [path, NULL]`
   (argc 1).
-- **Literal argument list**: `Execute "<path>" with arguments [...].` - argv
+- **Literal argument list**: `Execute '<path>' with arguments [...].` - argv
   is built at compile time.
-- **List variable**: `Execute "<path>" with arguments <list>.` - argv is
+- **List variable**: `Execute '<path>' with arguments <list>.` - argv is
   built at runtime from the list's current length and contents, sized and
   bounds-checked from that single length read so the argv array cannot be
   overrun regardless of the list's contents.
@@ -2228,7 +2284,7 @@ Get the current date/time as a `time` value:
 
 ```
 Get current time into now.
-a time called "now" is current time.
+a time called now is current time.
 ```
 
 ### Time Properties
@@ -2297,16 +2353,16 @@ Timers are stopwatches for measuring durations. They track start time, end time,
 #### Creating a Timer
 
 ```
-Create a timer called "job timer".
-a timer called "benchmark".
+Create a timer called 'job timer'.
+a timer called benchmark.
 ```
 
 #### Starting and Stopping
 
 ```
-Start the "job timer".
+Start the 'job timer'.
 (... do work ...)
-Stop the "job timer".
+Stop the 'job timer'.
 ```
 
 **Alternative keywords:**
@@ -2328,9 +2384,9 @@ Stop the "job timer".
 Use `in` to cast duration to a specific unit:
 
 ```
-Print the "job timer"'s duration in seconds.
-Print the "job timer"'s duration in milliseconds.
-Print the "job timer"'s elapsed in seconds.
+Print the 'job timer''s duration in seconds.
+Print the 'job timer''s duration in milliseconds.
+Print the 'job timer''s elapsed in seconds.
 ```
 
 #### Complete Timer Example
@@ -2338,26 +2394,26 @@ Print the "job timer"'s elapsed in seconds.
 ```
 (Measure job duration)
 Print "Starting job...".
-Create a timer called "job timer".
-Start the "job timer".
+Create a timer called 'job timer'.
+Start the 'job timer'.
 
 (... do work ...)
 Wait 1 second.
 Print "Seconds elapsed so far: ".
-Print the "job timer"'s elapsed in seconds.
+Print the 'job timer''s elapsed in seconds.
 
 Wait 500 milliseconds.
-Stop the "job timer".
+Stop the 'job timer'.
 
 Print "Finished the job in: ".
-Print the "job timer"'s duration in seconds.
+Print the 'job timer''s duration in seconds.
 Print " seconds".
 
 (Access raw timestamps)
 Print "Started at unix time: ".
-Print the "job timer"'s start time.
+Print the 'job timer''s start time.
 Print "Stopped at unix time: ".
-Print the "job timer"'s end time.
+Print the 'job timer''s end time.
 ```
 
 #### Formatted Time Output
@@ -2366,9 +2422,9 @@ Combine time properties with padded casting for formatted output:
 
 ```
 Get current time into now.
-a text called "h" is now's hour as text padded to 2.
-a text called "m" is now's minute as text padded to 2.
-a text called "s" is now's second as text padded to 2.
+a text called h is now's hour as text padded to 2.
+a text called m is now's minute as text padded to 2.
+a text called s is now's second as text padded to 2.
 
 Print the h.
 Print ":".
@@ -2400,11 +2456,11 @@ Access command-line arguments using the `'s` property syntax.
 ### Basic Usage
 
 ```
-a number called "argc" is arguments's count.
+a number called argc is arguments's count.
 Print "Argument count: ".
 Print the argc.
 
-a text called "program" is arguments's name.
+a text called program is arguments's name.
 Print "Program name: ".
 Print the program.
 ```
@@ -2414,8 +2470,8 @@ Print the program.
 ```
 (Get the first argument passed by the user)
 If arguments's count is greater than 1 then,
-    a text called "username" is arguments's first.
-    Print "Hello, ".
+    a text called username is arguments's first,
+    Print "Hello, ",
     Print the username.
 Otherwise,
     Print "Hello, World!".
@@ -2433,8 +2489,8 @@ If arguments's empty then,
 For accessing arguments by a computed index, use the `argument at` syntax:
 
 ```
-a number called "i" is 2.
-a text called "arg" is the argument at the i.
+a number called i is 2.
+a text called val is the argument at the i.
 ```
 
 ### Declarative Flag Parsing
@@ -2446,9 +2502,9 @@ Vox supports declarative CLI flag parsing with a schema-first style.
 Define each supported flag once, including aliases and type:
 
 ```
-a flag called "verbose" is "-v" or "--verbose", it is a boolean.
-a flag called "output" is "-o" or "--output", it is a text.
-a flag called "retries" is "-r" or "--retries", it is a number.
+a flag called verbose is "-v" or "--verbose", it is a boolean.
+a flag called output is "-o" or "--output", it is a text.
+a flag called retries is "-r" or "--retries", it is a number.
 ```
 
 Supported flag value types:
@@ -2462,8 +2518,8 @@ Supported flag value types:
 Flags may be marked as required and/or given defaults:
 
 ```
-a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
-a flag called "retries" is "-r" or "--retries", it is a number and is required.
+a flag called output is "-o" or "--output", it is a text with default "out.txt".
+a flag called retries is "-r" or "--retries", it is a number and is required.
 ```
 
 - `with default ...` initializes the flag value if the flag is not passed.
@@ -2498,8 +2554,8 @@ After parsing:
 Example:
 
 ```
-a flag called "verbose" is "-v" or "--verbose", it is a boolean.
-a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
+a flag called verbose is "-v" or "--verbose", it is a boolean.
+a flag called output is "-o" or "--output", it is a text with default "out.txt".
 Parse flags.
 
 Print "output:{output}".
@@ -2529,16 +2585,16 @@ In this case:
 #### 7) Practical pattern
 
 ```
-a flag called "help" is "-h" or "--help", it is a boolean.
-a flag called "version" is "-V" or "--version", it is a boolean.
-a flag called "number" is "-n" or "--number", it is a boolean.
+a flag called help is "-h" or "--help", it is a boolean.
+a flag called 'version' is "-V" or "--version", it is a boolean.
+a flag called 'number' is "-n" or "--number", it is a boolean.
 
 Parse flags.
 
 If help then,
     Print "Usage: myprog [options] [files]".
 
-If version then,
+If 'version' then,
     Print "myprog 1.0.0".
 
 Print each item from arguments's all.
@@ -2563,9 +2619,9 @@ Access environment variables using the `'s` property syntax.
 ### Reading Environment Variables
 
 ```
-a text called "home" is environment's "HOME".
-a text called "user" is environment's "USER".
-a text called "shell" is environment's "SHELL".
+a text called home is environment's "HOME".
+a text called user is environment's "USER".
+a text called shell is environment's "SHELL".
 
 Print "Home: ".
 Print the home.
@@ -2574,7 +2630,7 @@ Print the home.
 ### Environment Variable Count
 
 ```
-a number called "env count" is environment's count.
+a number called 'env count' is environment's count.
 Print "Total environment variables: ".
 Print the env count.
 ```
@@ -2582,7 +2638,7 @@ Print the env count.
 ### Iterating Environment Variables
 
 ```
-a text called "env1" is environment's first.
+a text called env1 is environment's first.
 Print "First env var: ".
 Print the env1.
 ```
@@ -2599,7 +2655,7 @@ If the environment variable "DEBUG" exists then,
 ```
 (A greeter using the 's property syntax)
 
-a text called "name" is "World".
+a text called name is "World".
 
 (Use argument if provided, otherwise use environment variable)
 If arguments's count is greater than 1 then,
@@ -2612,7 +2668,7 @@ Print the name.
 Print "!".
 
 (Show some environment info)
-a text called "user" is environment's "USER".
+a text called user is environment's "USER".
 Print "Current user: ".
 Print the user.
 ```
@@ -2664,11 +2720,11 @@ Print the user.
 
 **Examples:**
 ```
-a number called "lhs" is 0b11110000.
-a number called "rhs" is 0b10101010.
+a number called lhs is 0b11110000.
+a number called rhs is 0b10101010.
 
 (Bitwise AND)
-a number called "result" is lhs bit-and rhs.
+a number called result is lhs bit-and rhs.
 
 (Bitwise OR)
 Set result to lhs bit-or rhs.
@@ -2740,8 +2796,8 @@ The word `and` has multiple context-dependent meanings:
 | Context | Example | Meaning |
 |---------|---------|---------|
 | Logical operator | `if x and y then` | Boolean AND of two conditions |
-| Function parameters | `with a number called "x" and a number called "y"` | Separates parameter declarations |
-| Function arguments | `"add" of 3 and 5` | Separates argument values |
+| Function parameters | `with a number called x and a number called y` | Separates parameter declarations |
+| Function arguments | `'add' of 3 and 5` | Separates argument values |
 | Subject list terminator | `x, y, and z are true` | Final item in comma-separated list before `are` |
 
 **Disambiguation:**
@@ -2762,17 +2818,17 @@ Print "Hello, World!".
 ### Variables and Arithmetic
 
 ```
-a number called "x" is 3.
-a number called "y" is 5.
+a number called x is 3.
+a number called y is 5.
 Print the x add the y.
 ```
 
 ### Function Definition and Call
 
 ```
-To "add numbers" with a number called "x" and a number called "y". Return a number, the x add y.
+To 'add numbers' with a number called x and a number called y. Return a number, the x add y.
 
-Print "add numbers" of 3 and 5.
+Print 'add numbers' of 3 and 5.
 ```
 
 ### Counting Loop
@@ -2785,9 +2841,9 @@ While the counter is less than 10, print the counter, increment the counter.
 ### FizzBuzz
 
 ```
-To "check divisibility" with a number called "divisor" and a number called "dividend". Return a boolean, the divisor modulo the dividend is 0.
+To 'check divisibility' with a number called divisor and a number called dividend. Return a boolean, the divisor modulo the dividend is 0.
 
-For each number from 1 to 15, print the number, but if "check divisibility" of the number and 6 is true print "fizz buzz" but if "check divisibility" of the number and 2 is true print "fizz" but if "check divisibility" of the number and 3 is true print "buzz".
+For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 6 is true print "fizz buzz" but if 'check divisibility' of the number and 2 is true print "fizz" but if 'check divisibility' of the number and 3 is true print "buzz".
 ```
 
 ---
@@ -2801,13 +2857,13 @@ For each number from 1 to 15, print the number, but if "check divisibility" of t
 - **`see "<path>.vox".`** — include another Vox source file. This works today:
   the file is parsed as part of your program, so its functions become callable
   with no linking step. It is how you split a program across files.
-- **`see "<lib>" version "<ver>" from "<path>.lib".`** — consume a shared
+- **`see '<lib>' version "<ver>" from "<path>.lib".`** — consume a shared
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
 
 ```
 see "./utils.vox".
-see "mathkit" version "1.0" from "./libmathkit.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
 ```
 
 There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
@@ -2816,7 +2872,7 @@ version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF
 it carries mangled symbol *names* but no Vox type information, so the compiler
 cannot check a call against it. Those forms are retired: `see` of a `.so`
 errors and directs you to the `.lib`, and the `see ... for ...` form has its
-own diagnostic — both name the canonical form `see "<lib>" version "<x.y>" from
+own diagnostic — both name the canonical form `see '<lib>' version "<x.y>" from
 "<path>.lib".`. `see` of a `.vox` source is unchanged.
 
 **Search paths.** `see` resolves the path by its shape:
@@ -2864,11 +2920,11 @@ Add a `Library` declaration at the top of a `.vox` file, then build with
 `--shared`:
 
 ```
-Library "mathkit" version "1.0".
+Library mathkit version "1.0".
 
-To "add two numbers" with a number called "a" and a number called "b". Return a number, a add b.
+To 'add two numbers' with a number called x and a number called y. Return a number, x add y.
 
-To "greet".
+To greet.
   Print "hello from mathkit".
 ```
 
@@ -2907,7 +2963,7 @@ with no `Library` line has no identity and is rejected — add the declaration.
 a top-level executable statement (`Print`, assignment, `If`, a bare function
 call, …) would be silently dropped. The compiler rejects it instead:
 
-```
+```text
 error: Top-level print statement is not allowed in a shared library: only
 function definitions, 'Library', and 'see' may appear at the top level.
 ```
@@ -2933,15 +2989,15 @@ regenerates the `.so` and `.lib` together, so a rebuild cannot silently
 clobber an interface you have pinned or edited. The format:
 
 ```
-Library "mathkit" version "1.0".
+Library mathkit version "1.0".
 Location "./libmathkit.so".
 
 Table of Contents:
-    To "add two numbers" with a number called "a" and a number called "b", returning a number.
-    To "greet".
+    To 'add two numbers' with a number called x and a number called y, returning a number.
+    greet.
 ```
 
-- **`Library "<name>" version "<ver>".`** — the block's identity. Several
+- **`Library '<name>' version "<ver>".`** — the block's identity. Several
   `Library` blocks may appear in one `.lib`, each with its own `Location`;
   parsing runs to EOF, and a `Library` line starts a new block.
 - **`Location "<path>".`** — where the `.so` is. It resolves relative to the
@@ -2961,9 +3017,9 @@ cannot carry executable statements — only the interface above.
 #### Consuming a library
 
 ```
-see "mathkit" version "1.0" from "./libmathkit.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
 
-a number called "sum" is "add two numbers" of 3 and 4.
+a number called sum is 'add two numbers' of 3 and 4.
 Print the sum.
 ```
 
@@ -3015,7 +3071,7 @@ builds, where the semantics would be ambiguous.
 
 Every exported function is mangled to a single flat label:
 
-```
+```text
 <library>_<version>_<func>
 ```
 
@@ -3163,7 +3219,7 @@ vox main.vox --link math --lib-path ./libs
 
 ## Grammar Summary
 
-```
+```ebnf
 program     ::= statement*
 statement   ::= print_stmt | var_decl | assignment | if_stmt | while_stmt 
               | for_stmt | func_def | increment | decrement | break | continue
@@ -3177,11 +3233,11 @@ assignment  ::= "the" name "is" expr "."
 append_stmt ::= "append" expr "to" name "."
               | "append" "each" name "from" expr "to" name ("treating" expr "as" expr)? "."
 
-func_def    ::= "To" string "with" params "." "Return" "a" type "," expr "."
+func_def    ::= "To" identifier (("with" | "of") params)? "." "Return" "a" type "," expr "."
 params      ::= param ("and" param)*
 param       ::= "a" type "called" name
 
-func_call   ::= string "of" args
+func_call   ::= identifier ("of" | "with" | "to" | "on") args
 args        ::= expr ("and" expr)*
 
 if_stmt     ::= ("If" | "When") condition "then" "," block 
@@ -3196,7 +3252,7 @@ for_stmt    ::= "For each" name "from" expr "to" expr "," block "."
 print_stmt  ::= "Print" expr ("," "but if" condition "print" expr)* "."
               | "Print" "each" name "from" expr ("treating" expr "as" expr)? 
                 ("," "but if" condition "print" expr)* "."
-              | "Print" string "of" "each" name "from" expr ("treating" expr "as" expr)?
+              | "Print" identifier "of" "each" name "from" expr ("treating" expr "as" expr)?
                 ("," "but if" condition "print" expr)* "."
 
 loop_expansion ::= "each" name "from" expr ("treating" expr "as" expr)?
@@ -3211,5 +3267,8 @@ primary     ::= literal | identifier | func_call | "(" expr ")"
 
 type        ::= "number" | "float" | "text" | "boolean" | "list"
               | "map" | "buffer" | "file" | "time" | "timer" | "value"
-name        ::= string | identifier
+name        ::= identifier
+identifier  ::= bare | quoted          ; see Naming Rules for the lexical rule
+literal     ::= string | number | "true" | "false" | "nothing"
+string      ::= '"' ... '"'            ; a string literal is data, never a name
 ```

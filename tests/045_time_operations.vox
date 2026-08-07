@@ -5,41 +5,41 @@ Get current time into now.
 Print "Time retrieved: OK".
 
 (Verify year is reasonable - should be >= 2024)
-a number called "cur_year" is now's year.
+a number called cur_year is now's year.
 If cur_year is greater than 2023,
     Print "Year check: PASS".
 
 (Verify hour is in valid range 0-23)
-a number called "cur_hour" is now's hour.
+a number called cur_hour is now's hour.
 If cur_hour is greater than -1,
     If cur_hour is less than 24,
         Print "Hour range: PASS".
 
 (Verify minute is in valid range 0-59)
-a number called "cur_minute" is now's minute.
+a number called cur_minute is now's minute.
 If cur_minute is greater than -1,
     If cur_minute is less than 60,
         Print "Minute range: PASS".
 
 (Verify month is in valid range 1-12)
-a number called "cur_month" is now's month.
+a number called cur_month is now's month.
 If cur_month is greater than 0,
     If cur_month is less than 13,
         Print "Month range: PASS".
 
 (Verify day is in valid range 1-31)
-a number called "cur_day" is now's day.
+a number called cur_day is now's day.
 If cur_day is greater than 0,
     If cur_day is less than 32,
         Print "Day range: PASS".
 
 (Test inline time access works)
-a number called "inline_hour" is current time's hour.
+a number called inline_hour is current time's hour.
 If inline_hour is greater than -1,
     Print "Inline time: PASS".
 
 (Test basic calculation - not time dependent)
-a number called "result" is 0.
+a number called result is 0.
 For each i from 1 to 100,
     Set result to result add i.
 Print "Calculation result: ".

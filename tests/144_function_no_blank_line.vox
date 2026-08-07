@@ -6,6 +6,6 @@ effect on program execution, so the call below must run at top level
 and produce real output. Before the fix it printed nothing because the
 Print statement was emitted after the function's return epilogue.)
 
-To "double" with a number called "x". Return a number, x multiply 2.
-Print "double" of 21.
-Print "double" of 5.
+To double with a number called x. Return a number, x multiply 2.
+Print double of 21.
+Print double of 5.

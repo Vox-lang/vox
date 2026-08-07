@@ -122,14 +122,14 @@
     ------------------------------------
     Command: ./compiler --optimize -o output.bin -j 16 main.en lib.en
     )
-    a flag called "optimize" is "-O" or "--optimize", it is a boolean with default false.
-    a flag called "output" is "-o" or "--output", it is a text with default "a.out".
-    a flag called "jobs" is "-j" or "--jobs", it is a number with default 1.
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
-    a flag called "debug" is "-g" or "--debug", it is a boolean with default false.
+    a flag called optimize is "-O" or "--optimize", it is a boolean with default false.
+    a flag called output is "-o" or "--output", it is a text with default "a.out".
+    a flag called jobs is "-j" or "--jobs", it is a number with default 1.
+    a flag called verbose is "-v" or "--verbose", it is a boolean with default false.
+    a flag called debug is "-g" or "--debug", it is a boolean with default false.
     Parse flags.
     
-    a list called "source_files" is arguments's all.
+    a list called source_files is arguments's all.
     
     If source_files's empty then,
         Print "Error: No source files provided.",
@@ -155,18 +155,18 @@
 Print "=== Arguments Properties Demo ===".
 
 (Access argument count)
-a number called "argc" is arguments's count.
+a number called argc is arguments's count.
 Print "Number of arguments: ".
 Print the argc.
 
 (The program name is arguments's name)
-a text called "program" is arguments's name.
+a text called program is arguments's name.
 Print "Program name: ".
 Print the program.
 
 (Access first user argument with arguments's first)
 If arguments's count is greater than 1 then,
-    a text called "arg1" is arguments's first,
+    a text called arg1 is arguments's first,
     Print "First user argument: {arg1}".
 
 (Check if arguments were provided)
@@ -177,7 +177,7 @@ Otherwise,
     Print "User arguments were provided.".
 
 (Access last argument)
-a text called "lastarg" is arguments's last.
+a text called lastarg is arguments's last.
 Print "Last argument: ".
 Print the lastarg.
 
@@ -190,15 +190,15 @@ Print "".
 Print "=== Environment Properties Demo ===".
 
 (Access environment variable by name using 's syntax)
-a text called "home" is environment's "HOME".
+a text called home is environment's "HOME".
 Print "Home directory: ".
 Print the home.
 
-a text called "user" is environment's "USER".
+a text called user is environment's "USER".
 Print "Current user: ".
 Print the user.
 
-a text called "shell" is environment's "SHELL".
+a text called shell is environment's "SHELL".
 Print "Shell: ".
 Print the shell.
 
@@ -210,12 +210,12 @@ Otherwise,
 
 (Environment variable count)
 Print "".
-a number called "envcount" is environment's count.
+a number called envcount is environment's count.
 Print "Total environment variables: ".
 Print the envcount.
 
 (First environment variable)
-a text called "env1" is environment's first.
+a text called env1 is environment's first.
 Print "First env var: ".
 Print the env1.
 
@@ -228,7 +228,7 @@ Print "".
 Print "=== Practical Example ===".
 
 (A program that greets the user, using argument or environment variable)
-a text called "greetname" is "World".
+a text called greetname is "World".
 
 (Priority: 1. Command line argument, 2. Environment variable, 3. Default)
 If arguments's count is greater than 1 then,

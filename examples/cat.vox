@@ -1,19 +1,19 @@
 (reimplementation of core utils CAT command in vox)
 
-A text called "Program Version" is "0.1.10".
+A text called 'Program Version' is "0.1.10".
 
 (Parse the flags now)
-A flag called "wants help" is "--help" or "-h", it is a boolean.
-A flag called "wants version" is "--version" or "-v", it is a boolean.
-A flag called "we are numbering lines" is "--number" or "-n", it is a boolean.
+A flag called 'wants help' is "--help" or "-h", it is a boolean.
+A flag called 'wants version' is "--version" or "-v", it is a boolean.
+A flag called 'we are numbering lines' is "--number" or "-n", it is a boolean.
 
-A text called "Program" is arguments's name.
+A text called Program is arguments's name.
 
-To "show version".
+To 'show version'.
   Print "{Program} (vox) {Program Version} by Josjuar Lister".
   Exit 0.
 
-If "wants help" then,
+If 'wants help' then,
   Print "{Program} - concatenate files and print to standard output",
   Print "Usage: {Program} [OPTION]... [FILE]...",
   Print "With no FILE, or when FILE is -, read standard input.",
@@ -27,26 +27,26 @@ If "wants help" then,
   Print "See https://github.com/vox-lang/vox for more information.",
   Exit 0.
 
-If "wants version" then,
-  "show version".
+If 'wants version' then,
+  'show version'.
 
 (Prepare to cat)
-a boolean called "failed to open a file" is false.
+a boolean called 'failed to open a file' is false.
 
-Open a file for writing called "output" at 1(fd - stdout).
+Open a file for writing called output at 1(fd - stdout).
 On error print "{Program}: /dev/stdout: Could not open pipe", exit 1.
 
-A number called "Line Number" is 1.
+A number called 'Line Number' is 1.
 
-To "read the file" with a file called "source".
-  Create a buffer called "staged_output".
-  Create a buffer called "content".
+To 'read the file' with a file called source.
+  Create a buffer called staged_output.
+  Create a buffer called content.
   On error print "{Program}: failed to create buffer".
   Read line from source into content.
   While content is not empty,
-    if "we are numbering lines" then,
+    if 'we are numbering lines' then,
       Append "{Line Number:6}\t{content}" to staged_output,
-      increment the "Line Number".
+      increment the 'Line Number'.
     Otherwise,
       Append content to staged_output.
     if staged_output's size is greater than 65535 then,
@@ -57,24 +57,24 @@ To "read the file" with a file called "source".
   Return staged_output.
 
 If arguments's empty then,
-  Open a file for reading called "source" at 0(fd - stdin),
+  Open a file for reading called source at 0(fd - stdin),
   On error print "{Program}: /dev/stdin: Could not open pipe",
     exit 1.
-  a buffer called "staged_output" is "read the file" with "source",
+  a buffer called staged_output is 'read the file' with source,
   Write staged_output to output,
   Clear staged_output,
   Exit 0.
 
 (Loop expansion: open a file for each filename in arguments's all)
-Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
+Open a file called source for reading at each filename from arguments's all treating "-" as "/dev/stdin",
   On error print "{Program}: {filename}: No such file or directory",
-    set "failed to open a file" to true,
+    set 'failed to open a file' to true,
     continue.
-  a buffer called "staged_output" is "read the file" with "source",
+  a buffer called staged_output is 'read the file' with source,
   Write staged_output to output,
   Clear staged_output.
     
-If "failed to open a file" then,
+If 'failed to open a file' then,
   Exit 1.
 Otherwise,
   Exit 0.

@@ -3,7 +3,7 @@
  1a preserves the per-slot tag (in dl) across realloc, so predicates
  classify every element correctly even after the move. Acceptance 5.)
 
-a list called "m" is [].
+a list called m is [].
 append 1 to m.
 append "x" to m.
 append 2 to m.

@@ -3,9 +3,9 @@
  emit time (not the old TAG_INTEGER guess) and the list must widen to
  Mixed so elements are read back as what they are. Acceptance criterion 2.)
 
-To "greet" with a number called "x". Return a text, "hi".
-a list called "items" is [].
+To greet with a number called x. Return a text, "hi".
+a list called items is [].
 append 1 to items.
-append "greet" of 0 to items.
+append greet of 0 to items.
 print element 1 of items.
 print element 2 of items.

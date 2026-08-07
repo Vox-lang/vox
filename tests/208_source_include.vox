@@ -8,5 +8,5 @@
 
 see "./include/math_helpers.vox".
 
-print "double" of 21.
-print "greet" of "world".
+print double of 21.
+print greet of "world".

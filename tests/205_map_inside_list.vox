@@ -5,17 +5,17 @@
  for a mixed map/list cycle: the recursion stopped at the untagged slot
  instead of being bounded, so no error was flagged.)
 
-a map called "inner" is {}.
+a map called inner is {}.
 set inner's "deep" to 5.
-a list called "holder" is [].
+a list called holder is [].
 append 1 to holder.
 append inner to holder.
 print holder.
 If element 2 of holder is a map, print "elem2 is map".
 Otherwise print "elem2 not map".
 
-a map called "c1" is {}.
-a list called "c2" is [].
+a map called c1 is {}.
+a list called c2 is [].
 set c1's "to_list" to c2.
 append c1 to c2.
 print c1.

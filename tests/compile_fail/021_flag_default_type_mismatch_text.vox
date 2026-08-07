@@ -1,2 +1,2 @@
-a flag called "o" is "-o" or "--out", it is a text with default 3.
+a flag called o is "-o" or "--out", it is a text with default 3.
 Parse flags.

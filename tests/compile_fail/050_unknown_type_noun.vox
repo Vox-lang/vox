@@ -1,2 +1,2 @@
-a list called "m" is [1, "x"].
+a list called m is [1, "x"].
 For each item in m, if item is a widget, print item.

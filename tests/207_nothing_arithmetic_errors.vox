@@ -8,17 +8,17 @@
  This mirrors the choice already made for a missing map key in 1e2: that
  sets the error flag rather than quietly becoming nothing.)
 
-a map called "m" is {"present": 4, "absent": nothing}.
-a number called "good" is m's "present" add 1.
+a map called m is {"present": 4, "absent": nothing}.
+a number called good is m's "present" add 1.
 print good.
 on error print "BUG: present key flagged".
 
-a number called "bad" is m's "absent" add 1.
+a number called bad is m's "absent" add 1.
 print bad.
 on error print "nothing operand flagged".
 
-a list called "L" is [nothing].
-a number called "fromlist" is element 1 of L add 1.
+a list called L is [nothing].
+a number called fromlist is element 1 of L add 1.
 print fromlist.
 on error print "nothing element flagged".
 

@@ -1,7 +1,7 @@
 # Flag Schema Runtime Parsing - Feature Plan
 
 > **Status:** Built — declarative flag schemas ship. The parser implements
-> `a flag called "..." is "-x" or "--long", it is a <type> [and is required |
+> `a flag called <name> is "-x" or "--long", it is a <type> [and is required |
 > with default "..."]` (`parse_flag_schema_decl`) with unit tests. The
 > "Current State" / unchecked-box framing below reads as a pre-implementation
 > plan; the feature is done. _(assessed 2026-08, vox v0.1.23)_
@@ -57,7 +57,7 @@ Primary touch points for the feature are:
 
 ### Parser / AST
 - Add grammar for declarative flag schema statements, e.g.:
-  - `a flag called "name" is "-n" or "--number", it is a boolean.`
+  - `a flag called name is "-n" or "--number", it is a boolean.`
   - `... it is a number and is required.`
   - `... it is a text with default "out.txt".`
 - Add AST nodes for:

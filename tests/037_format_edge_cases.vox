@@ -1,23 +1,23 @@
 (Test format strings edge cases and error handling)
 
 (Empty and single-character strings)
-a text called "empty example" is "".
-a text called "single example" is "A".
+a text called 'empty example' is "".
+a text called 'single example' is "A".
 Print "Empty: '{empty example}'".
 Print "Single: '{single example}'".
 
 (Large numbers and precision)
-a number called "big" is 999999999.
-a float called "precise" is 123.456789012345.
+a number called big is 999999999.
+a float called precise is 123.456789012345.
 Print "Big: {big}".
 Print "Big hex: {big:x}".
 Print "Precise: {precise:.8}".
 Print "Precise short: {precise:.2}".
 
 (Zero and negative values)
-a number called "zero_example" is 0.
-a number called "negative_example" is -42.
-a float called "negative_float_example" is -3.14.
+a number called zero_example is 0.
+a number called negative_example is -42.
+a float called negative_float_example is -3.14.
 Print "Zero: {zero_example}".
 Print "Negative: {negative_example}".
 Print "Negative float: {negative_float_example}".
@@ -25,17 +25,17 @@ Print "Neg + pos: {negative_example add 100}".
 Print "Neg * neg: {negative_example multiply negative_example}".
 
 (Boolean values)
-a boolean called "true_example" is true.
-a boolean called "false_example" is false.
+a boolean called true_example is true.
+a boolean called false_example is false.
 Print "True: {true_example}".
 Print "False: {false_example}".
 Print "True as int: {true_example add 0}".
 Print "False as int: {false_example add 0}".
 
 (Complex nested expressions)
-a number called "x" is 1.
-a number called "y" is 2.
-a number called "z" is 3.
+a number called x is 1.
+a number called y is 2.
+a number called z is 3.
 Print "x + y + z: {x add y add z}".
 Print "x * y * z: {x multiply y multiply z}".
 Print "(x + y) * z: {x add y multiply z}".

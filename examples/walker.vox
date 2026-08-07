@@ -9,23 +9,23 @@ This example feeds each element of a flat mixed list through a classifier,
 then round-trips them through a value-returning function to show the tag
 survives the call in both directions.)
 
-To "describe" with a value called "item".
+To describe with a value called item.
   If item is a number, print "number".
   Otherwise if item is a text, print "text".
   Otherwise print "decimal".
 
-To "echo" with a value called "v". Return a value, v.
+To echo with a value called v. Return a value, v.
 
-a list called "data" is [42, "hello", 3.14].
+a list called data is [42, "hello", 3.14].
 
 print "Classifying each element:"
 For each item in data,
-  "describe" of item.
+  describe of item.
 
-a list called "echoed" is [].
+a list called echoed is [].
 For each item in data,
-  append "echo" of item to echoed.
+  append echo of item to echoed.
 
 print "After round-trip through echo, still:"
 For each e in echoed,
-  "describe" of e.
+  describe of e.

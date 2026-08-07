@@ -3,13 +3,13 @@
  a list-of-lists literal iterated directly yields list-typed loop vars;
  and `is a list` folds to true on a statically-typed list variable.)
 
-a list called "withempty" is [1, [], 2].
+a list called withempty is [1, [], 2].
 print withempty.
-a list called "lead" is [[1, 2], 3].
+a list called lead is [[1, 2], 3].
 print lead.
 print element 1 of lead.
 for each row in [[10, 20], [30, 40]], print row.
-a list called "static" is [1, 2, 3].
+a list called static is [1, 2, 3].
 if static is a list
   print "yes"
 otherwise
