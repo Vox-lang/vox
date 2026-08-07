@@ -1706,14 +1706,14 @@ Read and write individual bytes in buffers and strings by position. Positions ar
 **Reading bytes:**
 ```
 a number called 'first' is byte 1 of data.
-a number called 'byte value' is byte i of buffer.
+a number called 'byte value' is byte i of buf.
 ```
 
 **Writing bytes:**
 ```
 Set byte 1 of data to 0x48.
 Set byte 2 of data to 'A'.
-Set byte 3 of buffer to value.
+Set byte 3 of buf to value.
 ```
 
 **Creating buffer from string:**
@@ -1928,7 +1928,7 @@ High-level behavior:
 Read from files or standard input into a buffer:
 
 ```
-Read from standard input into buffer.
+Read from standard input into buf.
 Read from source into contents.
 ```
 
@@ -1967,7 +1967,7 @@ Write strings, buffers, or special values to files:
 
 ```
 Write "Hello, World!" to output.
-Write buffer to output.
+Write buf to output.
 Write a newline to output.
 ```
 
@@ -2017,7 +2017,7 @@ Operations that can fail (file reads, buffer operations, out-of-bounds access) s
 Check for errors after specific operations with `On error`:
 
 ```
-Read from source into buffer.
+Read from source into buf.
 On error print "Read failed or buffer overflow!".
 ```
 
@@ -2091,7 +2091,7 @@ This works correctly even with conditional file operations:
 
 ```
 If condition is true then,
-    open a file for writing called log at "debug.log".
+    open a file for writing called log at "debug.log",
     Write "Debug info" to log.
     (Close might be forgotten here - still safe!)
 ```
@@ -2470,8 +2470,8 @@ Print the program.
 ```
 (Get the first argument passed by the user)
 If arguments's count is greater than 1 then,
-    a text called username is arguments's first.
-    Print "Hello, ".
+    a text called username is arguments's first,
+    Print "Hello, ",
     Print the username.
 Otherwise,
     Print "Hello, World!".
@@ -2490,7 +2490,7 @@ For accessing arguments by a computed index, use the `argument at` syntax:
 
 ```
 a number called i is 2.
-a text called arg is the argument at the i.
+a text called val is the argument at the i.
 ```
 
 ### Declarative Flag Parsing
@@ -2594,7 +2594,7 @@ Parse flags.
 If help then,
     Print "Usage: myprog [options] [files]".
 
-If version then,
+If 'version' then,
     Print "myprog 1.0.0".
 
 Print each item from arguments's all.
@@ -2922,7 +2922,7 @@ Add a `Library` declaration at the top of a `.vox` file, then build with
 ```
 Library mathkit version "1.0".
 
-To 'add two numbers' with a number called 'a' and a number called b. Return a number, a add b.
+To 'add two numbers' with a number called x and a number called y. Return a number, x add y.
 
 To greet.
   Print "hello from mathkit".
@@ -2993,7 +2993,7 @@ Library mathkit version "1.0".
 Location "./libmathkit.so".
 
 Table of Contents:
-    To 'add two numbers' with a number called 'a' and a number called b, returning a number.
+    To 'add two numbers' with a number called x and a number called y, returning a number.
     greet.
 ```
 
