@@ -4,6 +4,28 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-08-07
+
+### Fixed
+
+- **A `.lib`'s declared return type silently dropped to void** for any
+  function whose `Return` was not its first statement — the common case for
+  any function with real logic before returning. `Return`'s type is parsed by
+  two different code paths depending on where it sits in the function body;
+  only one of them fed the parsed type back into the function's declared
+  return type. A library's own interface file could describe a function as
+  returning nothing when it genuinely returned a value.
+
+  ```
+  To gb with a number called x.
+    a number called y is x add x.
+    Return a number, y.
+  ```
+
+  Before this fix, the emitted `.lib` read `To gb with a number called x.` —
+  no `, returning a number` clause. It now correctly reads `To gb with a
+  number called x, returning a number.`
+
 ## [0.3.0] - 2026-08-07
 
 `"..."` is now always a string literal — never an identifier. Names are bare
