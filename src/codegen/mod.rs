@@ -3200,6 +3200,24 @@ impl CodeGenerator {
                 let saved_loop_stack = std::mem::take(&mut self.loop_stack);
                 let saved_in_function_codegen = self.in_function_codegen;
                 let saved_return_type = self.current_function_return_type.clone();
+                // `variable_types`/`mixed_tag_slots` are a flat, unscoped
+                // namespace (unlike `self.variables`, which resets to empty
+                // per function): a function body still needs to resolve the
+                // type of an already-declared global by name, so it cannot
+                // start empty. Clone-and-restore instead, so this function's
+                // OWN params/locals (registered into these maps below and
+                // during body codegen) are visible while generating its body
+                // but do not leak into whatever is generated after it. Before
+                // this, a parameter name from one function (e.g. `aa`) stayed
+                // in `variable_types` forever, so a later, unrelated string
+                // literal that happened to equal that name (e.g. `"aa"` in a
+                // call argument) inherited the stale parameter's type instead
+                // of being read as literal text — see
+                // tests/203_value_param_word_boundary.vox and
+                // `emit_time_expr_tag`'s `Expr::StringLit` handling, which
+                // trusts `variable_types` by name with no scope check.
+                let saved_variable_types = self.variable_types.clone();
+                let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
 
                 // Fresh function-local state
                 self.output = String::new();
@@ -3358,6 +3376,8 @@ impl CodeGenerator {
                 self.loop_stack = saved_loop_stack;
                 self.in_function_codegen = saved_in_function_codegen;
                 self.current_function_return_type = saved_return_type;
+                self.variable_types = saved_variable_types;
+                self.mixed_tag_slots = saved_mixed_tag_slots;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));

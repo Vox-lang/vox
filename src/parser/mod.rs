@@ -13,12 +13,18 @@ pub struct Parser {
     tokens: Vec<TokenInfo>,
     pos: usize,
     source_file: Option<SourceFile>,
-    // True while parsing an append statement's value expression, where `to`
-    // is reserved for the append separator. Without this, a nested call
-    // argument (e.g. `id` in `append id of item to out`) would greedily
-    // read `to out` as its own call tail via the generic `allow_to: true`
-    // path, leaving no `to` for the append statement itself.
+    // True while parsing a sub-expression where `to`/`of` is reserved for an
+    // enclosing statement's own grammar rather than available as this
+    // sub-expression's call connector (plan 270 G1 made `to`/`of`/`with`
+    // universal call connectors, which collides with older grammars that
+    // already claim one of those words immediately after a value position:
+    // the append separator `to`, a range bound's `to`, or an index's `of`).
+    // Without this, e.g. the `id` in `append id of item to out` would
+    // greedily read `to out` as its own call tail via the generic
+    // `allow_to: true` path, leaving no `to` for the append statement
+    // itself - see `parse_primary_reserving`.
     suppress_to_connector: bool,
+    suppress_of_connector: bool,
 }
 
 #[cfg(test)]
@@ -615,7 +621,7 @@ mod file_line_read_and_seek_tests {
 
 impl Parser {
     pub fn new(tokens: Vec<TokenInfo>) -> Self {
-        Parser { tokens, pos: 0, source_file: None, suppress_to_connector: false }
+        Parser { tokens, pos: 0, source_file: None, suppress_to_connector: false, suppress_of_connector: false }
     }
     
     pub fn with_source(mut self, filename: &str, content: &str) -> Self {
@@ -787,9 +793,13 @@ impl Parser {
     /// through to other postfix forms (property access, a bare identifier) or,
     /// in append-value position, the `to` separator. `allow_to` is false
     /// there: `to` is the append separator and must not read as a connector.
+    /// `of` is similarly reserved (via `suppress_of_connector`) while parsing
+    /// an index in `element N of .../byte N of ...`, where `of` is that
+    /// statement's own separator, not this primary's connector.
     fn parse_call_tail(&mut self, name: String, allow_to: bool) -> Result<Option<Expr>, Box<CompileError>> {
         let is_conn = match self.current() {
-            Token::Of | Token::With | Token::On => true,
+            Token::Of => !self.suppress_of_connector,
+            Token::With | Token::On => true,
             Token::To => allow_to && !self.suppress_to_connector,
             _ => false,
         };
@@ -815,6 +825,31 @@ impl Parser {
             }
         }
         Ok(Some(Expr::FunctionCall { name, args }))
+    }
+
+    /// Parse a primary expression with `to` and/or `of` reserved for an
+    /// enclosing statement grammar rather than available as this primary's
+    /// own call connector. Use this wherever a value/index/bound is parsed
+    /// immediately before code that then checks for a literal `to`/`of` of
+    /// its own (a range bound's `to`, an index's `of`) - otherwise a bare
+    /// identifier there greedily reads that following word as its call
+    /// connector via `parse_call_tail`'s generic lookahead, leaving nothing
+    /// for the enclosing check (plan 270 G1 regression). Restores the prior
+    /// suppression state unconditionally, including on error, so a caller
+    /// higher up the stack that also suppressed a connector is unaffected.
+    fn parse_primary_reserving(&mut self, to: bool, of: bool) -> Result<Expr, Box<CompileError>> {
+        let saved_to = self.suppress_to_connector;
+        let saved_of = self.suppress_of_connector;
+        if to {
+            self.suppress_to_connector = true;
+        }
+        if of {
+            self.suppress_of_connector = true;
+        }
+        let result = self.parse_primary();
+        self.suppress_to_connector = saved_to;
+        self.suppress_of_connector = saved_of;
+        result
     }
 
     fn peek(&self, offset: usize) -> &Token {
@@ -1224,7 +1259,7 @@ impl Parser {
         if *self.current() == Token::Byte {
             self.advance();
             self.skip_noise();
-            let index = self.parse_primary()?;
+            let index = self.parse_primary_reserving(false, true)?;
             self.skip_noise();
             if *self.current() != Token::Of {
                 return Err(self.err("Expected 'of' after byte index"));
@@ -1247,7 +1282,7 @@ impl Parser {
         if *self.current() == Token::Element {
             self.advance();
             self.skip_noise();
-            let index = self.parse_primary()?;
+            let index = self.parse_primary_reserving(false, true)?;
             self.skip_noise();
             if *self.current() != Token::Of {
                 return Err(self.err("Expected 'of' after element index"));
@@ -1872,10 +1907,10 @@ impl Parser {
             let inclusive = true;
             self.advance();
             self.skip_noise();
-            
-            let start = self.parse_primary()?;
+
+            let start = self.parse_primary_reserving(true, false)?;
             self.skip_noise();
-            
+
             // Check if this is a range (has "to") or a collection iteration
             if *self.current() == Token::To || matches!(self.current(), Token::Identifier(s) if s == "to") {
                 // Range: from X to Y
@@ -2520,10 +2555,13 @@ impl Parser {
         self.skip_noise();
         
         // Get collection to iterate over - could be a range (1 to 15) or a collection expression
-        // First parse a primary/simple expression
-        let first = self.parse_primary()?;
+        // First parse a primary/simple expression. `to` is reserved here
+        // (not available as a nested call connector) because the very next
+        // check is for a literal `to` marking either a range bound or, in
+        // append-each position, the append separator itself.
+        let first = self.parse_primary_reserving(true, false)?;
         self.skip_noise();
-        
+
         // Check if this is a range: <start> to <end>
         // But only if first is a simple value (number/identifier), not a list or other collection
         let is_list_or_collection = matches!(first, Expr::ListLit { .. } | Expr::PropertyAccess { .. });
@@ -2533,11 +2571,13 @@ impl Parser {
                 // (`from source to dest`): parse the would-be range end
                 // speculatively and keep the range only when a second `to`
                 // follows. Otherwise the first `to` is the caller's
-                // separator - rewind and leave it for the caller.
+                // separator - rewind and leave it for the caller. `to` stays
+                // reserved for `end` too, so it can't eat the second `to`
+                // this disambiguation depends on.
                 let saved = self.pos;
                 self.advance();
                 self.skip_noise();
-                let end = self.parse_primary()?;
+                let end = self.parse_primary_reserving(true, false)?;
                 self.skip_noise();
                 if *self.current() == Token::To {
                     Expr::Range {
@@ -2552,7 +2592,7 @@ impl Parser {
             } else {
                 self.advance();
                 self.skip_noise();
-                let end = self.parse_primary()?;
+                let end = self.parse_primary_reserving(true, false)?;
                 self.skip_noise();
                 Expr::Range {
                     start: Box::new(first),
@@ -5084,7 +5124,7 @@ impl Parser {
                 // byte N of buffer
                 self.advance();
                 self.skip_noise();
-                let index = self.parse_primary()?;
+                let index = self.parse_primary_reserving(false, true)?;
                 self.skip_noise();
                 if *self.current() != Token::Of {
                     return Err(self.err("Expected 'of' after byte index"));
@@ -5101,7 +5141,7 @@ impl Parser {
                 // element N of list
                 self.advance();
                 self.skip_noise();
-                let index = self.parse_primary()?;
+                let index = self.parse_primary_reserving(false, true)?;
                 self.skip_noise();
                 if *self.current() != Token::Of {
                     return Err(self.err("Expected 'of' after element index"));
@@ -5590,12 +5630,12 @@ impl Parser {
                     self.advance();
                     self.skip_noise();
                     
-                    let start = self.parse_primary()?;
+                    let start = self.parse_primary_reserving(true, false)?;
                     self.skip_noise();
                     self.expect(&Token::To);
                     self.expect(&Token::And);
                     self.skip_noise();
-                    
+
                     let end = self.parse_primary()?;
                     
                     Ok(Expr::Range {
@@ -5733,12 +5773,49 @@ impl Parser {
                                         }
                                     }
 
+                                    // Timer duration/elapsed may be followed by
+                                    // a unit, e.g. "the t's elapsed seconds" or
+                                    // "the t's duration in seconds". This
+                                    // matches the handling already present for
+                                    // the quoted-variable possessive form
+                                    // (`t's duration in seconds` without a
+                                    // leading `the`) - without it, a two-word
+                                    // `<property> <unit>` phrase here left
+                                    // `seconds` unconsumed, so the statement
+                                    // ended early and the top-level loop then
+                                    // choked trying to parse `seconds` as its
+                                    // own statement.
+                                    if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
+                                        self.skip_noise();
+                                        if *self.current() == Token::In {
+                                            self.advance();
+                                            self.skip_noise();
+                                        }
+                                        if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
+                                            let unit = match self.current() {
+                                                Token::Seconds | Token::Second => {
+                                                    self.advance();
+                                                    ast::TimeUnit::Seconds
+                                                }
+                                                Token::Milliseconds | Token::Millisecond => {
+                                                    self.advance();
+                                                    ast::TimeUnit::Milliseconds
+                                                }
+                                                _ => unreachable!(),
+                                            };
+                                            return Ok(Expr::DurationCast {
+                                                value: Box::new(Expr::PropertyAccess { object: name, property }),
+                                                unit,
+                                            });
+                                        }
+                                    }
+
                                     return Ok(Expr::PropertyAccess { object: name, property });
                                 }
                             }
                             return Err(self.err("Expected 's after apostrophe for property access"));
                         }
-                        
+
                         Ok(Expr::Identifier(name))
                     }
                     // Plan 270 §S1.5: a string literal cannot be an object name.
@@ -6140,6 +6217,215 @@ mod to_connector_tests {
                 )));
             }
             other => panic!("Expected VarDecl with nested FunctionCall value, got {:?}", other),
+        }
+    }
+
+    /// Regression 2 round 2: `Set start to 1.` alone is not sufficient
+    /// coverage - the bug only appears once `start`/`end` are also used as
+    /// range bounds later in the same file. `parse_primary()`'s generic
+    /// call-tail lookahead ate the `to end` in `from start to end` as a
+    /// call `start(end)`, leaving no `to` for the range check, so the whole
+    /// range collapsed into a bogus `ForEach` calling `start` as a function.
+    #[test]
+    fn identifier_range_bounds_do_not_become_calls() {
+        let input = "Set start to 1.\nSet end to 3.\nFor each number from start to end, print the number.\n";
+        let result = parse_input(input).expect("identifier range bounds should parse");
+        assert_eq!(result.statements.len(), 3);
+        match &result.statements[2] {
+            Statement::ForRange {
+                range: Expr::Range { start, end, .. },
+                ..
+            } => {
+                assert!(matches!(start.as_ref(), Expr::Identifier(s) if s == "start"));
+                assert!(matches!(end.as_ref(), Expr::Identifier(s) if s == "end"));
+            }
+            other => panic!("Expected ForRange with identifier bounds, got {:?}", other),
+        }
+    }
+
+    /// Same root cause, `append each ... from <source> to <dest>` shape:
+    /// the collection-source identifier must not eat the append's own `to`.
+    #[test]
+    fn append_each_from_identifier_source_keeps_to_separator() {
+        let input = "append each x from source to dest.";
+        let result = parse_input(input).expect("append each from identifier source should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::ForEach { collection, .. } => {
+                assert!(matches!(collection, Expr::Identifier(s) if s == "source"));
+            }
+            other => panic!("Expected ForEach wrapping the append, got {:?}", other),
+        }
+    }
+
+    /// Same root cause, `element N of <list>` shape (statement and
+    /// expression forms) with an identifier index: the index must not eat
+    /// the statement's own `of`.
+    #[test]
+    fn element_index_identifier_keeps_of_separator() {
+        let input = "a number called item is element j of items.";
+        let result = parse_input(input).expect("element N of with identifier index should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::VarDecl {
+                value: Some(Expr::ElementAccess { list, index }),
+                ..
+            } => {
+                assert!(matches!(index.as_ref(), Expr::Identifier(s) if s == "j"));
+                assert!(matches!(list.as_ref(), Expr::Identifier(s) if s == "items"));
+            }
+            other => panic!("Expected VarDecl with ElementAccess value, got {:?}", other),
+        }
+    }
+
+    /// Same shape for `Set element N of list to value` and
+    /// `Set byte N of buffer to value`, which parse the index the same way.
+    #[test]
+    fn set_element_and_byte_identifier_index_keeps_of_separator() {
+        let result = parse_input("Set element j of items to 5.")
+            .expect("Set element N of with identifier index should parse");
+        match &result.statements[0] {
+            Statement::ElementSet { list, index, .. } => {
+                assert!(matches!(index, Expr::Identifier(s) if s == "j"));
+                assert_eq!(list, "items");
+            }
+            other => panic!("Expected ElementSet, got {:?}", other),
+        }
+
+        let result = parse_input("Set byte i of buf to 5.")
+            .expect("Set byte N of with identifier index should parse");
+        match &result.statements[0] {
+            Statement::ByteSet { buffer, index, .. } => {
+                assert!(matches!(index, Expr::Identifier(s) if s == "i"));
+                assert_eq!(buffer, "buf");
+            }
+            other => panic!("Expected ByteSet, got {:?}", other),
+        }
+    }
+
+    /// The combined regression test: every construct that legitimately uses
+    /// `to`/`of`/`with` as a call connector must still work *alongside* a
+    /// `Set`, a range, an `append`, and an `element N of` in the same
+    /// program - this is the shape that would have caught the incomplete
+    /// first fix, which only tested each construct in isolation.
+    #[test]
+    fn connectors_and_reserved_words_coexist_in_one_program() {
+        let input = r#"
+To greet with a text called name. Return a text, name.
+Set start to 1.
+Set end to 3.
+For each number from start to end, print the number.
+append each x from source to dest.
+a number called item is element j of items.
+Set element k of items to 9.
+Set byte b of buf to 9.
+greet to "world".
+"#;
+        let result = parse_input(input).expect("connectors and reserved words should coexist");
+        assert_eq!(result.statements.len(), 9);
+
+        assert!(matches!(result.statements[0], Statement::FunctionDef { .. }));
+        assert!(matches!(result.statements[1], Statement::VarDecl { .. }));
+        assert!(matches!(result.statements[2], Statement::VarDecl { .. }));
+        assert!(matches!(
+            &result.statements[3],
+            Statement::ForRange { range: Expr::Range { start, end, .. }, .. }
+            if matches!(start.as_ref(), Expr::Identifier(s) if s == "start")
+                && matches!(end.as_ref(), Expr::Identifier(s) if s == "end")
+        ));
+        assert!(matches!(
+            &result.statements[4],
+            Statement::ForEach { collection, .. }
+            if matches!(collection, Expr::Identifier(s) if s == "source")
+        ));
+        assert!(matches!(
+            &result.statements[5],
+            Statement::VarDecl { value: Some(Expr::ElementAccess { .. }), .. }
+        ));
+        assert!(matches!(result.statements[6], Statement::ElementSet { .. }));
+        assert!(matches!(result.statements[7], Statement::ByteSet { .. }));
+        assert!(matches!(
+            &result.statements[8],
+            Statement::FunctionCall { name, args }
+            if name == "greet" && args.len() == 1
+        ));
+    }
+}
+
+#[cfg(test)]
+mod possessive_property_unit_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse_input(input: &str) -> Result<Program, Box<CompileError>> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
+    }
+
+    /// `the <quoted name>'s elapsed seconds` - a quoted (multi-word)
+    /// identifier's possessive followed by `elapsed`/`duration` plus a unit
+    /// word. Before this fix the `the X's Y` parse path returned right after
+    /// the property token, leaving `seconds` unconsumed: the statement ended
+    /// early and the top-level loop then failed trying to parse `seconds` as
+    /// its own statement.
+    #[test]
+    fn the_quoted_possessive_elapsed_seconds_parses() {
+        let input = "Print the 'job timer''s elapsed seconds.";
+        let result = parse_input(input).expect("elapsed seconds after 'the ...'s' should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::Print {
+                value: Expr::DurationCast { value, unit },
+                ..
+            } => {
+                assert!(matches!(
+                    value.as_ref(),
+                    Expr::PropertyAccess { object, property: ObjectProperty::Elapsed }
+                    if object == "job timer"
+                ));
+                assert!(matches!(unit, ast::TimeUnit::Seconds));
+            }
+            other => panic!("Expected Print of a DurationCast, got {:?}", other),
+        }
+    }
+
+    /// The `duration in seconds` phrasing (with the optional `in`) must keep
+    /// working through the same `the X's Y` path.
+    #[test]
+    fn the_quoted_possessive_duration_in_seconds_parses() {
+        let input = "Print the 'job timer''s duration in seconds.";
+        let result = parse_input(input).expect("duration in seconds after 'the ...'s' should parse");
+        match &result.statements[0] {
+            Statement::Print {
+                value: Expr::DurationCast { value, unit },
+                ..
+            } => {
+                assert!(matches!(
+                    value.as_ref(),
+                    Expr::PropertyAccess { property: ObjectProperty::Duration, .. }
+                ));
+                assert!(matches!(unit, ast::TimeUnit::Seconds));
+            }
+            other => panic!("Expected Print of a DurationCast, got {:?}", other),
+        }
+    }
+
+    /// A single-word property after the same `the X's Y` possessive form
+    /// (no unit suffix) must be unaffected by the fix.
+    #[test]
+    fn the_quoted_possessive_single_word_property_still_parses() {
+        let input = "Print the 'job timer''s 'start time'.";
+        let result = parse_input(input).expect("single-word property should still parse");
+        match &result.statements[0] {
+            Statement::Print {
+                value: Expr::PropertyAccess { object, property: ObjectProperty::StartTime },
+                ..
+            } => {
+                assert_eq!(object, "job timer");
+            }
+            other => panic!("Expected Print of a PropertyAccess, got {:?}", other),
         }
     }
 }
