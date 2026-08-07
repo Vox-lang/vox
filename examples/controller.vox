@@ -4,11 +4,11 @@ Print "The door will open if: door is not open, elevator not moving, and  lift i
 
 print ""
 print "================================== Conditions ==================================="
-a boolean called "door_open" is true.
-a boolean called "lift_moving" is true.
-a boolean called "lift_full" is true.
+a boolean called door_open is true.
+a boolean called lift_moving is true.
+a boolean called lift_full is true.
 
-If the "door_open" is true then, 
+If the door_open is true then, 
     Print "Door is open.".
   Otherwise,
     Print "Door is closed.".
@@ -23,10 +23,10 @@ If lift_full then,
 
 print ""
 print "==================================== Action ====================================="
-if "door_open", lift_moving, and lift_full are not true
+if door_open, lift_moving, and lift_full are not true
 then,
   Print "Opening the Door.".
   Otherwise,
     Print "Not opening the Door.".
-if "door_open" and lift_moving then,
+if door_open and lift_moving then,
   Print "EMERGENCY STOP".

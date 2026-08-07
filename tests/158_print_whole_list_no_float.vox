@@ -5,19 +5,19 @@
  is the configuration that broke when _list_print first referenced
  PRINT_FLOAT without float.asm being included.)
 
-a list called "nums" is [1, 2, 3].
+a list called nums is [1, 2, 3].
 print nums.
 
-a list called "names" is ["Alice", "Bob"].
+a list called names is ["Alice", "Bob"].
 print names.
 
-a list called "flags" is [yes, no, yes].
+a list called flags is [yes, no, yes].
 print flags.
 
-a list called "mix" is [1, "two", yes].
+a list called mix is [1, "two", yes].
 print mix.
 
-a list called "blank" is [].
+a list called blank is [].
 print blank.
 
 print "nums: {nums}".

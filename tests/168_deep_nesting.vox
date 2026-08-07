@@ -2,7 +2,7 @@
  A list may contain a list that contains a list; `element N of element N
  of ...` chains through the runtime tag to reach the innermost child.)
 
-a list called "deep" is [1, [2, [3, 4]], 5].
+a list called deep is [1, [2, [3, 4]], 5].
 print deep.
 print element 2 of deep.
 print element 2 of element 2 of deep.

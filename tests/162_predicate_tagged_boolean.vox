@@ -7,8 +7,8 @@
  `append <value> is a <noun> to <list>`, plus the negation path
  `is not a <noun>` via UnaryOp(Not, TypeCheck).)
 
-a list called "m" is [1, "two", 3].
-a list called "flags" is [].
+a list called m is [1, "two", 3].
+a list called flags is [].
 For each item in m,
   append item is a number to flags,
   append item is not a text to flags.

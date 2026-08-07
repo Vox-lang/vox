@@ -1,4 +1,4 @@
-a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+a flag called verbose is "-v" or "--verbose", it is a boolean.
 
 If verbose then,
   Print "verbose:on".

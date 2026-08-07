@@ -5,38 +5,38 @@
  print [], and inline {mylist} interpolation renders the same way.)
 
 (Homogeneous integer list)
-a list called "nums" is [1, 2, 3].
+a list called nums is [1, 2, 3].
 print nums.
 
 (Homogeneous text list - elements quoted)
-a list called "names" is ["Alice", "Bob"].
+a list called names is ["Alice", "Bob"].
 print names.
 
 (Mixed list - each element rendered by its own runtime tag)
-a list called "m" is [1, "two", 3.5, yes].
+a list called m is [1, "two", 3.5, yes].
 print m.
 
 (Empty list)
-a list called "blank" is [].
+a list called blank is [].
 print blank.
 
 (Inline format interpolation)
 print "list: {nums}".
 
 (Homogeneous float list)
-a list called "vals" is [1.5, 2.5].
+a list called vals is [1.5, 2.5].
 print vals.
 
 (Homogeneous boolean list - renders as 1/0)
-a list called "flags" is [yes, no, yes].
+a list called flags is [yes, no, yes].
 print flags.
 
 (Single element - no separator)
-a list called "single" is [7].
+a list called single is [7].
 print single.
 
 (Appended list - exercises _list_append tag writes then _list_print)
-a list called "acc" is [1, 2].
+a list called acc is [1, 2].
 append 3 to acc.
 print acc.
 
@@ -46,8 +46,8 @@ print m.
 
 (Edge cases: strings with spaces stay quoted, negative integers render,
  and an empty list interpolates inline as [])
-a list called "greet" is ["hello world", "foo"].
+a list called greet is ["hello world", "foo"].
 print greet.
-a list called "negs" is [-5, 3].
+a list called negs is [-5, 3].
 print negs.
 print "empty inline: {blank}".

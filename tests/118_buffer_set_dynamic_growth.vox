@@ -1,6 +1,6 @@
 (Dynamic buffer auto-grows when setting a byte beyond current capacity)
 
-a buffer called "b".
+a buffer called b.
 Set byte 5000 of b to 65.
 On error Print "error".
 Print b's size.

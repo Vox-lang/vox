@@ -1,9 +1,9 @@
 (Best-effort cleanup from any previous run - errors ignored, no On error check)
-Remove the directory called "/tmp/vox_test_mkdir".
+Remove the directory called '/tmp/vox_test_mkdir'.
 
-Create a directory called "/tmp/vox_test_mkdir".
+Create a directory called '/tmp/vox_test_mkdir'.
 On error print "mkdir failed", exit 1.
 Print "mkdir succeeded".
 
 (Clean up so the test is repeatable)
-Remove the directory called "/tmp/vox_test_mkdir".
+Remove the directory called '/tmp/vox_test_mkdir'.

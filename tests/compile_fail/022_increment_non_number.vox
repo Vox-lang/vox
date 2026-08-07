@@ -1,2 +1,2 @@
-a buffer called "buf" is 16 bytes in size.
+a buffer called buf is 16 bytes in size.
 Increment buf.

@@ -9,7 +9,7 @@ library".
   ./examples/mathkit_consumer
   -> 7)
 
-see "mathkit" version "1.0" from "./libmathkit.lib".
+see mathkit version "1.0" from "./libmathkit.lib".
 
-a number called "sum" is "add two numbers" of 3 and 4.
+a number called sum is 'add two numbers' of 3 and 4.
 Print the sum.

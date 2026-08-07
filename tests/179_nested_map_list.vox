@@ -2,6 +2,6 @@
  or another map; _map_print recurses via the shared _print_depth budget.
  Acceptance: the nested rendering below.)
 
-a map called "nested" is {"list": [1, 2], "inner": {"x": 1}}.
+a map called nested is {"list": [1, 2], "inner": {"x": 1}}.
 print nested.
 print nested's "list".

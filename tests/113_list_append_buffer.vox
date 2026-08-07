@@ -10,12 +10,12 @@
 a list called items is [].
 
 (Normal buffer append, unrelated to either bug)
-a buffer called "buf1" is "hello".
+a buffer called buf1 is "hello".
 Append buf1 to items.
 Print element 1 of items.
 
 (Fixed-size buffer filled to exactly its capacity)
-a buffer called "buf2" is 4 bytes in size.
+a buffer called buf2 is 4 bytes in size.
 Set byte 1 of buf2 to 'w'.
 Set byte 2 of buf2 to 'o'.
 Set byte 3 of buf2 to 'r'.

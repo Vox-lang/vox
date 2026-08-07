@@ -3,14 +3,14 @@
  (8 -> 16 -> 32 -> ... -> 16384); the sum verifies every element was
  copied correctly on every realloc.)
 
-a list called "items" is [].
-a number called "i" is 1.
+a list called items is [].
+a number called i is 1.
 While i is less than or equal to 10000, append i to items, increment i.
 
-a number called "total" is 0.
-a number called "j" is 1.
+a number called total is 0.
+a number called j is 1.
 While j is less than or equal to items's length,
-  a number called "item" is element j of items,
+  a number called item is element j of items,
   the total is the total add item,
   increment j.
 

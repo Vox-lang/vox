@@ -1,9 +1,9 @@
-Remove the directory called "/tmp/vox_test_access".
+Remove the directory called '/tmp/vox_test_access'.
 
-Create a directory called "/tmp/vox_test_access".
-While "/tmp/vox_test_access" is not available,
+Create a directory called '/tmp/vox_test_access'.
+While '/tmp/vox_test_access' is not available,
     Print "Waiting for directory...".
     Sleep for 10 milliseconds.
 Print "Directory is available".
 
-Remove the directory called "/tmp/vox_test_access".
+Remove the directory called '/tmp/vox_test_access'.

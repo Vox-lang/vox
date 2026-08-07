@@ -6,15 +6,15 @@
  their struct pointer instead of the NUL-terminated data area.)
 
 (Text variable path)
-a text called "dirpath" is "/tmp/vox_test_dynpath".
+a text called dirpath is "/tmp/vox_test_dynpath".
 Remove the directory called dirpath.
 Create a directory called dirpath.
 On error print "mkdir via text var failed", exit 1.
 Print "text var mkdir ok".
 
 (Buffer path built with a format string)
-a number called "run id" is 42.
-a buffer called "subdir" is "/tmp/vox_test_dynpath/run_{run id}".
+a number called 'run id' is 42.
+a buffer called subdir is "/tmp/vox_test_dynpath/run_{run id}".
 Create a directory called subdir.
 On error print "mkdir via buffer failed", exit 1.
 Print "buffer mkdir ok".

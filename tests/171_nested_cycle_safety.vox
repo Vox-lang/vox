@@ -4,7 +4,7 @@
  sets the error flag, and unwinds safely. The `on error` block observes
  the flag.)
 
-a list called "x" is [].
+a list called x is [].
 append x to x.
 print x.
 on error print "E".

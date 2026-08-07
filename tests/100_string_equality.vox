@@ -5,19 +5,19 @@
  essentially never at the same address since add_string mints a fresh
  label per literal occurrence.)
 
-a text called "user_command" is arguments's first.
+a text called user_command is arguments's first.
 If user_command is "reboot" then, print "text var equals literal: MATCH".
 Otherwise, print "text var equals literal: no match [{user_command}]".
 
 If user_command is not "shutdown" then, print "text var not-equal literal: correctly differs".
 
-a buffer called "linebuf" is "reboot".
+a buffer called linebuf is "reboot".
 If linebuf is "reboot" then, print "buffer equals literal: MATCH".
 If linebuf is "shutdown" then, print "buffer equals literal: WRONGLY matched shutdown".
 
 (NULL-safety: arguments's second is absent in this test invocation -
  _get_arg returns NULL for an out-of-range index. The comparison must
  evaluate to false, not dereference the NULL pointer.)
-a text called "missing" is the argument at 5.
+a text called missing is the argument at 5.
 If missing is "anything" then, print "NULL comparison wrongly matched".
 Otherwise, print "NULL-safe: absent argument correctly not-equal".

@@ -1,6 +1,6 @@
 (A former text variable reused as the loop variable over a numeric list
  must not keep its text label - arithmetic on the loop variable is valid)
-a text called "n" is "hi".
+a text called n is "hi".
 a list called nums is [10, 20, 30].
 For each n in nums,
   Print n add 1.

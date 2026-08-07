@@ -4,8 +4,8 @@
  negation `s is not a number` folds true via the UnaryOp(Not) path.
  Acceptance criterion 3.)
 
-a number called "n" is 5.
-a text called "s" is "hi".
+a number called n is 5.
+a text called s is "hi".
 if n is a number, print "n-is-number".
 if n is a text, print "n-is-text".
 if s is a text, print "s-is-text".

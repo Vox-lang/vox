@@ -1,17 +1,17 @@
 (Test edge cases and potential bugs)
 
 (Variable name with spaces and special characters)
-a number called "weird var name" is 42.
-a text called "has spaces and numbers123" is "test".
+a number called 'weird var name' is 42.
+a text called 'has spaces and numbers123' is "test".
 Print "Weird var: ".
 Print "{weird var name}".
 Print "Spaces text: ".
 Print "{has spaces and numbers123}".
 
 (Deeply nested arithmetic)
-a number called "x" is 2.
-a number called "y" is 3.
-a number called "z" is 4.
+a number called x is 2.
+a number called y is 3.
+a number called z is 4.
 Print "Deep nesting: ".
 Print x add y multiply z subtract x multiply y add z.
 Print "Should be: 2 + (3*4) - (2*3) + 4 = 2 + 12 - 6 + 4 = 12".
@@ -25,15 +25,15 @@ Print "0 / 10: ".
 Print _zero divide nonzero.)
 
 (Overflow and underflow tests)
-a number called "big" is 2147483647.
+a number called big is 2147483647.
 Print "Max int + 1: ".
 Print big add 1.
 Print "Min int - 1: ".
 Print -2147483648 subtract 1.
 
 (Boolean logic edge cases)
-a boolean called "true_val" is true.
-a boolean called "false_val" is false.
+a boolean called true_val is true.
+a boolean called false_val is false.
 Print "true and false: ".
 Print true_val bit-and false_val.
 Print "true or false: ".
@@ -62,8 +62,8 @@ Print "5 % -3: ".
 Print "{5 modulo -3}".
 
 (Empty and single-element lists)
-a list called "empty_list" is [].
-a list called "single_list" is [42].
+a list called empty_list is [].
+a list called single_list is [42].
 Print "Empty list size: ".
 Print "{empty_list's size}".
 Print "Single list size: ".
@@ -72,7 +72,7 @@ Print "Single element: ".
 Print "{element 1 of single_list}".
 
 (Empty buffers)
-a buffer called "empty_buf" is "".
+a buffer called empty_buf is "".
 Print "Empty buffer size: ".
 Print "{empty_buf's size}".
 Print "Empty buffer empty: ".

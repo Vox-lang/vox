@@ -9,10 +9,10 @@ it as a .so and asserts the .lib ToC entry count EQUALS the nm -D
 --defined-only count — a count equality, not a name list, so any future drop
 fails here regardless of which function it hits.)
 
-Library "toc" version "1.0".
+Library toc version "1.0".
 To "a". Return a number, 1.
-To "greet".
-To "c". Return a number, 3.
-To "noop".
-To "idle".
-To "z". Return a number, 9.
+To greet.
+To c. Return a number, 3.
+To noop.
+To idle.
+To z. Return a number, 9.

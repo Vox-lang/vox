@@ -2,7 +2,7 @@
  as entries are added; length and empty track the live entry count.
  Acceptance: 0, 1, then 0, 2, 0.)
 
-a map called "m" is {}.
+a map called m is {}.
 print m's length.
 set m's "a" to 1.
 print m's length.

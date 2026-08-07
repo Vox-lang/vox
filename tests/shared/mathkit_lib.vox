@@ -9,10 +9,10 @@ collides with a local definition (shadowing) or with another library's export
 Built with `vox mathkit_lib.vox --shared -o libmathkit.so`, which writes
 `libmathkit.lib` beside it; the consumer `see`s the `.lib`, never the `.so`.)
 
-Library "mathkit" version "1.0".
+Library mathkit version "1.0".
 
-To "add two numbers" with a number called "a" and a number called "b".
+To 'add two numbers' with a number called "a" and a number called b.
   Return a number, a add b.
 
-To "greet".
+To greet.
   Print "hi from mathkit".

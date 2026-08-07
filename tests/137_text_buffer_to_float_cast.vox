@@ -3,26 +3,26 @@ before this fix - codegen called _parse_f64, which didn't exist
 anywhere, causing a hard NASM assembly failure for every program using
 this cast.)
 
-A text called "s1" is "3.14".
+A text called s1 is "3.14".
 Set f1 to s1 as a float.
 Print f1.
 
-A text called "s2" is "-2.5".
+A text called s2 is "-2.5".
 Set f2 to s2 as a float.
 Print f2.
 
-A text called "s3" is "42".
+A text called s3 is "42".
 Set f3 to s3 as a float.
 Print f3.
 
-A text called "s4" is "0.001".
+A text called s4 is "0.001".
 Set f4 to s4 as a float.
 Print f4.
 
 (Buffer input, including the exact clear+reuse pattern that caused a
 real bug in integer casting elsewhere - verifying the float path uses
 the same length-bounded fix from the start rather than reintroducing it)
-a buffer called "buf1" is "3.14159".
+a buffer called buf1 is "3.14159".
 Set f5 to buf1 as a float.
 Print f5.
 
@@ -43,10 +43,10 @@ Set f7 to buf2 as a float.
 Print f7.
 
 (Degenerate inputs must not crash)
-A text called "emptystr" is "".
+A text called emptystr is "".
 Set f8 to emptystr as a float.
 Print f8.
 
-A text called "trailing" is "5.5abc".
+A text called trailing is "5.5abc".
 Set f9 to trailing as a float.
 Print f9.

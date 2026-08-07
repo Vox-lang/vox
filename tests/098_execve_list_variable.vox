@@ -2,7 +2,7 @@
  literal. argv is built at runtime by _list_to_argv from the list's
  length. Previously only literal lists were accepted.)
 
-a list called "echoargs" is ["from", "a", "list", "variable"].
+a list called echoargs is ["from", "a", "list", "variable"].
 Print "before exec".
-Execute "/bin/echo" with arguments echoargs.
+Execute '/bin/echo' with arguments echoargs.
 On error print "execve failed", exit 1.

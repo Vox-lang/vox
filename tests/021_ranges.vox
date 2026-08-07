@@ -14,9 +14,9 @@ print each number from 1 to 6,
     but if the number modulo 2 is equal to 0 print "even".
 
 (Test 5: Range in function)
-To "sum range" with a number called "n".
-  A number called "total" is 0.
+To 'sum range' with a number called n.
+  A number called total is 0.
   For each number from 1 to n, total is total add the number.
   Return a number, total.
 
-Print "sum range" of 4.
+Print 'sum range' of 4.

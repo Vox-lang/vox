@@ -5,7 +5,7 @@ Write "alpha\nbeta" to sample.
 Close sample.
 
 open a file for reading called source at "./test_read_line.txt".
-a buffer called "linebuf" is 256 bytes in size.
+a buffer called linebuf is 256 bytes in size.
 
 Read line from source into linebuf.
 Print linebuf.

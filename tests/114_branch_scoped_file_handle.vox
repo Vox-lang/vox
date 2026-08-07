@@ -1,16 +1,16 @@
 (Probe: file handle opened inside if/otherwise, used from a function
  and from main-line code after the branch)
 
-a number called "x" is 1.
+a number called x is 1.
 
 if x is 1 then,
-  Open a file for writing called "out" at 1.
+  Open a file for writing called out at 1.
 Otherwise,
-  Open a file for writing called "out" at 1.
+  Open a file for writing called out at 1.
 
-To "speak".
+To speak.
   write "from function\n" to out.
 
-"speak".
+speak.
 write "from main\n" to out.
 Print "done".

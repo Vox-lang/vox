@@ -8,7 +8,7 @@ returns 6). The driver calls both and asserts each, so a regression that
 collapses the two versions back onto one body fails loudly instead of
 silently.)
 
-Library "flags" version "1.0".
+Library flags version "1.0".
 
-To "hasflag" with a number called "n".
+To hasflag with a number called n.
   Return a number, n add 100.

@@ -7,10 +7,10 @@
  do. The pre-scan marks such values unprovable and the write falls back to
  the integer tag, which renders as a number and never dereferences.)
 
-a list called "m" is ["a", "b"].
+a list called m is ["a", "b"].
 append 42 to m.
-a text called "s" is element 3 of m.
-a list called "out" is [].
+a text called s is element 3 of m.
+a list called out is [].
 append s to out.
 print m.
 print out.

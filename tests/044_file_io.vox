@@ -11,7 +11,7 @@ Close test2.
 
 (Basic file reading)
 open a file for reading called input1 at "./test_io1.txt".
-a buffer called "buffer1" is 1024 bytes in size.
+a buffer called buffer1 is 1024 bytes in size.
 Read from input1 into buffer1.
 Print "Read from test1: ".
 Print buffer1.
@@ -28,7 +28,7 @@ Print input2's writable.
 Close input2.
 
 (Buffer operations with fixed size)
-a buffer called "fixed_buf" is 10 bytes in size.
+a buffer called fixed_buf is 10 bytes in size.
 open a file for reading called input3 at "./test_io1.txt".
 Read from input3 into fixed_buf.
 Print "Fixed buffer size: ".
@@ -41,17 +41,17 @@ Close input3.
 
 (Error handling - file not found)
 open a file for reading called missing at "./nonexistent.txt".
-a buffer called "error_buf" is 1024 bytes in size.
+a buffer called error_buf is 1024 bytes in size.
 Read from missing into error_buf.
 On error print "File not found error handled".
 
 (Error handling - out of bounds)
-a list called "small_list" is [1, 2, 3].
-a number called "bad_index" is element 100 of small_list.
+a list called small_list is [1, 2, 3].
+a number called bad_index is element 100 of small_list.
 On error print "Index out of bounds error handled".
 
 (Byte access and modification)
-a buffer called "byte_buf" is "Hello".
+a buffer called byte_buf is "Hello".
 Print "Original: ".
 Print byte_buf.
 Print "First byte: ".
@@ -61,7 +61,7 @@ Print "Modified: ".
 Print byte_buf.
 
 (Appending to files)
-a buffer called "append_content" is 1024 bytes in size.
+a buffer called append_content is 1024 bytes in size.
 open a file for appending called append_test at "./test_append.txt".
 Write "First line" to append_test.
 Close append_test.

@@ -3,16 +3,16 @@
 
 Print "=== Argument Properties Demo ===".
 
-a number called "argc" is arguments's count.
+a number called argc is arguments's count.
 Print "Argument count: ".
 Print the argc.
 
-a text called "program" is arguments's name.
+a text called program is arguments's name.
 Print "Program name: ".
 Print the program.
 
 (Greet using argument or default)
-a text called "name" is "World".
+a text called name is "World".
 
 If arguments's count is greater than 1 then,
     the name is arguments's first.
@@ -28,27 +28,27 @@ If arguments's empty then,
 Print "".
 Print "=== Environment Properties Demo ===".
 
-a number called "env count" is environment's count.
+a number called 'env count' is environment's count.
 Print "Environment variable count: ".
 Print the env count.
 
 (Access environment variable by name using 's syntax)
-a text called "user" is environment's "USER".
+a text called user is environment's "USER".
 Print "Current user: ".
 Print the user.
 
-a text called "home" is environment's "HOME".
+a text called home is environment's "HOME".
 Print "Home directory: ".
 Print the home.
 
 (Show first environment variable)
-a text called "env1" is environment's first.
+a text called env1 is environment's first.
 Print "First env var: ".
 Print the env1.
 
 open a file for writing called output at "/dev/stdout".
 open a file for reading called stdinput at "/dev/stdin".
-a buffer called "userbuf".
+a buffer called userbuf.
 print "What's your name? ".
 read from stdinput into userbuf.
 a text called username is userbuf.

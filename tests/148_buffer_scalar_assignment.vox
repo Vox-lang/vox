@@ -7,12 +7,12 @@ clobbering the value; the subsequent formatted-int append then read
 that pointer as the value to format. The fix clears the buffer before
 materializing the value.)
 
-a buffer called "b1" is 5.
+a buffer called b1 is 5.
 Print b1.
-a number called "n" is 42.
-a buffer called "b2" is n.
+a number called n is 42.
+a buffer called b2 is n.
 Print b2.
-a buffer called "b3" is 32 bytes in size.
+a buffer called b3 is 32 bytes in size.
 b3 is 7.
 b3 is 123.
 Print b3.

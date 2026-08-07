@@ -9,7 +9,7 @@ the import set, so a non-ambiguous name in a multi-version import just works.
 
 `hasflag` is not used here; `common` returns n add 1 in this version.)
 
-Library "parts" version "0.1".
+Library parts version "0.1".
 
-To "common" with a number called "n".
+To common with a number called n.
   Return a number, n add 1.

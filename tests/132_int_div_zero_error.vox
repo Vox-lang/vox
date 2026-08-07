@@ -1,5 +1,5 @@
 (Regression test: integer division by zero returned 0 but did not set _last_error, so On error could not detect it.)
-A number called "x" is 42.
-A number called "y" is 0.
+A number called x is 42.
+A number called y is 0.
 Set z to x divide y.
 On error Print "div-zero".

@@ -2,6 +2,6 @@
  fresh list of key texts, and a for-each over it types the loop variable
  as text so each key prints as a string. Acceptance: a, b, c in order.)
 
-a map called "m" is {"a": 1, "b": 2, "c": 3}.
+a map called m is {"a": 1, "b": 2, "c": 3}.
 for each key in m's keys
   print key.

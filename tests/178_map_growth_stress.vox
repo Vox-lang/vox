@@ -3,12 +3,12 @@
  rehash each time. Length stays accurate and the first/last keys resolve
  to their inserted values. Acceptance: 10000, 0, 9999.)
 
-a map called "m" is {}.
-a number called "i" is 0.
+a map called m is {}.
+a number called i is 0.
 while i is less than 10000, set m's "key{i}" to i, increment i.
-a number called "len" is m's length.
-a number called "firstv" is m's "key0".
-a number called "lastv" is m's "key9999".
+a number called len is m's length.
+a number called firstv is m's "key0".
+a number called lastv is m's "key9999".
 print len.
 print firstv.
 print lastv.

@@ -5,22 +5,22 @@
  produced a NULL text: it printed as empty, compared as empty, and
  injected a NULL into execve argv arrays built from lists.)
 
-a buffer called "word" is 64 bytes in size.
+a buffer called word is 64 bytes in size.
 copy "hello" to word.
-a number called "n" is 42.
+a number called n is 42.
 
-a text called "t" is "{word}-{n}".
+a text called t is "{word}-{n}".
 Print "text: {t}".
 
 (The materialized text must survive being carried through a list into
  an execve argv array - the original failure mode was a NULL argv[1])
-a list called "echoargs" is [].
+a list called echoargs is [].
 append t to echoargs.
 append "second" to echoargs.
 
 Set pid to fork the process.
 If pid is 0 then,
-    Execute "/bin/echo" with arguments echoargs.
+    Execute '/bin/echo' with arguments echoargs.
     On error print "exec failed", exit 1.
 Set reaped to reap process pid.
 Print "done".

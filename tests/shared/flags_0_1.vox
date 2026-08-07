@@ -10,7 +10,7 @@ n add 100 (equals 105). The driver calls both and checks each result, proving
 the two versions are independently callable from one .so — the property most
 likely to regress silently, so test.sh builds and runs it on every host.)
 
-Library "flags" version "0.1".
+Library flags version "0.1".
 
-To "hasflag" with a number called "n".
+To hasflag with a number called n.
   Return a number, n add 1.

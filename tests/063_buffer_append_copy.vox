@@ -1,7 +1,7 @@
 (Buffer append/copy happy path)
 
-a buffer called "left" is "Hello".
-a buffer called "right" is " World".
+a buffer called left is "Hello".
+a buffer called right is " World".
 
 append right to left.
 Print left.

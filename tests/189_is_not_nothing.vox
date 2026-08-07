@@ -6,7 +6,7 @@ if 7 is not nothing, print "7 is not nothing".
 if "x" is not nothing, print "x is not nothing".
 if true is not nothing, print "true is not nothing".
 
-To "check" with a value called "v".
+To check with a value called v.
   if v is not nothing, print "v is not nothing".
 
-"check" of 42.
+check of 42.

@@ -2,34 +2,34 @@
  and tokenised before the multi-word property handler could match, so these
  properties were unreachable even though the parser implements them)
 
-a timer called "t".
+a timer called t.
 Start t.
 Wait 50 milliseconds.
 Stop t.
 
 (Test 1: two-word properties on an unquoted name)
-a number called "st" is t's start time.
-a number called "et" is t's end time.
+a number called st is t's start time.
+a number called et is t's end time.
 If et is greater than or equal to st then,
     Print "two-word ok".
 Otherwise,
     Print "bad".
 
 (Test 2: the one-word forms still work)
-a number called "s2" is t's start.
-a number called "e2" is t's end.
+a number called s2 is t's start.
+a number called e2 is t's end.
 If e2 is greater than or equal to s2 then,
     Print "one-word ok".
 Otherwise,
     Print "bad".
 
 (Test 3: the documented quoted multi-word name form from LANGUAGE.md)
-Create a timer called "job timer".
-Start the "job timer".
+Create a timer called 'job timer'.
+Start the 'job timer'.
 Wait 50 milliseconds.
-Stop the "job timer".
-a number called "js" is the "job timer"'s start time.
-a number called "je" is the "job timer"'s end time.
+Stop the 'job timer'.
+a number called js is the 'job timer''s start time.
+a number called je is the 'job timer''s end time.
 If je is greater than or equal to js then,
     Print "quoted ok".
 Otherwise,

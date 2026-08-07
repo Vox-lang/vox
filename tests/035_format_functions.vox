@@ -1,28 +1,28 @@
 (Test format strings with arithmetic expressions)
 
 (Arithmetic expressions in format strings)
-a number called "x" is 5.
-a number called "y" is 3.
+a number called x is 5.
+a number called y is 3.
 Print "x + y: {x add y}".
 Print "x * y: {x multiply y}".
 Print "x - y: {x subtract y}".
 Print "x / y: {x divide y}".
 
 (Complex arithmetic expressions)
-a number called "val_a" is 10.
-a number called "val_b" is 20.
-a number called "val_c" is 2.
+a number called val_a is 10.
+a number called val_b is 20.
+a number called val_c is 2.
 Print "a + b * c: {val_a add val_b multiply val_c}".
 Print "(a + b) * c: {val_a add val_b multiply val_c}".
 Print "a * b + c: {val_a multiply val_b add val_c}".
 
 (Mixed arithmetic and formatting)
-a float called "pi" is 3.14159.
-a number called "radius" is 5.
+a float called pi is 3.14159.
+a number called radius is 5.
 Print "Circle area: {3.14159 multiply radius multiply radius:.2}".
 Print "Circle circumference: {2 multiply 3.14159 multiply radius:.2}".
 
-a number called "side" is 4.
+a number called side is 4.
 Print "Square area: {side multiply side}".
 Print "Square perimeter: {4 multiply side}".
 Print "Cube volume: {side multiply side multiply side}".

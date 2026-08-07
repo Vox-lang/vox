@@ -1,5 +1,5 @@
 (Regression test: rounding the fractional part of a float did not carry into the integer part, so 0.9995 with precision 3 printed 0.1000 instead of 1.000.)
-A float called "f" is 0.9995.
+A float called f is 0.9995.
 Print "{f:.3}".
-A float called "g" is 1.9995.
+A float called g is 1.9995.
 Print "{g:.3}".
