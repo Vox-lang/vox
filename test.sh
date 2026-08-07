@@ -320,6 +320,78 @@ run_shared_library_test() {
 }
 run_shared_library_test
 
+# C-interop boundary test. LANGUAGE.md promises a .so is "callable from Vox —
+# or from C" and "loadable from C, Rust, or any other host"; SYMBOL_MANGLING.md
+# promises a standalone .so "must be callable from C". Nothing in the suite
+# checked any of that until now. Builds tests/cinterop/{mathkit,strkit}.vox
+# (two libraries, one .so — the same multi-input path as tests/shared) with
+# one numeric export and one text export, compiles tests/cinterop/driver.c
+# against it with gcc, and runs the result. Asserts: the .so has zero NEEDED
+# entries (freestanding — no libc pulled in on the Vox side, so it links into
+# a C program without conflict); both mangled exports (math_kit_1_0_add_two,
+# strkit_1_0_greet) are present in .dynsym; the C build produces zero
+# warnings; and the driver's exact stdout, not just its exit status. gcc is a
+# required part of this project's toolchain (already needed to build/test
+# elsewhere) and is present on every host that can run this suite — if it is
+# ever missing this FAILS loudly rather than skipping, because a silent skip
+# here would drop the only coverage of a promise the docs make three times.
+run_c_interop_test() {
+    local work fail_msg="" fail_log=""
+    work="$(mktemp -d)"
+
+    if ! command -v gcc >/dev/null 2>&1; then
+        fail_msg="c-interop (gcc not found - required toolchain, not optional)"
+    # 1. Build the .so from two libraries: one numeric export, one text export.
+    elif ! "$VOX_BIN" "$SCRIPT_DIR/tests/cinterop/mathkit.vox" "$SCRIPT_DIR/tests/cinterop/strkit.vox" \
+            --shared -o "$work/libcinterop.so" >"$work/build.log" 2>&1; then
+        fail_msg="c-interop (library build)"; fail_log="$work/build.log"
+    # 2. No NEEDED entries: the .so must be freestanding, pulling in no libc
+    #    of its own, so it links into a C program without conflict.
+    elif readelf -d "$work/libcinterop.so" 2>"$work/needed.log" | grep -q NEEDED; then
+        fail_msg="c-interop (.so has NEEDED entries - not freestanding)"
+        readelf -d "$work/libcinterop.so" >"$work/needed.log" 2>&1
+        fail_log="$work/needed.log"
+    else
+        # 3. Both mangled exports present in .dynsym.
+        local dynsyms
+        dynsyms=$(nm -D --defined-only "$work/libcinterop.so" | awk '{print $3}')
+        if ! grep -qx "math_kit_1_0_add_two" <<<"$dynsyms" || ! grep -qx "strkit_1_0_greet" <<<"$dynsyms"; then
+            fail_msg="c-interop (mangled exports missing from .dynsym)"
+            { echo "expected: math_kit_1_0_add_two, strkit_1_0_greet"; echo "got:"; echo "$dynsyms"; } >"$work/dynsym.log"
+            fail_log="$work/dynsym.log"
+        # 4. Compile the C driver against the .so with gcc. -Werror turns any
+        #    warning into a build failure, so "zero build warnings" is enforced
+        #    by the exit code, not a separate log scrape.
+        elif ! gcc -Wall -Wextra -Werror -std=c11 "$SCRIPT_DIR/tests/cinterop/driver.c" \
+                -L"$work" -l:libcinterop.so -Wl,-rpath,"$work" -o "$work/cmain" >"$work/gcc.log" 2>&1; then
+            fail_msg="c-interop (gcc build)"; fail_log="$work/gcc.log"
+        else
+            # 5. Run it; assert the exact expected output, not just exit status.
+            local out rc
+            out=$("$work/cmain" 2>"$work/run.err")
+            rc=$?
+            if [[ $rc -ne 0 ]]; then
+                fail_msg="c-interop (driver exited $rc)"; fail_log="$work/run.err"
+            elif [[ "$out" != "42 hello from vox" ]]; then
+                fail_msg="c-interop (driver stdout mismatch)"
+                { echo "expected: 42 hello from vox"; echo "got: $out"; } >"$work/out.log"
+                fail_log="$work/out.log"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -30
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} c-interop (gcc-linked .so: add_two(40)=42, greet()='hello from vox', no NEEDED)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_c_interop_test
+
 # Two-version shared-library boundary test (plan 230 stage A2). This is the
 # backwards-compatibility case the entire multi-version design exists for: TWO
 # VERSIONS of one library (flags 0.1 and flags 1.0) in ONE .so, both defining
