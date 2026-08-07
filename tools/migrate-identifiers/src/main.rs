@@ -80,6 +80,29 @@ fn is_reserved(lower: &str) -> bool {
     RESERVED.binary_search(&lower).is_ok()
 }
 
+/// Words that can be the `<type>` in `a <type> called "<name>"` — a name
+/// declaration. The two English `called` grammars are distinguished by what
+/// immediately precedes `called`:
+///
+///   * `a <type> called "<name>"` — a type keyword precedes `called`; the quoted
+///     token is a variable/parameter name (rewrite to an identifier).
+///   * `Create a directory called "<path>"` / `Create a device node called
+///     "<path>"` — a non-type noun (`directory`, `node`) precedes `called`;
+///     `called` introduces a filesystem path, which is data (leave the string).
+///
+/// Keying off the grammatical shape (type keyword before `called` ⇒ name)
+/// generalises to statement kinds the corpus has not hit yet, instead of
+/// special-casing each filesystem verb. Derived from the lexer's type tokens
+/// (src/lexer/mod.rs:786-883) plus `value` (a pseudo-type handled specially in
+/// parse_typed_var_decl) and `reading`/`writing` (file-handle declarations:
+/// `open a file for reading called "src"`). None of these is a path noun.
+const TYPE_KWS: &[&str] = &[
+    "number", "numbers", "float", "decimal", "real", "int", "integer",
+    "text", "string", "message", "boolean", "bool", "list", "array",
+    "collection", "map", "dictionary", "buffer", "file", "bytes", "timer",
+    "stopwatch", "byte", "flag", "value", "reading", "writing",
+];
+
 /// A name is bare-legal when it matches `^[A-Za-z_][A-Za-z0-9_]*$` and is not a
 /// reserved keyword. (Spec §"The rule": single-word identifiers are ASCII.)
 fn is_bare_legal(name: &str) -> bool {
@@ -118,14 +141,6 @@ fn canonical(content: &str) -> Form {
         return Form::Unrepresentable;
     }
     Form::Quoted(content.to_string())
-}
-
-fn render(form: &Form) -> Option<String> {
-    match form {
-        Form::Bare(s) => Some(s.clone()),
-        Form::Quoted(s) => Some(format!("'{}'", s)),
-        Form::Unrepresentable => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +585,18 @@ fn word_in(toks: &[Tok], idx: Option<usize>, set: &[&str]) -> bool {
     }
 }
 
+/// The lowercased word of the significant token two steps before `i` — i.e. the
+/// word immediately before this token's own predecessor. Used to tell the two
+/// `called` grammars apart: for `called "<X>"`, `prev` is `called` itself and
+/// `prev_prev` is the `<type>` (name declaration) or the path noun (`directory`,
+/// `node` — a filesystem path). Returns `None` when there is no such token or it
+/// is not a word.
+fn prev_prev_word<'a>(toks: &'a [Tok], sig_prev: &[Option<usize>], i: usize) -> Option<&'a str> {
+    let prev = sig_prev[i]?;
+    let pp = sig_prev[prev]?;
+    toks[pp].word_lower()
+}
+
 // ---------------------------------------------------------------------------
 // Pass 1: collect declared names.
 //   functions  — names introduced by `To "X"` at line start (callable anywhere).
@@ -632,8 +659,14 @@ fn collect_names(toks: &[Tok], sig_prev: &[Option<usize>], in_func: &[bool]) -> 
                 }
             }
         }
-        // `called "X"` (declared name): global if at top level.
-        if word_in(toks, sig_prev[i], &["called", "named"]) && !in_func[i] {
+        // `called "X"` (declared name): global if at top level. Only count the
+        // name-declaration grammar (`a <type> called "X"`); the filesystem-path
+        // grammar (`Create a directory called "<path>"`) introduces data, not a
+        // variable, so it must not be registered as a declared name.
+        if word_in(toks, sig_prev[i], &["called", "named"])
+            && !in_func[i]
+            && word_in_opt(prev_prev_word(toks, sig_prev, i), TYPE_KWS)
+        {
             globals.insert(toks[i].text.clone());
         }
     }
@@ -676,6 +709,12 @@ enum Decision {
     /// Leave the `"..."` as-is. `data` true = a known data position (no flag);
     /// `data` false = an unlisted position (flag if it names a declared thing).
     Leave { data: bool },
+    /// A name in a must-rewrite position that cannot be represented canonically
+    /// — a reserved single-character name (`a`, which is the article keyword and
+    /// cannot be bare, while `'a'` is a character literal) or a name containing
+    /// `'`. The `"..."` is left as-is and recorded as a failure: the name needs
+    /// hand-renaming in the corpus, since the new syntax has no spelling for it.
+    Failed,
 }
 
 struct Migration {
@@ -709,7 +748,7 @@ fn migrate(src: &str) -> Migration {
     let mut pos = 0usize;
     let mut rewrites = Vec::new();
     let mut flags = Vec::new();
-    let failures = Vec::new();
+    let mut failures = Vec::new();
 
     // Pass 2: walk left-to-right, maintaining function-local scope incrementally
     // (decl-before-use within a function). `func_locals` holds locals of the
@@ -731,7 +770,12 @@ fn migrate(src: &str) -> Migration {
     let with_kws = ["with"];
     let to_kws = ["to", "up"];
     let data_guard = ["write", "append", "copy"];
-    let mount_guard = ["type", "options", "size"];
+    // Words that, when they follow `with` (or `at … with`), mark the string
+    // before `with` as a filesystem-statement data argument rather than a call
+    // operand: `Mount "x" at "y" with type/options/size`, `Execute "p" with
+    // arguments`, `Pivot root to "p" with old root`. None is a call expression,
+    // so the callee `with` rule must not fire on them.
+    let with_data_kws = ["type", "options", "size", "arguments", "old"];
 
     for i in 0..toks.len() {
         let tok = &toks[i];
@@ -823,10 +867,25 @@ fn migrate(src: &str) -> Migration {
                 }
             }
         } else {
+            // `from "X"` introduces a path or source (`see … from "path"`,
+            // `Create symbolic link from "A" to "B"`), never a callee. Check it
+            // before the callee rule so the symlink `from "A" to "B"` is not
+            // misread as a `to`-callee (`"A" to "B"`).
+            if word_in(&toks, prev, &["from"]) {
+                decision = Decision::Leave { data: true };
+            }
             // 4. Listed rewrite positions (always identifiers).
-            //    called "X"
-            if word_in(&toks, prev, &["called", "named"]) {
-                decision = decide(content);
+            //    called "X" / named "X" — but only the name-declaration grammar
+            //    (`a <type> called "X"`). The filesystem-path grammar (`Create a
+            //    directory called "<path>"`, `Create a device node called "<path>"`)
+            //    reuses the word `called` to introduce a path; a type keyword
+            //    immediately precedes `called` for a name, a path noun for a path.
+            else if word_in(&toks, prev, &["called", "named"]) {
+                if word_in_opt(prev_prev_word(&toks, &sig_prev, i), TYPE_KWS) {
+                    decision = decide(content);
+                } else {
+                    decision = Decision::Leave { data: true };
+                }
             }
             //    To "X"  (function def, `to` at line start)
             else if word_in(&toks, prev, &to_kws)
@@ -857,7 +916,7 @@ fn migrate(src: &str) -> Migration {
                 &with_kws,
                 &to_kws,
                 &data_guard,
-                &mount_guard,
+                &with_data_kws,
             ) {
                 decision = d;
             }
@@ -866,8 +925,6 @@ fn migrate(src: &str) -> Migration {
                 decision = Decision::Leave { data: true };
             } else if word_in(&toks, prev, &see_kws) {
                 decision = Decision::Leave { data: true }; // see "path.vox"
-            } else if word_in(&toks, prev, &["from"]) {
-                decision = Decision::Leave { data: true }; // see ... from "path"
             } else if word_in(&toks, prev, &print_kws) {
                 decision = Decision::Leave { data: true }; // print "string"
             } else {
@@ -895,6 +952,12 @@ fn migrate(src: &str) -> Migration {
                 if !data && in_scope(content) && is_name_like(content) {
                     flags.push((line, content.clone()));
                 }
+            }
+            Decision::Failed => {
+                // The name cannot be written canonically; leave the `"..."` and
+                // record it so the migration worker knows to hand-rename it.
+                out.push_str(&src[tok.start..tok.end]);
+                failures.push((line, content.clone()));
             }
         }
         pos = tok.end;
@@ -975,7 +1038,7 @@ fn callee(
     with_kws: &[&str],
     to_kws: &[&str],
     data_guard: &[&str],
-    mount_guard: &[&str],
+    with_data_kws: &[&str],
 ) -> Option<Decision> {
     // `of` — no false-positive form in the corpus.
     if next_w == Some("of") {
@@ -985,11 +1048,13 @@ fn callee(
     if next_w == Some("on") {
         return Some(decide(content));
     }
-    // `with` — but `Mount "dst" with type/options/size` is data.
+    // `with` — but `Mount "dst" with type/options/size`, `Execute "p" with
+    // arguments`, and `Pivot root to "p" with old root` are statement grammar,
+    // not call expressions: the word after `with` marks the string as data.
     if word_in_opt(next_w, with_kws) {
         if let Some(ni) = next {
             if let Some(nn) = sig_next[ni] {
-                if word_in(toks, Some(nn), mount_guard) {
+                if word_in(toks, Some(nn), with_data_kws) {
                     return Some(Decision::Leave { data: true });
                 }
             }
@@ -1013,11 +1078,14 @@ fn word_in_opt(w: Option<&str>, set: &[&str]) -> bool {
     }
 }
 
-/// Classify content into a Rewrite decision (or a failure Leave).
+/// Classify name content into a Rewrite decision, or `Failed` when it cannot be
+/// represented canonically (a reserved single-char name like `a`, or a name
+/// containing `'`). The caller leaves a `Failed` name as the original `"..."`.
 fn decide(content: &str) -> Decision {
     match canonical(content) {
-        f @ Form::Bare(_) | f @ Form::Quoted(_) => Decision::Rewrite(render(&f).unwrap()),
-        Form::Unrepresentable => Decision::Leave { data: true },
+        Form::Bare(s) => Decision::Rewrite(s),
+        Form::Quoted(s) => Decision::Rewrite(format!("'{}'", s)),
+        Form::Unrepresentable => Decision::Failed,
     }
 }
 
@@ -1073,9 +1141,17 @@ fn run_file(path: &PathBuf, in_place: bool) -> bool {
         );
     }
     for (line, content) in &m.failures {
+        let why = if content.contains('\'') || content.contains('\n') {
+            "contains ' or newline"
+        } else {
+            // No bare form (reserved keyword) and no quoted form (one char would
+            // collide with a character literal) — e.g. the single-letter name `a`,
+            // which is the article keyword. Rename it in the corpus.
+            "reserved single-char name (bare is a keyword, 'x' is a char literal)"
+        };
         println!(
-            "  L{}: FAILED \"{}\" cannot be represented canonically (contains ' or newline)",
-            line, content
+            "  L{}: FAILED \"{}\" cannot be represented canonically ({}) — rename this name",
+            line, content, why
         );
     }
     if in_place && !failed {
@@ -1442,16 +1518,15 @@ mod tests {
 
     // --- failure: unrepresentable name -------------------------------------
     #[test]
-    fn unrepresentable_left_and_flagged() {
+    fn unrepresentable_apostrophe_left_and_failed() {
         // A name containing an apostrophe cannot be written `'...`. The token
         // is left as a string and reported as a failure.
         let m = migrate("a text called \"o'brien\" is \"x\".\n");
         assert!(m.out.contains("\"o'brien\""), "left as-is");
-        // Failure recorded for the called position (unrepresentable canonical).
-        assert!(m
-            .out
-            .contains("\"x\""), // the string value still present
-        );
+        // the string value is still present (a separate DStr, untouched)
+        assert!(m.out.contains("\"x\""));
+        assert_eq!(m.failures.len(), 1, "failure recorded for the called name");
+        assert_eq!(m.failures[0].1, "o'brien");
     }
 
     // --- scoping: function-local name does not leak ------------------------
@@ -1469,5 +1544,152 @@ mod tests {
     #[test]
     fn char_literal_unchanged() {
         assert_unchanged("a number called c is 'A' as a number.\n");
+    }
+
+    // =======================================================================
+    // Filesystem paths: `called` introduces a PATH, not a name.
+    //
+    // `Create a directory called "<path>"` reuses the word `called` to introduce
+    // a filesystem path (data). The name-declaration form `a <type> called
+    // "<name>"` always has a type keyword immediately before `called`; the
+    // filesystem form has a non-type noun (`directory`, `node`). The shape rule
+    // (type keyword before `called` => name, else => path) tells them apart.
+    // =======================================================================
+    #[test]
+    fn mkdir_create_path_unchanged() {
+        assert_unchanged("Create a directory called \"/tmp/vox_test_mkdir\".\n");
+        assert_unchanged(
+            "Create a directory called \"/tmp/vox_test_mkdir\".\nOn error print \"mkdir failed\", exit 1.\n",
+        );
+    }
+    #[test]
+    fn rmdir_remove_path_unchanged() {
+        assert_unchanged("Remove the directory called \"/tmp/vox_test_mkdir\".\n");
+    }
+    #[test]
+    fn rmdir_delete_path_unchanged() {
+        // `Delete the directory "<path>"` does not use `called` at all.
+        assert_unchanged("Delete the directory \"/tmp/vox_test_mkdir\".\n");
+    }
+    #[test]
+    fn mknod_device_node_path_unchanged() {
+        assert_unchanged(
+            "Create a device node called \"/dev/null\" with type \"c\" major 1 minor 3.\n",
+        );
+    }
+    #[test]
+    fn chdir_path_unchanged() {
+        assert_unchanged("Change directory to \"/newroot\".\n");
+    }
+
+    // --- symlink: `from "<path>" to "<path>"` is data, not a callee --------
+    // The `from` path must not be misread as a `to`-callee (`"A" to "B"`).
+    #[test]
+    fn symlink_paths_unchanged() {
+        assert_unchanged("Create symbolic link from \"/proc/self/fd\" to \"/dev/fd\".\n");
+    }
+    #[test]
+    fn symlink_error_path_unchanged() {
+        assert_unchanged(
+            "Create symbolic link from \"/tmp\" to \"/tmp/vox_nonexistent_dir_12345/bad_link\".\nOn error print \"symlink error detected as expected\".\n",
+        );
+    }
+
+    // --- execve: `Execute "<path>" with arguments` is data ----------------
+    // The path must not be misread as a `with`-callee (`"X" with args`).
+    #[test]
+    fn execve_path_and_literal_args_unchanged() {
+        assert_unchanged("Execute \"/bin/echo\" with arguments [\"hello\", \"world\"].\n");
+    }
+    #[test]
+    fn execve_no_args_path_unchanged() {
+        assert_unchanged("Execute \"/bin/sh\".\n");
+    }
+
+    // --- pivot_root: `Pivot root to "<path>" with old root "<path>"` -------
+    // The path after `to` must not be misread as a `with`-callee.
+    #[test]
+    fn pivot_root_paths_unchanged() {
+        assert_unchanged("Pivot root to \"/newroot\" with old root \"/newroot/oldroot\".\n");
+    }
+
+    // --- genuine names still rewrite in files that also contain paths ------
+    #[test]
+    fn names_rewrite_alongside_paths() {
+        // `linktarget`/`linkname` are `text called` names -> bare; every path
+        // (`is "/tmp/..."`, `directory called "/tmp/..."`, `from … to …`,
+        // `Execute … with arguments […]`) stays a string.
+        let src = "a text called \"linktarget\" is \"/tmp/a\".\n\
+                   a text called \"linkname\" is \"/tmp/b\".\n\
+                   Create a directory called \"/tmp/d\".\n\
+                   Create symbolic link from \"/tmp/a\" to \"/tmp/b\".\n\
+                   Execute \"/bin/echo\" with arguments [\"x\"].\n";
+        let out = rewrote(src);
+        assert!(out.contains("a text called linktarget is \"/tmp/a\"."));
+        assert!(out.contains("a text called linkname is \"/tmp/b\"."));
+        assert!(out.contains("Create a directory called \"/tmp/d\"."));
+        assert!(out.contains("Create symbolic link from \"/tmp/a\" to \"/tmp/b\"."));
+        assert!(out.contains("Execute \"/bin/echo\" with arguments [\"x\"]."));
+        assert_eq!(count_rewrites(src), 2, "only the two called names rewrite");
+    }
+    #[test]
+    fn execve_list_var_name_rewrites_path_stays() {
+        let src = "a list called \"echoargs\" is [\"from\", \"a\", \"list\", \"variable\"].\n\
+                   Execute \"/bin/echo\" with arguments echoargs.\n";
+        let out = rewrote(src);
+        assert!(out.contains("a list called echoargs is [\"from\", \"a\", \"list\", \"variable\"]."));
+        assert!(out.contains("Execute \"/bin/echo\" with arguments echoargs."));
+        assert_eq!(count_rewrites(src), 1, "only the list name rewrites");
+    }
+
+    // --- idempotency / byte-identity on filesystem-statement input ---------
+    #[test]
+    fn filesystem_paths_canonical_and_idempotent() {
+        let src = "Create a directory called \"/tmp/d\".\n\
+                   Create symbolic link from \"/tmp/a\" to \"/tmp/b\".\n\
+                   Execute \"/bin/echo\" with arguments [\"x\"].\n\
+                   Pivot root to \"/newroot\" with old root \"/newroot/oldroot\".\n";
+        let once = rewrote(src);
+        assert_eq!(once, src, "paths stay; canonical input is byte-identical");
+        assert_eq!(rewrote(&once), once, "running twice equals once");
+    }
+    #[test]
+    fn idempotent_on_mixed_paths_and_names() {
+        let src = "a text called \"src\" is \"/tmp/a\".\n\
+                   Create a directory called \"/tmp/d\".\n\
+                   Execute \"/bin/echo\" with arguments [\"x\"].\n";
+        let once = rewrote(src);
+        assert_eq!(rewrote(&once), once);
+    }
+
+    // =======================================================================
+    // Single-char reserved name `a`: a SEPARATE root cause from the path bug.
+    //
+    // `a` is the article keyword. Bare `called a` does not parse (the compiler
+    // rejects the keyword as a name), and `'a'` is a character literal, not a
+    // quoted identifier. So a name `a` has no canonical spelling at all — it is
+    // unrepresentable, not merely "should be bare". The codemod leaves it as
+    // `"a"` and reports a failure so the corpus renames it (e.g. `aa`). This is
+    // distinct from the path bug, which is a classification error, not a
+    // representability limit. (Verified: `vox` rejects `To "gcd" with a number
+    // called a` with "Missing parameter name"; `called 'a'` with the same.)
+    // =======================================================================
+    #[test]
+    fn called_single_char_reserved_is_failure() {
+        let src = "To \"gcd\" with a number called \"a\" and a number called \"b\".\n  Return a number, a.\n";
+        let m = migrate(src);
+        assert!(m.out.contains("To gcd"), "function name rewrites");
+        assert!(m.out.contains("called b"), "\"b\" rewrites to bare");
+        assert!(m.out.contains("called \"a\""), "\"a\" left as-is (unrepresentable)");
+        assert_eq!(m.failures.len(), 1, "exactly one failure (the name `a`)");
+        assert_eq!(m.failures[0].1, "a");
+    }
+    #[test]
+    fn to_single_char_reserved_function_name_is_failure() {
+        let src = "To \"a\". Return a number, 1.\n";
+        let m = migrate(src);
+        assert!(m.out.contains("To \"a\"."), "\"a\" function name left as-is");
+        assert_eq!(m.failures.len(), 1);
+        assert_eq!(m.failures[0].1, "a");
     }
 }
