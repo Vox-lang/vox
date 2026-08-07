@@ -266,13 +266,16 @@ run_shared_library_test() {
         exp=$(printf '%s\n' mathkit_1_0_add_two_numbers mathkit_1_0_greet mathkit_1_0_makebuf | sort)
         # 2b. A3: the .lib interface file is written beside the .so. Assert its
         #     exact content — a drift in the emitted format fails here, not at
-        #     A4. `makebuf` is a multi-statement body, so the parser does not
-        #     capture its return type (a known A3 gap, see the report); its ToC
-        #     entry reads `To makebuf.` with no `, returning` clause. The
-        #     other two are single-line defs whose typed `Return a number, ...`
-        #     is captured, so they carry `, returning a number`.
+        #     A4. `makebuf` is a multi-statement body (`Return` follows a
+        #     `Create`/`Append` pair, not the function's first statement), so
+        #     plan 280 S1's Gate B fix is what makes its ToC entry carry
+        #     `, returning a number` at all — before that fix, Gate B parsed
+        #     the typed `Return a number, ...` but never wrote it back into
+        #     the function's declared return type, so this entry silently
+        #     read `To makebuf.` (void). The other two are single-line defs
+        #     whose typed `Return a number, ...` was always captured (Gate A).
         local lib_exp
-        lib_exp=$(printf 'Library mathkit version "1.0".\nLocation "./libmath.so".\n\nTable of Contents:\n    To '\''add two numbers'\'' with a number called n, returning a number.\n    To greet.\n    To makebuf.\n')
+        lib_exp=$(printf 'Library mathkit version "1.0".\nLocation "./libmath.so".\n\nTable of Contents:\n    To '\''add two numbers'\'' with a number called n, returning a number.\n    To greet.\n    To makebuf, returning a number.\n')
         if ! diff -u <(printf '%s\n' "$lib_exp") "$work/libmath.lib" >"$work/libdiff.log" 2>&1; then
             fail_msg="shared/libmath (.lib content mismatch)"; fail_log="$work/libdiff.log"
         elif [[ "$got" != "$exp" ]]; then
