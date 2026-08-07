@@ -122,22 +122,22 @@ This example demonstrates:
 - Loop expansion over arguments
 - Automatic resource cleanup
 
-```text
-Open a file for writing called "output" at "/dev/stdout".
-Create a buffer called "content".
+```
+Open a file for writing called output at "/dev/stdout".
+Create a buffer called content.
 
 If arguments's empty then,
-    open a file for reading called "source" at "/dev/stdin",
+    open a file for reading called source at "/dev/stdin",
     read from source into content,
     write content to output,
     close source,
     exit 0.
 
-Open a file called "source" for reading at each filename from arguments's all treating "-" as "/dev/stdin",
+Open a file called source for reading at each filename from arguments's all treating "-" as "/dev/stdin",
     read from source into content,
     write content to output,
     close source.
-````
+```
 
 The loop expansion construct:
 

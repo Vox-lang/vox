@@ -1,7 +1,7 @@
 # Shared Libraries Design Document
 
 > **Status:** Active design document — the authority for the shared-library
-> feature. The `see "<lib>" version "<ver>" from "<path>.lib"` form and the
+> feature. The `see '<lib>' version "<ver>" from "<path>.lib"` form and the
 > `.lib`→`.so` chain are the live design, implemented on the code track (plan
 > 230, Stages A1–A5); the earlier direct-`.so` model (plan 220) and per-version
 > runtime-state mangling (plan 230 explicit non-goal) are abandoned. The
@@ -19,7 +19,7 @@ This document outlines the design and implementation considerations for a shared
 Any `.vox` file can become a library by adding a library declaration at the beginning:
 
 ```
-Library 'lib_name' version '1.0'
+Library lib_name version "1.0"
 ```
 
 When this declaration is present, the compiler will automatically generate both:
@@ -42,18 +42,18 @@ The `.lib` file serves as the public interface for the library and contains:
 Example `.lib` file structure (the normative format — see plan 230, "The `.lib`
 format"; the code track emits this in Stage A3 and parses it in A4):
 ```
-Library "flags" version "0.1".
+Library flags version "0.1".
 Location "./libflags.so".
 
 Table of Contents:
-    To "hasflag" with a text called "flag", returning a boolean.
-    To "isverbose", returning a boolean.
-    To "wantshelp", returning a boolean.
-    To "getoption" with a text called "flag", returning a text.
+    To hasflag with a text called 'flag', returning a boolean.
+    isverbose, returning a boolean.
+    wantshelp, returning a boolean.
+    To getoption with a text called 'flag', returning a text.
 ```
 
 A `.lib` is a sequence of `Library` blocks. Each block has three parts: a
-`Library "<name>" version "<ver>"` line, a `Location` line naming the `.so`, and
+`Library '<name>' version "<ver>"` line, a `Location` line naming the `.so`, and
 a `Table of Contents` of exported signatures. Several `Library` blocks may
 appear in one `.lib` and parsing runs to EOF — a `Library` line starts a new
 block (see "Parsing Multi-Library `.lib` Files" below).
@@ -76,10 +76,10 @@ with no `returning` clause denotes a function that returns nothing.
 Programs that want to use a library must include a see statement:
 
 ```
-see "lib_name" version "1.0" from "Path/to/library.lib".
+see lib_name version "1.0" from "Path/to/library.lib".
 ```
 
-This is the sole canonical form (plan 230, decision 2): `see "<lib>" version
+This is the sole canonical form (plan 230, decision 2): `see '<lib>' version
 "<ver>" from "<path>.lib".` The earlier `See "…/library.lib" for "lib_name"
 "version"` ordering is retired — the compiler's `see` of a `.lib` accepts only
 this form, and the old `for`-form produces a diagnostic showing the canonical
@@ -102,7 +102,7 @@ A single `.so` file can contain multiple libraries and different versions. This 
 
 #### Parsing Multi-Library `.lib` Files
 
-The compiler must parse `.lib` files from top to bottom, treating each `Library "<name>" version "<ver>"` declaration as the start of a new block, each with its own `Location` and `Table of Contents`. Parsing continues until EOF is reached.
+The compiler must parse `.lib` files from top to bottom, treating each `Library '<name>' version "<ver>"` declaration as the start of a new block, each with its own `Location` and `Table of Contents`. Parsing continues until EOF is reached.
 
 > **A `.so` is binary ELF, not text.** An earlier draft of this section said
 > the compiler "parses `.so` files" this way — that was the abandoned
@@ -332,14 +332,14 @@ Expr::PropertyAccess { object, property } => {
 #### Multi-Library .so Structure
 ```
 libcombined.so:
-├── Library "flags" version "0.1"
+├── Library flags version "0.1"
 │   ├── flags_0_1_hasflag
 │   ├── flags_0_1_isverbose
 │   └── flags_0_1_getoption
-├── Library "utils" version "1.2"
+├── Library utils version "1.2"
 │   ├── utils_1_2_format_string
 │   └── utils_1_2_parse_number
-└── Library "flags" version "1.0"
+└── Library flags version "1.0"
     ├── flags_1_0_hasflag (newer version)
     └── flags_1_0_check_flag (new function)
 ```

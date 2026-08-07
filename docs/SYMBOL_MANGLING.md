@@ -44,7 +44,7 @@ anywhere two independently-authored names can reach the same symbol table.
 **A leading underscore is reserved for the runtime.** This mirrors C, where
 leading-underscore identifiers belong to the implementation. Author function
 names must not start with one; the compiler rejects them rather than letting
-the collision reach NASM. Before this rule, `To "_str_eq" ...` produced:
+the collision reach NASM. Before this rule, `To _str_eq ...` produced:
 
 ```
 error: label `_str_eq' inconsistently redefined

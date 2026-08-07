@@ -31,7 +31,7 @@ This document explores Linux syscalls that could be leveraged to add powerful fe
 
 | Syscall | Number | Description | Proposed Syntax |
 |---------|--------|-------------|-----------------|
-| `mkdir` | 83 | Create directory | `Create a directory called "logs".` |
+| `mkdir` | 83 | Create directory | `Create a directory called logs.` |
 | `rmdir` | 84 | Remove empty directory | `Remove the directory "temp".` |
 | `chdir` | 80 | Change working directory | `Change directory to "/home/user".` |
 | `getcwd` | 79 | Get current directory | `Get current directory into path.` |
@@ -39,7 +39,7 @@ This document explores Linux syscalls that could be leveraged to add powerful fe
 
 **Example:**
 ```vox
-Create a directory called "output".
+Create a directory called output.
 Change directory to "output".
 Get current directory into cwd.
 Print cwd.
@@ -57,8 +57,8 @@ Print cwd.
 | `chown` | 92 | Change ownership | `Set owner of "file.txt" to "user".` |
 | `rename` | 82 | Rename/move file | `Rename "old.txt" to "new.txt".` |
 | `unlink` | 87 | Delete file | `Delete "temp.txt".` |
-| `link` | 86 | Create hard link | `Link "original" to "hardlink".` |
-| `symlink` | 88 | Create symbolic link | `Create symbolic link from "target" to "link".` |
+| `link` | 86 | Create hard link | `Link original to "hardlink".` |
+| `symlink` | 88 | Create symbolic link | `Create symbolic link from target to "link".` |
 | `readlink` | 89 | Read symlink target | `Read link "symlink" into target.` |
 | `truncate` | 76 | Resize file | `Truncate "file.txt" to 0 bytes.` |
 
@@ -128,7 +128,7 @@ Print "Child exited with " then status.
 
 | Syscall | Number | Description | Proposed Syntax |
 |---------|--------|-------------|-----------------|
-| `socket` | 41 | Create socket | `Create a TCP socket called "server".` |
+| `socket` | 41 | Create socket | `Create a TCP socket called server.` |
 | `bind` | 49 | Bind to address | `Bind server to port 8080.` |
 | `listen` | 50 | Listen for connections | `Listen on server with backlog 10.` |
 | `accept` | 43 | Accept connection | `Accept connection on server into client.` |
@@ -145,7 +145,7 @@ Print "Child exited with " then status.
 
 **Example:**
 ```vox
-Create a TCP socket called "server".
+Create a TCP socket called server.
 Bind server to port 8080.
 Listen on server with backlog 10.
 Print "Listening on port 8080...".
@@ -197,7 +197,7 @@ Unmap db.
 | `clock_gettime` | 228 | High-res time | `Get monotonic time into elapsed.` |
 | `nanosleep` | 35 | Sleep | `Sleep for 1 second.` / `Wait 500 milliseconds.` |
 | `alarm` | 37 | Set alarm | `Set alarm for 30 seconds.` |
-| `timer_create` | 222 | Create timer | `Create timer called "heartbeat".` |
+| `timer_create` | 222 | Create timer | `Create timer called heartbeat.` |
 | `timer_settime` | 223 | Set timer | `Set heartbeat to fire every 1 second.` |
 
 **Example:**
@@ -248,14 +248,14 @@ Loop forever,
 
 | Syscall | Number | Description | Proposed Syntax |
 |---------|--------|-------------|-----------------|
-| `pipe` | 22 | Create pipe | `Create a pipe called "channel".` |
-| `pipe2` | 293 | Create pipe with flags | `Create a non-blocking pipe called "channel".` |
+| `pipe` | 22 | Create pipe | `Create a pipe called channel.` |
+| `pipe2` | 293 | Create pipe with flags | `Create a non-blocking pipe called channel.` |
 | `dup` | 32 | Duplicate fd | `Duplicate stdin into saved_stdin.` |
 | `dup2` | 33 | Duplicate to specific fd | `Redirect stdout to logfile.` |
 
 **Example:**
 ```vox
-Create a pipe called "channel".
+Create a pipe called channel.
 Fork into child.
 
 If child is 0 then,
@@ -275,7 +275,7 @@ Wait for child.
 
 | Syscall | Number | Description | Proposed Syntax |
 |---------|--------|-------------|-----------------|
-| `shmget` | 29 | Get shared memory | `Create shared memory "shm" of size 4096.` |
+| `shmget` | 29 | Get shared memory | `Create shared memory shm of size 4096.` |
 | `shmat` | 30 | Attach shared memory | `Attach shared memory "shm" into region.` |
 | `shmdt` | 67 | Detach shared memory | `Detach region.` |
 | `shmctl` | 31 | Control shared memory | `Remove shared memory "shm".` |
@@ -293,16 +293,16 @@ Wait for child.
 |---------|--------|-------------|-----------------|
 | `poll` | 7 | Wait for events | `Wait for input on [stdin, socket] into ready.` |
 | `select` | 23 | Wait for multiple fds | `Select readable from [fd1, fd2] into ready.` |
-| `epoll_create` | 213 | Create epoll instance | `Create event monitor called "events".` |
+| `epoll_create` | 213 | Create epoll instance | `Create event monitor called events.` |
 | `epoll_ctl` | 233 | Control epoll | `Watch socket for input in events.` |
 | `epoll_wait` | 232 | Wait for events | `Wait for events into triggered.` |
-| `eventfd` | 284 | Create event fd | `Create event counter called "signal".` |
-| `timerfd_create` | 283 | Create timer fd | `Create timer fd called "tick".` |
-| `signalfd` | 282 | Create signal fd | `Create signal fd for INTERRUPT called "sigfd".` |
+| `eventfd` | 284 | Create event fd | `Create event counter called signal.` |
+| `timerfd_create` | 283 | Create timer fd | `Create timer fd called tick.` |
+| `signalfd` | 282 | Create signal fd | `Create signal fd for INTERRUPT called sigfd.` |
 
 **Example:**
 ```vox
-Create event monitor called "events".
+Create event monitor called events.
 Watch server for connections in events.
 Watch stdin for input in events.
 
@@ -429,14 +429,14 @@ S_IXOTH = 0001   (other execute)
 (Simple HTTP server in Vox)
 
 Enable error catching.
-Create a TCP socket called "server".
+Create a TCP socket called server.
 Set option REUSEADDR on server.
 Bind server to port 8080.
 Listen on server with backlog 10.
 Print "Server listening on port 8080...".
 
-Create a buffer called "request".
-Create a buffer called "response".
+Create a buffer called request.
+Create a buffer called response.
 
 Loop forever,
     accept connection on server into client,
@@ -456,7 +456,7 @@ Loop forever,
 ```vox
 (Watch a directory for changes)
 
-Create event monitor called "watcher".
+Create event monitor called watcher.
 Watch directory "/var/log" for changes in watcher.
 
 Loop forever,

@@ -22,7 +22,7 @@ Support using format strings to *build bytes into a destination buffer* (null-te
 
 - Buffer assignment:
   - `Set out to "Hello {name}".`
-  - `A buffer called "out" is "Hello {name}".`
+  - `A buffer called out is "Hello {name}".`
   - `The buffer out is "Hello {name}".`
   - `append "Hello {name}" to out.`
   - `copy "Hello {name}" to out.`
@@ -66,7 +66,7 @@ Non-goals (for now):
 
 ## Success Criteria
 - [ ] `Set <buffer> to "...{...}...".` builds formatted output into the buffer
-- [ ] `A buffer called "x" is "...{...}...".` builds formatted output into the buffer
+- [ ] `A buffer called x is "...{...}...".` builds formatted output into the buffer
 - [ ] No heap allocation is required beyond what buffers already do (dynamic growth is allowed)
 - [ ] Fixed-size buffer behavior matches existing rules (truncate + set error)
 - [ ] All existing tests pass

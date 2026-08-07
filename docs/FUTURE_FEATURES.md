@@ -25,8 +25,8 @@ The compiler should emit warnings for code patterns that are syntactically valid
 **Pattern:** Variable declared but never referenced
 
 ```
-a number called "x" is 5.
-a number called "y" is 10.
+a number called x is 5.
+a number called y is 10.
 print the y.
 (x is never used - should warn)
 ```
@@ -46,7 +46,7 @@ print the y.
 **Pattern:** Function defined but never called
 
 ```
-To "helper" with a number called "x". Return a number, x multiply 2.
+To helper with a number called x. Return a number, x multiply 2.
 
 print "Hello".
 (helper is never called - should warn)
@@ -67,7 +67,7 @@ print "Hello".
 **Pattern:** Using `each...from` in a return statement
 
 ```
-To "get_doubled" with a list called "nums". 
+To get_doubled with a list called nums. 
   Return a list, each x from nums.
 (This is ambiguous - should warn or error)
 ```
@@ -95,10 +95,10 @@ Return a list, [each x from nums].
 **Pattern:** Using loop expansion in function parameters
 
 ```
-To "process" with a number called "x". Return a number, x multiply 2.
+To process with a number called x. Return a number, x multiply 2.
 
-a list called "nums" is [1, 2, 3].
-print "process" of each n from nums.
+a list called nums is [1, 2, 3].
+print process of each n from nums.
 (This is valid and works, but might be confusing)
 ```
 
@@ -118,11 +118,11 @@ print "process" of each n from nums.
 
 **Example of warning case:**
 ```
-To "add" with a number called "x" and a number called "y". 
+To 'add' with a number called x and a number called y. 
   Return a number, x add y.
 
 (This is ambiguous - which parameter gets the loop variable?)
-print "add" of each n from [1, 2, 3] and 10.
+print 'add' of each n from [1, 2, 3] and 10.
 ```
 
 ---
@@ -132,7 +132,7 @@ print "add" of each n from [1, 2, 3] and 10.
 **Pattern:** Loop variable shadows outer variable
 
 ```
-a number called "x" is 100.
+a number called x is 100.
 print each x from [1, 2, 3].
 print the x.
 (x is shadowed - should warn)
@@ -155,8 +155,8 @@ print the x.
 **Pattern:** Appending different types to a list
 
 ```
-a list called "items" is [1, 2, 3].
-append "hello" to items.
+a list called items is [1, 2, 3].
+append hello to items.
 (Type mismatch - list was integers, now appending string)
 ```
 
@@ -196,7 +196,7 @@ print each n from 1 to infinity.
 **Pattern:** Code after unconditional exit/return
 
 ```
-To "test".
+To test.
   Return a number, 5.
   print "This never runs".
 (Code after return is unreachable)
@@ -261,19 +261,19 @@ Add support for comparing lists using quantifier operations: `any`, `all`, and `
 **Examples:**
 
 ```
-a list called "numbers" is [1, 2, 3, 4, 5].
+a list called numbers is [1, 2, 3, 4, 5].
 
 (Check if any number is greater than 3)
 If any n in numbers is greater than 3 then,
   print "Found a number greater than 3".
 
 (Check if any name is "Alice")
-a list called "names" is ["Bob", "Charlie", "Alice"].
+a list called names is ["Bob", "Charlie", "Alice"].
 If any name in names is equal to "Alice" then,
   print "Alice is in the list".
 
 (With function calls)
-To "is_even" with a number called "x". 
+To is_even with a number called x. 
   Return a boolean, x modulo 2 is equal to 0.
 
 If any num in numbers is_even then,
@@ -297,26 +297,26 @@ If any num in numbers is_even then,
 **Examples:**
 
 ```
-a list called "numbers" is [2, 4, 6, 8].
+a list called numbers is [2, 4, 6, 8].
 
 (Check if all numbers are even)
 If all n in numbers modulo 2 is equal to 0 then,
   print "All numbers are even".
 
 (Check if all names are non-empty)
-a list called "names" is ["Alice", "Bob", "Charlie"].
+a list called names is ["Alice", "Bob", "Charlie"].
 If all name in names is not equal to "" then,
   print "All names are provided".
 
 (With function calls)
-To "is_positive" with a number called "x".
+To is_positive with a number called x.
   Return a boolean, x is greater than 0.
 
 If all num in numbers is_positive then,
   print "All numbers are positive".
 
 (Empty list - all returns true)
-a list called "empty" is [].
+a list called 'empty' is [].
 If all x in empty is greater than 0 then,
   print "This prints (vacuous truth)".
 ```
@@ -338,26 +338,26 @@ If all x in empty is greater than 0 then,
 **Examples:**
 
 ```
-a list called "numbers" is [1, 3, 5, 7].
+a list called numbers is [1, 3, 5, 7].
 
 (Check if no numbers are even)
 If none n in numbers modulo 2 is equal to 0 then,
   print "No even numbers found".
 
 (Check if no names are empty)
-a list called "names" is ["Alice", "Bob", "Charlie"].
+a list called names is ["Alice", "Bob", "Charlie"].
 If none name in names is equal to "" then,
   print "All names are non-empty".
 
 (With function calls)
-To "is_negative" with a number called "x".
+To is_negative with a number called x.
   Return a boolean, x is less than 0.
 
 If none num in numbers is_negative then,
   print "No negative numbers".
 
 (Empty list - none returns true)
-a list called "empty" is [].
+a list called 'empty' is [].
 If none x in empty is less than 0 then,
   print "This prints (vacuous truth)".
 ```
@@ -412,14 +412,14 @@ If all n from 1 to 5 is greater than 0 then,
 
 ```
 (Use quantifier result in variable)
-a boolean called "has_even" is any n in numbers modulo 2 is equal to 0.
+a boolean called has_even is any n in numbers modulo 2 is equal to 0.
 print the has_even.
 
 (Use in format strings)
 print "Any greater than 5: {any x in nums is greater than 5}".
 
 (Use in function calls)
-To "check_list" with a list called "items".
+To check_list with a list called items.
   If all x in items is greater than 0 then,
     print "All positive".
 
@@ -486,7 +486,7 @@ If any x in list1 and any y in list2 x add y is greater than 10 then,
 
 ```
 (Define a predicate function and use with quantifiers)
-To "is_prime" with a number called "x". Return a boolean, ...
+To is_prime with a number called x. Return a boolean, ...
 
 If any n from 1 to 100 is_prime then,
   print "Found a prime".
