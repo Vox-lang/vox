@@ -4,16 +4,16 @@
  is generated, so future richer expressions in later positions can
  never clobber earlier ones.)
 
-a text called linktarget is '/tmp/vox_test_symlink_vararg'.
+a text called linktarget is "/tmp/vox_test_symlink_vararg".
 a text called linkname is "/tmp/vox_test_link_vararg".
 
 Delete the file "/tmp/vox_test_link_vararg".
-Remove the directory called '/tmp/vox_test_symlink_vararg'.
+Remove the directory called "/tmp/vox_test_symlink_vararg".
 
-Create a directory called '/tmp/vox_test_symlink_vararg'.
+Create a directory called "/tmp/vox_test_symlink_vararg".
 Create symbolic link from linktarget to linkname.
 On error print "symlink failed", exit 1.
 Print "symlink succeeded".
 
 Delete the file "/tmp/vox_test_link_vararg".
-Remove the directory called '/tmp/vox_test_symlink_vararg'.
+Remove the directory called "/tmp/vox_test_symlink_vararg".

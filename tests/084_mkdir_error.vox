@@ -1,7 +1,7 @@
-Remove the directory called '/tmp/vox_test_mkdir_error'.
+Remove the directory called "/tmp/vox_test_mkdir_error".
 
-Create a directory called '/tmp/vox_test_mkdir_error'.
-Create a directory called '/tmp/vox_test_mkdir_error'.
+Create a directory called "/tmp/vox_test_mkdir_error".
+Create a directory called "/tmp/vox_test_mkdir_error".
 On error print "mkdir error detected as expected".
 
-Remove the directory called '/tmp/vox_test_mkdir_error'.
+Remove the directory called "/tmp/vox_test_mkdir_error".

@@ -4,5 +4,5 @@
 
 a list called echoargs is ["from", "a", "list", "variable"].
 Print "before exec".
-Execute '/bin/echo' with arguments echoargs.
+Execute "/bin/echo" with arguments echoargs.
 On error print "execve failed", exit 1.
