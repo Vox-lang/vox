@@ -19,7 +19,7 @@ use lexer::Lexer;
 use parser::Parser;
 use parser::ast::{Program, Statement};
 use analyzer::Analyzer;
-use codegen::{CodeGenerator, mangle_library_symbol, render_lib_file};
+use codegen::{CodeGenerator, format_lib_name, mangle_library_symbol, render_lib_file};
 
 /// Resolve the core-path environment override purely from its two inputs, so
 /// the precedence rule can be unit-tested without touching process-global env.
@@ -533,11 +533,11 @@ fn main() {
                             // twice): keep the existing diagnostic's shape.
                             eprintln!(
                                 "Duplicate library identity: '{}' and '{}' both declare \
-                                 Library \"{}\" version \"{}\". Two sources linked into one \
+                                 Library {} version \"{}\". Two sources linked into one \
                                  .so must each name a distinct library and version, or the \
                                  second's signatures silently overwrite the first's. Rename \
                                  one.",
-                                prev_file, source_path, lib, ver
+                                prev_file, source_path, format_lib_name(&lib), ver
                             );
                         } else {
                             // Different raw identities that sanitise to the
@@ -546,14 +546,14 @@ fn main() {
                             // author sees why their distinct-looking names are
                             // the same to the linker.
                             eprintln!(
-                                "Duplicate library identity: '{}' declares Library \"{}\" \
-                                 version \"{}\" and '{}' declares Library \"{}\" version \"{}\", \
+                                "Duplicate library identity: '{}' declares Library {} \
+                                 version \"{}\" and '{}' declares Library {} version \"{}\", \
                                  but both mangle to the symbol prefix '{}'. The mangler folds \
                                  every character outside [A-Za-z0-9_] to '_', so these are the \
                                  same to the linker and the second's signatures silently \
                                  overwrite the first's. Rename one so the library and version \
                                  stay distinct after mangling.",
-                                prev_file, plib, pver, source_path, lib, ver, prefix
+                                prev_file, format_lib_name(&plib), pver, source_path, format_lib_name(&lib), ver, prefix
                             );
                         }
                         std::process::exit(1);
@@ -564,7 +564,7 @@ fn main() {
                     eprintln!(
                         "'{}' has no `Library` declaration. A source linked into a shared \
                          library alongside others must declare its identity — \
-                         `Library \"name\" version \"x.y\".` — so its symbols are mangled \
+                         `Library name version \"x.y\".` — so its symbols are mangled \
                          apart from the other libraries' and a `.lib` can be written for it. \
                          Add one before the function definitions.",
                         source_path

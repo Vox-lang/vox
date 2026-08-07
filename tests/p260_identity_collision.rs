@@ -15,6 +15,21 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
+/// Render a library name as a canonical vox identifier: bare when it is
+/// bare-legal (`[A-Za-z_][A-Za-z0-9_]*`), else single-quoted. A single
+/// bare-legal character must stay bare — quoting it (`'x'`) would lex as a
+/// one-character *character literal*, not an identifier (plan 270 §"The
+/// rule" item 3).
+fn vox_name(name: &str) -> String {
+    let is_bare_legal = matches!(name.chars().next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if is_bare_legal {
+        name.to_string()
+    } else {
+        format!("'{}'", name)
+    }
+}
+
 /// One `<lib, version>` collision case: write the two sources, run the shared
 /// build, and assert it fails with the vox diagnostic — never a NASM error.
 fn assert_collision_rejected(name_a: &str, ver_a: &str, name_b: &str, ver_b: &str) {
@@ -27,12 +42,12 @@ fn assert_collision_rejected(name_a: &str, ver_a: &str, name_b: &str, ver_b: &st
     fs::create_dir_all(&work).expect("create temp work dir");
 
     let src_a = format!(
-        "Library \"{}\" version \"{}\".\n\nTo \"greet\" with a number called \"n\".\n  Return a number, n add 1.\n",
-        name_a, ver_a
+        "Library {} version \"{}\".\n\nTo greet with a number called n.\n  Return a number, n add 1.\n",
+        vox_name(name_a), ver_a
     );
     let src_b = format!(
-        "Library \"{}\" version \"{}\".\n\nTo \"greet\" with a number called \"n\".\n  Return a number, n add 2.\n",
-        name_b, ver_b
+        "Library {} version \"{}\".\n\nTo greet with a number called n.\n  Return a number, n add 2.\n",
+        vox_name(name_b), ver_b
     );
     fs::write(work.join("a.vox"), src_a).expect("write a.vox");
     fs::write(work.join("b.vox"), src_b).expect("write b.vox");
@@ -116,7 +131,7 @@ fn exact_duplicate_keeps_original_message_shape() {
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).expect("create temp work dir");
 
-    let src = "Library \"x\" version \"1.0\".\n\nTo \"f\" with a number called \"n\".\n  Return a number, n add 1.\n";
+    let src = "Library x version \"1.0\".\n\nTo f with a number called n.\n  Return a number, n add 1.\n";
     fs::write(work.join("one.vox"), src).expect("write one.vox");
     fs::write(work.join("two.vox"), src).expect("write two.vox");
 
@@ -138,7 +153,7 @@ fn exact_duplicate_keeps_original_message_shape() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // The original message named a single Library/version both files declare.
     assert!(
-        stderr.contains("both declare Library \"x\" version \"1.0\""),
+        stderr.contains("both declare Library x version \"1.0\""),
         "exact-duplicate case lost the original message shape; stderr:\n{}",
         stderr
     );
@@ -156,12 +171,12 @@ fn distinct_identities_still_build() {
 
     fs::write(
         work.join("a.vox"),
-        "Library \"alpha\" version \"1.0\".\n\nTo \"f\".\n  Return 1.\n",
+        "Library alpha version \"1.0\".\n\nTo f.\n  Return 1.\n",
     )
     .expect("write a.vox");
     fs::write(
         work.join("b.vox"),
-        "Library \"beta\" version \"1.0\".\n\nTo \"g\".\n  Return 2.\n",
+        "Library beta version \"1.0\".\n\nTo g.\n  Return 2.\n",
     )
     .expect("write b.vox");
 

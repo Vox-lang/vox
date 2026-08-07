@@ -13,6 +13,12 @@ pub struct Parser {
     tokens: Vec<TokenInfo>,
     pos: usize,
     source_file: Option<SourceFile>,
+    // True while parsing an append statement's value expression, where `to`
+    // is reserved for the append separator. Without this, a nested call
+    // argument (e.g. `id` in `append id of item to out`) would greedily
+    // read `to out` as its own call tail via the generic `allow_to: true`
+    // path, leaving no `to` for the append statement itself.
+    suppress_to_connector: bool,
 }
 
 #[cfg(test)]
@@ -609,7 +615,7 @@ mod file_line_read_and_seek_tests {
 
 impl Parser {
     pub fn new(tokens: Vec<TokenInfo>) -> Self {
-        Parser { tokens, pos: 0, source_file: None }
+        Parser { tokens, pos: 0, source_file: None, suppress_to_connector: false }
     }
     
     pub fn with_source(mut self, filename: &str, content: &str) -> Self {
@@ -784,7 +790,7 @@ impl Parser {
     fn parse_call_tail(&mut self, name: String, allow_to: bool) -> Result<Option<Expr>, Box<CompileError>> {
         let is_conn = match self.current() {
             Token::Of | Token::With | Token::On => true,
-            Token::To => allow_to,
+            Token::To => allow_to && !self.suppress_to_connector,
             _ => false,
         };
         if !is_conn {
@@ -3594,8 +3600,16 @@ impl Parser {
                 // A bare or quoted callee with `of/with/on` is a call (plan 270
                 // G1). `to` is the append separator here, so it is NOT treated
                 // as a call connector (else `append f to x to items` could
-                // never resolve).
-                if let Some(call) = self.parse_call_tail(name.clone(), false)? {
+                // never resolve). The suppression also covers this call's own
+                // arguments (e.g. `append id of item to out`) — otherwise the
+                // last argument would greedily read `to out` as its own call
+                // tail via the generic `allow_to: true` path, leaving no `to`
+                // for the append statement itself.
+                let saved_suppress = self.suppress_to_connector;
+                self.suppress_to_connector = true;
+                let call = self.parse_call_tail(name.clone(), false);
+                self.suppress_to_connector = saved_suppress;
+                if let Some(call) = call? {
                     return Ok(call);
                 }
                 Ok(Expr::Identifier(name))
@@ -5094,7 +5108,31 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
+                // The list operand is usually a name, but a list *literal*
+                // (`element 2 of [1, 2, 3]`) is also legal, so this can't use
+                // `parse_name()`. A bare string literal here is neither: it
+                // is the plan 270 §S1.5 trap (`element 1 of "items"` reading
+                // as a name in old syntax) and, left unrejected, silently
+                // resolves to a degenerate ElementAccess instead of a
+                // compile error. A format string is unambiguous data and
+                // stays allowed, same as elsewhere.
+                let list_loc = self.current_location();
+                let list_string_lit = match self.current().clone() {
+                    Token::StringLiteral(s) => Some(s),
+                    _ => None,
+                };
                 let list = self.parse_primary()?;
+                if let (Some(s), Expr::StringLit(_)) = (list_string_lit, &list) {
+                    let mut err = CompileError::new("expected a name, found a string literal");
+                    if let Some(loc) = list_loc {
+                        err = err.with_location(loc);
+                    }
+                    let span = s.chars().count() + 2;
+                    err = err
+                        .with_underline_note(span, "strings are data; names are bare or 'single-quoted'")
+                        .with_help_line(&Self::suggest_name_form(&s));
+                    return Err(Box::new(err));
+                }
                 Ok(Expr::ElementAccess {
                     list: Box::new(list),
                     index: Box::new(index),

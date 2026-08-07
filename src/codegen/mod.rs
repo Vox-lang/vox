@@ -295,7 +295,7 @@ fn return_type_noun(t: &Type) -> Option<&'static str> {
 /// are already legal, so the keyword check is defensive against a future
 /// hand-edited `LibBlock`; the writer and reader agree on exactly this form —
 /// no dual parsing, no backwards compatibility.
-fn format_lib_name(name: &str) -> String {
+pub(crate) fn format_lib_name(name: &str) -> String {
     fn is_bare_legal(s: &str) -> bool {
         let mut chars = s.chars();
         matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
@@ -7465,6 +7465,23 @@ mod tests {
         let mut gen = CodeGenerator::new();
         gen.set_shared_lib_mode(true);
         gen.generate(&program)
+    }
+
+    #[test]
+    fn quoted_zero_arg_identifier_in_expression_position_calls_not_reads() {
+        // Plan 270 G4 / defect Q1: `is 'get five'` must emit a call to the
+        // zero-argument function, not a variable lookup (which used to
+        // silently print the function's pointer value instead).
+        let asm = compile_to_asm(
+            "To 'get five', Return a number, 5.\n\
+             a number called x is 'get five'.\n\
+             print x.\n",
+        );
+        assert!(
+            asm.contains("call get_five"),
+            "a bare zero-arg identifier in expression position must call the function: {}",
+            asm
+        );
     }
 
     #[test]

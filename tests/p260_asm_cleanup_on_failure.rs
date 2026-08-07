@@ -23,7 +23,7 @@ fn failed_build_leaves_no_asm() {
 
     fs::write(
         work.join("prog.vox"),
-        "To \"greet\" with a number called \"n\".\n  Return a number, n add 1.\n",
+        "To greet with a number called n.\n  Return a number, n add 1.\n",
     )
     .expect("write prog.vox");
 
@@ -71,7 +71,7 @@ fn emit_asm_still_writes_asm() {
 
     fs::write(
         work.join("prog.vox"),
-        "To \"greet\" with a number called \"n\".\n  Return a number, n add 1.\n",
+        "To greet with a number called n.\n  Return a number, n add 1.\n",
     )
     .expect("write prog.vox");
 
@@ -112,7 +112,7 @@ fn keep_asm_preserves_asm_on_failure() {
 
     fs::write(
         work.join("prog.vox"),
-        "To \"greet\" with a number called \"n\".\n  Return a number, n add 1.\n",
+        "To greet with a number called n.\n  Return a number, n add 1.\n",
     )
     .expect("write prog.vox");
 

@@ -52,10 +52,10 @@ mod buffer_append_copy_analysis_tests {
     fn quoted_condition_unknown_variable_inside_function_is_reported() {
         let input = r#"
             To mutate,
-                if "missing" then,
+                if 'missing' then,
                     Print "ok".
 
-            "mutate".
+            'mutate'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -75,10 +75,10 @@ mod buffer_append_copy_analysis_tests {
             a boolean called counter is true.
 
             To bump,
-                if "counter" then,
+                if 'counter' then,
                     Print "ok".
 
-            "bump".
+            'bump'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -401,7 +401,7 @@ mod guard_env_tests {
             To 'show',
                 Print "{missing}".
 
-            "show".
+            'show'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -423,7 +423,7 @@ mod guard_env_tests {
             To 'show',
                 Print "{Program Version}".
 
-            "show".
+            'show'.
         "#;
 
         let analyzer = analyze_input(input);
