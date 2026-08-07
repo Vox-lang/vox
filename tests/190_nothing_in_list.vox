@@ -3,7 +3,7 @@
  stored tag, while a non-nothing slot does not. Acceptance: the print
  line and the two predicate lines.)
 
-a list called "xs" is [1, nothing, 2].
+a list called xs is [1, nothing, 2].
 print xs.
 if element 2 of xs is nothing, print "element 2 is nothing".
 if element 1 of xs is not nothing, print "element 1 is not nothing".

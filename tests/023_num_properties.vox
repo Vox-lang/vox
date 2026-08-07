@@ -1,16 +1,16 @@
 (Test 1: Absolute value)
-A number called "x" is -42.
+A number called x is -42.
 Print x's absolute.
 
 (Test 2: Sign property)
 Print x's sign.
 
 (Test 3: Even/odd checks)
-A number called "y" is 10.
+A number called y is 10.
 Print y's even.
 Print y's odd.
 
-A number called "z" is 7.
+A number called z is 7.
 Print z's even.
 Print z's odd.
 

@@ -1,8 +1,8 @@
 (Global list property access from inside a function must use the global mirror)
 
-a list called "l" is [1, 2, 3].
+a list called l is [1, 2, 3].
 
-To "show".
+To 'show'.
   Print l's length.
 
-"show".
+'show'.

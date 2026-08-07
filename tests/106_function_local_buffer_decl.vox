@@ -9,12 +9,12 @@
  statement (BufferDecl) whose arm already registered, which is why only
  the initializer form failed.)
 
-To "measure" of a text called "word".
-  a buffer called "padded" is " {word}\n".
-  a number called "first byte" is byte 1 of padded.
+To measure of a text called word.
+  a buffer called padded is " {word}\n".
+  a number called 'first byte' is byte 1 of padded.
   Print "padded size: {padded's size}".
   Print "first byte: {first byte} (expect 32 = space)".
   Return a number, padded's size.
 
-a number called "n" is "measure" of "sda2".
+a number called n is measure of "sda2".
 Print "returned: {n}".

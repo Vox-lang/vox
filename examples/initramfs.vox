@@ -1,7 +1,7 @@
 (Initramfs Setup Example)
 (Demonstrates proposed mount and related syscalls for initramfs operations)
 
-A text called "Program Version" is "0.1.0".
+A text called 'Program Version' is "0.1.0".
 
 (Setup script for early userspace initialization)
 Print "Initramfs setup starting...".
@@ -52,7 +52,7 @@ Create symbolic link from "/proc/self/fd/2" to "/dev/stderr".
 
 (Wait for root device)
 Print "Waiting for root device...".
-a text called "root_device" is "/dev/sda1".
+a text called root_device is "/dev/sda1".
 
 (Check if root device exists)
 While the root_device is not available,

@@ -5,10 +5,10 @@ importing both versions and calling `only one` finds exactly one provider and
 resolves without a warning). `common` returns n add 100 here so the two
 versions' bodies are distinct, the same pattern as flags.)
 
-Library "parts" version "1.0".
+Library parts version "1.0".
 
-To "common" with a number called "n".
+To common with a number called n.
   Return a number, n add 100.
 
-To "only one" with a number called "n".
+To 'only one' with a number called n.
   Return a number, n add 42.

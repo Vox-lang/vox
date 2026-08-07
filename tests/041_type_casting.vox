@@ -15,14 +15,14 @@ Print "Non-zero to boolean: ".
 Print 42 as a boolean.
 
 (Number to float conversion - this is broken)
-a number called "qty" is 42.
-a float called "qtyF" is the qty as a float.
+a number called qty is 42.
+a float called qtyF is the qty as a float.
 Print "42 as float: ".
 Print the qtyF.
 
 (Padded text formatting)
-a number called "that hour" is 9.
-a number called "that minute" is 5.
+a number called 'that hour' is 9.
+a number called 'that minute' is 5.
 Print "Padded hour: ".
 Print "{that hour:02}".
 Print "Padded minute: ".
@@ -32,7 +32,7 @@ Print "{that minute:02}".
 Print "String to number: ".
 Print "123" as a number.
 
-a buffer called "line" is "".
+a buffer called line is "".
 the buffer line is "456".
 Print "Buffer to number: ".
 Print the line as a number.

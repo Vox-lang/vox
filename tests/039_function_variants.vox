@@ -1,38 +1,38 @@
 (Test functions with no parameters and no returns)
 
 (Void function - no return)
-To "print_separator". 
+To print_separator. 
     Print "---".
     Print "===".
     Print "---".
 
 (Void function with parameters)
-To "greet" with a text called "_name".
+To greet with a text called _name.
     Print "Hello, {_name}!".
     Print "Welcome back!".
 
 (Function with no parameters but returns)
-To "get_lucky_number".
+To get_lucky_number.
     Print "Lucky number: 42".
 
 (Function with parameters but no explicit return - should return 0)
-To "side effect" with a number called "x".
+To 'side effect' with a number called x.
     Print "Side effect: {x}".
 
 (Function that returns different types based on input)
-To "type test" with a number called "x".
+To 'type test' with a number called x.
     If x is less than 0 then, print "negative".
     Otherwise if x is equal to 0 then, print "zero".
     Otherwise print "positive".
 
 (Test calls)
 print_separator.
-"greet" with "Alice".
+greet with "Alice".
 get_lucky_number.
-"side effect" with 123.
+'side effect' with 123.
 Print "Type test for -5: ".
-"type test" of -5.
+'type test' of -5.
 Print "Type test for 0: ".
-"type test" of 0.
+'type test' of 0.
 Print "Type test for 10: ".
-"type test" of 10.
+'type test' of 10.

@@ -1,2 +1,2 @@
-a flag called "r" is "-r" or "--retries", it is a number with default "foo".
+a flag called r is "-r" or "--retries", it is a number with default "foo".
 Parse flags.

@@ -4,9 +4,9 @@
  is the 7th word and lands on the stack at [rbp+16] while its payload is
  in r9 — the register/stack straddle. Acceptance 3.)
 
-To "classify7" with a number called "a" and a number called "b" and a number called "c" and a number called "d" and a number called "e" and a value called "v".
+To classify7 with a number called aa and a number called b and a number called c and a number called d and a number called e and a value called v.
   If v is a text, print "text".
   Otherwise print "number".
 
-"classify7" of 1 and 2 and 3 and 4 and 5 and "hello".
-"classify7" of 1 and 2 and 3 and 4 and 5 and 6.
+classify7 of 1 and 2 and 3 and 4 and 5 and "hello".
+classify7 of 1 and 2 and 3 and 4 and 5 and 6.

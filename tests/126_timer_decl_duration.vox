@@ -1,10 +1,10 @@
 (Timer declaration must use properly accounted frame storage)
 
-a timer called "t".
+a timer called t.
 Start t.
 Wait 100 milliseconds.
 Stop t.
-a number called "d" is t's duration in seconds.
+a number called d is t's duration in seconds.
 If d is greater than or equal to 0 then,
     Print "ok".
 Otherwise,

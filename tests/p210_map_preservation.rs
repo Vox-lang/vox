@@ -32,7 +32,7 @@ fn shared_does_not_clobber_preexisting_map() {
     // source carries one; the .map-preservation assertion below is unchanged.
     fs::write(
         work.join("victim.vox"),
-        "Library \"victim\" version \"1.0\".\nTo \"greet\".\n  Print \"hi\".\n",
+        "Library victim version \"1.0\".\nTo greet.\n  Print \"hi\".\n",
     )
     .expect("write victim.vox");
 

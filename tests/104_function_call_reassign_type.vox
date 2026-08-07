@@ -7,16 +7,16 @@
  was unaffected, which is what made this easy to miss - only
  REASSIGNMENT of an already-declared variable was broken.)
 
-To "classify" of a number called "n".
+To classify of a number called n.
   If n is 1 then,
       Return a text, "one".
   If n is 2 then,
       Return a text, "two".
   Return a text, "other".
 
-a text called "label" is "start".
+a text called label is "start".
 Print "before: {label}".
-the label is "classify" of 1.
+the label is classify of 1.
 Print "after reassign (1): {label}".
-the label is "classify" of 2.
+the label is classify of 2.
 Print "after reassign (2): {label}".

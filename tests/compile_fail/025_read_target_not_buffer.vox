@@ -1,4 +1,4 @@
 open a file for reading called src at "./x.txt".
-a number called "n" is 0.
+a number called n is 0.
 Read from src into n.
 Close src.

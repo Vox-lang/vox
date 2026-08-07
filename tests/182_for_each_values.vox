@@ -2,6 +2,6 @@
  yields a fresh mixed list carrying each value's runtime tag, so a
  for-each prints each according to its type. Acceptance: 1, two, 3.5.)
 
-a map called "m" is {"a": 1, "b": "two", "c": 3.5}.
+a map called m is {"a": 1, "b": "two", "c": 3.5}.
 for each v in m's values
   print v.

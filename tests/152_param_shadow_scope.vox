@@ -1,10 +1,10 @@
 (A function parameter that shadows a top-level variable must not
  relabel it for the code after the definition - the text/buffer
  labels stay scoped to the function body)
-a number called "x" is 5.
-a number called "b" is 7.
+a number called x is 5.
+a number called b is 7.
 
-To "show" with a text called "x" and a buffer called "b",
+To 'show' with a text called x and a buffer called b,
   Print x.
 
 Print x add 1.

@@ -1,7 +1,7 @@
 print "=== Secure File I/O Demo ===".
 
 print "Creating a dynamic buffer (no size needed!)".
-a buffer called "data".
+a buffer called data.
 
 print "Writing to file...".
 open a file for writing called out at "./secure_test.txt".

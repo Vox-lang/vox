@@ -32,8 +32,8 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn append_requires_buffer_source_when_destination_is_buffer() {
         let input = r#"
-            a buffer called "dst" is "hello".
-            a number called "n" is 7.
+            a buffer called dst is "hello".
+            a number called n is 7.
             append n to dst.
         "#;
 
@@ -51,11 +51,11 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn quoted_condition_unknown_variable_inside_function_is_reported() {
         let input = r#"
-            To "mutate",
-                if "missing" then,
+            To mutate,
+                if 'missing' then,
                     Print "ok".
 
-            "mutate".
+            'mutate'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -72,13 +72,13 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn quoted_condition_top_level_global_inside_function_is_allowed() {
         let input = r#"
-            a boolean called "counter" is true.
+            a boolean called counter is true.
 
-            To "bump",
-                if "counter" then,
+            To bump,
+                if 'counter' then,
                     Print "ok".
 
-            "bump".
+            'bump'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -95,8 +95,8 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn copy_requires_buffers_for_both_operands() {
         let input = r#"
-            a buffer called "dst" is "hello".
-            a number called "n" is 7.
+            a buffer called dst is "hello".
+            a number called n is 7.
             copy n to dst.
         "#;
 
@@ -114,7 +114,7 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn clear_requires_buffer_operand() {
         let input = r#"
-            a number called "n" is 7.
+            a number called n is 7.
             clear n.
         "#;
 
@@ -132,8 +132,8 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn append_allows_format_string_when_destination_is_buffer() {
         let input = r#"
-            a number called "n" is 7.
-            a buffer called "dst" is "".
+            a number called n is 7.
+            a buffer called dst is "".
             append "N={n:04}" to dst.
         "#;
 
@@ -151,8 +151,8 @@ mod buffer_append_copy_analysis_tests {
     #[test]
     fn copy_allows_format_string_source() {
         let input = r#"
-            a number called "n" is 7.
-            a buffer called "dst" is "".
+            a number called n is 7.
+            a buffer called dst is "".
             copy "N={n:04}" to dst.
         "#;
 
@@ -291,7 +291,7 @@ mod guard_env_tests {
     fn variable_declared_under_same_guard_is_available_under_same_guard_later() {
         let input = r#"
             if "number lines" then,
-                a number called "line number" is 1.
+                a number called 'line number' is 1.
 
             if "number lines" then,
                 Print "{line number:6}".
@@ -312,7 +312,7 @@ mod guard_env_tests {
     fn variable_declared_under_different_guard_is_not_available() {
         let input = r#"
             if "number lines" then,
-                a number called "line number" is 1.
+                a number called 'line number' is 1.
 
             if "verbose" then,
                 Print "{line number:6}".
@@ -333,7 +333,7 @@ mod guard_env_tests {
     fn guarded_variable_is_available_in_nested_while_for_repeat_blocks() {
         let input = r#"
             if "number lines" then,
-                a number called "line number" is 1.
+                a number called 'line number' is 1.
 
             if "number lines" then,
                 while true,
@@ -357,7 +357,7 @@ mod guard_env_tests {
     fn variable_declared_under_same_and_condition_is_available() {
         let input = r#"
             if "number lines" and "verbose" then,
-                a number called "line number" is 1.
+                a number called 'line number' is 1.
 
             if "number lines" and "verbose" then,
                 Print "{line number:6}".
@@ -378,7 +378,7 @@ mod guard_env_tests {
     fn variable_declared_under_same_not_condition_is_available() {
         let input = r#"
             if not "number lines" then,
-                a number called "line number" is 1.
+                a number called 'line number' is 1.
 
             if not "number lines" then,
                 Print "{line number:6}".
@@ -398,10 +398,10 @@ mod guard_env_tests {
     #[test]
     fn unknown_variable_inside_function_is_reported() {
         let input = r#"
-            To "show",
+            To 'show',
                 Print "{missing}".
 
-            "show".
+            'show'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -418,12 +418,12 @@ mod guard_env_tests {
     #[test]
     fn top_level_global_variable_is_available_inside_function() {
         let input = r#"
-            A text called "Program Version" is "0.1.3".
+            A text called 'Program Version' is "0.1.3".
 
-            To "show",
+            To 'show',
                 Print "{Program Version}".
 
-            "show".
+            'show'.
         "#;
 
         let analyzer = analyze_input(input);
@@ -440,8 +440,8 @@ mod guard_env_tests {
     #[test]
     fn function_local_variable_is_not_available_at_top_level() {
         let input = r#"
-            To "make",
-                a number called "temp" is 1.
+            To 'make',
+                a number called temp is 1.
 
             Print "{temp}".
         "#;
@@ -461,7 +461,7 @@ mod guard_env_tests {
     fn branch_local_identifier_named_like_keyword_is_not_false_positive() {
         let input = r#"
             If arguments's count is greater than 1 then,
-                a text called "arg1" is arguments's first,
+                a text called arg1 is arguments's first,
                 Print the arg1.
         "#;
 
@@ -480,7 +480,7 @@ mod guard_env_tests {
     fn flag_schema_after_non_schema_code_is_allowed() {
         let input = r#"
             Print "hello".
-            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            a flag called verbose is "-v" or "--verbose", it is a boolean.
         "#;
 
         let analyzer = analyze_input(input);
@@ -494,9 +494,9 @@ mod guard_env_tests {
     #[test]
     fn flag_schema_after_explicit_parse_is_rejected() {
         let input = r#"
-            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            a flag called verbose is "-v" or "--verbose", it is a boolean.
             parse flags.
-            a flag called "debug" is "-d" or "--debug", it is a boolean.
+            a flag called debug is "-d" or "--debug", it is a boolean.
         "#;
 
         let analyzer = analyze_input(input);
@@ -513,7 +513,7 @@ mod guard_env_tests {
     #[test]
     fn duplicate_parse_flags_statement_is_rejected() {
         let input = r#"
-            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            a flag called verbose is "-v" or "--verbose", it is a boolean.
             parse flags.
             parse flags.
         "#;
@@ -532,7 +532,7 @@ mod guard_env_tests {
     #[test]
     fn flag_usage_before_explicit_parse_is_rejected() {
         let input = r#"
-            a flag called "verbose" is "-v" or "--verbose", it is a boolean.
+            a flag called verbose is "-v" or "--verbose", it is a boolean.
             Print "{verbose}".
             parse flags.
         "#;
@@ -587,7 +587,7 @@ pub struct Analyzer {
     scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
     /// Names declared as the dynamic `value` type (value parameters and `a
-    /// value called "x"` locals). A bare `value` is not usable in arithmetic
+    /// value called x` locals). A bare `value` is not usable in arithmetic
     /// without an explicit type check (stage 1c predicate); the arithmetic
     /// operand check uses this set to reject unguarded use with a clear error.
     value_typed_names: HashSet<String>,
@@ -607,7 +607,7 @@ pub struct Analyzer {
     /// "Unknown function" error (cross-library calls are out of scope for A2).
     /// `None` outside shared mode, where the key is plain `mangle_symbol(name)`.
     current_library: Option<(String, String)>,
-    /// Stage A4: functions imported by `see "<lib>" version "<ver>" from
+    /// Stage A4: functions imported by `see '<lib>' version "<ver>" from
     /// "...lib".`, resolved against the filesystem by the driver (parse +
     /// .dynsym verification) and handed here for name resolution and call
     /// checking. A call resolves local-first (a local definition SHADOWS a
@@ -760,7 +760,7 @@ impl Analyzer {
                 self.push_error(
                     "A shared library must declare its identity with a `Library` \
                      declaration giving its name and version — without one there is \
-                     no mangling and no `.lib`. Add `Library \"name\" version \
+                     no mangling and no `.lib`. Add `Library name version \
                      \"x.y\".` before the function definitions and rebuild with \
                      --shared."
                         .to_string(),
@@ -1162,6 +1162,24 @@ impl Analyzer {
         self.functions.contains(&self.func_key(name))
     }
 
+    /// Plan 270 G4: a bare or quoted identifier in *expression* position
+    /// that names a zero-argument function is a call, not a variable lookup.
+    /// True iff `name` resolves to a callable declaring zero parameters — a
+    /// local function (looked up via `func_key`, so shared-mode mangling
+    /// matches the definition) or a single unambiguous import. A name that is
+    /// a variable in scope is decided by the caller *before* consulting this;
+    /// a variable shadows a same-named zero-arg function.
+    fn is_zero_arg_function(&self, name: &str) -> bool {
+        if self.is_local_function(name) {
+            return self.function_param_counts.get(&self.func_key(name)) == Some(&0);
+        }
+        // An imported function: only treat as a zero-arg call when exactly one
+        // library exports it (the same single-provider rule `check_function_call`
+        // applies); an ambiguous name is left for an explicit call to report.
+        let providers = self.imported_providers(name);
+        providers.len() == 1 && providers[0].params.is_empty()
+    }
+
     /// Resolve and validate a call site shared by `Statement::FunctionCall`
     /// and `Expr::FunctionCall`: local definition, then a single import (with
     /// the same arity message as any other call, plus argument-type checks,
@@ -1339,6 +1357,16 @@ impl Analyzer {
     }
 
     fn declare_variable_in_current_scope(&mut self, name: &str) {
+        if name.starts_with('_') {
+            self.push_error(
+                format!(
+                    "Variable name '{}' starts with '_', which is reserved for \
+                     the Vox runtime; choose a name without the leading underscore.",
+                    name
+                ),
+                Some(name),
+            );
+        }
         if self.active_guards.is_empty() {
             self.variables.insert(name.to_string());
         } else {
@@ -1897,10 +1925,10 @@ impl Analyzer {
                 // Register the declared type in the type-specific sets,
                 // mirroring the top-level pre-pass. That pre-pass only
                 // walks program.statements and never descends into
-                // function bodies, so without this a `a buffer called "x"
+                // function bodies, so without this a `a buffer called x
                 // is "..."` INSIDE a function was never recorded as a
                 // buffer and property/byte access on it was rejected.
-                // (`a buffer called "x" is N bytes in size.` parses as
+                // (`a buffer called x is N bytes in size.` parses as
                 // BufferDecl - a different statement whose arm already
                 // registers - which is why only the initializer form
                 // failed.)
@@ -1914,7 +1942,7 @@ impl Analyzer {
                     self.map_variables.insert(name.clone());
                 }
                 if let Some(Type::Value) = var_type {
-                    // A declared `a value called "x"` is dynamic, like a value
+                    // A declared `a value called x` is dynamic, like a value
                     // parameter: bare arithmetic on it is rejected until the
                     // author checks its type with a predicate.
                     self.value_typed_names.insert(name.clone());
@@ -2181,7 +2209,7 @@ impl Analyzer {
             Statement::FunctionDef { name, params, body, .. } => {
                 // A leading underscore is the runtime's namespace (see
                 // docs/SYMBOL_MANGLING.md). A function name emits a label
-                // verbatim, so `To "_str_eq" ...` redefines a coreasm symbol
+                // verbatim, so `To _str_eq ...` redefines a coreasm symbol
                 // and the author gets NASM's "label `_str_eq' inconsistently
                 // redefined" - an assembler diagnostic about a symbol they
                 // never wrote. Reject it here, in their terms.
@@ -3059,9 +3087,16 @@ impl Analyzer {
             Expr::Identifier(name) => {
                 self.track_identifier(name);
                 if !self.is_variable_available(name) && name != "_iter" {
-                    // Don't report as unknown variable if it might be a keyword typo
-                    // (that will be caught by check_for_typos)
-                    if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                    // Plan 270 G4: a bare/quoted identifier naming a
+                    // zero-argument function is a call in expression position,
+                    // not a variable lookup. Validate it resolves and has zero
+                    // arity via the shared call-site path.
+                    if self.is_zero_arg_function(name) {
+                        self.deps.uses_funcs = true;
+                        self.check_function_call(name, &[]);
+                    } else if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                        // Don't report as unknown variable if it might be a
+                        // keyword typo (that will be caught by check_for_typos)
                         self.push_unknown_variable(name);
                     } else {
                         self.track_typo_candidate(name);

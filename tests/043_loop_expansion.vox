@@ -9,7 +9,7 @@ print each number from 2 to 10,
     but if the number modulo 2 is equal to 1 print "".
 
 (Loop expansion with lists)
-a list called "names" is ["Alice", "Bob", "Charlie"].
+a list called names is ["Alice", "Bob", "Charlie"].
 Print "Names:".
 print each name from names.
 
@@ -25,16 +25,16 @@ print each number from 1 to 15,
     but if the number modulo 5 is equal to 0 print "Buzz".
 
 (Inline substitution with treating)
-a list called "files" is ["data.txt", "-", "output.txt"].
+a list called files is ["data.txt", "-", "output.txt"].
 Print "Processing files (treating - as stdin):".
 for each filename from files treating "-" as "/dev/stdin",
     print "Processing: {filename}".
 
 (Complex loop expansion with function calls)
-To "process" with a text called "item".
+To process with a text called item.
     Return a text, "Processed: {item}".
 
-a list called "items" is ["A", "B", "C"].
+a list called items is ["A", "B", "C"].
 Print "Function calls in loop expansion:".
 for each result from items,
     print "Done: {result}".

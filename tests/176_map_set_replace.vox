@@ -2,7 +2,7 @@
  existing entry (length unchanged) and updates the value. Acceptance: 37
  then 2.)
 
-a map called "person" is {"name": "Ada", "age": 36}.
+a map called person is {"name": "Ada", "age": 36}.
 set person's "age" to 37.
 print person's "age".
 print person's length.

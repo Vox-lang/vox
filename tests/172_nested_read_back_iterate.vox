@@ -2,7 +2,7 @@
  extracted with `element N of` is usable as a list: its length, element
  access, and iteration all work on the extracted child.)
 
-a list called "inner" is element 2 of [1, [2, 3], "four"].
+a list called inner is element 2 of [1, [2, 3], "four"].
 print inner's length.
 print element 1 of inner.
 for each y in inner, print y.

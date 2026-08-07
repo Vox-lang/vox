@@ -4,9 +4,9 @@
  local carries its tag through printing, predicates, reassignment, and an
  append back into a list.)
 
-To "echo" with a value called "v". Return a value, v.
+To echo with a value called v. Return a value, v.
 
-a value called "first_slot" is "echo" of "hello".
+a value called first_slot is echo of "hello".
 print first_slot.
 If first_slot is a text, print "text".
 Otherwise print "not text".
@@ -16,8 +16,8 @@ print first_slot.
 If first_slot is a number, print "number now".
 Otherwise print "still text".
 
-a value called "second_slot" is "echo" of 3.5.
-a list called "out" is [].
+a value called second_slot is echo of 3.5.
+a list called out is [].
 append first_slot to out.
 append second_slot to out.
 print out.

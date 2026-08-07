@@ -4,11 +4,11 @@
  number`. If any frame dropped or corrupted the tag, a text/decimal `v`
  would mis-classify as a number. Acceptance 4.)
 
-To "walk" with a value called "v" and a number called "n".
-  If n is greater than 0, return a number, "walk" of v and n subtract 1.
+To walk with a value called v and a number called n.
+  If n is greater than 0, return a number, walk of v and n subtract 1.
   Otherwise if v is a number, return a number, 1.
   Otherwise return a number, 0.
 
-print "walk" of 1 and 100.
-print "walk" of "two" and 100.
-print "walk" of 3.5 and 100.
+print walk of 1 and 100.
+print walk of "two" and 100.
+print walk of 3.5 and 100.

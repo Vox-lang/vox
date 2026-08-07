@@ -3,7 +3,7 @@
  previously Print supported special names like {arguments's name} that
  the buffer set/copy/append sinks silently dropped.)
 
-a number called "v" is 255.
+a number called v is 255.
 
 Print "print: {v} {v:04x} {v:b} {v:o}".
 

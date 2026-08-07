@@ -3,8 +3,8 @@
  reallocation path in _list_append, which previously corrupted the stack
  and segfaulted.)
 
-a list called "items" is [].
-a number called "i" is 1.
+a list called items is [].
+a number called i is 1.
 While i is less than or equal to 9, append i to items, increment i.
 Print "length: {items's length}".
 Print element 1 of items.

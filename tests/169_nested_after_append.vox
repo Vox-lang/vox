@@ -3,8 +3,8 @@
  receives ten appends, forcing the data region to grow; the appended
  child list must still render as a list afterwards.)
 
-a list called "acc" is [].
-a list called "child" is [9, 8].
+a list called acc is [].
+a list called child is [9, 8].
 append child to acc.
 append child to acc.
 append child to acc.

@@ -1,6 +1,6 @@
 print "=== Simple File Test ===".
 
-a buffer called "data" is 256 bytes in size.
+a buffer called data is 256 bytes in size.
 
 print "Creating and writing to file...".
 open a file for writing called output at "./test_output.txt".

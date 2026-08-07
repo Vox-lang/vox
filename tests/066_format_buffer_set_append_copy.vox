@@ -1,8 +1,8 @@
 (Format strings can build into buffers via set/append/copy)
 
-a number called "n" is 42.
-a buffer called "prefix" is "pre".
-a buffer called "out" is "".
+a number called n is 42.
+a buffer called prefix is "pre".
+a buffer called out is "".
 
 set out to "N={n:04}".
 print out.

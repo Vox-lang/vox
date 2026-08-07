@@ -1,26 +1,26 @@
 (Timer example - measuring job duration)
 
 Print "Starting job...".
-Create a timer called "job timer".
-Start the "job timer".
+Create a timer called 'job timer'.
+Start the 'job timer'.
 
 (... do work ...)
 Wait 1 second.
 Print "Seconds elapsed so far: ".
-Print the "job timer"'s elapsed seconds.
+Print the 'job timer''s elapsed seconds.
 
 Wait 500 milliseconds.
-Stop the "job timer".
+Stop the 'job timer'.
 
 Print "Finished the job in: ".
-Print the "job timer"'s duration in seconds.
+Print the 'job timer''s duration in seconds.
 Print " seconds".
 
 (Access raw timestamps)
 Print "Started at unix time: ".
-Print the "job timer"'s 'start time'.
+Print the 'job timer''s 'start time'.
 Print "Stopped at unix time: ".
-Print the "job timer"'s 'end time'.
+Print the 'job timer''s 'end time'.
 
 (Get current date/time components)
 Print "Current date and time:".

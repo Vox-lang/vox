@@ -16,8 +16,8 @@ For each item in arguments's all,
 Print each item from arguments's all.
 
 (function call expansion form - the shape of a coreutils rmdir/cat)
-To "shout" of a text called "path".
+To shout of a text called path.
   Print "fn: {path}".
 
-"shout" of each item from arguments's all.
+shout of each item from arguments's all.
 Print "end".

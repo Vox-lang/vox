@@ -1,8 +1,8 @@
 (Test append value forms - plan 250 D2: the value slot used a restricted
  rule that rejected arithmetic and braced expressions)
 
-a list called "s" is [].
-a number called "i" is 2.
+a list called s is [].
+a number called i is 2.
 
 (Test 1: arithmetic expression value)
 append i multiply i to s.

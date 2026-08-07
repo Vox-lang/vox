@@ -1,8 +1,8 @@
 (Test format string expressions - arithmetic operations)
 
 (Basic arithmetic expressions)
-a number called "x" is 10.
-a number called "y" is 3.
+a number called x is 10.
+a number called y is 3.
 Print "x + y = {x add y}".
 Print "x - y = {x subtract y}".
 Print "x * y = {x multiply y}".
@@ -10,12 +10,12 @@ Print "x / y = {x divide y}".
 Print "x % y = {x modulo y}".
 
 (Unary operations)
-a number called "verr" is 5.
+a number called verr is 5.
 Print "verr + 0 = {verr add 0}".
 Print "0 - verr = {0 subtract verr}".
 
 (Complex expressions)
-a number called "base" is 100.
-a number called "rate" is 0.15.
+a number called base is 100.
+a number called rate is 0.15.
 Print "total = {base add base multiply rate}".
 Print "discounted = {base subtract base multiply rate}".

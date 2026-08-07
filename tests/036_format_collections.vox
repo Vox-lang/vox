@@ -1,15 +1,15 @@
 (Test format strings with buffers and lists)
 
 (Buffer operations in format strings)
-a buffer called "data" is "Hello".
-a buffer called "more_data" is "World".
+a buffer called data is "Hello".
+a buffer called more_data is "World".
 Print "Buffer size: {data's size}".
 Print "Buffer empty: {data's empty}".
 Print "Buffer full: {data's full}".
 Print "Buffer capacity: {data's capacity}".
 
-a list called "num_list" is [1, 2, 3, 4, 5].
-a list called "word_list" is ["apple", "banana", "cherry"].
+a list called num_list is [1, 2, 3, 4, 5].
+a list called word_list is ["apple", "banana", "cherry"].
 
 (List operations in format strings)
 Print "List size: {num_list's size}".
@@ -21,7 +21,7 @@ Print "Word count: {word_list's length}".
 Print "First word: {word_list's first}".
 
 (Byte access in format strings)
-a list called "bin_data" is [0x48, 0x65, 0x6c, 0x6c, 0x6f].
+a list called bin_data is [0x48, 0x65, 0x6c, 0x6c, 0x6f].
 Print "First byte: {bin_data's first}".
 Print "Second byte: {element 2 of bin_data}".
 Print "Third byte: {element 3 of bin_data}".

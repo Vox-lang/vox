@@ -4,27 +4,27 @@
  a value in the FIRST position, and two values in one signature. A wrong
  pad offset or word index shows up as a mistagged or mispaired argument.)
 
-To "w8" with a number called "a" and a number called "b" and a number called "c" and a number called "d" and a number called "e" and a number called "f" and a value called "v".
+To w8 with a number called aa and a number called b and a number called c and a number called d and a number called e and a number called f and a value called v.
   If v is a text, print "w8 text f={f}".
   Otherwise print "w8 num {v} f={f}".
 
-To "w9" with a number called "a" and a number called "b" and a number called "c" and a number called "d" and a number called "e" and a number called "f" and a number called "g" and a value called "v".
+To w9 with a number called aa and a number called b and a number called c and a number called d and a number called e and a number called f and a number called g and a value called v.
   If v is a text, print "w9 text g={g}".
   Otherwise print "w9 num {v} g={g}".
 
-To "vfirst" with a value called "v" and a number called "a" and a number called "b".
+To vfirst with a value called v and a number called aa and a number called b.
   If v is a text, print "vfirst text b={b}".
   Otherwise print "vfirst num {v} b={b}".
 
-To "twovals" with a value called "v" and a number called "a" and a value called "w".
-  If v is a text, print "twovals v-text a={a}".
-  Otherwise print "twovals v-num a={a}".
+To twovals with a value called v and a number called aa and a value called w.
+  If v is a text, print "twovals v-text a={aa}".
+  Otherwise print "twovals v-num a={aa}".
 
-"w8" of 1 and 2 and 3 and 4 and 5 and 6 and "hi".
-"w8" of 1 and 2 and 3 and 4 and 5 and 6 and 99.
-"w9" of 1 and 2 and 3 and 4 and 5 and 6 and 7 and "yo".
-"w9" of 1 and 2 and 3 and 4 and 5 and 6 and 7 and 88.
-"vfirst" of "aa" and 1 and 2.
-"vfirst" of 77 and 1 and 2.
-"twovals" of "x" and 5 and "y".
-"twovals" of 4 and 5 and 6.
+w8 of 1 and 2 and 3 and 4 and 5 and 6 and "hi".
+w8 of 1 and 2 and 3 and 4 and 5 and 6 and 99.
+w9 of 1 and 2 and 3 and 4 and 5 and 6 and 7 and "yo".
+w9 of 1 and 2 and 3 and 4 and 5 and 6 and 7 and 88.
+vfirst of "aa" and 1 and 2.
+vfirst of 77 and 1 and 2.
+twovals of "x" and 5 and "y".
+twovals of 4 and 5 and 6.

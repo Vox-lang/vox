@@ -4,9 +4,9 @@ this fix - format strings like "{n:6x}" (width, no leading zero) would
 fail at NASM assembly time with an undefined-symbol error for any base
 other than decimal.)
 
-A number called "n" is 255.
-A number called "b" is 10.
-A number called "o" is 15.
+A number called n is 255.
+A number called b is 10.
+A number called o is 15.
 
 (Space-padded - the previously-missing macros)
 Print "{n:6x}".

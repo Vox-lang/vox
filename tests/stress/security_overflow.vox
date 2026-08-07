@@ -1,11 +1,11 @@
 print "=== SECURITY TEST: Buffer Overflow Attempts ===".
 
 print "Test 1: Reading a huge file into buffer".
-a buffer called "huge".
+a buffer called huge.
 
 print "Creating a 1MB test file...".
 open a file for writing called out at "./huge_test.txt".
-a number called "i" is 0.
+a number called i is 0.
 
 While i is less than 10000,
     Write "Line of text for testing buffer growth capabilities in the dynamic buffer system!" to out,
@@ -24,9 +24,9 @@ print "Cleaning up...".
 Delete the file "./huge_test.txt".
 
 print "Test 2: Multiple buffers".
-a buffer called "buf1".
-a buffer called "buf2".
-a buffer called "buf3".
+a buffer called buf1.
+a buffer called buf2.
+a buffer called buf3.
 
 print "All buffers allocated safely.".
 

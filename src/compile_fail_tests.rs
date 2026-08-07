@@ -80,9 +80,20 @@ mod tests {
             let err_path = vox_path.with_extension("err");
             let expected = fs::read_to_string(&err_path)
                 .unwrap_or_else(|e| panic!("missing .err for {}: {}", case_name, e));
-            let expected = expected.trim();
+            // Each non-blank line is an independently required substring of
+            // the rendered error, not one substring spanning the whole file.
+            // A single-line `.err` behaves exactly as before; this only adds
+            // power for multi-line fixtures, letting a `.err` pin the
+            // message *and* a `help:` line (which the plan 270 §S1.5
+            // diagnostic puts on its own line, separated by an ANSI-coded
+            // gutter that would otherwise break a single-substring match).
+            let expected_lines: Vec<&str> = expected
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
             assert!(
-                !expected.is_empty(),
+                !expected_lines.is_empty(),
                 ".err for {} must contain an expected error substring",
                 case_name
             );
@@ -90,13 +101,15 @@ mod tests {
             match compile_to_error(&vox_path) {
                 Ok(()) => panic!("{} unexpectedly compiled successfully", case_name),
                 Err(actual) => {
-                    assert!(
-                        actual.contains(expected),
-                        "{} failed with unexpected error.\nExpected substring: {:?}\nActual:\n{}",
-                        case_name,
-                        expected,
-                        actual
-                    );
+                    for line in &expected_lines {
+                        assert!(
+                            actual.contains(line),
+                            "{} failed with unexpected error.\nExpected substring: {:?}\nActual:\n{}",
+                            case_name,
+                            line,
+                            actual
+                        );
+                    }
                 }
             }
         }

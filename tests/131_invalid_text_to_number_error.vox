@@ -1,8 +1,8 @@
 (Regression test: invalid text-to-number casts did not set _last_error, so On error could not detect them.)
-A text called "badInt" is "abc".
+A text called badInt is "abc".
 Set x to badInt as an integer.
 On error Print "bad int".
 
-A text called "badFloat" is "xyz".
+A text called badFloat is "xyz".
 Set y to badFloat as a float.
 On error Print "bad float".

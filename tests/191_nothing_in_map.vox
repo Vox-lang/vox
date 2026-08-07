@@ -4,7 +4,7 @@
  Acceptance: the print line, the present-key predicate, and the
  missing-key error line.)
 
-a map called "m" is {"k": nothing}.
+a map called m is {"k": nothing}.
 print m.
 if m's "k" is nothing, print "k is nothing".
 if m's "missing" is nothing, print "missing is nothing (BUG)".

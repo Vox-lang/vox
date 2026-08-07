@@ -11,7 +11,7 @@ Mount "tmpfs" at "/tmp/vox_test_unmount" with type "tmpfs".
 On error print "tmpfs mount failed - are you root?", exit 1.
 
 (Prove the mount is live: create a file inside it)
-Open a file for writing called "marker" at "/tmp/vox_test_unmount/marker.txt".
+Open a file for writing called marker at "/tmp/vox_test_unmount/marker.txt".
 Write "on the mount\n" to marker.
 Close marker.
 

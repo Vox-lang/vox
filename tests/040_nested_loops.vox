@@ -6,7 +6,7 @@ For each i from 1 to 3,
         Print "i={i}, j={j}".
 
 (While loop with nested for)
-a number called "counter" is 1.
+a number called counter is 1.
 While counter is less than or equal to 2,
     Print "Outer loop: counter={counter}",
     For each k from 1 to 3,
@@ -20,7 +20,7 @@ For each n from 1 to 10,
     Print "Odd number: {n}".
 
 (Complex conditional with multiple else-if)
-a number called "score" is 85.
+a number called score is 85.
 If score is greater than or equal to 90 then,
     Print "Grade: A".
 But if score is greater than or equal to 80 then,

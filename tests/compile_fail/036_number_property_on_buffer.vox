@@ -1,2 +1,2 @@
-a buffer called "b" is 16 bytes in size.
+a buffer called b is 16 bytes in size.
 Print b's absolute.

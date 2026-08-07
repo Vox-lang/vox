@@ -9,15 +9,15 @@
  bug rather than avoiding it). Two functions sharing a parameter name
  makes sure the fix isn't accidentally scoped to a single function.)
 
-To "describe" of a buffer called "hay".
+To describe of a buffer called hay.
   Print "func one: size {hay's size}".
   Return a number, hay's size.
 
-To "describe again" of a buffer called "hay".
+To 'describe again' of a buffer called hay.
   Print "func two: size {hay's size}".
   Return a number, hay's size.
 
-a buffer called "data" is "hello".
-a number called "s1" is "describe" of data.
-a number called "s2" is "describe again" of data.
+a buffer called data is "hello".
+a number called s1 is describe of data.
+a number called s2 is 'describe again' of data.
 Print "sizes: {s1} {s2}".

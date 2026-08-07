@@ -4,8 +4,8 @@
  must hit the same depth bound and set the error flag; an empty child must
  render as [] rather than being skipped.)
 
-a list called "inner" is [1.5, "s", yes].
-a list called "outer" is [].
+a list called inner is [1.5, "s", yes].
+a list called outer is [].
 append 7 to outer.
 append inner to outer.
 append 2.5 to outer.
@@ -13,13 +13,13 @@ print outer.
 If element 2 of outer is a list, print "elem2 is list".
 Otherwise print "elem2 not list".
 
-a list called "empty_child" is [].
-a list called "holder" is [].
+a list called empty_child is [].
+a list called holder is [].
 append empty_child to holder.
 print holder.
 
-a list called "aa" is [].
-a list called "bb" is [].
+a list called aa is [].
+a list called bb is [].
 append aa to bb.
 append bb to aa.
 print aa.
