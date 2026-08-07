@@ -348,6 +348,12 @@ pub enum Statement {
     
     Return {
         value: Option<Expr>,
+        // The type written in `Return a <type>, ...`, when present. Carried
+        // on the statement itself (rather than only being consulted where
+        // the statement is parsed) so that whichever code assembles the
+        // enclosing function's `FunctionDef.return_type` can read it back
+        // regardless of where in the body this Return sits.
+        declared_type: Option<Type>,
     },
     
     FunctionDef {
