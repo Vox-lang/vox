@@ -1,0 +1,9 @@
+(Paired with mathkit.vox; see there for the test this fixture belongs to.
+Exercises the text side of the C ABI: Vox text is NUL-terminated, so the
+returned pointer reads directly as a C `char *` with no marshalling. Mangles
+to strkit_1_0_greet.)
+
+Library "strkit" version "1.0".
+
+To "greet".
+  Return a text, "hello from vox".
