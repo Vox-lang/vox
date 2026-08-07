@@ -709,7 +709,7 @@ fn migrate(src: &str) -> Migration {
     let mut pos = 0usize;
     let mut rewrites = Vec::new();
     let mut flags = Vec::new();
-    let mut failures = Vec::new();
+    let failures = Vec::new();
 
     // Pass 2: walk left-to-right, maintaining function-local scope incrementally
     // (decl-before-use within a function). `func_locals` holds locals of the
