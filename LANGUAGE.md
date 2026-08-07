@@ -1623,7 +1623,7 @@ a buffer called data.
 ```
 
 **Features:**
-- Start with 4KB capacity and grow automatically as needed
+- Start with zero capacity and grow automatically as needed
 - No buffer overflows possible - memory expands dynamically
 - Automatically freed on program exit
 
@@ -2067,7 +2067,7 @@ open a file for writing called log at "x". (Auto-closed on exit)
 
 #### Dynamic Buffers
 
-Buffers start at 4KB and grow automatically. No size specification needed:
+Buffers start at zero capacity and grow automatically. No size specification needed:
 
 ```
 a buffer called inputbuf.     (Grows as needed - never overflows)

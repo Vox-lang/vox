@@ -13,7 +13,7 @@ This document describes how to install `vox` and its runtime assembly macros (`c
 
 ## Prerequisites
 
-- `cargo` (Rust toolchain, to build the compiler)
+- `cargo` (Rust toolchain >= 1.87, to build the compiler)
 - `nasm`
 - `ld` (binutils)
 
