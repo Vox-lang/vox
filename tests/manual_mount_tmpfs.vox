@@ -2,18 +2,18 @@
 (deliberately no .expected file, so test.sh skips it.)
 (Run manually with: sudo ./target/release/vox tests/manual_mount_tmpfs.vox --run)
 
-Remove the directory called '/tmp/vox_test_mount_tmpfs'.
-Create a directory called '/tmp/vox_test_mount_tmpfs'.
+Remove the directory called "/tmp/vox_test_mount_tmpfs".
+Create a directory called "/tmp/vox_test_mount_tmpfs".
 On error print "mkdir failed", exit 1.
 
 Mount "tmpfs" at "/tmp/vox_test_mount_tmpfs" with type "tmpfs".
 On error print "tmpfs mount failed - are you root?", exit 1.
 Print "tmpfs mount succeeded".
 
-Unmount '/tmp/vox_test_mount_tmpfs'.
+Unmount "/tmp/vox_test_mount_tmpfs".
 On error print "unmount failed", exit 1.
 Print "unmount succeeded".
 
-Remove the directory called '/tmp/vox_test_mount_tmpfs'.
+Remove the directory called "/tmp/vox_test_mount_tmpfs".
 On error print "rmdir failed", exit 1.
 Print "cleanup complete".

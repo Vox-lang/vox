@@ -7,14 +7,14 @@ A text called 'Program Version' is "0.1.0".
 Print "Initramfs setup starting...".
 
 (Create essential directories)
-Create a directory called '/proc'.
-Create a directory called '/sys'.
-Create a directory called '/dev'.
-Create a directory called '/dev/pts'.
-Create a directory called '/dev/shm'.
-Create a directory called '/run'.
-Create a directory called '/tmp'.
-Create a directory called '/newroot'.
+Create a directory called "/proc".
+Create a directory called "/sys".
+Create a directory called "/dev".
+Create a directory called "/dev/pts".
+Create a directory called "/dev/shm".
+Create a directory called "/run".
+Create a directory called "/tmp".
+Create a directory called "/newroot".
 
 (Mount virtual filesystems)
 Mount "proc" at "/proc" with type "proc".
@@ -39,16 +39,16 @@ Mount "tmpfs" at "/tmp" with type "tmpfs".
 On error print "Failed to mount /tmp", exit 1.
 
 (Create device nodes if needed)
-Create a device node called '/dev/null' with type "c" major 1 minor 3.
-Create a device node called '/dev/zero' with type "c" major 1 minor 5.
-Create a device node called '/dev/random' with type "c" major 1 minor 8.
-Create a device node called '/dev/urandom' with type "c" major 1 minor 9.
+Create a device node called "/dev/null" with type "c" major 1 minor 3.
+Create a device node called "/dev/zero" with type "c" major 1 minor 5.
+Create a device node called "/dev/random" with type "c" major 1 minor 8.
+Create a device node called "/dev/urandom" with type "c" major 1 minor 9.
 
 (Set up symlinks for compatibility)
-Create symbolic link from '/proc/self/fd' to "/dev/fd".
-Create symbolic link from '/proc/self/fd/0' to "/dev/stdin".
-Create symbolic link from '/proc/self/fd/1' to "/dev/stdout".
-Create symbolic link from '/proc/self/fd/2' to "/dev/stderr".
+Create symbolic link from "/proc/self/fd" to "/dev/fd".
+Create symbolic link from "/proc/self/fd/0" to "/dev/stdin".
+Create symbolic link from "/proc/self/fd/1" to "/dev/stdout".
+Create symbolic link from "/proc/self/fd/2" to "/dev/stderr".
 
 (Wait for root device)
 Print "Waiting for root device...".
@@ -68,18 +68,18 @@ On error print "Failed to mount root filesystem", exit 1.
 
 (pivot_root requires put_old to exist INSIDE the new root - it lives on
  the freshly mounted filesystem, so it can only be created now)
-Create a directory called '/newroot/oldroot'.
+Create a directory called "/newroot/oldroot".
 On error print "Failed to create /newroot/oldroot", exit 1.
 
 (Move virtual filesystems to new root)
-Mount '/proc' at "/newroot/proc" with type "none" with options "move".
-Mount '/sys' at "/newroot/sys" with type "none" with options "move".
-Mount '/dev' at "/newroot/dev" with type "none" with options "move".
-Mount '/run' at "/newroot/run" with type "none" with options "move".
+Mount "/proc" at "/newroot/proc" with type "none" with options "move".
+Mount "/sys" at "/newroot/sys" with type "none" with options "move".
+Mount "/dev" at "/newroot/dev" with type "none" with options "move".
+Mount "/run" at "/newroot/run" with type "none" with options "move".
 
 (Switch to new root using pivot_root)
 Print "Switching to new root...".
-Pivot root to '/newroot' with old root '/newroot/oldroot'.
+Pivot root to "/newroot" with old root "/newroot/oldroot".
 On error print "Failed to pivot_root", exit 1.
 
 (Change to new root directory)

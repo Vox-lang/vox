@@ -6,17 +6,17 @@
 (The unshare wraps this in a private mount namespace so it can't affect)
 (your real system - pivot_root there is fully sandboxed and safe to try.)
 
-Remove the directory called '/tmp/vox_test_pivot_newroot/oldroot'.
-Remove the directory called '/tmp/vox_test_pivot_newroot'.
-Create a directory called '/tmp/vox_test_pivot_newroot'.
-Create a directory called '/tmp/vox_test_pivot_newroot/oldroot'.
+Remove the directory called "/tmp/vox_test_pivot_newroot/oldroot".
+Remove the directory called "/tmp/vox_test_pivot_newroot".
+Create a directory called "/tmp/vox_test_pivot_newroot".
+Create a directory called "/tmp/vox_test_pivot_newroot/oldroot".
 
 (pivot_root requires new_root to be an actual mount point - a self)
 (bind-mount is the standard trick to make an ordinary directory qualify.)
-Mount '/tmp/vox_test_pivot_newroot' at "/tmp/vox_test_pivot_newroot" with type "none" with options "bind".
+Mount "/tmp/vox_test_pivot_newroot" at "/tmp/vox_test_pivot_newroot" with type "none" with options "bind".
 On error print "self bind-mount failed", exit 1.
 
-Pivot root to '/tmp/vox_test_pivot_newroot' with old root '/tmp/vox_test_pivot_newroot/oldroot'.
+Pivot root to "/tmp/vox_test_pivot_newroot" with old root "/tmp/vox_test_pivot_newroot/oldroot".
 On error print "pivot_root failed - are you root, and did the bind-mount work?", exit 1.
 Print "pivot_root succeeded".
 

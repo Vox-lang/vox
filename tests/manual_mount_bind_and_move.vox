@@ -3,18 +3,18 @@
 (Run manually with: sudo ./target/release/vox tests/manual_mount_bind_and_move.vox --run)
 (This exercises the exact bind+move pattern the initramfs pivot_root sequence needs.)
 
-Remove the directory called '/tmp/vox_test_mount_source'.
-Remove the directory called '/tmp/vox_test_mount_bind'.
-Remove the directory called '/tmp/vox_test_mount_moved'.
-Create a directory called '/tmp/vox_test_mount_source'.
-Create a directory called '/tmp/vox_test_mount_bind'.
-Create a directory called '/tmp/vox_test_mount_moved'.
+Remove the directory called "/tmp/vox_test_mount_source".
+Remove the directory called "/tmp/vox_test_mount_bind".
+Remove the directory called "/tmp/vox_test_mount_moved".
+Create a directory called "/tmp/vox_test_mount_source".
+Create a directory called "/tmp/vox_test_mount_bind".
+Create a directory called "/tmp/vox_test_mount_moved".
 
-Mount '/tmp/vox_test_mount_source' at "/tmp/vox_test_mount_bind" with type "none" with options "bind".
+Mount "/tmp/vox_test_mount_source" at "/tmp/vox_test_mount_bind" with type "none" with options "bind".
 On error print "bind mount failed - are you root?", exit 1.
 Print "bind mount succeeded".
 
-Mount '/tmp/vox_test_mount_bind' at "/tmp/vox_test_mount_moved" with type "none" with options "move".
+Mount "/tmp/vox_test_mount_bind" at "/tmp/vox_test_mount_moved" with type "none" with options "move".
 On error print "move mount failed", exit 1.
 Print "move mount succeeded".
 
