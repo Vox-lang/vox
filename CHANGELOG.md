@@ -4,6 +4,32 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-08-07
+
+### Fixed
+
+- **A function call inside an explicit `{...}` group failed to parse when the
+  enclosing statement had reserved `of` or `to` for itself** — most visibly,
+  `byte {<call>} of <buffer>` and `element {<call>} of <list>` rejected any
+  function call in the braces, even a single-argument one, so a program had
+  to precompute the index into a local variable first instead of writing it
+  directly.
+
+  ```
+  byte {ci of 1 and 2} of b     -> error: Expected a statement, got And
+  ```
+
+  The connector-precedence fix in 0.3.0 reserved `of`/`to` for the duration
+  of parsing an index or bound, so an identifier immediately followed by that
+  word couldn't swallow the enclosing statement's own connector. But the
+  reservation wasn't cleared when parsing entered an explicit `{...}` group —
+  even though the closing brace already unambiguously ends the group, leaving
+  nothing left to protect. It now correctly parses:
+
+  ```
+  byte {ci of 1 and 2} of b     -- compiles and evaluates correctly
+  ```
+
 ## [0.3.1] - 2026-08-07
 
 ### Fixed
