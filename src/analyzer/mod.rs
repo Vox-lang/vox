@@ -1357,6 +1357,16 @@ impl Analyzer {
     }
 
     fn declare_variable_in_current_scope(&mut self, name: &str) {
+        if name.starts_with('_') {
+            self.push_error(
+                format!(
+                    "Variable name '{}' starts with '_', which is reserved for \
+                     the Vox runtime; choose a name without the leading underscore.",
+                    name
+                ),
+                Some(name),
+            );
+        }
         if self.active_guards.is_empty() {
             self.variables.insert(name.to_string());
         } else {

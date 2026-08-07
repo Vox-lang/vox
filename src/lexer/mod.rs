@@ -1009,7 +1009,7 @@ impl<'a> Lexer<'a> {
                     }
                     '"' => Token::StringLiteral(self.read_string()),
                     c if c.is_ascii_digit() => self.read_number(c),
-                    c if c.is_alphabetic() => self.read_word(c),
+                    c if c.is_alphabetic() || c == '_' => self.read_word(c),
                     _ => continue,
                 }
             };
@@ -1073,6 +1073,21 @@ mod tests {
         assert_eq!(
             tokens_of("'my nums''s length"),
             tokens_of("'my nums's length")
+        );
+    }
+
+    #[test]
+    fn underscore_prefix_is_preserved_in_identifier() {
+        // Regression 1: `_str_eq` must lex as a single identifier with the
+        // leading underscore intact, not as the bare name `str_eq`.
+        assert_eq!(
+            tokens_of("_str_eq"),
+            vec![Token::Identifier("_str_eq".to_string())]
+        );
+        // Mid-word underscores continue to work.
+        assert_eq!(
+            tokens_of("my_helper"),
+            vec![Token::Identifier("my_helper".to_string())]
         );
     }
 }
