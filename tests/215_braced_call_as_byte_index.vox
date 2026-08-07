@@ -1,0 +1,16 @@
+(Plan 281: a function call inside an explicit {...} group must use its own)
+(of/to connectors even when nested inside a construct that reserves that)
+(connector for itself - here, byte's own "of".)
+
+To ci with a number called x and a number called y.
+  Return a number, x add y.
+
+To id with a number called x.
+  Return a number, x.
+
+a buffer called buf is 10 bytes in size.
+Set byte 3 of buf to 42.
+Print byte {ci of 1 and 2} of buf.
+
+Set byte 3 of buf to 99.
+Print byte {id of 3} of buf.

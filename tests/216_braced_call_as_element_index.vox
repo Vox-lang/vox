@@ -1,0 +1,8 @@
+(Plan 281: same braced-call fix, exercised through element N of list)
+(instead of byte N of buffer.)
+
+To idfn with a number called x.
+  Return a number, x.
+
+a list called lst is [10, 20, 30, 40].
+Print element {idfn of 2} of lst.
