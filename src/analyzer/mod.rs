@@ -1052,7 +1052,7 @@ impl Analyzer {
             Statement::Repeat { count, body } => self
                 .expr_uses_flag(count)
                 .or_else(|| body.iter().find_map(|s| self.statement_uses_flag(s))),
-            Statement::Return { value } => value.as_ref().and_then(|v| self.expr_uses_flag(v)),
+            Statement::Return { value, .. } => value.as_ref().and_then(|v| self.expr_uses_flag(v)),
             Statement::Exit { code } => self.expr_uses_flag(code),
             Statement::Allocate { size, .. } => self.expr_uses_flag(size),
             Statement::ByteSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
@@ -2157,7 +2157,7 @@ impl Analyzer {
                 self.loop_depth -= 1;
             }
             
-            Statement::Return { value } => {
+            Statement::Return { value, .. } => {
                 // `Return` is only meaningful inside a function. At top
                 // level the codegen still emits a function epilogue
                 // (leave/ret) which is undefined from _start, so reject

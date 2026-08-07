@@ -342,7 +342,7 @@ mod file_line_read_and_seek_tests {
             Statement::FunctionDef { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
-                    Statement::Return { value: Some(Expr::BinaryOp { op, .. }) } => {
+                    Statement::Return { value: Some(Expr::BinaryOp { op, .. }), .. } => {
                         assert!(matches!(op, BinaryOperator::Add));
                     }
                     other => panic!("Expected Return(BinaryOp Add), got {:?}", other),
@@ -388,6 +388,7 @@ mod file_line_read_and_seek_tests {
                                 left,
                                 right,
                             }),
+                        ..
                     } => {
                         assert!(matches!(&**left, Expr::BinaryOp { op: BinaryOperator::Add, .. }));
                         assert!(matches!(&**right, Expr::BinaryOp { op: BinaryOperator::Subtract, .. }));
@@ -2103,34 +2104,40 @@ impl Parser {
     fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
         if matches!(self.current(), Token::Period | Token::EOF | Token::Newline) {
-            Ok(Statement::Return { value: None })
+            Ok(Statement::Return { value: None, declared_type: None })
         } else {
             // Handle "Return a type, expr." syntax (type declaration is optional)
             if matches!(self.current(), Token::A | Token::An) {
                 self.advance();
                 self.skip_noise();
-                
+
                 // Check if this is a type keyword followed by comma
                 if matches!(self.current(), Token::Number | Token::Text | Token::Boolean) {
+                    let declared_type = match self.current() {
+                        Token::Number => Type::Integer,
+                        Token::Text => Type::String,
+                        Token::Boolean => Type::Boolean,
+                        _ => unreachable!(),
+                    };
                     self.advance();
                     self.skip_noise();
-                    
+
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
                         // Now parse the actual return expression
                         let value = self.parse_expression()?;
-                        return Ok(Statement::Return { value: Some(value) });
+                        return Ok(Statement::Return { value: Some(value), declared_type: Some(declared_type) });
                     }
                 }
                 // If not "a type,", backtrack isn't possible, so error
                 return Err(self.err("Expected type after 'a' in return statement"));
             }
-            
+
             let value = self.parse_expression()?;
-            Ok(Statement::Return { value: Some(value) })
+            Ok(Statement::Return { value: Some(value), declared_type: None })
         }
     }
     
@@ -4237,6 +4244,7 @@ impl Parser {
                 self.skip_noise();
             }
             
+            let mut declared_type = None;
             if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File)
                 || matches!(self.current(), Token::Identifier(ref n) if n == "value")
             {
@@ -4248,14 +4256,15 @@ impl Parser {
                     Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
                     _ => Type::Void,
                 };
+                declared_type = Some(return_type.clone());
                 self.skip_noise();
                 self.expect(&Token::Comma);
                 self.skip_noise();
             }
-            
+
             // Parse the return expression
             let expr = self.parse_condition()?;
-            body.push(Statement::Return { value: Some(expr) });
+            body.push(Statement::Return { value: Some(expr), declared_type });
         }
 
         // A top-level Return ends the function body. LANGUAGE.md states
@@ -4307,6 +4316,15 @@ impl Parser {
             }
             let stmt = self.parse_statement()?;
             let is_return = matches!(stmt, Statement::Return { .. });
+            // Gate B: `Return` isn't the function's first statement, so its
+            // type annotation (if any) was parsed by `parse_return` rather
+            // than inline above. Feed it back into the function's declared
+            // return type the same way the inline path above does, or a
+            // `Return a number, ...` that isn't the first statement would
+            // silently leave `return_type` at `Type::Void`.
+            if let Statement::Return { declared_type: Some(ref t), .. } = stmt {
+                return_type = t.clone();
+            }
             body.push(stmt);
 
             // A top-level Return parsed as a body statement terminates the

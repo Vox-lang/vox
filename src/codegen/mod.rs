@@ -3156,7 +3156,7 @@ impl CodeGenerator {
                 }
             }
             
-            Statement::Return { value } => {
+            Statement::Return { value, .. } => {
                 if let Some(v) = value {
                     self.generate_expr(v); // leaves return payload in RAX
                     // A `value` return carries its runtime tag in r11 for the
@@ -8083,6 +8083,57 @@ To hasflag with a number called n.\n  Return a number, n add 100.\n";
         let lib = super::render_lib_file(&blocks, "libflags.so");
         let expected = "Library flags version \"0.1\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n\nLibrary flags version \"1.0\".\nLocation \"./libflags.so\".\n\nTable of Contents:\n    To hasflag with a number called n, returning a number.\n";
         assert_eq!(lib, expected, "emitted .lib must match the normative format");
+    }
+
+    #[test]
+    fn lib_file_return_first_statement_still_carries_return_type() {
+        // Gate A regression: `Return` as the function's literal first
+        // statement is handled by a separate inline path in
+        // `parse_function_def`, not `parse_return`. This pins its output
+        // unchanged by the Gate B fix below.
+        let src = "\
+Library ga version \"1.0\".\n\
+To ga with a number called x.\n  Return a number, x.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        let lib = super::render_lib_file(&blocks, "libga.so");
+        assert!(
+            lib.contains("To ga with a number called x, returning a number."),
+            "Return as the first statement must still record its return type; got:\n{}",
+            lib
+        );
+    }
+
+    #[test]
+    fn lib_file_return_after_other_statement_carries_return_type() {
+        // Gate B: `Return` follows a local declaration, so it's parsed by
+        // `parse_return`, not the inline first-statement path above. Before
+        // the fix, `parse_return` validated the type annotation but never
+        // wrote it back to `FunctionDef.return_type`, which stayed
+        // `Type::Void` — so the .lib ToC silently dropped the `, returning
+        // a <type>` clause for any function with real logic before its
+        // `Return`. Covers all three types Gate B accepts today.
+        let src = "\
+Library gb version \"1.0\".\n\
+To gbnum with a number called x.\n  a number called y is x add x.\n  Return a number, y.\n\
+To gbtext with a text called s.\n  a text called t is s.\n  Return a text, t.\n\
+To gbbool with a number called x.\n  a boolean called ok is true.\n  Return a boolean, ok.\n";
+        let (blocks, _exports) = compile_shared_with_libs(src);
+        let lib = super::render_lib_file(&blocks, "libgb.so");
+        assert!(
+            lib.contains("To gbnum with a number called x, returning a number."),
+            "a number return after a preceding statement must not evaporate to void; got:\n{}",
+            lib
+        );
+        assert!(
+            lib.contains("To gbtext with a text called s, returning a text."),
+            "a text return after a preceding statement must not evaporate to void; got:\n{}",
+            lib
+        );
+        assert!(
+            lib.contains("To gbbool with a number called x, returning a boolean."),
+            "a boolean return after a preceding statement must not evaporate to void; got:\n{}",
+            lib
+        );
     }
 
     #[test]
