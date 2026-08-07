@@ -5092,51 +5092,69 @@ impl Parser {
             Token::OpenBrace => {
                 self.advance();
                 self.skip_noise();
-                // Disambiguate a map literal from a grouping {expr}:
-                //   {}                -> empty map
-                //   {k: v, ...}       -> map literal (a colon follows the
-                //                        first expression)
-                //   {expr}            -> grouping (existing behaviour)
-                // Parse the first expression, then branch on whether a colon
-                // follows. This lets a non-text key (e.g. {1: "x"}) reach the
-                // analyzer's "Map keys must be text" check rather than being
-                // rejected as a malformed grouping. (stage 1e2)
-                if *self.current() == Token::CloseBrace {
-                    self.advance();
-                    return Ok(Expr::MapLit { pairs: vec![] });
-                }
-                let first = self.parse_expression()?;
-                self.skip_noise();
-                if *self.current() == Token::Colon {
-                    let mut pairs = Vec::new();
-                    self.advance(); // consume colon
-                    self.skip_noise();
-                    let first_value = self.parse_expression()?;
-                    pairs.push((first, first_value));
-                    loop {
-                        self.skip_noise();
-                        if *self.current() != Token::Comma {
-                            break;
-                        }
+                // An explicit `{...}` group is fully self-delimiting - the
+                // closing brace unambiguously ends it, so any `to`/`of`
+                // reserved by an *enclosing* construct (e.g. `byte X of
+                // buffer` reserving `of` via `parse_primary_reserving`) has
+                // nothing left to protect once we're inside the braces.
+                // Save/clear/restore here, mirroring the shape
+                // `parse_primary_reserving` uses, so a nested call like
+                // `byte {ci of 1 and 2} of buf` can use its own `of` (plan
+                // 281).
+                let saved_to = self.suppress_to_connector;
+                let saved_of = self.suppress_of_connector;
+                self.suppress_to_connector = false;
+                self.suppress_of_connector = false;
+                let result = (|| -> Result<Expr, Box<CompileError>> {
+                    // Disambiguate a map literal from a grouping {expr}:
+                    //   {}                -> empty map
+                    //   {k: v, ...}       -> map literal (a colon follows the
+                    //                        first expression)
+                    //   {expr}            -> grouping (existing behaviour)
+                    // Parse the first expression, then branch on whether a colon
+                    // follows. This lets a non-text key (e.g. {1: "x"}) reach the
+                    // analyzer's "Map keys must be text" check rather than being
+                    // rejected as a malformed grouping. (stage 1e2)
+                    if *self.current() == Token::CloseBrace {
                         self.advance();
-                        self.skip_noise();
-                        // tolerate a trailing comma before the close brace
-                        if *self.current() == Token::CloseBrace {
-                            break;
-                        }
-                        let key = self.parse_expression()?;
-                        self.skip_noise();
-                        self.expect(&Token::Colon);
-                        self.skip_noise();
-                        let value = self.parse_expression()?;
-                        pairs.push((key, value));
+                        return Ok(Expr::MapLit { pairs: vec![] });
                     }
+                    let first = self.parse_expression()?;
+                    self.skip_noise();
+                    if *self.current() == Token::Colon {
+                        let mut pairs = Vec::new();
+                        self.advance(); // consume colon
+                        self.skip_noise();
+                        let first_value = self.parse_expression()?;
+                        pairs.push((first, first_value));
+                        loop {
+                            self.skip_noise();
+                            if *self.current() != Token::Comma {
+                                break;
+                            }
+                            self.advance();
+                            self.skip_noise();
+                            // tolerate a trailing comma before the close brace
+                            if *self.current() == Token::CloseBrace {
+                                break;
+                            }
+                            let key = self.parse_expression()?;
+                            self.skip_noise();
+                            self.expect(&Token::Colon);
+                            self.skip_noise();
+                            let value = self.parse_expression()?;
+                            pairs.push((key, value));
+                        }
+                        self.expect(&Token::CloseBrace);
+                        return Ok(Expr::MapLit { pairs });
+                    }
+                    // grouping
                     self.expect(&Token::CloseBrace);
-                    return Ok(Expr::MapLit { pairs });
-                }
-                // grouping
-                self.expect(&Token::CloseBrace);
-                Ok(first)
+                    Ok(first)
+                })();
+                self.suppress_to_connector = saved_to;
+                self.suppress_of_connector = saved_of;
+                result
             }
             Token::Byte => {
                 // byte N of buffer
@@ -6366,6 +6384,163 @@ greet to "world".
             &result.statements[8],
             Statement::FunctionCall { name, args }
             if name == "greet" && args.len() == 1
+        ));
+    }
+
+    /// Plan 281: a braced group is fully self-delimiting, so a function
+    /// call inside it must use its own `of` connector even though `byte`'s
+    /// index position reserves `of` for itself via `parse_primary_reserving`
+    /// - before the fix, the outer reservation leaked into the group and
+    /// `ci of 1 and 2` failed with "Expected a statement, got And".
+    #[test]
+    fn braced_multi_arg_call_as_byte_index_uses_own_of_connector() {
+        let input = "a number called v is byte {ci of 1 and 2} of buf.";
+        let result = parse_input(input).expect("braced call as byte index should parse");
+        match &result.statements[0] {
+            Statement::VarDecl { value: Some(Expr::ByteAccess { buffer, index }), .. } => {
+                assert!(matches!(buffer.as_ref(), Expr::Identifier(s) if s == "buf"));
+                assert!(matches!(
+                    index.as_ref(),
+                    Expr::FunctionCall { name, args }
+                    if name == "ci" && args.len() == 2
+                ));
+            }
+            other => panic!("Expected VarDecl with ByteAccess value, got {:?}", other),
+        }
+    }
+
+    /// Same bug, single-argument call whose `of` sits right against the
+    /// closing brace - before the fix this failed differently ("Expected a
+    /// statement, got CloseBrace") because the suppressed `of` couldn't even
+    /// start a call tail, leaving the brace unconsumed.
+    #[test]
+    fn braced_single_arg_call_as_byte_index_uses_own_of_connector() {
+        let input = "a number called v is byte {id of 3} of buf.";
+        let result = parse_input(input).expect("braced single-arg call as byte index should parse");
+        match &result.statements[0] {
+            Statement::VarDecl { value: Some(Expr::ByteAccess { index, .. }), .. } => {
+                assert!(matches!(
+                    index.as_ref(),
+                    Expr::FunctionCall { name, args }
+                    if name == "id" && args.len() == 1
+                ));
+            }
+            other => panic!("Expected VarDecl with ByteAccess value, got {:?}", other),
+        }
+    }
+
+    /// Same bug, `element N of list` shape instead of `byte N of buffer`.
+    #[test]
+    fn braced_call_as_element_index_uses_own_of_connector() {
+        let input = "a number called v is element {idfn of 2} of lst.";
+        let result = parse_input(input).expect("braced call as element index should parse");
+        match &result.statements[0] {
+            Statement::VarDecl { value: Some(Expr::ElementAccess { list, index }), .. } => {
+                assert!(matches!(list.as_ref(), Expr::Identifier(s) if s == "lst"));
+                assert!(matches!(
+                    index.as_ref(),
+                    Expr::FunctionCall { name, args }
+                    if name == "idfn" && args.len() == 1
+                ));
+            }
+            other => panic!("Expected VarDecl with ElementAccess value, got {:?}", other),
+        }
+    }
+
+    /// Same fix, `to` side rather than `of`: a range's start bound reserves
+    /// `to` for the range itself, so a braced call there must still be free
+    /// to use its own `to`.
+    #[test]
+    fn braced_call_uses_own_to_connector_in_range_start_bound() {
+        let input = "For each number from {calc to 3} to 10, print the number.";
+        let result = parse_input(input).expect("braced call in range start bound should parse");
+        match &result.statements[0] {
+            Statement::ForRange { range: Expr::Range { start, end, .. }, .. } => {
+                assert!(matches!(
+                    start.as_ref(),
+                    Expr::FunctionCall { name, args }
+                    if name == "calc" && args.len() == 1
+                ));
+                assert!(matches!(end.as_ref(), Expr::IntegerLit(10)));
+            }
+            other => panic!("Expected ForRange, got {:?}", other),
+        }
+    }
+
+    /// Plan 281 item 4: the `Token::OpenBrace` handler reaches
+    /// `parse_expression()` on both the grouping path and the map-literal
+    /// key/value path before it can tell which one it's in, so a map value
+    /// nested inside a suppressed context shares the exact same exposure -
+    /// even though no live program has hit it yet.
+    #[test]
+    fn map_literal_value_inside_suppressed_of_context_uses_own_of_connector() {
+        let input = "a number called v is byte {\"k\": ci of 1 and 2} of buf.";
+        let result = parse_input(input).expect("map literal as byte index should parse");
+        match &result.statements[0] {
+            Statement::VarDecl { value: Some(Expr::ByteAccess { index, .. }), .. } => {
+                match index.as_ref() {
+                    Expr::MapLit { pairs } => {
+                        assert_eq!(pairs.len(), 1);
+                        assert!(matches!(&pairs[0].0, Expr::StringLit(s) if s == "k"));
+                        assert!(matches!(
+                            &pairs[0].1,
+                            Expr::FunctionCall { name, args }
+                            if name == "ci" && args.len() == 2
+                        ));
+                    }
+                    other => panic!("Expected MapLit index, got {:?}", other),
+                }
+            }
+            other => panic!("Expected VarDecl with ByteAccess value, got {:?}", other),
+        }
+    }
+
+    /// Combined regression: every bare (non-braced) construct that the
+    /// original plan 270 fix protects must keep working exactly as before,
+    /// *alongside* a braced sub-expression that now legitimately uses its
+    /// own connector - proving the plan 281 fix doesn't loosen suppression
+    /// for anything outside an explicit `{...}` group.
+    #[test]
+    fn braced_group_coexists_with_reserved_connectors_in_one_program() {
+        let input = r#"
+Set start to 1.
+Set end to 3.
+For each number from start to end, print the number.
+append each x from source to dest.
+a number called item is element j of items.
+Set element k of items to 9.
+Set byte b of buf to 9.
+a number called computed is byte {ci of 1 and 2} of buf.
+"#;
+        let result = parse_input(input).expect("braced group should coexist with reserved words");
+        assert_eq!(result.statements.len(), 8);
+
+        assert!(matches!(
+            &result.statements[2],
+            Statement::ForRange { range: Expr::Range { start, end, .. }, .. }
+            if matches!(start.as_ref(), Expr::Identifier(s) if s == "start")
+                && matches!(end.as_ref(), Expr::Identifier(s) if s == "end")
+        ));
+        assert!(matches!(
+            &result.statements[3],
+            Statement::ForEach { collection, .. }
+            if matches!(collection, Expr::Identifier(s) if s == "source")
+        ));
+        assert!(matches!(
+            &result.statements[4],
+            Statement::VarDecl { value: Some(Expr::ElementAccess { index, .. }), .. }
+            if matches!(index.as_ref(), Expr::Identifier(s) if s == "j")
+        ));
+        assert!(matches!(result.statements[5], Statement::ElementSet { .. }));
+        assert!(matches!(result.statements[6], Statement::ByteSet { .. }));
+        assert!(matches!(
+            &result.statements[7],
+            Statement::VarDecl { value: Some(Expr::ByteAccess { index, .. }), .. }
+            if matches!(
+                index.as_ref(),
+                Expr::FunctionCall { name, args }
+                if name == "ci" && args.len() == 2
+            )
         ));
     }
 }
