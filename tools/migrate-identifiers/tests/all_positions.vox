@@ -1,0 +1,45 @@
+# Complete test file for all rewrite rules
+# Based on docs/plans/270_identifier_syntax.md
+
+# --- Rewrite rules ---
+a number called "total" is 5.
+a number called "total items" is 5.
+a flag called "verbose" is true.
+To "add two" with a number called "x", returning a number.
+print "add up" of 3 and 4.
+Set "total" to 9.
+print "total items"'s length.
+a number called x is "get five".
+
+# --- Must NOT rewrite ---
+# Map keys after 's
+print person's "name".
+set person's "age" to 37.
+print "job timer"'s elapsed.
+
+# Flag aliases
+a flag called "verbose" is "-v" or "--verbose".
+a flag called "wants help" is "--help".
+
+# Versions in Library/see
+Library "math kit" version "1.0".
+see "mathkit" version "1.0" from "./libmathkit.lib".
+Library math version "1.0.3".
+
+# String in print
+print "hello world".
+Print "DONE".
+Print "{x} is {y}".
+
+# Data operations (Write/Append/Copy)
+Write "Hello World" to output.
+append "hello" to staged_output.
+copy "Y={n}" to buf.
+
+# Mount paths
+Mount "proc" at "/proc" with type "proc".
+Mount "src" at "/dst" with type "none" with options "bind".
+
+# See paths (strings, not identifiers)
+see "./include/math_helpers.vox".
+see "../relative/path.vox".
