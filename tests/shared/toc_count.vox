@@ -10,7 +10,7 @@ it as a .so and asserts the .lib ToC entry count EQUALS the nm -D
 fails here regardless of which function it hits.)
 
 Library toc version "1.0".
-To "a". Return a number, 1.
+To aa. Return a number, 1.
 To greet.
 To c. Return a number, 3.
 To noop.

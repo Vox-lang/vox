@@ -11,8 +11,8 @@ Built with `vox mathkit_lib.vox --shared -o libmathkit.so`, which writes
 
 Library mathkit version "1.0".
 
-To 'add two numbers' with a number called "a" and a number called b.
-  Return a number, a add b.
+To 'add two numbers' with a number called aa and a number called b.
+  Return a number, aa add b.
 
 To greet.
   Print "hi from mathkit".

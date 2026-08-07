@@ -94,7 +94,7 @@ On error print "Failed to detach old root", exit 1.
 
 (Execute init)
 Print "Executing init...".
-Execute '/sbin/init' with arguments [].
+Execute "/sbin/init" with arguments [].
 On error print "Failed to execute init", exit 1.
 
 (Should never reach here)

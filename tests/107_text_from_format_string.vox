@@ -20,7 +20,7 @@ append "second" to echoargs.
 
 Set pid to fork the process.
 If pid is 0 then,
-    Execute '/bin/echo' with arguments echoargs.
+    Execute "/bin/echo" with arguments echoargs.
     On error print "exec failed", exit 1.
 Set reaped to reap process pid.
 Print "done".

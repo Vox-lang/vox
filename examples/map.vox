@@ -35,7 +35,7 @@ print "values:"
 for each v in person's values
   print v.
 
-a map called nested is {"tags": ["a", "b"], meta: {"id": 1}}.
+a map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
 print "nested:"
 print nested.
 a list called taglist is nested's "tags".

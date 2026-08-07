@@ -842,7 +842,7 @@ EOF
     #    this would have compiled silently under the old `process_includes`
     #    marker path. The .so check must still fire.
     run_case canonical_so_path <<'EOF'
-see "flags" version "0.1" from "./libflags.so".
+see flags version "0.1" from "./libflags.so".
 Print "hi".
 EOF
     if [[ -f "$work/canonical_so_path/prog" ]] || [[ "$err" != *"see of a .so"* ]] \

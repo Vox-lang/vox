@@ -12,9 +12,9 @@ To fibonacci with a number called n.
     Otherwise Return a number, {fibonacci of {n subtract 1}} add {fibonacci of {n subtract 2}}.
 
 (Recursive GCD)
-To gcd with a number called "a" and a number called b.
-    If b is equal to 0 then, return a number, a.
-    Otherwise Return a number, gcd of b and a modulo b.
+To gcd with a number called aa and a number called b.
+    If b is equal to 0 then, return a number, aa.
+    Otherwise Return a number, gcd of b and aa modulo b.
 
 (Test edge cases)
 Print "Factorial of 5: ".
