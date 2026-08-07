@@ -6042,3 +6042,104 @@ mod buffer_declaration_tests {
         // Note: Warning should be emitted to stderr during parsing
     }
 }
+
+#[cfg(test)]
+mod to_connector_tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse_input(input: &str) -> Result<Program, Box<CompileError>> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
+    }
+
+    /// Regression 2: `to` as a call connector must not break `Set X to Y`.
+    #[test]
+    fn set_assignment_keeps_to_as_separator() {
+        let input = r#"Set start to 1."#;
+        let result = parse_input(input).expect("Set assignment should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::VarDecl { name, value, .. } => {
+                assert_eq!(name, "start");
+                assert!(matches!(value, Some(Expr::IntegerLit(1))));
+            }
+            other => panic!("Expected VarDecl, got {:?}", other),
+        }
+    }
+
+    /// Regression 2: `For each number from A to B` range keeps `to` as a
+    /// range-bound keyword, not a call connector.
+    #[test]
+    fn for_each_range_keeps_to_as_bound() {
+        let input = r#"For each number from 1 to 3, print the number."#;
+        let result = parse_input(input).expect("for-each range should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::ForRange {
+                variable: _,
+                range: Expr::Range { start, end, inclusive },
+                body,
+            } => {
+                assert!(matches!(start.as_ref(), Expr::IntegerLit(1)));
+                assert!(matches!(end.as_ref(), Expr::IntegerLit(3)));
+                assert!(matches!(inclusive, true));
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("Expected ForRange, got {:?}", other),
+        }
+    }
+
+    /// Regression 2: `to` as a universal call connector in expression calls.
+    #[test]
+    fn function_call_with_to_connector_parses() {
+        let input = r#"To greet with a text called name. Return a text, name."#;
+        let result = parse_input(input).expect("function definition should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::FunctionDef { name, params, .. } => {
+                assert_eq!(name, "greet");
+                assert_eq!(params.len(), 1);
+                assert_eq!(params[0].0, "name");
+            }
+            other => panic!("Expected FunctionDef, got {:?}", other),
+        }
+
+        // The call itself: a bare identifier callee followed by `to` and an argument.
+        let call_input = r#"greet to "world"."#;
+        let call_result = parse_input(call_input).expect("call with 'to' should parse");
+        match &call_result.statements[0] {
+            Statement::FunctionCall { name, args } => {
+                assert_eq!(name, "greet");
+                assert_eq!(args.len(), 1);
+                assert!(matches!(
+                    &args[0],
+                    Expr::StringLit(s) if s == "world"
+                ));
+            }
+            other => panic!("Expected FunctionCall, got {:?}", other),
+        }
+    }
+
+    /// Regression 2: `Set X to (calc to 3)` — `to` must serve both the
+    /// assignment separator and the nested call connector in one sentence.
+    #[test]
+    fn set_value_to_nested_call_with_to_connector() {
+        let input = r#"Set x to calc to 3."#;
+        let result = parse_input(input).expect("Set with nested 'to' call should parse");
+        assert_eq!(result.statements.len(), 1);
+        match &result.statements[0] {
+            Statement::VarDecl { name, value, .. } => {
+                assert_eq!(name, "x");
+                assert!(matches!(
+                    value,
+                    Some(Expr::FunctionCall { name: callee, args })
+                    if callee == "calc" && args.len() == 1 && matches!(&args[0], Expr::IntegerLit(3)
+                )));
+            }
+            other => panic!("Expected VarDecl with nested FunctionCall value, got {:?}", other),
+        }
+    }
+}
