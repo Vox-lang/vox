@@ -1,0 +1,25 @@
+(Plan 291 required verification: a multi-branch `append ... but if ... but
+if ... otherwise append ...` chain, mirroring the existing multi-branch
+print test (018_fizzbuzz.vox has three `but if` branches). Confirms the
+continuation loop in the shared chain-builder (comma/but/and) still works
+for `append`, not just `print`.)
+
+a buffer called b15 is 64 bytes in size.
+a number called n15 is 15.
+Append "x" to b15, but if n15 modulo 15 is equal to 0 append "fizzbuzz", but if n15 modulo 3 is equal to 0 append "fizz", but if n15 modulo 5 is equal to 0 append "buzz".
+Print b15.
+
+a buffer called b3 is 64 bytes in size.
+a number called n3 is 3.
+Append "x" to b3, but if n3 modulo 15 is equal to 0 append "fizzbuzz", but if n3 modulo 3 is equal to 0 append "fizz", but if n3 modulo 5 is equal to 0 append "buzz".
+Print b3.
+
+a buffer called b5 is 64 bytes in size.
+a number called n5 is 5.
+Append "x" to b5, but if n5 modulo 15 is equal to 0 append "fizzbuzz", but if n5 modulo 3 is equal to 0 append "fizz", but if n5 modulo 5 is equal to 0 append "buzz".
+Print b5.
+
+a buffer called b7 is 64 bytes in size.
+a number called n7 is 7.
+Append "x" to b7, but if n7 modulo 15 is equal to 0 append "fizzbuzz", but if n7 modulo 3 is equal to 0 append "fizz", but if n7 modulo 5 is equal to 0 append "buzz".
+Print b7.

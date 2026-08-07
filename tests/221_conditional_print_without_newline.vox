@@ -1,0 +1,12 @@
+(Plan 291 Finding 6: `but if` conditional branches for `print` parse their
+own `without newline`, independent of the base statement's. A following
+marker print (with its own trailing newline) makes it visible in the
+captured output whether a newline snuck in after the conditional branch.)
+
+a number called v1 is 1.
+Print "." without newline, but if v1 is equal to 1 print "#" without newline.
+Print "|".
+
+a number called v2 is 2.
+Print "." without newline, but if v2 is equal to 1 print "#" without newline.
+Print "|".

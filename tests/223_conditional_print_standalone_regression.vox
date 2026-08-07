@@ -1,0 +1,10 @@
+(Plan 291 required verification: `print X, but if Y print Z.` with no
+`without newline` anywhere at all - the standalone, non-loop-expansion
+`but if` path that already worked before this generalization. Must still
+produce identical output. Both branches exercised.)
+
+a number called v1 is 1.
+Print "X", but if v1 is equal to 1 print "Y".
+
+a number called v2 is 2.
+Print "X", but if v2 is equal to 1 print "Y".
