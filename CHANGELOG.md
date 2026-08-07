@@ -4,6 +4,83 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-08-07
+
+`"..."` is now always a string literal — never an identifier. Names are bare
+words (`total`), or `'single quoted'` when they contain spaces
+(`'total items'`). This closes the single overload that has caused this
+project's worst defects: `a number called "x" is "get five".` used to
+silently parse a function call as a string and print a stray pointer instead
+of calling anything. The "Names and strings" section of `LANGUAGE.md` is the
+full guide.
+
+> **Breaking.** Every existing `.vox` program that names anything the old way
+> (`a number called "x" is 5.`, `To "greet".`, `print "greet" of 3.`,
+> `Library "lib" version "1.0".`) now fails to compile, with a diagnostic
+> telling you the correct replacement. There is no compatibility window.
+>
+> | Before | After |
+> |---|---|
+> | `a number called "x" is 5.` | `a number called x is 5.` |
+> | `a number called "total items" is 5.` | `a number called 'total items' is 5.` |
+> | `To "greet" with a number called "n".` | `To greet with a number called n.` |
+> | `print "greet" of 3.` | `print greet of 3.` |
+> | `Library "mathkit" version "1.0".` | `Library mathkit version "1.0".` |
+>
+> **Unchanged, still double-quoted** — these were never names: map keys
+> (`person's "name"`), file/library paths (`see "./utils.vox"`,
+> `from "./lib.lib"`), flag aliases (`"-v"`), and version strings
+> (`version "1.0"`).
+>
+> A mechanical migration tool ships in this repo at
+> `tools/migrate-identifiers`; it rewrote this project's own 250+ file test
+> corpus and is a reasonable starting point for a large program, though its
+> output should be reviewed.
+
+### Fixed
+
+- **A function call could silently misparse as a string literal**, printing a
+  raw pointer instead of calling anything — `a number called x is "get
+  five".` compiled and ran, printing something like `4198480`. The old
+  grammar (`name ::= string | identifier`) made this possible in any position
+  a name was expected; it no longer exists.
+- **The same defect shape, independently, in `element N of`.** `element 1 of
+  "no such thing".` compiled and printed `0` — a string naming nothing was
+  silently treated as an out-of-bounds access rather than rejected. Bare
+  string literals are now rejected in this position with a clear diagnostic.
+- **A value-typed parameter's runtime type tag could leak across function
+  definitions.** If two functions in the same file reused a parameter name
+  (e.g. both taking a parameter called `x`), a later string literal that
+  happened to equal that name could be misread as a stale value tag instead
+  of literal data. `variable_types`/`mixed_tag_slots` are now scoped per
+  function, matching how ordinary variables already were.
+- **A `.lib`'s declared return type was silently dropped to void** for any
+  function whose `Return` was not its first statement — the common case for
+  any function with real logic before returning. The library's own interface
+  file described a function as returning nothing when it returned a value.
+- **`to`/`of`/`with` as universal call connectors collided with grammar that
+  already used those words** — `Set x to 1.` followed later by `x` used as a
+  range bound, `append ... to`, and `element N of`/`byte N of` with a
+  variable index could all misparse as function calls, consuming a token that
+  belonged to the enclosing statement.
+
+### Added
+
+- **`docs/check-samples.sh`** — extracts every runnable code sample from
+  `LANGUAGE.md`, compiles it against the built compiler, and reports honest
+  pass/fail/skip counts with an internal consistency check (`checked +
+  skipped` must equal the real number of samples). Every sample in the
+  language reference is now verified to actually compile, not merely
+  asserted to.
+- **A C-interoperability test** confirming a Vox `--shared` library is
+  genuinely callable from C: a built `.so` has zero `NEEDED` entries
+  (freestanding), exports the documented mangled symbol names, and a C driver
+  linked against it produces the exact expected output.
+- **`tools/migrate-identifiers`** — the mechanical migration tool described
+  above, with its own test suite (idempotent, byte-identical on
+  already-canonical input, preserves the semantic meaning of blank lines
+  between function definitions).
+
 ## [0.2.0] - 2026-08-03
 
 A Vox program can now call a Vox library. Build a library with `--shared`,
