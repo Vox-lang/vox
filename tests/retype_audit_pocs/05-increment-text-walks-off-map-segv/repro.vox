@@ -1,0 +1,5 @@
+a text called s is "hi".
+Repeat 200000 times,
+  Increment s.
+
+Print "[{s}]".

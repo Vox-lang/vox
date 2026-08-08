@@ -1,0 +1,3 @@
+a text called src is "hello".
+open a file for reading called src at "/etc/hostname".
+Print "[{src}]".

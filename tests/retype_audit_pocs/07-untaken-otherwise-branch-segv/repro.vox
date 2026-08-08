@@ -1,0 +1,7 @@
+a number called n is 5.
+a number called g is 1.
+If g is equal to 1,
+  Print "taken".
+Otherwise,
+  n is "abc".
+Print "{n}".

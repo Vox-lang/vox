@@ -1,0 +1,4 @@
+a list called data is [42, "hello"].
+For each item in data,
+  a number called z is item add 1,
+  Print "z={z}".

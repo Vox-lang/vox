@@ -1,0 +1,4 @@
+a number called n is 5.
+For each k from 1 to 0,
+  n is "abc".
+Print "[{n}]".
