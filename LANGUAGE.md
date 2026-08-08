@@ -350,6 +350,78 @@ the x is 10.
 the counter is the counter add 1.
 ```
 
+### Type Immutability
+
+**A variable's type is fixed at its declaration and never changes.** Every
+form that writes to an already-declared name — `x is <value>.`, `the x is
+<value>.`, and `Set x to <value>.` — is checked the same way: if the new
+value's type doesn't match the type `x` was declared with, that's a compile
+error, not a silent retype.
+
+```vox fragment
+a number called n is 5.
+n is "abc".              → compile error: cannot assign text to 'n', which is a number
+n is "42" as a number.   → OK: n is now 42
+```
+
+The error names the variable, its declared type and where it was declared,
+the type of the value that doesn't match, and the exact cast that would fix
+it:
+
+```
+error: cannot assign text to 'n', which is a number
+  --> prog.vox:2:1
+   |
+ 2 | n is "abc".
+   | ^ this assigns text
+   |
+  note: 'n' was declared as a number at prog.vox:1:17
+  help: convert it explicitly:  n is "abc" as a number.
+```
+
+Convert explicitly with [Type Casting](#type-casting) (`as a number` / `as
+text` / ...) — the same mechanism used everywhere else in the language, not
+new syntax for this rule.
+
+This isn't limited to reassignment. Any construct that binds a name to a new
+runtime value is checked the same way: reusing an already-declared name as a
+`For each`/for-range loop variable, as the target of `open ... called`, or
+as the target of `Allocate ... for` all reject a type that conflicts with
+the name's existing declaration. So does a nested declaration that reuses an
+outer name with a different type (Vox has no block-level scoping today, so
+there is no separate slot for the inner declaration to occupy):
+
+```vox fragment
+a number called n is 5.
+If 1 is equal to 2,
+  a text called n is "abc".   → compile error: 'n' is already declared as a number
+```
+
+**Two exemptions, both deliberate:**
+
+- **Buffers.** Writing into a buffer (`b is 42.`, `Set b to "text".`) copies
+  the value's text representation into the buffer's content — a format
+  operation, not a type change — so a buffer accepts any value type on every
+  write.
+- **`value`.** A variable declared `a value called x` is the language's
+  sanctioned dynamic type and keeps accepting any type across reassignment,
+  exactly as documented in [Dynamic Values (`value`)](#dynamic-values-value)
+  below — that section's behavior is unchanged by this rule, not an
+  exception carved out of it.
+
+**What this doesn't catch.** The check only rejects a mismatch it can prove
+statically from the value's own shape (a literal, a cast, a read from a
+list/map whose element type is provably uniform, ...). A value coming from
+a function call, an unprovable list/map read (a map literal with mixed
+value types, for instance), or anything else the compiler can't classify at
+compile time is allowed through unchecked, exactly as it was before this
+rule. This closes a large, concrete class of bugs — a variable's compiler-
+tracked type disagreeing with what it actually holds at runtime, which
+previously produced a wrong number on screen at best and a segfault at
+worst — not every possible source of type confusion, and it says nothing
+about type agreement across a `.lib` import boundary (a library's declared
+signature is currently trusted, not verified against its `.so`).
+
 ### Naming Rules
 
 A name is an **identifier**, never a string literal. Three forms, no overlap,
@@ -1169,20 +1241,44 @@ set r to 7.
 If r is a number, print "now a number".
 ```
 
-**A `value` is not usable in arithmetic without checking its type first.**
-Because a `value` might hold a string or a decimal, the compiler rejects
-bare arithmetic on it and points you at the predicate idiom:
+**A `value` is not usable in arithmetic, and cannot currently be
+converted.** Because a `value` might hold a string or a decimal, the
+compiler rejects bare arithmetic on it:
 
 ```
 To bump with a value called v. Return a number, v add 1.
-(compile error: Cannot use a value v in arithmetic; check its type with
- 'is a number'/'is a text' first.)
+(compile error: Cannot use a value v in arithmetic; convert it explicitly
+ first with 'as a number' or 'as text'.)
 ```
 
-Guard it first — `if v is a number, … v add 1 …` — or cast it with
-`v as a number` (see Type Casting). (Full flow-sensitive dispatch — where a
-guard narrows the type *inside* the branch so `v add 1` just works — is a
-later decision; see the roadmap.)
+The error's own advice doesn't fully work yet, and it's worth knowing why
+rather than hitting a wall silently: neither of the two paths that would
+normally apply currently narrows or converts a `value` whose tag is only
+known at runtime.
+
+- **A type-predicate guard does not narrow.** `if v is a number, … v add 1
+  …` still rejects `v add 1` *inside* the `If` body — the guard proves the
+  branch is live only when the tag matches, but nothing today propagates
+  that proof into `v`'s tracked type for the statements inside it. Full
+  flow-sensitive narrowing is a later decision; see the roadmap.
+- **A cast is also rejected, deliberately, rather than silently computing
+  garbage.** `v as a number` cannot currently be relied on either: the
+  runtime-tag dispatch that would make it convert correctly (parse the
+  string when the tag says text, pass the integer through when it says
+  number, ...) doesn't exist in codegen yet, so a cast on a `value` whose
+  tag isn't known at compile time is a compile error rather than a
+  conversion that would sometimes silently produce the wrong number. (A
+  `value` whose tag genuinely *is* knowable at compile time — one holding a
+  literal number right where it's declared, for instance — is still
+  dynamically typed by declaration and gets the same rejection; the
+  compiler does not special-case it.)
+
+Both are open, tracked gaps (plan 294 finding 21), not present behavior to
+route around. There is currently no supported way to convert or narrow a
+genuinely dynamically-tagged `value` from within the language — the
+predicate idiom (`is a number` / `is a text`) remains useful for branching
+and for `Print`, which does dispatch correctly on the runtime tag; it just
+does not yet unlock arithmetic or casting inside the branch it guards.
 
 **Recursion with `value` works.** A `value` parameter threads its tag
 through every frame, so a recursive walker over mixed data classifies
