@@ -1,0 +1,4 @@
+cannot assign text to 'n', which is a number
+073_type_lock_caret_points_at_write_site.vox:4:1
+note: 'n' was declared as a number
+help: convert it explicitly:  n is "abc" as a number.

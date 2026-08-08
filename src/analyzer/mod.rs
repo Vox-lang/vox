@@ -563,6 +563,10 @@ pub struct Analyzer {
     source_file: Option<SourceFile>,
     guarded_scopes: HashMap<String, HashSet<String>>,
     symbol_error_counts: HashMap<String, usize>,
+    /// Where each concretely-typed variable was first declared, captured at
+    /// declaration time for the type-lock check's "note: declared here"
+    /// (a variable's type is fixed at declaration and never changes).
+    declared_locations: HashMap<String, SourceLocation>,
     active_guards: Vec<String>,
     in_function_scope: bool,
     block_depth: usize,
@@ -666,6 +670,7 @@ impl Analyzer {
             source_file: None,
             guarded_scopes: HashMap::new(),
             symbol_error_counts: HashMap::new(),
+            declared_locations: HashMap::new(),
             active_guards: Vec::new(),
             in_function_scope: false,
             block_depth: 0,
@@ -1075,6 +1080,67 @@ impl Analyzer {
             Statement::Wait { duration, .. } => self.expr_uses_flag(duration),
             _ => None,
         }
+    }
+
+    /// Like `find_symbol_location`, but for pointing at the specific
+    /// statement that *writes* to `symbol` (`Set symbol to ...` / `symbol is
+    /// ...` / `the symbol is ...`), not just any occurrence of the name.
+    /// `find_symbol_location`'s own preference order (`{symbol` first, for
+    /// format-string interpolation) is wrong here: a name that also appears
+    /// in an unrelated `Print "{n}"` elsewhere in the file would anchor the
+    /// type-lock error there instead of at the offending assignment.
+    fn find_write_site_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
+        let source = self.source_file.as_ref()?;
+        // The declaration line is never the offending write - excluding it
+        // matters because the canonical declaration syntax
+        // (`a <type> called X is <value>.`) itself contains `X is `, so an
+        // unfiltered search finds the declaration before the real
+        // reassignment on every plain `X is <value>` case.
+        let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
+        let write_patterns = [
+            format!("Set {} to ", symbol),
+            format!("the {} is ", symbol),
+            format!("{} is ", symbol),
+        ];
+
+        for pattern in write_patterns {
+            let mut seen = 0usize;
+            for (idx, line) in source.content.lines().enumerate() {
+                let line_no = idx + 1;
+                if Some(line_no) == decl_line {
+                    continue;
+                }
+                let mut search_from = 0usize;
+                while let Some(rel) = line[search_from..].find(&pattern) {
+                    let col = search_from + rel;
+                    // Word boundary on the left: the byte before the match
+                    // must not be alphanumeric/'_', otherwise a shorter
+                    // name matches as a suffix of a longer one (symbol "x",
+                    // pattern "x is " matching inside "max is "). The
+                    // pattern's own trailing " is "/" to " already enforces
+                    // the right boundary.
+                    let boundary_ok = col == 0 || {
+                        let prev = line.as_bytes()[col - 1];
+                        !(prev.is_ascii_alphanumeric() || prev == b'_')
+                    };
+                    // A declaration written as `a <type> called X is <v>.`
+                    // contains this exact pattern right after "called " -
+                    // exclude it explicitly as a second guard alongside the
+                    // decl_line skip above (covers a declaration sharing a
+                    // line with something else, however unlikely).
+                    let preceded_by_called = line[..col].ends_with("called ");
+                    if boundary_ok && !preceded_by_called {
+                        if seen == occurrence {
+                            return Some(SourceLocation::new(&source.filename, line_no, col + 1, line));
+                        }
+                        seen += 1;
+                    }
+                    search_from = col + 1;
+                }
+            }
+        }
+
+        self.find_symbol_location(symbol, occurrence)
     }
 
     fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
@@ -1838,6 +1904,128 @@ impl Analyzer {
         }
     }
 
+    /// Render a value expression back into Vox source syntax, for the
+    /// "help: convert it explicitly" suggestion. Only handles the simple
+    /// literal/identifier shapes that are common in a mismatched assignment;
+    /// anything else falls back to a generic placeholder rather than
+    /// fabricating source that wouldn't parse.
+    fn render_value_hint(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::StringLit(s) => format!("\"{}\"", s),
+            Expr::IntegerLit(n) => n.to_string(),
+            Expr::FloatLit(n) => n.to_string(),
+            Expr::BoolLit(b) => if *b { "true".to_string() } else { "false".to_string() },
+            Expr::Identifier(name) => name.clone(),
+            _ => "<value>".to_string(),
+        }
+    }
+
+    /// Type-lock check: a concretely-typed variable's type is fixed at
+    /// declaration and never changes (the language owner's fix for the
+    /// whole "tracked type disagrees with runtime type" bug family - see
+    /// the plan 293 writeup). Reports a compile error naming the variable,
+    /// its declared type, the mismatched type, and the exact cast that
+    /// fixes it when `value`'s type is statically known to differ from
+    /// `name`'s declared type. Returns true iff an error was reported.
+    ///
+    /// Deliberately permissive (returns false, i.e. "allow") when:
+    /// - `name` is `value`-typed (`self.value_typed_names`): that is the
+    ///   language's sanctioned dynamic-type mechanism and must keep
+    ///   accepting varying types.
+    /// - `name`'s declared type can't be resolved (untracked/unknown name -
+    ///   some other check, e.g. unknown-variable, owns that case).
+    /// - `value`'s type can't be determined statically (function calls,
+    ///   property/element access, etc.) - this mirrors the existing
+    ///   `arithmetic_operand_type`/`check_arithmetic_operand` policy of
+    ///   biasing against false positives when static inference runs out,
+    ///   rather than requiring a full type-inference pass this task did not
+    ///   ask for.
+    /// - `value`'s type resolves to `Type::Value` (a dynamically-typed
+    ///   source flowing into a concretely-typed destination): the runtime
+    ///   type isn't known until runtime, so this can't be verified
+    ///   statically either, and there is no sanctioned narrowing syntax to
+    ///   demand here.
+    /// - `name` is a buffer: `X is <value>.` / `Set X to <value>.` on a
+    ///   buffer is a content write (format the value's text into the
+    ///   buffer), not a type change - a buffer legitimately accepts a
+    ///   number, text, or another buffer's contents this way, already
+    ///   special-cased throughout the analyzer/codegen (e.g. the
+    ///   `is_buffer_variable` exclusions the old `Statement::Assignment`
+    ///   arm used before this check replaced it). Locking buffers here
+    ///   would reject `a buffer called b is "".` / `b is 42.`, which must
+    ///   keep working.
+    fn check_type_lock(&mut self, name: &str, value: &Expr) -> bool {
+        if self.value_typed_names.contains(name) || self.is_buffer_variable(name) {
+            return false;
+        }
+        let Some(declared) = self.named_value_type(name) else {
+            return false;
+        };
+        let Some(actual) = self.arithmetic_operand_type(value) else {
+            return false;
+        };
+        if matches!(actual, Type::Value) {
+            return false;
+        }
+        if self.treating_types_compatible(&declared, &actual) {
+            return false;
+        }
+
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let mut err = CompileError::new(&format!(
+            "cannot assign {} to '{}', which is a {}",
+            self.type_name(&actual),
+            name,
+            self.type_name(&declared)
+        ));
+        if let Some(loc) = self.find_write_site_location(name, occurrence) {
+            err = err.with_underline_note(name.len().max(1), &format!("this assigns {}", self.type_name(&actual)));
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+
+        if let Some(decl_loc) = self.declared_locations.get(name) {
+            err = err.with_note_line(&format!(
+                "'{}' was declared as a {} at {}:{}:{}",
+                name,
+                self.type_name(&declared),
+                decl_loc.file,
+                decl_loc.line,
+                decl_loc.column
+            ));
+        } else {
+            err = err.with_note_line(&format!("'{}' was declared as a {}", name, self.type_name(&declared)));
+        }
+        // Canonical Vox cast phrasing (LANGUAGE.md): `as a number` / `as a
+        // float` / `as a boolean` / `as a buffer`, but `as text` - no
+        // article - specifically for text.
+        let cast_target = if matches!(declared, Type::String) {
+            "text".to_string()
+        } else {
+            format!("a {}", self.type_name(&declared))
+        };
+        err = err.with_help_line(&format!(
+            "convert it explicitly:  {} is {} as {}.",
+            name,
+            self.render_value_hint(value),
+            cast_target
+        ));
+        self.errors.push(err);
+
+        // Poison the tracked type after reporting: the assignment was
+        // rejected, so `name` never actually took on the new type, but
+        // leaving the OLD type in place would make later, unrelated uses of
+        // `name` in this same (already-failing) compile cascade into a
+        // second, confusing error about the mistake that was just rejected
+        // (e.g. `z is s add 1` after a rejected `Set s to 7` re-flagging `s`
+        // as text in arithmetic). The program never reaches codegen once
+        // `self.errors` is non-empty, so this only affects which additional
+        // diagnostics get reported, not correctness.
+        self.scalar_types.remove(name);
+
+        true
+    }
+
     fn validate_treating_expr(&mut self, value: &Expr, match_value: &Expr, replacement: &Expr) {
         if let (Some(match_ty), Some(replacement_ty)) = (
             self.infer_simple_expr_type(match_value),
@@ -1946,6 +2134,14 @@ impl Analyzer {
             }
             
             Statement::VarDecl { name, var_type, value } => {
+                // `Set x to <value>.` / `Create x to <value>.` parse into
+                // this same statement with `var_type: None` regardless of
+                // whether `x` is brand-new or already exists (no explicit
+                // type keyword follows `Set`/`Create`). Only the
+                // already-declared case is a reassignment that the type
+                // lock applies to; a genuinely new `x` is a real
+                // declaration and must infer/lock its type as usual.
+                let was_already_declared = self.is_variable_available(name);
                 self.declare_variable_in_current_scope(name);
                 // Register the declared type in the type-specific sets,
                 // mirroring the top-level pre-pass. That pre-pass only
@@ -2006,6 +2202,21 @@ impl Analyzer {
                         }
                         _ => {}
                     }
+                } else if was_already_declared {
+                    // `Set n to <value>.` on an already-declared `n`: a
+                    // reassignment wearing a declaration's syntax. Enforce
+                    // the lock exactly like `Statement::Assignment` does,
+                    // instead of leaving scalar_types untouched (which is
+                    // how this exact case used to silently retype, or
+                    // silently do nothing, depending on the value's shape).
+                    if let Some(v) = value.as_ref() {
+                        self.check_type_lock(name, v);
+                    }
+                }
+                if !was_already_declared && !self.declared_locations.contains_key(name) {
+                    if let Some(loc) = self.find_symbol_location(name, 0) {
+                        self.declared_locations.insert(name.clone(), loc);
+                    }
                 }
             }
 
@@ -2045,7 +2256,16 @@ impl Analyzer {
             }
             
             Statement::Assignment { name, value } => {
-                if !self.is_variable_available(name) {
+                // A variable's type is fixed at declaration and never
+                // changes (the fix for the whole "tracked type disagrees
+                // with runtime type" bug family). `name is <value>.` is
+                // ambiguous on its own between "declare a brand-new
+                // variable" (valid at top level) and "reassign an existing
+                // one" - which it is decides whether this write gets
+                // type-checked at all, so capture it before the auto-declare
+                // below can change the answer.
+                let was_already_declared = self.is_variable_available(name);
+                if !was_already_declared {
                     if self.in_function_scope {
                         self.push_unknown_variable(name);
                     } else {
@@ -2065,24 +2285,37 @@ impl Analyzer {
 
                 self.analyze_expr(value);
 
-                // Mirror Vox's dynamic typing: a reassignment relabels the
-                // variable to whatever category the value has. `s is 5` turns
-                // a text `s` into a number, so `s add 1` must then be allowed.
-                // When the value's category can't be determined (e.g. a
-                // function result), drop the entry rather than keep a stale
-                // text label that would falsely reject valid arithmetic.
-                if !self.is_buffer_variable(name)
-                    && !self.is_list_variable(name)
-                    && !self.is_map_variable(name)
-                    && !self.file_variables.contains(name.as_str())
-                    && !self.timer_variables.contains(name.as_str())
-                {
-                    match self.arithmetic_operand_type(value) {
-                        Some(t) => {
-                            self.scalar_types.insert(name.clone(), t);
+                if was_already_declared {
+                    // Reassignment of an existing name: enforce the lock
+                    // instead of relabelling scalar_types to match. On a
+                    // mismatch, check_type_lock has already reported the
+                    // error; either way the declared type never changes
+                    // here.
+                    self.check_type_lock(name, value);
+                } else {
+                    // A brand-new name introduced by bare `name is <value>.`
+                    // (valid at top level; the function-scope case above
+                    // already reported "unknown variable") is a genuine
+                    // declaration - infer and lock its type, exactly like an
+                    // explicit `a <type> called name is <value>.` would.
+                    if !self.is_buffer_variable(name)
+                        && !self.is_list_variable(name)
+                        && !self.is_map_variable(name)
+                        && !self.file_variables.contains(name.as_str())
+                        && !self.timer_variables.contains(name.as_str())
+                    {
+                        match self.arithmetic_operand_type(value) {
+                            Some(t) => {
+                                self.scalar_types.insert(name.clone(), t);
+                            }
+                            None => {
+                                self.scalar_types.remove(name);
+                            }
                         }
-                        None => {
-                            self.scalar_types.remove(name);
+                    }
+                    if !self.declared_locations.contains_key(name) {
+                        if let Some(loc) = self.find_symbol_location(name, 0) {
+                            self.declared_locations.insert(name.clone(), loc);
                         }
                     }
                 }

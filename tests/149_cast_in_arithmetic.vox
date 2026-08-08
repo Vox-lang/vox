@@ -9,8 +9,9 @@
     immediately to its left; brace to cast a whole expression.
  3. Bare text in arithmetic used to compile to pointer arithmetic and print
     garbage; it now errors at analysis time. Casts do atoi/atof and pass.
- Dynamic relabeling: a text var reassigned to a number may then be used in
- arithmetic without a cast.)
+ A variable's declared type is now fixed for good (plan 294): reassigning
+ `dyn` to a number is a compile error, so arithmetic on it goes through an
+ explicit cast at the use site instead of relying on dynamic relabeling.)
 
 a text called s is "42".
 a text called sf is "3.5".
@@ -21,9 +22,8 @@ a number called ic is {s as a number} add 1.
 a float called fc1 is {sf as a float} add 1.
 a float called fc2 is {sf as a float} multiply 2.
 a float called fc3 is {sf as a float} subtract 0.5.
-a text called dyn is "hi".
-dyn is 5.
-a number called dynr is dyn add 1.
+a text called dyn is "5".
+a number called dynr is dyn as a number add 1.
 Print tight1.
 Print tight2.
 Print rounded.
