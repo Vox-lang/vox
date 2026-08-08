@@ -1,0 +1,4 @@
+a map called m is {"k": "hello"}.
+a value called v is m's "k".
+a number called z is v as a number.
+Print "z={z}".

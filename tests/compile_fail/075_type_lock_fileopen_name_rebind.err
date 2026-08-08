@@ -1,0 +1,4 @@
+cannot bind 'src' to a file in this open statement; 'src' is already declared as text
+075_type_lock_fileopen_name_rebind.vox:2:32
+note: 'src' was declared as text at 075_type_lock_fileopen_name_rebind.vox:1:15
+help: use a different name here, or declare 'src' as a file instead

@@ -1,6 +1,6 @@
 # Vox Roadmap: From Today to a Kernel Written in Vox
 
-This roadmap charts the path from the current state of Vox (v0.2.0) to the
+This roadmap charts the path from the current state of Vox (v0.3.3) to the
 long-term goal: a memory-safe, sentence-based systems language capable of
 expressing *any* program — including cryptographic libraries, network stacks,
 device drivers, and ultimately an operating system kernel — across multiple
@@ -62,6 +62,18 @@ graph LR
 - [ ] Adopt the compile-time safety goals in
       [docs/segfault-safety-test-plan.md](docs/segfault-safety-test-plan.md):
       no valid Vox program may segfault at runtime.
+- [x] **Fix the compiler-tracked-type-vs-runtime-type divergence family.**
+      *(Fixed in v0.3.3. A variable's type is now fixed at its declaration
+      and locked for good — a type-differing write is a compile error, not a
+      silent retype. This closed 18 confirmed findings across the class,
+      documented in `docs/plans/294_retype_audit.md`; see LANGUAGE.md's "Type
+      Immutability" section for the user-facing rule. Two things this does
+      NOT close, tracked as their own follow-ups in the same audit: casting a
+      dynamically-tagged `value` still can't convert (finding 21 — currently
+      a compile error instead of a silent wrong answer, which is the safe
+      state, but the conversion itself isn't implemented), and a `.lib`'s
+      declared signature is trusted, not verified against its `.so` (audit
+      section C).)*
 
 **Exit criteria:** the full test suite passes; no known program written in
 documented Vox can crash the generated binary.

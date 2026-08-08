@@ -1,0 +1,5 @@
+a text called s is "hello".
+Set s to 7.
+a number called z is 0.
+z is s add 1.
+Print "{z}".

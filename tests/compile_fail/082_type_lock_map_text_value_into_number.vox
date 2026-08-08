@@ -1,0 +1,4 @@
+a map called m is {"k": "abc"}.
+a number called n is 5.
+n is m's "k".
+Print "{n}".

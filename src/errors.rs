@@ -35,6 +35,12 @@ pub struct CompileError {
     /// gutter line), carrying the migration suggestion. Rendered as plain
     /// text so `.err` fixtures can assert on it verbatim.
     pub help_line: Option<String>,
+    /// A `note:` line rendered after the pointer, before `help_line` -
+    /// typically a second, unrelated location (e.g. where a variable was
+    /// originally declared, for a type-mismatch error whose primary pointer
+    /// is at the offending assignment). Plain text, same reasoning as
+    /// `help_line`.
+    pub note_line: Option<String>,
 }
 
 impl CompileError {
@@ -48,6 +54,7 @@ impl CompileError {
             error_code: None,
             underline_note: None,
             help_line: None,
+            note_line: None,
         }
     }
 
@@ -83,6 +90,14 @@ impl CompileError {
     /// `length` characters starting at the error's location column.
     pub fn with_underline_note(mut self, length: usize, note: &str) -> Self {
         self.underline_note = Some((length, note.to_string()));
+        self
+    }
+
+    /// Attach a `note:` line - typically a second, unrelated source
+    /// location spelled out as plain text (e.g. a variable's declaration
+    /// site), rendered before `help_line`.
+    pub fn with_note_line(mut self, note: &str) -> Self {
+        self.note_line = Some(note.to_string());
         self
     }
 
@@ -172,11 +187,17 @@ impl fmt::Display for CompileError {
                 return Ok(());  // Skip normal hint display
             }
 
-            // Plan 270 §S1.5: a dedicated `help:` line, rendered after the
-            // pointer with a blank gutter line. Plain text (no colour) so
-            // `tests/compile_fail/*.err` fixtures can assert it verbatim.
-            if let Some(ref help) = self.help_line {
+            // A dedicated `note:`/`help:` pair, rendered after the pointer
+            // with a single shared blank gutter line. Plain text (no
+            // colour) so `tests/compile_fail/*.err` fixtures can assert
+            // them verbatim.
+            if self.note_line.is_some() || self.help_line.is_some() {
                 write!(f, "  {:width$} {}|\n", "", BLUE, width = line_num_width)?;
+            }
+            if let Some(ref note) = self.note_line {
+                write!(f, "  note: {}\n", note)?;
+            }
+            if let Some(ref help) = self.help_line {
                 write!(f, "  help: {}\n", help)?;
             }
         }

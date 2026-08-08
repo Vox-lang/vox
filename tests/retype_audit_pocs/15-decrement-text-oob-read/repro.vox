@@ -1,0 +1,3 @@
+a text called s is "hello".
+Decrement s.
+Print "[{s}]".

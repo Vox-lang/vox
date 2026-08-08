@@ -1,0 +1,5 @@
+a number called n is 5.
+Repeat 0 times,
+  n is "abc".
+
+Print "[{n}]".

@@ -1,0 +1,4 @@
+cannot bind 'p' to a number in this Allocate statement; 'p' is already declared as text
+076_type_lock_allocate_name_rebind.vox:2:18
+note: 'p' was declared as text at 076_type_lock_allocate_name_rebind.vox:1:15
+help: use a different name here, or declare 'p' as a number instead

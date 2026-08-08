@@ -1,0 +1,5 @@
+a number called n is 5.
+open a file for reading called src at "/etc/hostname".
+on error n is "abc".
+
+Print "[{n}]".

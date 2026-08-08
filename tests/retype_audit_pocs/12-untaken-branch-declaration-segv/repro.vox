@@ -1,0 +1,5 @@
+a number called n is 5.
+If 1 is equal to 2,
+  a text called n is "abc".
+
+Print "outer [{n}]".

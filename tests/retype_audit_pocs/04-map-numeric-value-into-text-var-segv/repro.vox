@@ -1,0 +1,4 @@
+a map called m is {"k": 42}.
+a text called s is "hello".
+s is m's "k".
+Print "[{s}]".

@@ -4,6 +4,49 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.3] - 2026-08-08
+
+### Fixed
+
+- **Reassigning a variable to a value of a different type could silently
+  produce a wrong number, or segfault** — the compiler's tracked type for a
+  variable could disagree with what the variable actually held at runtime,
+  and formatting/printing code trusted the tracked type. Depending on the
+  direction of the mismatch this either printed a pointer address as if it
+  were a number, or dereferenced a raw number as if it were a string
+  pointer and crashed:
+
+  ```
+  a number called n is 5.
+  n is "abc".
+  Print "{n}".        -> printed a garbage number; could also segfault
+                          depending on which way the mismatch ran
+  ```
+
+  A variable's type is now fixed at its declaration and never changes. A
+  write that would change it — `n is "abc".`, `the n is "abc".`, or `Set n
+  to "abc".`, and reusing an already-declared name as a loop variable, an
+  `open ... called` target, or an `Allocate ... for` target — is now a
+  compile error instead:
+
+  ```
+  n is "abc".   -> error: cannot assign text to 'n', which is a number
+                    help: convert it explicitly:  n is "abc" as a number.
+  ```
+
+  **If a program you have relies on this**, convert the value explicitly
+  with `as a number` / `as text` / `as a float` / `as a boolean` at the
+  point of assignment — this syntax already existed and is unchanged. A
+  variable declared `a value called x` is unaffected and keeps accepting
+  any type, as documented.
+
+  This also closes several related cases with the same root cause:
+  incrementing or decrementing a text variable, a declaration inside an
+  untaken `If`/`Otherwise`/`While`/`Repeat`/`for` branch or an `on error`
+  handler that never fires, a nested declaration that reuses an outer
+  variable's name with a different type, and reading a mismatched value out
+  of a map whose value type is provable from its own literal.
+
 ## [0.3.2] - 2026-08-07
 
 ### Fixed

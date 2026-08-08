@@ -641,6 +641,41 @@ pub enum DefiniteDeclKind {
 /// declarations behave as globals.
 pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<String, DefiniteDeclKind> {
     let mut out = std::collections::HashMap::new();
+    // A name whose recognised occurrences disagree on kind (e.g. `a text
+    // called src is "hello".` followed later by `open ... called src`,
+    // which this function would otherwise see as `Plain` then `File`) is
+    // poisoned: removed from `out` and never re-added, rather than letting
+    // whichever occurrence is scanned last silently win. That "last write
+    // wins" used to pre-register the *later* kind (into
+    // buffer_variables/list_variables/map_variables/file_variables) before
+    // the analyzer's own per-statement, declaration-order-respecting
+    // type-immutability check ever ran - masking the real conflict instead
+    // of surfacing it (plan 294 finding 3). A poisoned name is simply
+    // absent from the definite-decl map; the analyzer's linear walk still
+    // sees and rejects the conflict when it reaches the second occurrence,
+    // it just does so without this pre-pass having pre-judged the type.
+    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    fn record(
+        out: &mut std::collections::HashMap<String, DefiniteDeclKind>,
+        poisoned: &mut std::collections::HashSet<String>,
+        name: &str,
+        kind: DefiniteDeclKind,
+    ) {
+        if poisoned.contains(name) {
+            return;
+        }
+        match out.get(name) {
+            Some(existing) if *existing != kind => {
+                out.remove(name);
+                poisoned.insert(name.to_string());
+            }
+            _ => {
+                out.insert(name.to_string(), kind);
+            }
+        }
+    }
+
     for stmt in stmts {
         match stmt {
             Statement::VarDecl { name, var_type, .. } => {
@@ -650,19 +685,19 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
                     Some(Type::Map(_)) => DefiniteDeclKind::Map,
                     _ => DefiniteDeclKind::Plain,
                 };
-                out.insert(name.clone(), kind);
+                record(&mut out, &mut poisoned, name, kind);
             }
             Statement::BufferDecl { name, .. } => {
-                out.insert(name.clone(), DefiniteDeclKind::Buffer);
+                record(&mut out, &mut poisoned, name, DefiniteDeclKind::Buffer);
             }
             Statement::Allocate { name, .. } | Statement::TimerDecl { name } => {
-                out.insert(name.clone(), DefiniteDeclKind::Plain);
+                record(&mut out, &mut poisoned, name, DefiniteDeclKind::Plain);
             }
             Statement::FileOpen { name, .. } => {
-                out.insert(name.clone(), DefiniteDeclKind::File);
+                record(&mut out, &mut poisoned, name, DefiniteDeclKind::File);
             }
             Statement::GetTime { into } => {
-                out.insert(into.clone(), DefiniteDeclKind::Plain);
+                record(&mut out, &mut poisoned, into, DefiniteDeclKind::Plain);
             }
             Statement::If { then_block, else_if_blocks, else_block: Some(else_block), .. } => {
                 let mut definite = collect_definite_decls(then_block);
@@ -672,7 +707,9 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
                 }
                 let branch = collect_definite_decls(else_block);
                 definite.retain(|name, kind| branch.get(name) == Some(kind));
-                out.extend(definite);
+                for (name, kind) in definite {
+                    record(&mut out, &mut poisoned, &name, kind);
+                }
             }
             _ => {}
         }
