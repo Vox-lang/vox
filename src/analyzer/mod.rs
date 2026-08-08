@@ -2439,7 +2439,9 @@ impl Analyzer {
                         Expr::Identifier(source) => {
                             if !self.is_variable_available(source) {
                                 self.push_error(format!("Unknown buffer: {}", source), Some(source));
-                            } else if !self.is_buffer_variable(source) {
+                            } else if !self.is_buffer_variable(source)
+                                && self.named_value_type(source) != Some(Type::String)
+                            {
                                 self.push_error(
                                     format!("Buffer append requires a buffer source: {}", source),
                                     Some(source),

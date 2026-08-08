@@ -1,0 +1,13 @@
+(Plan 291 Finding 5: `but if` conditional sugar generalized to `append`.
+Base statement carries its own target `to line`; the branch reuses it.
+Exercise both branches of the condition against separate buffers.)
+
+a buffer called hit is 256 bytes in size.
+a number called v1 is 1.
+Append "." to hit, but if v1 is equal to 1 append "#".
+Print hit.
+
+a buffer called miss is 256 bytes in size.
+a number called v2 is 2.
+Append "." to miss, but if v2 is equal to 1 append "#".
+Print miss.

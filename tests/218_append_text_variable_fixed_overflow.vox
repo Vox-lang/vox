@@ -1,0 +1,20 @@
+(Plan 290 regression: a text-variable source appended into a
+fixed-size buffer must still honor the bounds check - the same
+truncate-and-set-error behavior a literal/format-string source already
+has (see tests/067_format_buffer_fixed_overflow.vox). A gap here would
+be a memory-safety regression, not a cosmetic one - the analyzer fix
+must not bypass _buffer_append_bytes's clamp for this newly-accepted
+source kind.)
+
+a buffer called dst is 8 bytes in size.
+a text called payload is "1234567890".
+
+append payload to dst.
+print dst.
+on error print "append overflow".
+
+clear dst.
+a text called fits is "1234567".
+append fits to dst.
+print dst.
+on error print "should not overflow".
