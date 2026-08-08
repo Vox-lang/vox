@@ -1,1 +1,1 @@
-Cannot use a value v in arithmetic; check its type with 'is a number'/'is a text' first.
+Cannot use a value v in arithmetic; convert it explicitly first with 'as a number' or 'as text'.

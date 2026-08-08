@@ -595,6 +595,17 @@ pub struct Analyzer {
     /// without an explicit type check (stage 1c predicate); the arithmetic
     /// operand check uses this set to reject unguarded use with a clear error.
     value_typed_names: HashSet<String>,
+    /// Lists proven heterogeneous from their own literal initializer at
+    /// declaration time (plan 294 finding 18) - e.g. `a list called data is
+    /// [42, "hello"].`. Deliberately narrower than codegen's `mixed_lists`
+    /// pre-scan: this only looks at a direct `ListLit` initializer, not
+    /// aliasing through other variables or widening via later `Append`s.
+    /// That asymmetry is safe in the direction it's used (a `for each` loop
+    /// variable over a list this set doesn't catch keeps today's existing,
+    /// unchanged behaviour rather than being wrongly tightened), but it
+    /// means a list built up entirely through `Append` calls of differing
+    /// types is not detected as mixed here the way it would be by codegen.
+    list_mixed: HashSet<String>,
     loop_depth: usize,
     /// True when compiling `--shared`. A shared library has no `_start`, so a
     /// top-level executable statement would be generated into the discarded
@@ -685,6 +696,7 @@ impl Analyzer {
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
             value_typed_names: HashSet::new(),
+            list_mixed: HashSet::new(),
             loop_depth: 0,
             shared_mode: false,
             current_library: None,
@@ -1811,8 +1823,22 @@ impl Analyzer {
             Type::Map(_) => format!("Cannot use map {} in arithmetic.", label),
             Type::File => format!("Cannot use file {} in arithmetic.", label),
             Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            // Deliberately NOT "check its type with 'is a number' first":
+            // verified that guard does not narrow the type inside its own
+            // body, so the advice would be a dead end (still rejected
+            // after doing exactly what it says). `as a number`/`as text`
+            // is the escape hatch that LANGUAGE.md documents and that
+            // actually compiles - though it's only proven correct here
+            // when the value's tag is statically known; a value whose tag
+            // is genuinely only known at runtime (e.g. from a map read, or
+            // plan 294 finding 18's heterogeneous-list loop variable) casts
+            // without error but silently reads the wrong bytes - a
+            // separate, pre-existing codegen gap (confirmed on unmodified
+            // `main`, unrelated to this track) in Cast not consulting the
+            // runtime tag. Recording that here rather than in a hint
+            // string a `.err` fixture would have to pin.
             Type::Value => format!(
-                "Cannot use a value {} in arithmetic; check its type with 'is a number'/'is a text' first.",
+                "Cannot use a value {} in arithmetic; convert it explicitly first with 'as a number' or 'as text'.",
                 label
             ),
             _ => return,
@@ -1954,6 +1980,41 @@ impl Analyzer {
                 | (Type::List(_), Type::List(_))
                 | (Type::Map(_), Type::Map(_))
         )
+    }
+
+    /// Classify a list-literal element for the finding-18 homogeneity
+    /// check. `None` means "can't prove a single tag" (an identifier,
+    /// function call, property/element access, `nothing`, ...) and is
+    /// treated as mixed by the caller - matching codegen's own
+    /// `TagInfo::Unknowable` policy of widening to mixed rather than
+    /// guessing when a value's tag can't be proven statically.
+    fn list_element_kind(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::StringLit(_) => Some(Type::String),
+            Expr::IntegerLit(_) => Some(Type::Integer),
+            Expr::FloatLit(_) => Some(Type::Float),
+            Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::ListLit { .. } => Some(Type::List(Box::new(Type::Unknown))),
+            Expr::MapLit { .. } => Some(Type::Map(Box::new(Type::Unknown))),
+            _ => None,
+        }
+    }
+
+    /// True iff a list literal's elements don't all share one provable
+    /// type - see `list_element_kind` and `list_mixed`.
+    fn list_literal_is_mixed(&self, elements: &[Expr]) -> bool {
+        let mut seen: Option<Type> = None;
+        for e in elements {
+            let Some(t) = self.list_element_kind(e) else {
+                return true;
+            };
+            match &seen {
+                None => seen = Some(t),
+                Some(prev) if !self.treating_types_compatible(prev, &t) => return true,
+                Some(_) => {}
+            }
+        }
+        false
     }
 
     fn type_name(&self, ty: &Type) -> &'static str {
@@ -2364,6 +2425,15 @@ impl Analyzer {
                 }
                 if let Some(Type::List(_)) = var_type {
                     self.list_variables.insert(name.clone());
+                    // Plan 294 finding 18: a `for each` loop variable over
+                    // a list this proves heterogeneous must be dynamically
+                    // typed (see the ForEach arm) rather than silently
+                    // allowing arithmetic that only some elements support.
+                    if let Some(Expr::ListLit { elements }) = value {
+                        if self.list_literal_is_mixed(elements) {
+                            self.list_mixed.insert(name.clone());
+                        }
+                    }
                 }
                 if let Some(Type::Map(_)) = var_type {
                     self.map_variables.insert(name.clone());
@@ -2623,6 +2693,31 @@ impl Analyzer {
                 // list - must not linger and falsely reject arithmetic on the
                 // loop variable inside the body.
                 self.scalar_types.remove(variable);
+                // Plan 294 finding 18: over a list PROVEN heterogeneous (see
+                // `list_mixed`/`list_literal_is_mixed`), the loop variable
+                // genuinely holds a different type each iteration - no
+                // fixed type is correct, so route it into the same
+                // dynamic/`value` mechanism a declared `a value called x`
+                // uses, demanding an explicit check before arithmetic
+                // instead of silently allowing it on whatever type the
+                // element turns out not to be. A list this narrower,
+                // single-pass check can't prove mixed (see `list_mixed`'s
+                // own doc comment on what it does not catch) keeps today's
+                // existing behaviour unchanged.
+                let list_name = match collection {
+                    Expr::Identifier(n) | Expr::StringLit(n) => Some(n.as_str()),
+                    _ => None,
+                };
+                let is_mixed = match (list_name, collection) {
+                    (Some(n), _) => self.list_mixed.contains(n),
+                    (None, Expr::ListLit { elements }) => self.list_literal_is_mixed(elements),
+                    (None, _) => false,
+                };
+                if is_mixed {
+                    self.value_typed_names.insert(variable.clone());
+                } else {
+                    self.value_typed_names.remove(variable.as_str());
+                }
                 self.analyze_expr(collection);
                 self.loop_depth += 1;
                 for s in body {
