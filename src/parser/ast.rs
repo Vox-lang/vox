@@ -1,3 +1,5 @@
+use crate::errors::SourceLocation;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -362,6 +364,11 @@ pub enum Statement {
         #[allow(dead_code)]
         return_type: Type,
         body: Vec<Statement>,
+        // Set when a blank line (paragraph break) force-closed this
+        // function's body early, per the "blank line closes all open
+        // clauses" rule. Consulted by the analyzer to explain otherwise
+        // confusing errors in the top-level statements that follow.
+        body_ended_early: Option<SourceLocation>,
     },
     
     FunctionCall {

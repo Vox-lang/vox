@@ -170,7 +170,7 @@ No dynamic analysis or runtime interpretation occurs after compilation.
 
 ## Requirements
 
-* Rust (for building the compiler)
+* Rust >= 1.87 (for building the compiler)
 * NASM (Netwide Assembler)
 * GNU ld
 

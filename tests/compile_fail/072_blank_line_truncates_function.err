@@ -1,0 +1,4 @@
+Unknown variable: r
+a blank line ended `calc`'s body early at line 2 — a paragraph break closes all open clauses, including the enclosing function, so `r` is no longer in scope here
+Return is only valid inside a function
+a blank line ended `calc`'s body early at line 2 — a paragraph break closes all open clauses, so this Return is no longer inside it

@@ -607,6 +607,13 @@ pub struct Analyzer {
     /// "Unknown function" error (cross-library calls are out of scope for A2).
     /// `None` outside shared mode, where the key is plain `mangle_symbol(name)`.
     current_library: Option<(String, String)>,
+    /// Set right after analyzing a function whose body a blank line force-
+    /// closed early. Consulted by errors in the top-level statements that
+    /// follow, since that's where such a function's "missing" params actually
+    /// surface as errors. Cleared as soon as the next FunctionDef or Library
+    /// starts analysis, bounding it to just the orphaned statements in between.
+    pending_blank_line_truncation: Option<(String, Vec<String>, SourceLocation)>,
+    // (function_name, its parameter names, the blank line's location)
     /// Stage A4: functions imported by `see '<lib>' version "<ver>" from
     /// "...lib".`, resolved against the filesystem by the driver (parse +
     /// .dynsym verification) and handed here for name resolution and call
@@ -676,6 +683,7 @@ impl Analyzer {
             loop_depth: 0,
             shared_mode: false,
             current_library: None,
+            pending_blank_line_truncation: None,
             imports: Vec::new(),
             warnings: Vec::new(),
         }
@@ -1098,6 +1106,10 @@ impl Analyzer {
     }
 
     fn push_error(&mut self, message: String, symbol: Option<&str>) {
+        self.push_error_with_hint(message, symbol, None);
+    }
+
+    fn push_error_with_hint(&mut self, message: String, symbol: Option<&str>, hint: Option<&str>) {
         let mut err = CompileError::new(&message);
         if let Some(name) = symbol {
             let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
@@ -1106,11 +1118,24 @@ impl Analyzer {
             }
             self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
         }
+        if let Some(h) = hint {
+            err = err.with_hint(h);
+        }
         self.errors.push(err);
     }
 
     fn push_unknown_variable(&mut self, name: &str) {
-        self.push_error(format!("Unknown variable: {}", name), Some(name));
+        let hint = self.pending_blank_line_truncation.as_ref().and_then(|(func, params, loc)| {
+            if params.iter().any(|p| p == name) {
+                Some(format!(
+                    "a blank line ended `{}`'s body early at line {} — a paragraph break closes all open clauses, including the enclosing function, so `{}` is no longer in scope here",
+                    func, loc.line, name
+                ))
+            } else {
+                None
+            }
+        });
+        self.push_error_with_hint(format!("Unknown variable: {}", name), Some(name), hint.as_deref());
     }
 
     /// Validate that a function call supplies exactly the number of
@@ -2163,9 +2188,16 @@ impl Analyzer {
                 // (leave/ret) which is undefined from _start, so reject
                 // it here rather than produce broken output.
                 if !self.in_function_scope {
-                    self.push_error(
+                    let hint = self.pending_blank_line_truncation.as_ref().map(|(func, _, loc)| {
+                        format!(
+                            "a blank line ended `{}`'s body early at line {} — a paragraph break closes all open clauses, so this Return is no longer inside it",
+                            func, loc.line
+                        )
+                    });
+                    self.push_error_with_hint(
                         "Return is only valid inside a function".to_string(),
                         None,
+                        hint.as_deref(),
                     );
                 }
                 if let Some(v) = value {
@@ -2206,7 +2238,8 @@ impl Analyzer {
                 }
             }
             
-            Statement::FunctionDef { name, params, body, .. } => {
+            Statement::FunctionDef { name, params, body, body_ended_early, .. } => {
+                self.pending_blank_line_truncation = None;
                 // A leading underscore is the runtime's namespace (see
                 // docs/SYMBOL_MANGLING.md). A function name emits a label
                 // verbatim, so `To _str_eq ...` redefines a coreasm symbol
@@ -2322,8 +2355,12 @@ impl Analyzer {
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
                 self.apply_env(&saved_env);
+
+                self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {
+                    (name.clone(), params.iter().map(|(n, _)| n.clone()).collect(), loc.clone())
+                });
             }
-            
+
             Statement::Increment { name } | Statement::Decrement { name } => {
                 if !self.is_variable_available(name) {
                     self.push_unknown_variable(name);
@@ -2706,6 +2743,7 @@ impl Analyzer {
             }
             
             Statement::LibraryDecl { name, version } => {
+                self.pending_blank_line_truncation = None;
                 // A `Library` declaration sets the identity for the function
                 // definitions that follow it. The per-function tables are keyed
                 // by the `<lib>_<ver>_<func>` label, so a call inside this
