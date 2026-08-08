@@ -3806,8 +3806,10 @@ impl CodeGenerator {
                             if let Some(offset) = dst_local {
                                 self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(value), fmt_spec);
                             } else if let Some(ref label) = dst_global {
+                                self.emit_indent("push rax  ; save source value across destination address load");
                                 self.emit_load_named_var_addr(list);
                                 self.emit_indent("mov rdi, rax");
+                                self.emit_indent("pop rax  ; restore source value");
                                 self.emit_append_runtime_value_to_buffer_ptr(self.infer_expr_type(value), fmt_spec);
                                 self.emit_indent(&format!("mov [rel {}], rax", label));
                             }
