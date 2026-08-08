@@ -2314,7 +2314,41 @@ impl Analyzer {
                 // lock applies to; a genuinely new `x` is a real
                 // declaration and must infer/lock its type as usual.
                 let was_already_declared = self.is_variable_available(name);
+                // A second explicitly-typed declaration of an
+                // already-declared name is a redeclaration, not scoping:
+                // Vox has no block-level lexical scoping today - If/While/
+                // etc. bodies share the enclosing scope's slots, so there
+                // is no separate slot for an inner declaration to occupy
+                // and no scope exit to restore the outer type at. Without
+                // this check, `a text called n is "abc".` inside an
+                // untaken `If` branch permanently overwrote the outer
+                // `number` n's tracked type regardless of whether the
+                // branch ever ran (plan 294 finding 12 - this is the
+                // declaration-arm counterpart to what the type lock
+                // already does for reassignment). A conflicting rebind is
+                // rejected exactly like `Statement::Assignment`/`Set`
+                // reusing an incompatible name; a same-type redeclaration
+                // (or a genuinely new name) is unaffected - `bind_variable_
+                // type` no-ops on either.
+                let redeclaration_conflict = if let (true, Some(vt)) = (was_already_declared, var_type.as_ref()) {
+                    self.bind_variable_type(
+                        name,
+                        vt.clone(),
+                        "this declaration",
+                        "declares as",
+                        &[format!("called {} ", name)],
+                        false,
+                    )
+                } else {
+                    false
+                };
                 self.declare_variable_in_current_scope(name);
+                if redeclaration_conflict {
+                    if let Some(v) = value {
+                        self.analyze_expr(v);
+                    }
+                    return;
+                }
                 // Register the declared type in the type-specific sets,
                 // mirroring the top-level pre-pass. That pre-pass only
                 // walks program.statements and never descends into
@@ -2804,7 +2838,6 @@ impl Analyzer {
                     || self.flag_variables.contains(name.as_str())
                     || self.timer_variables.contains(name.as_str())
                     || matches!(self.named_value_type(name), Some(Type::String))
-                    || self.value_typed_names.contains(name.as_str())
                 {
                     // Increment/Decrement compile to an integer `inc/dec
                     // qword` on the variable's stack slot. Applied to a
@@ -2820,11 +2853,16 @@ impl Analyzer {
                     // really is text - so the lock doesn't see it (plan 294
                     // findings 5/15): the pointer just gets walked one byte
                     // at a time with no relationship to the string's bounds
-                    // until it wanders off the mapping. A `value`-typed
-                    // name is the same risk generalised - its runtime tag
-                    // might be text - and gets the same rejection the
-                    // arithmetic-operand check already gives it elsewhere
-                    // (`check_arithmetic_operand`), for consistency.
+                    // until it wanders off the mapping.
+                    //
+                    // Deliberately NOT rejecting `value`-typed names here:
+                    // unlike bare arithmetic, Increment/Decrement on a
+                    // `value` holding a number already worked correctly
+                    // (inc/dec on its raw integer payload) before this
+                    // check existed, and rejecting it would remove working
+                    // behaviour outside findings 5/15, which are both about
+                    // text. If `value` should eventually be rejected too,
+                    // that is a separate decision, not folded in here.
                     let kw = if matches!(stmt, Statement::Increment { .. }) {
                         "Increment"
                     } else {

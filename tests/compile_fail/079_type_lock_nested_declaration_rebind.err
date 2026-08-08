@@ -1,0 +1,4 @@
+cannot bind 'n' to text in this declaration; 'n' is already declared as a number
+079_type_lock_nested_declaration_rebind.vox:3:17
+note: 'n' was declared as a number at 079_type_lock_nested_declaration_rebind.vox:1:17
+help: use a different name here, or declare 'n' as text instead
