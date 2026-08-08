@@ -2049,7 +2049,7 @@ impl Analyzer {
             self.type_name(&declared)
         ));
         if let Some(loc) = self.find_write_site_location(name, occurrence) {
-            err = err.with_underline_note(name.len().max(1), &format!("this assigns {}", self.type_name(&actual)));
+            err = err.with_underline_note(name.len().max(1), &format!("this assigns {}", self.typed_phrase(&actual)));
             err = err.with_location(loc);
         }
         self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
@@ -2170,7 +2170,7 @@ impl Analyzer {
         if let Some(loc) = self.find_bind_site_location(name, patterns, occurrence, guard_against_called) {
             err = err.with_underline_note(
                 name.len().max(1),
-                &format!("this {} {}", bind_verb, self.type_name(&new_type)),
+                &format!("this {} {}", bind_verb, self.typed_phrase(&new_type)),
             );
             err = err.with_location(loc);
         }
@@ -2803,6 +2803,8 @@ impl Analyzer {
                     || self.file_variables.contains(name.as_str())
                     || self.flag_variables.contains(name.as_str())
                     || self.timer_variables.contains(name.as_str())
+                    || matches!(self.named_value_type(name), Some(Type::String))
+                    || self.value_typed_names.contains(name.as_str())
                 {
                     // Increment/Decrement compile to an integer `inc/dec
                     // qword` on the variable's stack slot. Applied to a
@@ -2811,15 +2813,38 @@ impl Analyzer {
                     // struct (also corrupted), and to a boolean flag it
                     // yields 2, 3, ... instead of a boolean. Reject these
                     // rather than emit undefined behaviour.
+                    //
+                    // A declared-text variable is the same defect the type
+                    // lock elsewhere in this file exists to close, but this
+                    // one is not a type CHANGE - tracking is correct, `name`
+                    // really is text - so the lock doesn't see it (plan 294
+                    // findings 5/15): the pointer just gets walked one byte
+                    // at a time with no relationship to the string's bounds
+                    // until it wanders off the mapping. A `value`-typed
+                    // name is the same risk generalised - its runtime tag
+                    // might be text - and gets the same rejection the
+                    // arithmetic-operand check already gives it elsewhere
+                    // (`check_arithmetic_operand`), for consistency.
                     let kw = if matches!(stmt, Statement::Increment { .. }) {
                         "Increment"
                     } else {
                         "Decrement"
                     };
-                    self.push_error(
-                        format!("{} requires a number variable: {}", kw, name),
-                        Some(name),
-                    );
+                    // Built directly rather than via `push_error` so the
+                    // pointer lands on the `Increment`/`Decrement` line
+                    // itself: `push_error`'s `find_symbol_location` prefers
+                    // `{name` (format-string interpolation) as its first
+                    // pattern, which would anchor on an unrelated
+                    // `Print "{s}"` elsewhere in the same program instead.
+                    let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+                    let mut err = CompileError::new(&format!("{} requires a number variable: {}", kw, name));
+                    let patterns = [format!("{} {}", kw, name)];
+                    if let Some(loc) = self.find_bind_site_location(name, &patterns, occurrence, true) {
+                        err = err.with_underline_note(name.len().max(1), "not a number here");
+                        err = err.with_location(loc);
+                    }
+                    self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+                    self.errors.push(err);
                 }
             }
             

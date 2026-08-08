@@ -1,0 +1,3 @@
+a text called s is "hi".
+Increment s.
+Print "[{s}]".
