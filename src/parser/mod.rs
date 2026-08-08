@@ -1161,42 +1161,55 @@ impl Parser {
         // Check for conditional print patterns: "print X, but if Y" or "print X but if Y"
         // IMPORTANT: do not consume a plain trailing comma here, because it may belong
         // to an enclosing sentence-consuming construct (if/while/for/on error).
-        let conditional_start_pos = self.pos;
+        self.maybe_parse_conditional_suffix(Statement::Print { value, without_newline })
+    }
+
+    /// Detects an optional `, but if ...` / `but if ...` conditional-sugar
+    /// suffix after a fully-parsed base statement (currently `print` or
+    /// `append`) and, if present, dispatches to `parse_conditional_suffix`.
+    /// If no `but if` follows, restores the parser position and returns
+    /// `base` unchanged so outer constructs can consume the separator
+    /// normally (e.g. a plain trailing comma belonging to an enclosing
+    /// sentence-consuming construct).
+    fn maybe_parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
+        let start_pos = self.pos;
         if matches!(self.current(), Token::But | Token::Comma) {
             self.advance();
             self.skip_noise();
-            
+
             // Handle "but if" or just "if"
             if *self.current() == Token::But {
                 self.advance();
                 self.skip_noise();
             }
-            
+
             if *self.current() == Token::If {
-                return self.parse_conditional_print(value);
+                return self.parse_conditional_suffix(base);
             }
 
-            // Not a conditional-print continuation; restore parser position so
+            // Not a conditional continuation; restore parser position so
             // outer constructs can consume the separator normally.
-            self.pos = conditional_start_pos;
+            self.pos = start_pos;
         }
-        
-        Ok(Statement::Print { value, without_newline })
+
+        Ok(base)
     }
-    
-    fn parse_conditional_print(&mut self, default_value: Expr) -> Result<Statement, Box<CompileError>> {
-        self.advance();
+
+    /// Builds the nested `Statement::If` chain for `but if` conditional
+    /// sugar, sharing one grammar across base statement kinds. `base` is
+    /// the already-parsed default statement (used as-is in the innermost
+    /// `else`); each branch's own grammar is dispatched by
+    /// `parse_conditional_branch` off `base`'s shape.
+    fn parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
+        self.advance(); // consume 'if'
         self.skip_noise();
-        
+
         let mut conditions = Vec::new();
-        
+
         let cond = self.parse_condition()?;
         self.skip_noise();
-        self.expect(&Token::Print);
-        self.skip_noise();
-        let val = self.parse_primary()?;
-        conditions.push((cond, val));
-        
+        conditions.push((cond, self.parse_conditional_branch(&base)?));
+
         // Skip newlines before checking for continuation (allows multi-line but if)
         self.skip_noise();
         loop {
@@ -1204,54 +1217,92 @@ impl Parser {
             if !matches!(self.current(), Token::But | Token::Comma | Token::And) {
                 break;
             }
-            
+
             // Remember if we started with comma (for ", but if" syntax)
             let started_with_comma = *self.current() == Token::Comma;
             self.advance();
             self.skip_noise();
-            
+
             // After comma, we might have "but if" or just "if"
             if started_with_comma && *self.current() == Token::But {
                 self.advance();
                 self.skip_noise();
             }
-            
+
             if *self.current() == Token::If {
                 self.advance();
                 self.skip_noise();
                 let cond = self.parse_condition()?;
                 self.skip_noise();
-                self.expect(&Token::Print);
-                self.skip_noise();
-                let val = self.parse_primary()?;
-                conditions.push((cond, val));
+                conditions.push((cond, self.parse_conditional_branch(&base)?));
             } else if *self.current() == Token::Else || *self.current() == Token::Otherwise {
                 self.advance();
                 self.skip_noise();
-                self.expect(&Token::Print);
-                self.skip_noise();
-                let val = self.parse_primary()?;
-                conditions.push((Expr::BoolLit(true), val));
+                conditions.push((Expr::BoolLit(true), self.parse_conditional_branch(&base)?));
                 break;
             } else {
                 break;
             }
         }
-        
-        let mut result = Statement::Print { value: default_value, without_newline: false };
-        
+
+        let mut result = base;
+
         for (cond, val) in conditions.into_iter().rev() {
             result = Statement::If {
                 condition: cond,
-                then_block: vec![Statement::Print { value: val, without_newline: false }],
+                then_block: vec![val],
                 else_if_blocks: vec![],
                 else_block: Some(vec![result]),
             };
         }
-        
+
         Ok(result)
     }
-    
+
+    /// Parses one `but if`/`otherwise` branch's body, using the base
+    /// statement's own value grammar (e.g. `print` gets its own
+    /// independent `without newline`; `append` reuses the same
+    /// value-parsing helpers `parse_append` itself uses, and always
+    /// targets the base statement's own list — branches do not
+    /// re-specify a target).
+    fn parse_conditional_branch(&mut self, base: &Statement) -> Result<Statement, Box<CompileError>> {
+        match base {
+            Statement::Print { .. } => {
+                if !self.expect(&Token::Print) {
+                    return Err(self.err("Expected 'print' in 'but if' branch"));
+                }
+                self.skip_noise();
+                let val = self.parse_primary()?;
+                self.skip_noise();
+                let without_newline = if *self.current() == Token::Without {
+                    self.advance();
+                    self.skip_noise();
+                    if *self.current() == Token::Newline
+                        || matches!(self.current(), Token::Identifier(s) if s.to_lowercase() == "newline")
+                    {
+                        self.advance();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                Ok(Statement::Print { value: val, without_newline })
+            }
+            Statement::ListAppend { list, .. } => {
+                if !self.expect(&Token::Append) {
+                    return Err(self.err("Expected 'append' in 'but if' branch"));
+                }
+                self.skip_noise();
+                let mut val = self.parse_append_value_primary()?;
+                val = self.parse_append_value_ops(val, 0)?;
+                Ok(Statement::ListAppend { list: list.clone(), value: val })
+            }
+            _ => unreachable!("conditional sugar is only built for Print/ListAppend bases"),
+        }
+    }
+
     fn parse_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Set/Create
         self.skip_noise();
@@ -2639,7 +2690,7 @@ impl Parser {
                 if *self.current() == Token::If {
                     // Extract the default value from the base print statement
                     if let Statement::Print { value: default_value, .. } = body.pop().unwrap() {
-                        let conditional_print = self.parse_conditional_print(default_value)?;
+                        let conditional_print = self.parse_conditional_suffix(Statement::Print { value: default_value, without_newline: false })?;
                         body.push(conditional_print);
                     } else {
                         return Err(self.err("'but if' conditional branching only works with print statements"));
@@ -3814,7 +3865,7 @@ impl Parser {
             _ => return Err(self.err("Expected list name after 'to'")),
         };
 
-        Ok(Statement::ListAppend { list, value })
+        self.maybe_parse_conditional_suffix(Statement::ListAppend { list, value })
     }
 
     fn parse_copy(&mut self) -> Result<Statement, Box<CompileError>> {

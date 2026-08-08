@@ -1,0 +1,47 @@
+(Plan 292: `Append <text var> to <buffer>.` must produce the correct
+bytes when the buffer is declared at top level and mutated from
+inside a function (a "global" buffer, resolved through its global
+mirror in codegen) - not just when both live in the same top-level
+scope (the "local" case tests/217 and tests/218 already cover). Plan
+290 widened Append to accept a text-variable source; this uncovered a
+register clobber specific to the global-buffer codegen fallback:
+`emit_load_named_var_addr` overwrote rax - which still held the
+source value from `generate_expr` - before that value was consumed,
+so the runtime ended up appending a fragment of the destination
+buffer's own header bytes onto itself instead of the intended text.)
+
+a buffer called g is 64 bytes in size.
+a text called payload is "PAYLOAD".
+
+To mutate.
+  Append payload to g.
+
+mutate.
+Print g.
+
+(Control: the literal-source case in the exact same
+function-mutates-global-buffer shape already worked before this fix
+and must not regress)
+a buffer called g2 is 64 bytes in size.
+
+To mutate_literal.
+  Append "PAYLOAD" to g2.
+
+mutate_literal.
+Print g2.
+
+(Sibling path: the same text-variable source appended to a buffer
+that stays local to the current scope - the dst_local path this fix
+must not touch - printed here for a direct side-by-side comparison
+against the global case above)
+a buffer called local_buf is 64 bytes in size.
+a text called payload2 is "PAYLOAD".
+Append payload2 to local_buf.
+Print local_buf.
+
+(Two separate appends into two different global buffers from two
+different function calls in sequence, to confirm the fix's push/pop
+pair around the destination-address load stays balanced across
+repeated invocations rather than drifting the stack)
+mutate.
+Print g.

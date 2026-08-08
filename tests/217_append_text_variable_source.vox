@@ -1,0 +1,30 @@
+(Plan 290: `Append ch to line.` where `ch` is a `text` variable must
+compile AND append ch's actual runtime string content onto line - the
+analyzer previously rejected this with "Buffer append requires a
+buffer source: ch" even though codegen/runtime already handled a
+VarType::String identifier correctly via the same path `{ch}` format
+interpolation into a buffer already uses.)
+
+a buffer called line is 256 bytes in size.
+a text called ch is "hello".
+Append ch to line.
+Print line.
+
+(A second append proves this really appends onto existing content,
+not just writes without erroring)
+a text called tail is " world".
+Append tail to line.
+Print line.
+
+(Text produced dynamically via a format string, not a bare literal,
+to rule out any literal/constant-folding shortcut hiding a runtime bug)
+a number called n is 1.
+a text called digit is "{n add 2}".
+Append digit to line.
+Print line.
+
+(Same source kind appended into a growable, non-fixed buffer target)
+Create a buffer called dyn.
+a text called word is "grow".
+Append word to dyn.
+Print dyn.
