@@ -125,6 +125,67 @@ While content is not empty,
 
 In the example above, the period after the inner `if` closes only that `if`. The `while` body continues with `write` and `read`.
 
+### The termination rule
+
+Two rules govern where a construct's body ends, and together they explain everything above precisely:
+
+1. **A period closes the most recently opened clause** — the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`.
+2. **A blank line (paragraph break) force-closes every open clause at once** — including an enclosing function definition. Think of nested HTML `<div>`s: a paragraph boundary closes all of them together, the same way you would never continue a single sentence across a paragraph break in English.
+
+```
+(A blank line closes everything still open, not just the nearest thing)
+a number called retries is 0.
+While retries is less than 3,
+    if retries is equal to 1 then, print "retrying".
+    the retries is retries add 1.
+
+Print "done".
+```
+
+This prints `retrying` once (when `retries` is 1) then `done` once, after the loop runs its full three iterations — the blank line closes the `while` (rule 2) even though the `if`'s own period already closed the `if` (rule 1); there is nothing special about the `if` being the loop's last action, the blank line would close the loop the same way after any kind of action.
+
+**This applies uniformly** — `while`, `for each`, `repeat`, and `on error` all terminate their body on a blank line, regardless of what the last body statement was (an ordinary statement, an `if`/`on error`, or another nested loop).
+
+**Caution:** because rule 1 means a nested construct's own period doesn't close its parent, a blank line placed purely for visual readability *inside* a loop body — after a nested `if` or a nested loop, before more of the same loop's actions — will close that loop early, not just add whitespace:
+
+```
+(This blank line is NOT cosmetic - it ends the outer while)
+a number called round is 0.
+While round is less than 2,
+    the round is round add 1,
+    For each item in batch,
+        print item.
+
+    print "batch done".
+```
+
+This prints `1 2 1 2 batch done` — not `1 2 batch done 1 2 batch done` as the indentation suggests. `print "batch done".` runs once, after the loop, not once per batch, because the blank line closed the `while` right after the nested `for each` closed itself.
+
+**This can hang your program with no error message, if the ejected statement happens to be the loop's own increment:**
+
+```
+(DON'T DO THIS - infinite loop, no diagnostic, the blank line ejects the increment)
+a number called counter is 1.
+While counter is less than or equal to 2,
+    For each k from 1 to 2,
+        print "inner {k}".
+
+    increment counter.
+Print "end".
+```
+
+`increment counter.` is ejected from the `while` body by the same blank line, so `counter` never changes and the loop never becomes false — it hangs forever, printing `inner 1` / `inner 2` on repeat, and `Print "end".` never runs. There is no error, no warning, and nothing in the output points at the blank line as the cause. If a loop that should terminate hangs instead, check for a blank line inside its body first.
+
+A blank line placed **after a comma** (mid-sentence, more actions still to come) is the one exception — it is still just visual spacing there, since the sentence is explicitly still open:
+
+```
+(Safe: this blank line follows a comma, so it stays cosmetic)
+While retries is less than 3,
+    print "attempt {retries}",
+
+    increment retries.
+```
+
 ### Ranges
 
 Ranges define a sequence of numbers from a start to an end value. They are **not** allocated as lists - they compile directly to efficient loop constructs with a counter, bounds check, and increment.

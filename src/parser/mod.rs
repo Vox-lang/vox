@@ -1912,8 +1912,7 @@ impl Parser {
                 self.skip_noise();
                 break;
             } else if *self.current() == Token::ParagraphBreak {
-                self.advance();
-                self.skip_noise();
+                break;
             } else if *self.current() == Token::EOF {
                 break;
             }

@@ -55,11 +55,9 @@ While true,
         if flush is 1 and have_cmd is 0 then, set cmd to tok, set have_cmd to 1.
         if flush is 1 then, clear word.
         increment i.
-
     a number called pid is 0,
     if cmd is "exit" then, exit 0.
     if have_cmd is 1 then, set pid to fork the process.
-
     (Child: execve only returns on failure, so falling through to the
      next Execute IS the search order: as given, /bin, /usr/bin)
     if pid is 0 and have_cmd is 1 then,
@@ -70,7 +68,6 @@ While true,
         Execute usrpath with arguments argv,
         print "vsh: {cmd}: command not found",
         exit 127.
-
     (Parent: wait for the child so the prompt returns in order)
     if pid is greater than 0 then, set reaped to reap process pid.
     set flush to 0.
