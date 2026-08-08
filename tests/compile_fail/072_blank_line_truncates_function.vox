@@ -1,0 +1,7 @@
+To calc with a number called r and a number called c.
+  a number called v is 0.
+
+  the v is r add c.
+  Return a number, v.
+
+Print "{calc of 1 and 2}".

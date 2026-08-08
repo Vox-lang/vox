@@ -4349,6 +4349,7 @@ impl Parser {
         // then dropped it from the table of contents while the `.so` still
         // exported it. Terminating on `To`/`Library` keeps the successor
         // top-level where it belongs.
+        let mut body_ended_early: Option<SourceLocation> = None;
         while !body_ended_at_return
             && !matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library)
         {
@@ -4363,6 +4364,9 @@ impl Parser {
                 self.skip_noise();
             }
             if matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library) {
+                if matches!(self.current(), Token::ParagraphBreak) {
+                    body_ended_early = self.current_location();
+                }
                 break;
             }
             let stmt = self.parse_statement()?;
@@ -4406,6 +4410,7 @@ impl Parser {
             params,
             return_type,
             body,
+            body_ended_early,
         })
     }
 
