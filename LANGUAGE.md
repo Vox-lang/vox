@@ -161,6 +161,21 @@ While round is less than 2,
 
 This prints `1 2 1 2 batch done` — not `1 2 batch done 1 2 batch done` as the indentation suggests. `print "batch done".` runs once, after the loop, not once per batch, because the blank line closed the `while` right after the nested `for each` closed itself.
 
+**This can hang your program with no error message, if the ejected statement happens to be the loop's own increment:**
+
+```
+(DON'T DO THIS - infinite loop, no diagnostic, the blank line ejects the increment)
+a number called counter is 1.
+While counter is less than or equal to 2,
+    For each k from 1 to 2,
+        print "inner {k}".
+
+    increment counter.
+Print "end".
+```
+
+`increment counter.` is ejected from the `while` body by the same blank line, so `counter` never changes and the loop never becomes false — it hangs forever, printing `inner 1` / `inner 2` on repeat, and `Print "end".` never runs. There is no error, no warning, and nothing in the output points at the blank line as the cause. If a loop that should terminate hangs instead, check for a blank line inside its body first.
+
 A blank line placed **after a comma** (mid-sentence, more actions still to come) is the one exception — it is still just visual spacing there, since the sentence is explicitly still open:
 
 ```
