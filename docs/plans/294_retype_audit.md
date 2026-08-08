@@ -918,3 +918,240 @@ The brief was accurate everywhere I checked it; the `scalar_types` and
    is exactly what the new rule repeals. Under the rule, Bug B's repro program
    becomes a compile error and the finding is closed by redefinition rather
    than by fixing the tracking.
+
+---
+
+# Follow-up — closing the "what I could not audit" gaps
+
+Added after the main audit was committed as `f16cab4`, at the master's
+request: the three gaps listed in "What I could not audit" above are resolved
+here. **Two are new findings (19, 20); two are null results with evidence.**
+
+Nothing above this line was rewritten. PoCs 01-18 are untouched.
+
+## Summary
+
+| gap | outcome |
+|---|---|
+| cross-function global retyping | **null result** — not a bug. Tracking and runtime *agree*, both discard the write |
+| `.lib` type agreement across a module boundary | **findings 19 (critical) and 20 (high)** — a `.lib` may lie about a type and nothing checks it |
+| `MapSet` / `BufferCopy` as retype vectors | **null result** — structurally impossible; all four write-through statements guard their target's kind |
+
+## Gap 1 — cross-function global retyping: NOT a bug
+
+I suspected a direction-2 bug: the analyzer's save/restore at
+`analyzer:2299`/`2349` discarding the *tracking* write while the *runtime*
+write persists. **That suspicion was wrong**, and the reason is more
+interesting than the bug would have been.
+
+A function's assignment to a global does not persist at runtime either:
+
+```vox
+a number called n is 5.
+To f.
+  Print "in f, n={n}",
+  n is 99,
+  Print "in f after, n={n}".
+
+f.
+Print "after call [{n}]".
+```
+
+```
+in f, n=5          <- the function READS the global correctly
+in f after, n=99   <- the write takes effect INSIDE the function
+after call [5]     <- ...and is gone once the function returns
+```
+
+So codegen discards the runtime write exactly as the analyzer discards the
+tracking write. **They agree, so there is no disagreement to exploit.**
+
+Confirmed across all four shapes that could have broken it:
+
+| probe | program | observed | verdict |
+|---|---|---|---|
+| text written to a number global | `To f.` / `n is "abc".` then `f.` | `[5]` | correct |
+| number written to a text global | `To f.` / `s is 42.` then `f.` | `[hello]` | correct |
+| **same-type** write (no retype at all) | `To bump.` / `n is 99.` then `bump.` | `[5]` | correct — proves this is not type-specific |
+| conditional call | `If g is equal to 1,` / `f.` | `[hello]` | correct |
+| type leak with the function never called | `To f.` / `n is "abc".`, no call | `[5]` | correct — no tracking leak |
+
+Command used for each (programs written to `p.vox` in a temp dir):
+
+```bash
+cd "$(mktemp -d)" && vox p.vox -o p.bin && ./p.bin; echo "exit=$?"
+```
+
+The same-type probe is the decisive one: `bump` writes `99` and the global is
+still `5` afterwards, so nothing about this is about types. **No PoC is
+written, because there is no bug to reproduce.**
+
+### Adjacent (not a retype bug): functions cannot write to globals
+
+The probe above documents a real and surprising language limitation — a
+function may **read** a global but its **writes are silently discarded** on
+return. No diagnostic is issued. That is a correctness issue worth its own
+plan, but tracked type and runtime type stay in agreement throughout, so it is
+out of scope for this audit and gets no finding number.
+
+It does matter to the fix, though: **if a future change makes function writes
+to globals persist, this gap reopens immediately** as a genuine direction-2
+bug, because the analyzer's save/restore would then be discarding a tracking
+write whose runtime counterpart survives. Worth a comment at
+`analyzer:2299`/`2349` when that code is next touched.
+
+## Gap 2 — `.lib` type agreement: findings 19 and 20
+
+**A `.lib` may declare a type its `.so` does not implement, and nothing
+checks.** The `.lib` is a plain-text file:
+
+```
+Library tkit version "1.0".
+Location "./libtkit.so".
+
+Table of Contents:
+    To 'give text', returning a text.
+    To 'give number', returning a number.
+```
+
+Editing one word in that ToC is enough. The `.so` is never modified in either
+PoC — it is built once from the fixture and is correct.
+
+### 19 — critical — `.lib` declares text, `.so` returns a number
+
+`tests/retype_audit_pocs/19-lib-declares-text-really-number-segv/`
+
+The ToC is edited to `To 'give number', returning a text.` while the function
+really returns `42`. The consumer:
+
+```vox
+see tkit version "1.0" from "./lying.lib".
+
+a text called t is 'give number'.
+Print "[{t}]".
+```
+
+Observed: prints `[` then **SIGSEGV, exit 139.** The consumer dereferences the
+returned integer `42` as a `char*`.
+
+### 20 — high — `.lib` declares a number, `.so` returns text
+
+`tests/retype_audit_pocs/20-lib-declares-number-really-text-wrong-output/`
+
+The mirror case: `To 'give text', returning a number.` while the function
+really returns `"abc"`.
+
+Observed: `[139954821435450]` — the string's address printed as an integer.
+Expected `[abc]`.
+
+### Why nothing catches it
+
+This is the part worth acting on. `src/lib_file.rs:529-605` **does** verify the
+`.lib` against the `.so`: it resolves `Location`, reads the `.so`'s `.dynsym`,
+and errors if any ToC symbol is absent. That check is real and it works.
+
+But the mangled symbol is `<lib>_<version>_<function>` — confirmed both in the
+mangling test at `src/lib_file.rs:835-849` and directly against the built
+artifact:
+
+```console
+$ nm -D libtkit.so | grep tkit
+0000000000000307 T tkit_1_0_give_number
+00000000000002ee T tkit_1_0_give_text
+```
+
+**No type information is encoded in the symbol name**, so symbol verification
+cannot detect a type mismatch even in principle. The declared types in the ToC
+are consumed on trust: `src/lib_file.rs:194-201` parses them into `Type::*` and
+they flow into both `analyzer.imports` and `codegen.imports`.
+
+This is the same class as findings 1-18 with a module boundary in the middle,
+and it is worse in one specific way: **the type-immutability rule does not
+touch it.** A consumer that declares `a text called t is 'give number'.` is
+obeying the rule perfectly — it never retypes anything. The type is wrong from
+the moment it enters the program, and every downstream check is consistent
+with a false premise.
+
+**Severity note.** This needs no hostile actor: a `.lib` that has drifted from
+its `.so` after an edit-and-rebuild-one-side cycle produces exactly this. The
+existing `rebuild/lib` test in `test.sh` guards the `.lib`-matches-`nm -D`
+count, but a *count* is preserved by a type edit.
+
+**Recommended fix, in prose (not implemented).** Either encode the types in
+the mangled symbol so the existing `.dynsym` check catches a mismatch for free
+— the check is already written, already runs, and would need no new call site
+— or emit a checksum of the ToC's declared types into the `.so` and compare it
+on import. The first is strictly better: it turns a trust relationship into a
+link-time error, and it degrades gracefully because an old `.so` simply fails
+to resolve rather than silently mis-typing. Both are larger than a local patch
+and belong in their own plan.
+
+## Gap 3 — `MapSet` / `BufferCopy` as retype vectors: NOT possible
+
+Previously recorded as inconclusive ("could not distinguish correct from wrong
+shape tried"). It is now a definite null result: **these statements cannot be
+retype vectors, structurally.**
+
+All four write-through statements guard their target's kind in the analyzer
+before doing anything:
+
+| statement | guard | source |
+|---|---|---|
+| `ElementSet` | `Element set target must be a list: {}` | `analyzer:2438` |
+| `MapSet` | `Map set target must be a map: {}` | `analyzer:2456` |
+| `ListAppend` / `Append` | `Append target must be a buffer or list: {}` | `analyzer:2504` |
+| `BufferCopy` | `Copy destination must be a buffer: {}` | `analyzer:2544` |
+
+Probes, all rejected at compile time:
+
+| probe | program | result |
+|---|---|---|
+| `MapSet` onto a text variable | `a text called m is "hello".` / `Set m's "k" to 42.` | rejected: `Map set target must be a map: m` |
+| `Append` onto a text variable | `a text called t is "hello".` / `append 42 to t.` | rejected: `Append target must be a buffer or list: t` |
+| `BufferCopy` into a text variable | `a text called t is "hello".` / `copy "world" to t.` | rejected: `Copy destination must be a buffer: t` |
+| `BufferCopy` into a number variable | `a number called n is 5.` / `copy "world" to n.` | rejected: `Copy destination must be a buffer: n` |
+| `MapSet` on a real map | `a map called m is {"k": 1}.` / `Set m's "j" to 2.` | `{"k": 1, "j": 2}` — correct, container type preserved |
+| `Set` on a buffer | `a buffer called b is 16 bytes in size.` / `Set b to 7.` | `[7]` — correct; buffers are special-cased at `analyzer:2074`, `codegen:2919`/`2935` |
+
+These statements write *through* a container without rebinding the name, and
+they refuse to run at all when the name's kind is wrong — so there is no shape
+in which they change a tracked type. The earlier inability to find one was not
+a gap in the search; there is nothing to find.
+
+### A related probe that also came back clean
+
+Because those guards consult the *kind* sets (`buffer_variables`,
+`list_variables`, `map_variables`) rather than `scalar_types`, and those sets
+are themselves flow-insensitive, I checked the finding-12 analogue — a
+container declared in an untaken branch and then written through:
+
+```vox
+a number called g is 0.
+If g is equal to 1,
+  a buffer called b is 16 bytes in size.
+
+copy "world" to b.
+```
+
+Rejected: `Unknown buffer: b` / `Unknown variable: b`. Same for a list with
+`append`. The `AnalysisEnv` availability merge (`analyzer:2091-2136`) catches
+these, because a name declared in only one branch is not definitely available.
+
+**This is the sharpest illustration of the root cause in the whole audit:** the
+analyzer already has correct, flow-sensitive branch/merge machinery, and it
+already protects container *kinds* through it. Findings 6-12 exist purely
+because scalar **types** were never threaded through that same machinery.
+
+## Revised gap list
+
+What remains genuinely un-audited after this pass:
+
+- **Non-x86_64 targets.** Unchanged; `coreasm/` was not exercised.
+- **Migration count remains a lower bound**, for the reasons given in that
+  section (literal right-hand sides only).
+- **`.lib` parameter-type lies.** Findings 19 and 20 cover *return* types. I
+  did not build the parameter-type equivalent (a `.lib` that declares
+  `with a number called x` for a function whose `.so` expects text). The same
+  mechanism applies — parameter types are parsed at `src/lib_file.rs:194-201`
+  alongside return types and are equally unverified — so I expect it to
+  reproduce, but **I have not run it and it gets no finding number.**
