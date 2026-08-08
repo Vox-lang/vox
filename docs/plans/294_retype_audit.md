@@ -439,6 +439,84 @@ is right for a homogeneous list and unsound for a heterogeneous one.
 > **Under the new rule:** **survives, and it is the case where a fixed type is
 > the wrong answer.** See the section below.
 
+### 21 — high — casting a dynamically-tagged `value` silently computes garbage
+
+Not in the original 18. Discovered mid-implementation, while verifying that
+finding 18's fix (routing a heterogeneous-list loop variable into
+`value_typed_names`) actually has a working escape hatch — a review asked for
+end-to-end proof that the fix-it hint the compiler prints is not itself a
+dead end, and running it revealed this.
+
+```vox
+a map called m is {"k": "hello"}.
+a value called v is m's "k".
+a number called z is v as a number.
+Print "z={z}".
+```
+
+Observed `z=4198548` (the string's address); expected `z=0` (`atoi("hello")`,
+matching the language's established behaviour for parsing a non-numeric
+string — see the Type Casting table). Confirmed reproducing on unmodified
+`main` (`409bd2c`) — pre-existing, unrelated to plans 290-293 or this
+track's own commits (`git diff 409bd2c -- src/codegen/mod.rs` was empty at
+the moment this was found).
+
+**Root cause.** `Expr::Cast`'s codegen (`src/codegen/mod.rs`, the
+`Expr::Cast { value, target_type, radix }` arm) dispatches on the STATIC
+source type from `infer_expr_type`. For a `value`-typed source that type is
+always `VarType::Mixed`, and every target-type branch's fallback for a
+source type it doesn't specifically recognise is to pass the raw payload
+through unconverted rather than convert it. That is silently correct only
+when the runtime tag happens to already match the target's native
+representation (an Integer-tagged `value` cast `as a number` is a no-op that
+*looks* like a real conversion, because none was needed) and silently wrong
+for every other tag — here, a text pointer reinterpreted as an integer. This
+is the exact bug family the whole track exists to close, reached through the
+fix-it hint the compiler itself was recommending (`Cannot use a value v in
+arithmetic; check its type... first` before this track, or the equivalent
+cast-based hint mid-track) rather than around it.
+
+The mechanism to fix this properly already exists and is proven correct for
+a different consumer: `Print` on a `value` dispatches on the runtime tag via
+`mixed_tag_slots` and `emit_mixed_print_dispatch`, which is exactly the
+shape a `emit_mixed_cast_dispatch` would need (read the tag, branch, and in
+each branch do what the existing static-source Cast logic already does for
+that source type). Estimated as real but non-trivial: up to 4 source tags ×
+4 target types, each branch needing correct register/stack discipline,
+reusing existing runtime helpers (`_parse_i64`, `_parse_f64`, the boolean/
+text conversions already in the static-source branches) rather than
+reimplementing them.
+
+**Decision made under this track:** reject the cast instead of implementing
+the dispatch. Two reasons: implementing it correctly is real codegen work in
+exactly the highest-risk area for a change like that to go wrong under time
+pressure (a mistake here reintroduces the same class of memory-unsafety this
+whole track exists to close), and rejecting is unconditionally safe — it can
+only ever be *more* permissive later, once the dispatch is actually built,
+never require walking back a guarantee. The rejection message deliberately
+names no workaround: the type-predicate guard (`is a number`/`is a text`)
+does not narrow the type inside its own body either (verified directly, not
+assumed), so recommending it would repeat the exact mistake this finding is
+about — pointing confidently at a dead end.
+
+**Cost estimate for the real fix**, for whoever picks this up: a new
+`emit_mixed_cast_dispatch(tag_slot, target_type, radix)` in
+`src/codegen/mod.rs`, modelled directly on `emit_mixed_print_dispatch`
+(same file). Wire it into the `Expr::Cast` arm wherever `value` is an
+`Expr::Identifier`/`Expr::StringLit` with a `mixed_tag_slots` entry, ahead of
+the existing static-source branches. The individual conversions per
+source-tag/target-type pair are not new — they already exist in the
+static-source branches this arm has today — the work is extracting them into
+tag-dispatched branches and testing the full matrix (a same-tag no-op path,
+and each real conversion, for each of the 4 tags × 4 targets). Once done,
+this repro should print `z=0` and `poc.sh` should flip to non-zero.
+
+> **Under the new rule:** the silent-garbage direction is closed (this repro
+> is now a compile error). The conversion itself remains unimplemented -
+> tracked here as its own follow-up, not attempted in this track.
+
+PoC: `tests/retype_audit_pocs/21-dynamic-value-cast-silent-garbage/`.
+
 ---
 
 ## Implementation checklist — every site that binds, assigns, or infers a type
