@@ -1,0 +1,7 @@
+To 'do thing' with a number called n.
+    if n is 1 then,
+        print "inner".
+        Return.
+    print "ESCAPED".
+
+print "MAIN".
