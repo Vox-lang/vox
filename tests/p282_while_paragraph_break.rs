@@ -207,6 +207,24 @@ Print "after".
     let _ = fs::remove_dir_all(&work);
 }
 
+// Same as above, for the `for each ... from <collection>` form (distinct
+// from both the range form above and the `in <collection>` form below).
+#[test]
+fn for_each_from_collection_blank_line_after_if_then_ends_body_unaffected() {
+    let work = work_dir("for-each-from-if-closes");
+    let bin = compile(
+        &work,
+        r#"a list called nums is [1, 2, 3].
+For each n from nums,
+    if n is equal to 99 then, print "never".
+
+Print "after".
+"#,
+    );
+    assert_eq!(run(&bin), "after\n");
+    let _ = fs::remove_dir_all(&work);
+}
+
 // Same as above, for the `for each ... in <collection>` form.
 #[test]
 fn for_each_in_collection_blank_line_after_if_then_ends_body_unaffected() {
