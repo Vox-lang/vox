@@ -1845,22 +1845,25 @@ impl Analyzer {
             Type::Map(_) => format!("Cannot use map {} in arithmetic.", label),
             Type::File => format!("Cannot use file {} in arithmetic.", label),
             Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
-            // Deliberately NOT "check its type with 'is a number' first":
-            // verified that guard does not narrow the type inside its own
-            // body, so the advice would be a dead end (still rejected
-            // after doing exactly what it says). `as a number`/`as text`
-            // is the escape hatch that LANGUAGE.md documents and that
-            // actually compiles - though it's only proven correct here
-            // when the value's tag is statically known; a value whose tag
-            // is genuinely only known at runtime (e.g. from a map read, or
-            // plan 294 finding 18's heterogeneous-list loop variable) casts
-            // without error but silently reads the wrong bytes - a
-            // separate, pre-existing codegen gap (confirmed on unmodified
-            // `main`, unrelated to this track) in Cast not consulting the
-            // runtime tag. Recording that here rather than in a hint
-            // string a `.err` fixture would have to pin.
+            // Deliberately naming no escape hatch, after two rounds of
+            // getting this wrong: "check its type with 'is a number'
+            // first" was a dead end (a type-predicate guard does not
+            // narrow the type inside its own body - still rejected there
+            // too), and "convert it explicitly with 'as a number'" was
+            // ALSO a dead end once finding 21's fix made exactly that cast
+            // a compile error (plan 294 finding 21 - casting a
+            // dynamically-tagged value doesn't dispatch on the runtime tag
+            // in codegen, so it used to silently compute garbage; rejecting
+            // it was the fix, but this message kept sending people to it
+            // anyway). This is the value-typed case by construction - it
+            // is the ONLY way this branch fires - so every occurrence of
+            // this message hits both dead ends the same way, every time.
+            // There is currently no supported way to use a dynamically-
+            // tagged value in arithmetic; say only that, since a plausible-
+            // sounding but unverified alternative is worse than none (that
+            // is exactly how the previous two wordings went wrong).
             Type::Value => format!(
-                "Cannot use a value {} in arithmetic; convert it explicitly first with 'as a number' or 'as text'.",
+                "Cannot use a value {} in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.",
                 label
             ),
             _ => return,

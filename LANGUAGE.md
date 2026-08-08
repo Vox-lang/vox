@@ -394,7 +394,8 @@ there is no separate slot for the inner declaration to occupy):
 ```vox fragment
 a number called n is 5.
 If 1 is equal to 2,
-  a text called n is "abc".   → compile error: 'n' is already declared as a number
+  a text called n is "abc".   → compile error: cannot bind 'n' to text in this
+                                 declaration; 'n' is already declared as a number
 ```
 
 **Two exemptions, both deliberate:**
@@ -1241,41 +1242,39 @@ set r to 7.
 If r is a number, print "now a number".
 ```
 
-**A `value` is not usable in arithmetic, and cannot currently be
-converted.** Because a `value` might hold a string or a decimal, the
-compiler rejects bare arithmetic on it:
+**A `value` is not usable in arithmetic, and cannot currently be converted
+or narrowed either.** Because a `value` might hold a string or a decimal,
+the compiler rejects bare arithmetic on it:
 
 ```
 To bump with a value called v. Return a number, v add 1.
-(compile error: Cannot use a value v in arithmetic; convert it explicitly
- first with 'as a number' or 'as text'.)
+(compile error: Cannot use a value v in arithmetic: its type is only known
+ at runtime, and arithmetic on a dynamically-tagged value is not currently
+ supported.)
 ```
 
-The error's own advice doesn't fully work yet, and it's worth knowing why
-rather than hitting a wall silently: neither of the two paths that would
-normally apply currently narrows or converts a `value` whose tag is only
-known at runtime.
+This is a real, open gap (plan 294 finding 21), not just an unhelpful
+message — the two paths that would normally get you out of a check like
+this don't currently work for a `value` whose tag is only known at
+runtime, and it's worth knowing why rather than hitting a wall twice:
 
 - **A type-predicate guard does not narrow.** `if v is a number, … v add 1
   …` still rejects `v add 1` *inside* the `If` body — the guard proves the
   branch is live only when the tag matches, but nothing today propagates
   that proof into `v`'s tracked type for the statements inside it. Full
   flow-sensitive narrowing is a later decision; see the roadmap.
-- **A cast is also rejected, deliberately, rather than silently computing
-  garbage.** `v as a number` cannot currently be relied on either: the
-  runtime-tag dispatch that would make it convert correctly (parse the
-  string when the tag says text, pass the integer through when it says
-  number, ...) doesn't exist in codegen yet, so a cast on a `value` whose
-  tag isn't known at compile time is a compile error rather than a
-  conversion that would sometimes silently produce the wrong number. (A
-  `value` whose tag genuinely *is* knowable at compile time — one holding a
-  literal number right where it's declared, for instance — is still
-  dynamically typed by declaration and gets the same rejection; the
-  compiler does not special-case it.)
+- **A cast is rejected outright, deliberately, rather than silently
+  computing garbage.** `v as a number` used to compile but skip the
+  conversion when the tag didn't already match the target's native
+  representation — a text pointer reinterpreted as an integer, not parsed.
+  Casting a `value` whose tag isn't known at compile time is now a compile
+  error instead. (A `value` whose tag genuinely *is* knowable at compile
+  time — one holding a literal number right where it's declared, for
+  instance — is still dynamically typed by declaration and gets the same
+  rejection; the compiler does not special-case it.)
 
-Both are open, tracked gaps (plan 294 finding 21), not present behavior to
-route around. There is currently no supported way to convert or narrow a
-genuinely dynamically-tagged `value` from within the language — the
+There is currently no supported way to use, convert, or narrow a genuinely
+dynamically-tagged `value` in arithmetic from within the language. The
 predicate idiom (`is a number` / `is a text`) remains useful for branching
 and for `Print`, which does dispatch correctly on the runtime tag; it just
 does not yet unlock arithmetic or casting inside the branch it guards.

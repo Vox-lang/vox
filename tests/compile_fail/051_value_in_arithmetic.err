@@ -1,1 +1,1 @@
-Cannot use a value v in arithmetic; convert it explicitly first with 'as a number' or 'as text'.
+Cannot use a value v in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.
