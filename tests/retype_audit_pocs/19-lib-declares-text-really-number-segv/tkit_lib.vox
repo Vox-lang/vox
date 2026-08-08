@@ -1,0 +1,11 @@
+(Fixture library for plan 294 findings 19/20. Built with --shared, which
+emits libtkit.lib beside libtkit.so. The .so is always correct; the PoCs
+tamper only with the .lib's declared types.)
+
+Library tkit version "1.0".
+
+To 'give text'.
+  Return a text, "abc".
+
+To 'give number'.
+  Return a number, 42.
