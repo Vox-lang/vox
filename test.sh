@@ -1087,6 +1087,55 @@ EOF
 }
 run_see_name_resolution_test
 
+# Plan 282: examples/ was never compiled by this test runner at all, which
+# is exactly the gap that let a real regression (examples/sh.vox breaking
+# under the while-ParagraphBreak fix) ship undetected until someone found
+# it by hand. Every .vox under examples/ must compile. mathkit_lib.vox and
+# mathkit_consumer.vox are a library/consumer pair (mathkit_consumer.vox
+# needs a prebuilt libmathkit.lib next to it, per its own `see` statement)
+# so they get built together in a temp dir instead of standalone.
+run_examples_compile_check() {
+    local examples_dir="$SCRIPT_DIR/examples"
+    local fail_list=()
+    local f base
+
+    for f in "$examples_dir"/*.vox; do
+        base=$(basename "$f" .vox)
+        case "$base" in
+            mathkit_lib|mathkit_consumer) continue ;;
+        esac
+        if ! "$VOX_BIN" "$f" -o "$SCRIPT_DIR/.examples_check_bin" >"$SCRIPT_DIR/.examples_check.log" 2>&1; then
+            fail_list+=("$base")
+        fi
+        rm -f "$SCRIPT_DIR/.examples_check_bin"
+    done
+
+    # mathkit_lib.vox / mathkit_consumer.vox: build the library, then the
+    # consumer against it, in a scratch dir so the produced .lib/.so don't
+    # land in examples/ itself.
+    local work
+    work=$(mktemp -d)
+    if ! "$VOX_BIN" "$examples_dir/mathkit_lib.vox" --shared -o "$work/libmathkit.so" >"$work/lib_build.log" 2>&1; then
+        fail_list+=("mathkit_lib")
+    else
+        cp "$examples_dir/mathkit_consumer.vox" "$work/mathkit_consumer.vox"
+        if ! ( cd "$work" && "$VOX_BIN" mathkit_consumer.vox -o mathkit_consumer_bin >"$work/consumer_build.log" 2>&1 ); then
+            fail_list+=("mathkit_consumer")
+        fi
+    fi
+    rm -rf "$work"
+    rm -f "$SCRIPT_DIR/.examples_check.log"
+
+    if [[ ${#fail_list[@]} -gt 0 ]]; then
+        echo -e "  ${RED}FAIL${NC} examples/ compile check (${#fail_list[@]} failed: ${fail_list[*]})"
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} examples/ compile check (all .vox under examples/ compile)"
+        ((PASSED++))
+    fi
+}
+run_examples_compile_check
+
 # Summary
 echo ""
 echo -e "${BOLD}=== Summary ===${NC}"
