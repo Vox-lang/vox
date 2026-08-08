@@ -606,6 +606,20 @@ pub struct Analyzer {
     /// means a list built up entirely through `Append` calls of differing
     /// types is not detected as mixed here the way it would be by codegen.
     list_mixed: HashSet<String>,
+    /// A map's value type, proven from its own literal initializer when
+    /// every value shares one provable type (plan 294 findings 4, 14) -
+    /// e.g. `{"k": 42}` is a map of number. `Type::Map` is otherwise never
+    /// given a value type anywhere in the analyzer, so a mismatched read
+    /// (`a text called s is m's "k".` where `m`'s values are numbers) was
+    /// unprovable and silently passed the type lock. Absent (not `None`
+    /// stored, just no entry) for a map whose literal has mixed value
+    /// types, an empty map, or a non-literal initializer - `arithmetic_
+    /// operand_type` then returns `None` for a read from it, same
+    /// "can't prove it, so allow" policy as everywhere else in this file.
+    /// Narrower than a full type system: only the map's own declaration
+    /// site is consulted, not aliasing or later `Set <map>'s "k" to
+    /// <value>` writes that could widen it.
+    map_value_type: HashMap<String, Type>,
     loop_depth: usize,
     /// True when compiling `--shared`. A shared library has no `_start`, so a
     /// top-level executable statement would be generated into the discarded
@@ -697,6 +711,7 @@ impl Analyzer {
             function_param_counts: HashMap::new(),
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
+            map_value_type: HashMap::new(),
             loop_depth: 0,
             shared_mode: false,
             current_library: None,
@@ -1765,6 +1780,13 @@ impl Analyzer {
                     }
                 }
             },
+            // Plan 294 findings 4, 14: only resolvable when the map's own
+            // literal initializer proved a single value type (see
+            // `map_value_type`) - a map declared with a non-literal
+            // initializer, an empty literal, or a literal with mixed value
+            // types falls through to `None`, same "can't prove it, allow
+            // it" policy as everywhere else in this function.
+            Expr::MapAccess { map, .. } => self.map_value_type.get(map).cloned(),
             _ => None,
         }
     }
@@ -2015,6 +2037,24 @@ impl Analyzer {
             }
         }
         false
+    }
+
+    /// The single provable value type shared by every pair in a map
+    /// literal (keys are always text and don't factor in), or `None` for
+    /// an empty map, a mixed one, or a value that isn't a simple literal.
+    /// See `map_value_type`'s doc comment for how this is used and its
+    /// limits.
+    fn map_literal_value_type(&self, pairs: &[(Expr, Expr)]) -> Option<Type> {
+        let mut seen: Option<Type> = None;
+        for (_, v) in pairs {
+            let t = self.list_element_kind(v)?;
+            match &seen {
+                None => seen = Some(t),
+                Some(prev) if !self.treating_types_compatible(prev, &t) => return None,
+                Some(_) => {}
+            }
+        }
+        seen
     }
 
     fn type_name(&self, ty: &Type) -> &'static str {
@@ -2437,6 +2477,15 @@ impl Analyzer {
                 }
                 if let Some(Type::Map(_)) = var_type {
                     self.map_variables.insert(name.clone());
+                    // Plan 294 findings 4, 14: a homogeneous map literal's
+                    // value type is provable, which makes a mismatched read
+                    // from it a statically-detectable type-lock violation
+                    // instead of a silently-allowed "can't prove it" case.
+                    if let Some(Expr::MapLit { pairs }) = value {
+                        if let Some(t) = self.map_literal_value_type(pairs) {
+                            self.map_value_type.insert(name.clone(), t);
+                        }
+                    }
                 }
                 if let Some(Type::Value) = var_type {
                     // A declared `a value called x` is dynamic, like a value
@@ -3803,11 +3852,64 @@ impl Analyzer {
                 self.analyze_expr(value);
             }
 
-            Expr::Cast { value, .. } => {
+            Expr::Cast { value, target_type, .. } => {
                 // Recurse so unknown variables / nested type errors inside
                 // a cast (`missing as a number`) are reported instead of
                 // compiling silently and emitting garbage.
                 self.analyze_expr(value);
+
+                // Plan 294 finding 21 (adjacent discovery, not one of the
+                // original 18): a cast on a dynamically-tagged `value`
+                // source (a declared `a value called x`, a `value`
+                // parameter, or - as of finding 18's fix - a heterogeneous-
+                // list loop variable) is codegen-unimplemented, not merely
+                // unchecked. Verified on unmodified `main`: codegen's Cast
+                // arm dispatches on the STATIC source type
+                // (`infer_expr_type`), which is `VarType::Mixed` here, and
+                // every target-type branch's fallback for an unrecognised
+                // source type is to pass the raw payload through
+                // unconverted. That is silently correct only when the
+                // runtime tag happens to already match the target's native
+                // representation (an Integer-tagged value cast `as a
+                // number` is a no-op that looks like a real conversion);
+                // for any other tag it reinterprets the bytes - a text
+                // pointer read as an integer, the same failure mode this
+                // whole track exists to close, just reached through the
+                // suggested fix-it rather than around it. The properly
+                // general fix is a runtime tag dispatch in codegen's Cast
+                // arm (the tag-branch machinery already exists and is
+                // proven correct for `Print`'s equivalent dispatch,
+                // `emit_mixed_print_dispatch`) - tracked as its own follow-
+                // up rather than attempted here under this session's time
+                // pressure, in the single highest-risk area for a change
+                // like that to go wrong. Loud and honest beats silently
+                // wrong: reject the cast instead of emitting it.
+                let is_dynamic_source = match value.as_ref() {
+                    Expr::Identifier(name) | Expr::StringLit(name) => {
+                        self.value_typed_names.contains(name.as_str())
+                    }
+                    _ => false,
+                };
+                if is_dynamic_source {
+                    // Deliberately not suggesting a workaround: the type
+                    // predicate guard ('X is a number') was checked and
+                    // does NOT narrow X's type inside its own body (still
+                    // rejected there too), so recommending it here would
+                    // repeat the exact mistake this whole check exists to
+                    // avoid - confidently pointing at a dead end. There is
+                    // currently no supported way to convert a genuinely
+                    // dynamically-tagged value; say so plainly rather than
+                    // invent one.
+                    self.push_error(
+                        format!(
+                            "Cannot cast {} to {}: {}'s type is only known at runtime, and casting a dynamically-tagged value is not currently supported by the compiler (a known gap, not yet resolvable from within the language).",
+                            self.operand_label(value),
+                            self.typed_phrase(target_type),
+                            self.operand_label(value),
+                        ),
+                        None,
+                    );
+                }
             }
 
             Expr::FileAvailable { path } => {

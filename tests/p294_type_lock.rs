@@ -12,6 +12,7 @@
 // here rather than only as a silent behavior change.
 
 use std::fs;
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
 fn work_dir(tag: &str) -> std::path::PathBuf {
@@ -211,4 +212,106 @@ For each item in nums,
 "#,
     );
     run_and_expect(&bin, "2\n4\n6\n");
+}
+
+/// A homogeneous map's value type is proven from its own literal (findings
+/// 4, 14) - a same-typed read into an already-declared variable, and a
+/// cast on the read value directly, must both keep working. The cast case
+/// matters specifically: it is the escape hatch `check_type_lock`'s "help:"
+/// line suggests for a mismatched map read, and unlike a `value`-typed
+/// source (see `dynamic_value_cast_is_rejected_not_silently_wrong` below)
+/// this one is proven to actually work, because the map's value type is
+/// statically known here - it never goes through the broken runtime-tag
+/// dispatch at all.
+#[test]
+fn homogeneous_map_value_read_and_cast_still_work() {
+    let work = work_dir("map-homogeneous");
+
+    let bin = compile(
+        &work,
+        "a map called m is {\"k\": 42}.\na number called n is 0.\nn is m's \"k\".\nPrint \"{n}\".\n",
+    );
+    run_and_expect(&bin, "42\n");
+
+    let bin = compile(
+        &work,
+        "a map called m is {\"k\": 42}.\na text called s is \"hello\".\ns is m's \"k\" as text.\nPrint \"[{s}]\".\n",
+    );
+    run_and_expect(&bin, "[42]\n");
+}
+
+/// A map literal with mixed value types (or a non-literal initializer) is
+/// NOT proven, so a read from it is unaffected by findings 4/14's fix - for
+/// better AND worse. This test pins the "worse": reading a key whose OWN
+/// value is a number, from a map that merely CONTAINS some other,
+/// differently-typed key too, into an already-declared text variable,
+/// still compiles and then SEGFAULTS - identical to finding 4's own
+/// mechanism, just reached through a map my single-pass, whole-map
+/// classifier can't prove homogeneous even though this specific key is
+/// perfectly consistent every time it's read. Confirmed unaffected by this
+/// track (same crash before and after `map_value_type` existed) - a real,
+/// known, and explicitly out-of-scope gap: closing it needs PER-KEY value
+/// tracking, not just per-map, which map_literal_value_type deliberately
+/// does not attempt (see its doc comment).
+#[test]
+fn heterogeneous_map_value_read_still_crashes_a_known_gap() {
+    let work = work_dir("map-heterogeneous");
+    let vox = env!("CARGO_BIN_EXE_vox");
+    fs::write(
+        work.join("prog.vox"),
+        "a map called m is {\"k\": 42, \"j\": \"text\"}.\na text called s is \"hello\".\ns is m's \"k\".\nPrint \"[{s}]\".\n",
+    )
+    .unwrap();
+    let bin = work.join("prog");
+    let compile_output = Command::new(vox)
+        .arg(work.join("prog.vox"))
+        .arg("-o")
+        .arg(&bin)
+        .current_dir(&work)
+        .output()
+        .expect("spawn vox");
+    assert!(compile_output.status.success(), "expected this to still compile (unproven, so permitted)");
+    let run_output = Command::new(&bin)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run compiled binary");
+    assert_eq!(
+        run_output.status.signal(),
+        Some(11), // SIGSEGV
+        "expected the pre-existing SIGSEGV this track does not close for a mixed-value map; \
+         got status {:?} - if this now passes, map value inference has grown per-key tracking and \
+         this test (and its documented limitation) should be updated, not just loosened",
+        run_output.status
+    );
+}
+
+/// Casting a `value` whose runtime tag is only known dynamically is
+/// rejected at compile time rather than silently computing garbage - the
+/// "finding 21" gap a review caught: the arithmetic error's hint (fixed in
+/// this track) says to convert with `as a number`/`as text`, and casting a
+/// dynamically-tagged source used to silently pass its raw bytes through
+/// unconverted instead of actually converting them (correct only by
+/// coincidence, when the runtime tag already matched the target's native
+/// representation - wrong, silently, whenever it didn't). See
+/// tests/compile_fail/083_* for the message.
+#[test]
+fn dynamic_value_cast_is_rejected_not_silently_wrong() {
+    let work = work_dir("dynamic-cast-rejected");
+    let vox = env!("CARGO_BIN_EXE_vox");
+    fs::write(
+        work.join("prog.vox"),
+        "a value called v is 5.\na number called z is v as a number add 1.\nPrint \"z={z}\".\n",
+    )
+    .unwrap();
+    let output = Command::new(vox)
+        .arg(work.join("prog.vox"))
+        .arg("-o")
+        .arg(work.join("prog"))
+        .current_dir(&work)
+        .output()
+        .expect("spawn vox");
+    assert!(
+        !output.status.success(),
+        "expected a compile error, but it compiled successfully"
+    );
 }
