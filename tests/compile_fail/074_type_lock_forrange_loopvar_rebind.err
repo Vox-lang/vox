@@ -1,0 +1,4 @@
+cannot bind 'i' to a number in this for-range loop; 'i' is already declared as text
+074_type_lock_forrange_loopvar_rebind.vox:2:10
+note: 'i' was declared as text at 074_type_lock_forrange_loopvar_rebind.vox:1:15
+help: use a different name here, or declare 'i' as a number instead

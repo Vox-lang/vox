@@ -1082,6 +1082,79 @@ impl Analyzer {
         }
     }
 
+    /// Core of `find_write_site_location`/`find_bind_site_location`: search
+    /// `patterns` in order, skipping `exclude_line` (the declaration, when
+    /// known) and requiring a left word boundary so a shorter name doesn't
+    /// match as a suffix of a longer one (symbol "x", pattern "x is "
+    /// matching inside "max is " - each pattern's own trailing space
+    /// already enforces the right boundary). `guard_against_called`
+    /// additionally excludes a match immediately preceded by "called " -
+    /// the canonical declaration syntax `a <type> called X is <value>.`
+    /// contains `X is ` right after it, so an "X is "-shaped pattern needs
+    /// this guard as a second line of defence alongside `exclude_line`
+    /// (which only covers the *recorded* declaration line, e.g. if a
+    /// declaration and something else ever shared one line). A
+    /// construct-specific pattern that legitimately targets "called X"
+    /// itself (`FileOpen`'s own syntax) must pass `false` here so it does
+    /// not exclude its own match.
+    /// Search `patterns` (each expected to contain `symbol` as a
+    /// substring) for the statement that binds/writes `symbol`, returning
+    /// the location of `symbol` itself within the match - not the
+    /// pattern's own start. That distinction matters: a pattern like
+    /// `"Set {symbol} to "` has the symbol sitting *inside* it, offset by
+    /// `len("Set ")`, so anchoring on the pattern's start would draw the
+    /// caret under `Set` while claiming to point at the variable. Boundary
+    /// checks (word boundary on both sides of `symbol`, and optionally
+    /// "not immediately preceded by `called `") are applied around the
+    /// symbol's own span for the same reason - a boundary check anchored on
+    /// the pattern's start protects the wrong substring whenever the symbol
+    /// isn't at offset 0.
+    fn find_pattern_location(
+        &self,
+        symbol: &str,
+        patterns: &[String],
+        occurrence: usize,
+        exclude_line: Option<usize>,
+        guard_against_called: bool,
+    ) -> Option<SourceLocation> {
+        let source = self.source_file.as_ref()?;
+        for pattern in patterns {
+            let Some(name_offset) = pattern.find(symbol) else {
+                continue;
+            };
+            let mut seen = 0usize;
+            for (idx, line) in source.content.lines().enumerate() {
+                let line_no = idx + 1;
+                if Some(line_no) == exclude_line {
+                    continue;
+                }
+                let mut search_from = 0usize;
+                while let Some(rel) = line[search_from..].find(pattern.as_str()) {
+                    let pat_col = search_from + rel;
+                    let name_col = pat_col + name_offset;
+                    let name_end = name_col + symbol.len();
+                    let left_ok = name_col == 0 || {
+                        let prev = line.as_bytes()[name_col - 1];
+                        !(prev.is_ascii_alphanumeric() || prev == b'_')
+                    };
+                    let right_ok = line
+                        .as_bytes()
+                        .get(name_end)
+                        .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'));
+                    let excluded_by_called = guard_against_called && line[..pat_col].ends_with("called ");
+                    if left_ok && right_ok && !excluded_by_called {
+                        if seen == occurrence {
+                            return Some(SourceLocation::new(&source.filename, line_no, name_col + 1, line));
+                        }
+                        seen += 1;
+                    }
+                    search_from = pat_col + 1;
+                }
+            }
+        }
+        None
+    }
+
     /// Like `find_symbol_location`, but for pointing at the specific
     /// statement that *writes* to `symbol` (`Set symbol to ...` / `symbol is
     /// ...` / `the symbol is ...`), not just any occurrence of the name.
@@ -1090,57 +1163,54 @@ impl Analyzer {
     /// in an unrelated `Print "{n}"` elsewhere in the file would anchor the
     /// type-lock error there instead of at the offending assignment.
     fn find_write_site_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
-        let source = self.source_file.as_ref()?;
-        // The declaration line is never the offending write - excluding it
-        // matters because the canonical declaration syntax
-        // (`a <type> called X is <value>.`) itself contains `X is `, so an
-        // unfiltered search finds the declaration before the real
-        // reassignment on every plain `X is <value>` case.
         let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
         let write_patterns = [
             format!("Set {} to ", symbol),
             format!("the {} is ", symbol),
             format!("{} is ", symbol),
         ];
+        self.find_pattern_location(symbol, &write_patterns, occurrence, decl_line, true)
+            .or_else(|| self.find_symbol_location(symbol, occurrence))
+    }
 
-        for pattern in write_patterns {
-            let mut seen = 0usize;
-            for (idx, line) in source.content.lines().enumerate() {
-                let line_no = idx + 1;
-                if Some(line_no) == decl_line {
-                    continue;
-                }
-                let mut search_from = 0usize;
-                while let Some(rel) = line[search_from..].find(&pattern) {
-                    let col = search_from + rel;
-                    // Word boundary on the left: the byte before the match
-                    // must not be alphanumeric/'_', otherwise a shorter
-                    // name matches as a suffix of a longer one (symbol "x",
-                    // pattern "x is " matching inside "max is "). The
-                    // pattern's own trailing " is "/" to " already enforces
-                    // the right boundary.
-                    let boundary_ok = col == 0 || {
-                        let prev = line.as_bytes()[col - 1];
-                        !(prev.is_ascii_alphanumeric() || prev == b'_')
-                    };
-                    // A declaration written as `a <type> called X is <v>.`
-                    // contains this exact pattern right after "called " -
-                    // exclude it explicitly as a second guard alongside the
-                    // decl_line skip above (covers a declaration sharing a
-                    // line with something else, however unlikely).
-                    let preceded_by_called = line[..col].ends_with("called ");
-                    if boundary_ok && !preceded_by_called {
-                        if seen == occurrence {
-                            return Some(SourceLocation::new(&source.filename, line_no, col + 1, line));
-                        }
-                        seen += 1;
-                    }
-                    search_from = col + 1;
-                }
-            }
-        }
+    /// Like `find_write_site_location`, for a statement that *binds* `name`
+    /// through some construct-specific syntax rather than `is`/`to`
+    /// (a for-range/for-each loop header, `open ... called X`, `Allocate N
+    /// for X`). `patterns` are the construct's own syntax fragments
+    /// (e.g. `"each {name} "`, `"called {name} "`); `guard_against_called`
+    /// should be `false` when a pattern itself targets `"called X"`; a
+    /// caller doing that must instead disambiguate the declaration via
+    /// `exclude_line`.
+    fn find_bind_site_location(
+        &self,
+        symbol: &str,
+        patterns: &[String],
+        occurrence: usize,
+        guard_against_called: bool,
+    ) -> Option<SourceLocation> {
+        let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
+        self.find_pattern_location(symbol, patterns, occurrence, decl_line, guard_against_called)
+            .or_else(|| self.find_symbol_location(symbol, occurrence))
+    }
 
-        self.find_symbol_location(symbol, occurrence)
+    /// Where `name` was declared, for `declared_locations`. Deliberately
+    /// does NOT use `find_symbol_location`: that function prefers `{name`
+    /// (format-string interpolation) as its first pattern, which is right
+    /// for "where is this name used" but wrong here - a `Print "{src}"`
+    /// anywhere in the file would outrank the actual `a text called src
+    /// is ...` declaration, since interpolation is usually textually
+    /// earlier or just as likely to hit occurrence 0. Tries the `called
+    /// NAME` declaration syntax first (typed declarations, `Allocate`,
+    /// `FileOpen`, ...), then falls back to bare/loop-header forms that
+    /// have no `called` keyword at all (`NAME is <value>.`, `each NAME `).
+    fn find_declaration_location(&self, name: &str) -> Option<SourceLocation> {
+        let called_patterns = [format!("called {} is", name), format!("called {} ", name)];
+        self.find_pattern_location(name, &called_patterns, 0, None, false)
+            .or_else(|| {
+                let bare_patterns = [format!("{} is ", name), format!("each {} ", name)];
+                self.find_pattern_location(name, &bare_patterns, 0, None, false)
+            })
+            .or_else(|| self.find_symbol_location(name, 0))
     }
 
     fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
@@ -2026,6 +2096,108 @@ impl Analyzer {
         true
     }
 
+    /// `a {} number` / `text` / etc. - the article Vox's own cast syntax
+    /// uses (`as a number`, but `as text` with none). Shared by
+    /// `check_type_lock` and `bind_variable_type` so both error shapes
+    /// agree.
+    fn typed_phrase(&self, ty: &Type) -> String {
+        if matches!(ty, Type::String) {
+            "text".to_string()
+        } else {
+            format!("a {}", self.type_name(ty))
+        }
+    }
+
+    /// Statement-level binder for constructs that put a new runtime value
+    /// into `name` WITHOUT going through `Statement::Assignment`/`VarDecl`
+    /// - a for-range/for-each loop header, `open ... called X`, `Allocate N
+    /// for X`. A binding is not an assignment, but plan 294's audit found
+    /// six such sites still segfault under a rule enforced only on
+    /// assignment, because each one rebinds an existing name to a new
+    /// runtime value without updating (or checking) its tracked type. Same
+    /// rule, same rejection: if `name` is already declared with a type
+    /// incompatible with `new_type`, this is a compile error. If `name` is
+    /// new, this call IS the declaration - `new_type` becomes its locked
+    /// type, exactly as a `VarDecl` would set it.
+    ///
+    /// `construct`/`bind_verb` describe the site in the error text (e.g.
+    /// "this for-range loop" / "counts with"). `patterns` locate the
+    /// binding statement for the caret, tried in order via
+    /// `find_bind_site_location`; `guard_against_called` must be `false`
+    /// when a pattern itself targets literal `"called X"` syntax (so it
+    /// does not exclude its own match - see that function's docs).
+    ///
+    /// Exempt exactly like `check_type_lock`: `value`-typed names (the
+    /// sanctioned dynamic mechanism) and buffers (binding into a buffer is
+    /// a content write, not a type change).
+    fn bind_variable_type(
+        &mut self,
+        name: &str,
+        new_type: Type,
+        construct: &str,
+        bind_verb: &str,
+        patterns: &[String],
+        guard_against_called: bool,
+    ) -> bool {
+        if self.value_typed_names.contains(name) || self.is_buffer_variable(name) {
+            return false;
+        }
+        let Some(declared) = self.named_value_type(name) else {
+            // A brand-new name: this binding is the declaration.
+            if matches!(new_type, Type::Integer | Type::Float | Type::Boolean | Type::String) {
+                self.scalar_types.insert(name.to_string(), new_type);
+            }
+            if !self.declared_locations.contains_key(name) {
+                if let Some(loc) = self.find_declaration_location(name) {
+                    self.declared_locations.insert(name.to_string(), loc);
+                }
+            }
+            return false;
+        };
+        if self.treating_types_compatible(&declared, &new_type) {
+            return false;
+        }
+
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let mut err = CompileError::new(&format!(
+            "cannot bind '{}' to {} in {}; '{}' is already declared as {}",
+            name,
+            self.typed_phrase(&new_type),
+            construct,
+            name,
+            self.typed_phrase(&declared)
+        ));
+        if let Some(loc) = self.find_bind_site_location(name, patterns, occurrence, guard_against_called) {
+            err = err.with_underline_note(
+                name.len().max(1),
+                &format!("this {} {}", bind_verb, self.type_name(&new_type)),
+            );
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+
+        if let Some(decl_loc) = self.declared_locations.get(name) {
+            err = err.with_note_line(&format!(
+                "'{}' was declared as {} at {}:{}:{}",
+                name,
+                self.typed_phrase(&declared),
+                decl_loc.file,
+                decl_loc.line,
+                decl_loc.column
+            ));
+        } else {
+            err = err.with_note_line(&format!("'{}' was declared as {}", name, self.typed_phrase(&declared)));
+        }
+        err = err.with_help_line(&format!(
+            "use a different name here, or declare '{}' as {} instead",
+            name,
+            self.typed_phrase(&new_type)
+        ));
+        self.errors.push(err);
+        self.scalar_types.remove(name);
+        true
+    }
+
     fn validate_treating_expr(&mut self, value: &Expr, match_value: &Expr, replacement: &Expr) {
         if let (Some(match_ty), Some(replacement_ty)) = (
             self.infer_simple_expr_type(match_value),
@@ -2213,8 +2385,16 @@ impl Analyzer {
                         self.check_type_lock(name, v);
                     }
                 }
-                if !was_already_declared && !self.declared_locations.contains_key(name) {
-                    if let Some(loc) = self.find_symbol_location(name, 0) {
+                // Record the declaration site the first time we see a real
+                // type for `name`, regardless of `was_already_declared`: a
+                // global pre-pass (`self.variables = self.global_variables
+                // .clone()` before the main walk, fed by
+                // `collect_definite_decls`) makes every top-level name
+                // "already available" from the very first statement, so
+                // `was_already_declared` is always true here for a
+                // top-level declaration and can't be used to gate this.
+                if !self.declared_locations.contains_key(name) {
+                    if let Some(loc) = self.find_declaration_location(name) {
                         self.declared_locations.insert(name.clone(), loc);
                     }
                 }
@@ -2314,7 +2494,7 @@ impl Analyzer {
                         }
                     }
                     if !self.declared_locations.contains_key(name) {
-                        if let Some(loc) = self.find_symbol_location(name, 0) {
+                        if let Some(loc) = self.find_declaration_location(name) {
                             self.declared_locations.insert(name.clone(), loc);
                         }
                     }
@@ -2380,8 +2560,19 @@ impl Analyzer {
 
             Statement::ForRange { variable, range, body } => {
                 self.variables.insert(variable.clone());
-                // A range loop variable steps over integers.
-                self.scalar_types.insert(variable.clone(), Type::Integer);
+                // A range loop variable steps over integers - reusing a
+                // name already declared with a different type is a rebind,
+                // same rule as `Set`/`is` (plan 294 finding 2: this used to
+                // leave the old label in place and segfault when the
+                // formatter dereferenced the loop counter as a pointer).
+                self.bind_variable_type(
+                    variable,
+                    Type::Integer,
+                    "this for-range loop",
+                    "counts with",
+                    &[format!("each {} ", variable)],
+                    true,
+                );
                 self.analyze_expr(range);
                 self.loop_depth += 1;
                 for s in body {
@@ -2442,9 +2633,18 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 self.variables.insert(name.clone());
                 self.allocated_variables.insert(name.clone());
-                // The variable now holds a raw pointer, not its previous
-                // scalar value - drop any stale number/text label.
-                self.scalar_types.remove(name);
+                // The variable now holds a raw pointer, rendered as a
+                // number when printed - a rebind like any other (plan 294
+                // finding 17: codegen used to leave a stale text label in
+                // place, formatting the fresh allocation as a C string).
+                self.bind_variable_type(
+                    name,
+                    Type::Integer,
+                    "this Allocate statement",
+                    "allocates",
+                    &[format!("for {}", name)],
+                    true,
+                );
                 self.analyze_expr(size);
             }
 
@@ -2794,6 +2994,20 @@ impl Analyzer {
             }
             
             Statement::FileOpen { name, path, .. } => {
+                // `open ... called X` binds X to a file descriptor - a
+                // rebind like any other if X already exists with an
+                // incompatible type (plan 294 finding 3: this used to leave
+                // a stale text label in place and dereference the fd as a
+                // string pointer). Checked before registering `name` as a
+                // file below, so it sees the pre-existing declared type.
+                self.bind_variable_type(
+                    name,
+                    Type::File,
+                    "this open statement",
+                    "opens as",
+                    &[format!("called {} ", name)],
+                    false,
+                );
                 self.variables.insert(name.clone());
                 self.file_variables.insert(name.clone());
                 self.analyze_expr(path);
