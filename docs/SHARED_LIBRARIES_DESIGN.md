@@ -63,13 +63,48 @@ flag, then error. It is relative by norm so a `.lib`/`.so` pair can be moved or
 shipped together; an absolute `Location` is honoured when read but never
 generated.
 
-Parameter and return types are drawn from a fixed vocabulary — `number`,
-`text`, `boolean`, `file`, `value`; anything else is an error naming the
-unsupported type. The `, returning a <type>` suffix exists **only** in `.lib`
-files: a `.lib` entry is a bodiless declaration, so the return type rides the
-signature. In Vox source the return type lives in the body
-(`Return a number, x.`), which a bodiless `.lib` line has no room for. An entry
-with no `returning` clause denotes a function that returns nothing.
+Parameter and return types are drawn from the SAME fixed 11-type vocabulary,
+in EITHER position — `number`, `float`, `text`, `boolean`, `list`, `map`,
+`buffer`, `file`, `time`, `timer`, `value`; anything else is an error naming
+the unsupported type. This mirrors Vox source exactly: every one of these 11
+types is also legal as a `with a <type> called x` parameter and as a
+`Return a <type>,` declared return type on an ordinary function (plan 296).
+
+Two types are deliberately NOT in that list, and never will be:
+
+- **`void`** isn't a spelling — a function that returns nothing is declared
+  by *omitting* the `, returning` clause (`.lib`) or the `Return a <type>,`
+  annotation (Vox source) entirely. There is no `returning a void`.
+- **`unknown`** isn't a spelling either — it's the compiler's own internal
+  placeholder for an untyped `with n` parameter, never something an author
+  writes.
+
+A `list` may optionally carry its element type: `a list of text called out`,
+`returning a list of text`. This is **compiler-inferred, never author-
+declared** — Vox source itself has no generic/typed-collection syntax (a
+library author still just writes `a list called out`); when a `--shared`
+build exports a function with a list parameter or list return, it scans that
+function's own body for `Append`/literal evidence and, when every element
+provably agrees on one type, writes `list of <type>` into the `.lib` for you.
+Disagreement, or no evidence at all, emits plain untyped `list`, exactly as
+before this existed. `map`'s value type is not carried this way — `.lib`
+accepts bare `map` in both positions, element-untyped.
+
+The `, returning a <type>` suffix exists **only** in `.lib` files: a `.lib`
+entry is a bodiless declaration, so the return type rides the signature. In
+Vox source the return type lives in the body (`Return a number, x.`), which a
+bodiless `.lib` line has no room for. An entry with no `returning` clause
+denotes a function that returns nothing — this is also why a `.lib`-exported
+function needs a *declared* return type (`Return a list, out.`, not a bare
+`Return out.`) before the `.lib` can say anything about what it returns at
+all, list-element-typing included.
+
+A `.lib`'s declared types are trusted, not verified against the `.so`'s
+actual behavior (plan 294 findings 19/20): a `.lib` declaring a return type
+its implementation doesn't really provide crashes the consumer. Widening the
+declarable vocabulary (plan 296) widens what a stale or hand-edited `.lib`
+can misdeclare; it does not add any new verification. That remains a known,
+unfixed gap.
 
 ### Library Linking
 

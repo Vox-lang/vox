@@ -524,11 +524,14 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 
 ### Parameter and Local Types (v0.1.16)
 
-Parameters may use any variable type, including `buffer`, `list`, `map`,
-and `file` - and a typed parameter supports the same properties and
-operations as a top-level variable of that type. A parameter (or return
-type) may also be `value`, the dynamic type whose runtime tag travels with
-its payload across the call (a map rides this as payload + tag 5); see
+Parameters may use any of the 11 expressible types — `number`, `float`,
+`text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`, `value`
+— and a typed parameter supports the same properties and operations as a
+top-level variable of that type. The same 11 types are also legal as a
+declared `Return a <type>,` return type (plan 296) — parameters and returns
+share one vocabulary, not two. A parameter (or return type) may also be
+`value`, the dynamic type whose runtime tag travels with its payload across
+the call (a map rides this as payload + tag 5); see
 [Dynamic Values (`value`)](#dynamic-values-value)
 below.
 
@@ -3160,12 +3163,28 @@ Table of Contents:
   `.lib` first, then `--lib-path`, then error. Absolute paths are honoured but
   never generated, so a `.lib` is portable.
 - **`Table of Contents:`** — one line per exported function, in the same
-  signature vocabulary as Vox source. Parameter and return types are drawn from
-  `number`, `text`, `boolean`, `file`, `value`; anything else is an error
-  naming the unsupported type.
-- **`, returning a <type>`** is new and exists only in `.lib` files. Vox source
-  declares return types in the body (`Return a number, x.`), which a bodiless
-  `.lib` declaration has no room for.
+  11-type vocabulary as Vox source, in EITHER position: `number`, `float`,
+  `text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`,
+  `value`; anything else is an error naming the unsupported type. `void`
+  isn't a spelling — a function returning nothing omits the `, returning`
+  clause entirely — and neither is `unknown`, the compiler's own internal
+  placeholder for an untyped parameter.
+- A `list` may optionally carry its element type: `a list of text called
+  out`, `returning a list of text`. This is compiler-inferred, not author-
+  declared — Vox source has no generic/typed-collection syntax, so a library
+  author still just writes `a list called out`; a `--shared` build scans the
+  exported function's own body and, when every appended/returned element
+  provably agrees on one type, writes `list of <type>` for you. Disagreement
+  or no evidence emits plain untyped `list`, same as always. `map`'s value
+  type isn't carried this way; `map` stays element-untyped in both
+  positions.
+- **`, returning a <type>`** exists only in `.lib` files. Vox source declares
+  return types in the body (`Return a number, x.`), which a bodiless `.lib`
+  declaration has no room for. No `returning` clause means the function
+  returns nothing — which is also why a list's element type only shows up in
+  the `.lib` when the exporting function has a *declared* return type
+  (`Return a list, out.`) in the first place; a bare `Return out.` records no
+  return type at all, list-element-typing included.
 
 A `.lib` is lexed with the Vox lexer but parsed by a dedicated parser, so it
 cannot carry executable statements — only the interface above.
