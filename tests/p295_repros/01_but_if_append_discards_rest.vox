@@ -1,0 +1,6 @@
+a buffer called line is 64 bytes in size.
+a number called v is 1.
+print "BEFORE".
+Append "." to line, but if v is equal to 1 append "#" to line.
+print "AFTER".
+print "SECOND AFTER".
