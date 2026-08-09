@@ -4,6 +4,33 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] - 2026-08-09
+
+### Fixed
+
+- **A `but if` branch on a non-`print` action (e.g. `append`) could silently
+  discard the rest of the program.** The branch's grammar didn't consume a
+  trailing `to <name>` clause, which desynced the parser into treating
+  everything after it as the body of a bogus, never-called function. This
+  was a regression: the previous release rejected the same source with a
+  compile error instead of silently discarding it. It's a compile error
+  again if the branch names the wrong target, and consumed correctly
+  otherwise.
+
+- **A function could only declare a handful of parameter and return types.**
+  `number`, `float`, `text`, `boolean`, `list`, `map`, `buffer`, `file`,
+  `time`, `timer`, and `value` now all work identically as a parameter type
+  and a declared return type, for ordinary functions and for shared-library
+  (`.lib`) functions alike. Previously only five of these were accepted as a
+  return type at all, and `float`/`time`/`timer` weren't accepted anywhere.
+
+- **A list returned or passed across a `.lib` boundary printed raw memory
+  addresses instead of its actual contents.** The list's length and
+  structure always crossed correctly; only its element type was lost. The
+  compiler now infers a list's element type from the exporting function's
+  own code and carries it across the boundary automatically, for every call
+  shape - no new syntax required.
+
 ## [0.3.3] - 2026-08-08
 
 ### Fixed
