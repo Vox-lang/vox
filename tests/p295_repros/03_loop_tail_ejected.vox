@@ -1,0 +1,9 @@
+a number called k is 0.
+a number called p is 0.
+While k is less than 2,
+    increment k,
+    if p is 9 then, print "never".
+    print "EXTRA k={k}".
+    if p is 0 and k is 1 then,
+        print "BRANCH k={k}".
+    print "TAIL k={k}".
