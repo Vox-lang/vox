@@ -1297,6 +1297,42 @@ impl Parser {
                 self.skip_noise();
                 let mut val = self.parse_append_value_primary()?;
                 val = self.parse_append_value_ops(val, 0)?;
+                self.skip_noise();
+
+                // A branch may mirror the base statement's own `to <name>`
+                // (users naturally repeat it for symmetry) or omit it
+                // entirely (the plan 291 canonical form). Either is valid,
+                // but if present it is consumed here rather than left for
+                // the enclosing sentence — an unconsumed `to` previously
+                // desynced the top-level parser into reinterpreting the
+                // rest of the file as a new statement (plan 295 finding 1).
+                // Retargeting to a different list/buffer is not supported.
+                if *self.current() == Token::To {
+                    self.advance();
+                    self.skip_noise();
+                    let target = match self.current().clone() {
+                        Token::Identifier(n) => { self.advance(); n }
+                        Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
+                        Token::The => {
+                            self.advance();
+                            self.skip_noise();
+                            match self.current().clone() {
+                                Token::Identifier(n) => { self.advance(); n }
+                                Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
+                                _ => return Err(self.err("Expected list name after 'the'")),
+                            }
+                        }
+                        _ => return Err(self.err("Expected list name after 'to' in 'but if' branch")),
+                    };
+                    if target != *list {
+                        return Err(self.err(&format!(
+                            "'but if' append branch targets '{}', but the base statement targets '{}' — \
+                             a conditional append branch cannot retarget to a different list/buffer",
+                            target, list
+                        )));
+                    }
+                }
+
                 Ok(Statement::ListAppend { list: list.clone(), value: val })
             }
             _ => unreachable!("conditional sugar is only built for Print/ListAppend bases"),
