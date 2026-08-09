@@ -2150,7 +2150,38 @@ impl Parser {
         
         Ok(Statement::Repeat { count, body })
     }
-    
+
+    /// The 11-type declaration vocabulary shared by a function parameter
+    /// type (`with a <type> called x`) and a declared return type (`Return
+    /// a <type>,`, both the inline path in `parse_function_def` and the
+    /// Gate-B path here in `parse_return`). One table so these call sites
+    /// cannot drift into accepting different sets again — they had: Gate B
+    /// recognized only number/text/boolean while the inline return path
+    /// separately also took file/value, and the parameter path separately
+    /// took buffer/list/map but neither took float/time/timer. Does not
+    /// consume the token; callers advance after matching. `list`/`map`
+    /// declared this way stay element-untyped (`Unknown`) — Vox source has
+    /// no generic/typed-collection declaration syntax (plan 296).
+    fn declaration_type_token(&self) -> Option<Type> {
+        match self.current() {
+            Token::Number => Some(Type::Integer),
+            Token::Float => Some(Type::Float),
+            Token::Text => Some(Type::String),
+            Token::Boolean => Some(Type::Boolean),
+            Token::File => Some(Type::File),
+            Token::Buffer => Some(Type::Buffer),
+            Token::List => Some(Type::List(Box::new(Type::Unknown))),
+            Token::Map => Some(Type::Map(Box::new(Type::Unknown))),
+            Token::Time => Some(Type::Time),
+            Token::Timer => Some(Type::Timer),
+            // `value` is not a reserved keyword (it stays a usable
+            // identifier everywhere else); in a type position it denotes
+            // the dynamic `value` type.
+            Token::Identifier(n) if n == "value" => Some(Type::Value),
+            _ => None,
+        }
+    }
+
     fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
@@ -2164,13 +2195,7 @@ impl Parser {
                 self.skip_noise();
 
                 // Check if this is a type keyword followed by comma
-                if matches!(self.current(), Token::Number | Token::Text | Token::Boolean) {
-                    let declared_type = match self.current() {
-                        Token::Number => Type::Integer,
-                        Token::Text => Type::String,
-                        Token::Boolean => Type::Boolean,
-                        _ => unreachable!(),
-                    };
+                if let Some(declared_type) = self.declaration_type_token() {
                     self.advance();
                     self.skip_noise();
 
@@ -4236,19 +4261,9 @@ impl Parser {
                         self.skip_noise();
                     }
                     
-                    let param_type = match self.current() {
-                        Token::Number => { self.advance(); Type::Integer }
-                        Token::Text => { self.advance(); Type::String }
-                        Token::Boolean => { self.advance(); Type::Boolean }
-                        Token::File => { self.advance(); Type::File }
-                        Token::Buffer => { self.advance(); Type::Buffer }
-                        Token::List => { self.advance(); Type::List(Box::new(Type::Unknown)) }
-                        Token::Map => { self.advance(); Type::Map(Box::new(Type::Unknown)) }
-                        // `value` is not a reserved keyword (it stays a usable
-                        // identifier everywhere else); in a parameter type
-                        // position it denotes the dynamic `value` type.
-                        Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
-                        _ => Type::Unknown,
+                    let param_type = match self.declaration_type_token() {
+                        Some(t) => { self.advance(); t }
+                        None => Type::Unknown,
                     };
                     
                     self.skip_noise();
@@ -4295,17 +4310,9 @@ impl Parser {
             }
             
             let mut declared_type = None;
-            if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::File)
-                || matches!(self.current(), Token::Identifier(ref n) if n == "value")
-            {
-                return_type = match self.current() {
-                    Token::Number => { self.advance(); Type::Integer }
-                    Token::Text => { self.advance(); Type::String }
-                    Token::Boolean => { self.advance(); Type::Boolean }
-                    Token::File => { self.advance(); Type::File }
-                    Token::Identifier(ref n) if n == "value" => { self.advance(); Type::Value }
-                    _ => Type::Void,
-                };
+            if let Some(t) = self.declaration_type_token() {
+                self.advance();
+                return_type = t;
                 declared_type = Some(return_type.clone());
                 self.skip_noise();
                 self.expect(&Token::Comma);
