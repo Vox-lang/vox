@@ -1363,6 +1363,32 @@ impl CodeGenerator {
         }
     }
 
+    /// The resolved call-target label for `val`, if it is a function call —
+    /// either the unambiguous `Expr::FunctionCall` shape (an explicit
+    /// `of`/`with`/`to` argument list), or a bare/quoted identifier in
+    /// expression position that names a zero-argument function rather than
+    /// a variable. The second shape is the one plan 296's first cut of
+    /// list-return element typing missed: `a list called got is 'tokens'.`
+    /// has no connector, so the parser can't tell it's a call — it produces
+    /// `Expr::Identifier("tokens")`, indistinguishable at the AST level
+    /// from a variable reference. `generate_expr`'s own Identifier arm
+    /// resolves the exact same ambiguity (plan 270 G4: try a variable load
+    /// first, fall back to `zero_arg_func_return_type`); this mirrors that
+    /// resolution order so a variable always wins over a same-named
+    /// zero-arg function, here too.
+    fn call_label_for_list_return(&self, val: &Expr) -> Option<String> {
+        match val {
+            Expr::FunctionCall { name, .. } => Some(self.resolved_call_label(name)),
+            Expr::Identifier(name)
+                if self.get_var(name).is_none() && self.global_var_label(name).is_none() =>
+            {
+                self.zero_arg_func_return_type(name)
+                    .map(|_| self.resolved_call_label(name))
+            }
+            _ => None,
+        }
+    }
+
     /// The mangled labels of functions exported by a `--shared` compile, in
     /// emission order. Populated during `generate`; the linker's version
     /// script names exactly these as the library's public symbols.
@@ -3064,13 +3090,15 @@ impl CodeGenerator {
                     // A call to a `.lib` function declared `returning a
                     // list of <type>` carries a real element type (plan
                     // 296) — the symmetric case to `emit_function_call`'s
-                    // parameter-side propagation above. A call to anything
-                    // else (a local function, an unannotated `.lib`
-                    // return, a runtime helper) resolves to
-                    // `Type::List(Unknown)` here, so this is a no-op for
+                    // parameter-side propagation above. Covers BOTH call
+                    // shapes: an explicit `of`/`with` argument list
+                    // (`Expr::FunctionCall`) and a bare zero-argument call
+                    // (`Expr::Identifier`, see `call_label_for_list_return`).
+                    // A call to anything else (a local function, an
+                    // unannotated `.lib` return, a runtime helper) resolves
+                    // to `Type::List(Unknown)` here, so this is a no-op for
                     // it, exactly today's behavior.
-                    else if let Expr::FunctionCall { name: fname, .. } = val {
-                        let label = self.resolved_call_label(fname);
+                    else if let Some(label) = self.call_label_for_list_return(val) {
                         if let Some(Type::List(inner)) = self.function_return_full_types.get(&label) {
                             if !matches!(**inner, Type::Unknown) {
                                 self.list_element_types
