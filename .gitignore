@@ -37,7 +37,10 @@ release.sh
 /tests/*.asm
 /examples/*.asm
 
--e 
 # Compiled vox output binaries at repo root (from running the compiler on examples)
 /cat
 /rmdir_check
+
+# Local Claude Code session state (permissions, scheduler locks) - not project
+# files, and specific to whichever machine/session generated them.
+.claude/
