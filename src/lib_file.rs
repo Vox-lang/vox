@@ -182,23 +182,28 @@ impl LibParser {
         }
     }
 
-    /// The signature type vocabulary. Parameter positions additionally accept
-    /// the composite/collection nouns the A3 emitter can write (`buffer`,
-    /// `list`, `map`) so the file the compiler emits always re-parses —
-    /// parameter types are trusted straight from the file either way.
-    /// Return positions accept exactly the normative five (`number`, `text`,
-    /// `boolean`, `file`, `value`); anything else is an error naming the
-    /// unsupported type.
+    /// The signature type vocabulary: the full 11 expressible `Type`
+    /// variants (number, float, text, boolean, list, map, buffer, file,
+    /// time, timer, value), identical in parameter and return position
+    /// (plan 296 — the old split, five types in return position and eight
+    /// in parameter position, mirrored a restriction Vox source's own
+    /// `Return a <type>,` no longer has). `position` still names the spot
+    /// for diagnostics; it no longer gates which tokens are accepted.
     fn take_type(&mut self, position: &'static str) -> Result<Type, String> {
+        if *self.current() == Token::List {
+            return self.take_list_type();
+        }
         let ty = match self.current() {
             Token::Number => Some(Type::Integer),
+            Token::Float => Some(Type::Float),
             Token::Text => Some(Type::String),
             Token::Boolean => Some(Type::Boolean),
             Token::File => Some(Type::File),
+            Token::Buffer => Some(Type::Buffer),
+            Token::Map => Some(Type::Map(Box::new(Type::Unknown))),
+            Token::Time => Some(Type::Time),
+            Token::Timer => Some(Type::Timer),
             Token::Identifier(n) if n.eq_ignore_ascii_case("value") => Some(Type::Value),
-            Token::Buffer if position == "parameter" => Some(Type::Buffer),
-            Token::List if position == "parameter" => Some(Type::List(Box::new(Type::Unknown))),
-            Token::Map if position == "parameter" => Some(Type::Map(Box::new(Type::Unknown))),
             _ => None,
         };
         match ty {
@@ -209,23 +214,58 @@ impl LibParser {
             None => {
                 let found = match self.current() {
                     Token::Identifier(n) => format!("'{}'", n),
-                    Token::Buffer => "'buffer'".to_string(),
-                    Token::List => "'list'".to_string(),
-                    Token::Map => "'map'".to_string(),
                     other => format!("{:?}", other),
-                };
-                let allowed = if position == "return" {
-                    "number, text, boolean, file, value"
-                } else {
-                    "number, text, boolean, file, buffer, list, map, value"
                 };
                 Err(self.err(format!(
                     "unsupported type {} in a {} position — a .lib states types \
-                     as one of: {}",
-                    found, position, allowed
+                     as one of: number, float, text, boolean, list, map, buffer, \
+                     file, time, timer, value",
+                    found, position
                 )))
             }
         }
+    }
+
+    /// A `.lib` list type: bare `list` (element type `Unknown`, exactly as
+    /// before — backward compatible with every `.lib` ever emitted) or
+    /// `list of <noun>`, where `<noun>` is any non-collection type (no
+    /// nested list-of-list/map: out of scope, no evidence requires it).
+    /// `list of <noun>` exists only in this grammar — it is how the A3
+    /// emitter serializes an element type it *infers* from the exporting
+    /// library's own source (plan 296), never syntax a `.lib` author
+    /// writes expecting Vox source to match it: Vox source has no
+    /// generic/typed-collection declaration syntax at all.
+    fn take_list_type(&mut self) -> Result<Type, String> {
+        self.advance(); // consume 'list'
+        if *self.current() != Token::Of {
+            return Ok(Type::List(Box::new(Type::Unknown)));
+        }
+        self.advance(); // consume 'of'
+        let elem = match self.current() {
+            Token::Number => Type::Integer,
+            Token::Float => Type::Float,
+            Token::Text => Type::String,
+            Token::Boolean => Type::Boolean,
+            Token::File => Type::File,
+            Token::Buffer => Type::Buffer,
+            Token::Time => Type::Time,
+            Token::Timer => Type::Timer,
+            Token::Identifier(n) if n.eq_ignore_ascii_case("value") => Type::Value,
+            other => {
+                let found = match other {
+                    Token::Identifier(n) => format!("'{}'", n),
+                    o => format!("{:?}", o),
+                };
+                return Err(self.err(format!(
+                    "unsupported list element type {} — 'list of' takes one of: \
+                     number, float, text, boolean, buffer, file, time, timer, \
+                     value (no nested list or map)",
+                    found
+                )));
+            }
+        };
+        self.advance();
+        Ok(Type::List(Box::new(elem)))
     }
 
     /// One table-of-contents entry, which is exactly one physical line:
@@ -793,14 +833,43 @@ Table of Contents:\n\
 
     #[test]
     fn unsupported_return_type_is_named() {
+        // `buffer` used to be the pinned example here, back when return
+        // position accepted only five types. Plan 296 widened return
+        // position to the full 11-type vocabulary (buffer included), so
+        // this now exercises the diagnostic with a genuinely nonexistent
+        // type instead — the "named unsupported type" coverage this test
+        // exists for is not about buffer specifically, it's about the
+        // parser naming whatever it rejects.
         let text = "Library n version \"1.0\".\n\
 Location \"./n.so\".\n\
 \n\
 Table of Contents:\n\
-    To f, returning a buffer.\n";
+    To f, returning a widget.\n";
         let err = parse_lib_text(text).unwrap_err();
         assert!(err.contains("unsupported type"), "got: {}", err);
-        assert!(err.contains("'buffer'"), "got: {}", err);
+        assert!(err.contains("'widget'"), "got: {}", err);
+    }
+
+    #[test]
+    fn void_and_unknown_have_no_surface_spelling_in_return_position() {
+        // Plan 296's judgment call: `Void` is spelled by omitting the
+        // `returning` clause entirely (never `returning a void`), and
+        // `Unknown` is an internal placeholder with no author-facing
+        // spelling at all. Both must still be rejected by name, the same
+        // as any other nonexistent type noun.
+        for word in ["void", "unknown"] {
+            let text = format!(
+                "Library n version \"1.0\".\n\
+Location \"./n.so\".\n\
+\n\
+Table of Contents:\n\
+    To f, returning a {}.\n",
+                word
+            );
+            let err = parse_lib_text(&text).unwrap_err();
+            assert!(err.contains("unsupported type"), "got: {}", err);
+            assert!(err.contains(&format!("'{}'", word)), "got: {}", err);
+        }
     }
 
     #[test]
