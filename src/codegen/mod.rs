@@ -88,6 +88,13 @@ pub struct CodeGenerator {
     // SysV stream; a scalar parameter occupies one. Both caller and callee
     // derive the word layout from this same vector so they agree.
     function_param_types: std::collections::HashMap<String, Vec<Type>>,
+    // The full declared return `Type` of each user/imported function, keyed
+    // the same way as `function_return_types` (which only keeps the coarse
+    // `VarType`). Needed so a `VarDecl` initialized from a call to a `.lib`
+    // function returning `list of <type>` can recover the element type and
+    // seed `list_element_types` for the declared variable (plan 296 -
+    // element typing crossing the `.lib` boundary in return position).
+    function_return_full_types: std::collections::HashMap<String, Type>,
     // Return type of the function currently being codegen'd (None at top
     // level). When it is `Type::Value`, the `Return` path must leave the
     // value's runtime tag in r11 for the caller to consume.
@@ -254,38 +261,275 @@ pub struct LibBlock {
     pub funcs: Vec<LibFunction>,
 }
 
-/// Author-facing noun for a parameter type, matching the Vox source vocabulary
-/// the parser accepts in `with a <type> called <name>` (`number`, `text`,
-/// `boolean`, `file`, `buffer`, `list`, `map`, `value`). Returns `None` for
-/// `Unknown` (an untyped `with n` parameter) and types the parser never produces
-/// in a parameter position (`Float`/`decimal`, `Time`, `Timer`, `Void`).
-fn param_type_noun(t: &Type) -> Option<&'static str> {
+/// Author-facing noun for a scalar (non-collection) type — shared by
+/// `type_noun` itself and its `List`-element rendering.
+fn scalar_type_noun(t: &Type) -> Option<&'static str> {
     match t {
         Type::Integer => Some("number"),
+        Type::Float => Some("float"),
         Type::String => Some("text"),
         Type::Boolean => Some("boolean"),
         Type::File => Some("file"),
         Type::Buffer => Some("buffer"),
-        Type::List(_) => Some("list"),
-        Type::Map(_) => Some("map"),
+        Type::Time => Some("time"),
+        Type::Timer => Some("timer"),
         Type::Value => Some("value"),
         _ => None,
     }
 }
 
-/// Author-facing noun for a return type, matching the vocabulary the parser
-/// accepts in `Return a <type>,` (`number`, `text`, `boolean`, `file`,
-/// `value`). Returns `None` for `Void` (no `, returning` clause — the function
-/// returns nothing) and types the return-annotation parser never produces
-/// (`Float`, `Buffer`, `List`, `Map`, `Time`, `Timer`).
-fn return_type_noun(t: &Type) -> Option<&'static str> {
+/// Author-facing noun for a `.lib` parameter or return type — the same
+/// 11-type vocabulary in both positions (plan 296; the vocabulary used to
+/// differ by position — five types in return, eight in parameter — mirroring
+/// a restriction Vox source's own `Return a <type>,` no longer has). Returns
+/// `None` for `Void` (no `, returning` clause: the function returns nothing)
+/// and `Unknown` (an untyped `with n` parameter has no noun to render;
+/// callers fall back to `number`, matching `emit_function_call`'s untyped-
+/// param word count). A `List` renders `list of <elem>` when its element
+/// type is known — inferred by `collect_function_signatures` from the
+/// exporting library's own source, never author-declared (plan 296) — or
+/// bare `list` otherwise, exactly as before.
+fn type_noun(t: &Type) -> Option<String> {
     match t {
-        Type::Integer => Some("number"),
-        Type::String => Some("text"),
-        Type::Boolean => Some("boolean"),
-        Type::File => Some("file"),
-        Type::Value => Some("value"),
+        Type::List(elem) => Some(match scalar_type_noun(elem) {
+            Some(en) => format!("list of {}", en),
+            None => "list".to_string(),
+        }),
+        Type::Map(_) => Some("map".to_string()),
+        _ => scalar_type_noun(t).map(|s| s.to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stage A3: inferring a `.lib`-exported list's element type
+// ---------------------------------------------------------------------------
+//
+// Vox source has no typed-list declaration syntax (plan 296 confirmed this
+// by inspection: every `Token::List` match in the parser hard-codes
+// `Type::List(Box::new(Type::Unknown))`) — the language's own design
+// principle is that the author picks the data and the compiler picks the
+// representation, so element type is inferred from how a list is built
+// (first append/literal), never declared. These functions apply that same
+// "infer, don't declare" rule specifically to a `.lib`-exported function's
+// OWN list parameters and list return, so the `.lib` can record a real
+// element type without any new Vox source syntax: the library author writes
+// nothing new, and an ordinary (non-exported) function's lists are
+// completely unaffected (only `collect_function_signatures`'s `LibFunction`
+// construction calls these — never `function_param_types` /
+// `function_return_types`, which drive this compilation unit's own codegen).
+//
+// This is a narrow, single-pass, non-flow-sensitive scan — deliberately NOT
+// the existing fixed-point `prescan_mixed_lists` machinery, which already
+// walks every function body but never seeds a function's own parameters
+// into its environment (so `Append s to out` with `s` a text parameter is
+// invisible to it; a separate, out-of-scope bug, see plan 296). Reusing or
+// extending that whole-program pre-scan here would carry its blast radius
+// into a change meant to touch only `.lib` emission. Any expression this
+// scan can't classify (a call result, an element read, disagreement between
+// two sites) makes it give up and report `Unknown` — the safe fallback that
+// exactly matches today's behavior (no annotation), never a wrong guess.
+
+/// A scalar expression's `Type`, for the handful of shapes this scan
+/// understands: a literal, or a reference to a parameter whose own
+/// (non-collection) type is already known. Anything else — a function call,
+/// an element/property read, a local built from something this scan didn't
+/// already trace — is `None`, which the caller treats as "give up."
+fn scalar_expr_type(expr: &Expr, param_types: &HashMap<String, Type>) -> Option<Type> {
+    match expr {
+        Expr::StringLit(_) => Some(Type::String),
+        Expr::IntegerLit(_) => Some(Type::Integer),
+        Expr::FloatLit(_) => Some(Type::Float),
+        Expr::BoolLit(_) => Some(Type::Boolean),
+        Expr::Identifier(n) => param_types.get(n).and_then(|t| match t {
+            Type::Integer | Type::Float | Type::String | Type::Boolean | Type::File
+            | Type::Buffer | Type::Time | Type::Timer | Type::Value => Some(t.clone()),
+            _ => None,
+        }),
         _ => None,
+    }
+}
+
+/// Join one observed element type into the running verdict: the first
+/// observation wins, a disagreeing later one (or an unclassifiable
+/// observation, `None`) taints the whole scan to `Unknown` via `conflict`.
+fn note_element_type(found: &mut Option<Type>, conflict: &mut bool, observed: Option<Type>) {
+    match observed {
+        None => *conflict = true,
+        Some(t) => match found {
+            Some(prev) if *prev != t => *conflict = true,
+            Some(_) => {}
+            None => *found = Some(t),
+        },
+    }
+}
+
+/// Recurse into a statement list's control-flow bodies the same shape
+/// `prescan_walk` does, collecting every `Append <expr> to target` and every
+/// `a list called target is [...]` literal that names `target`.
+fn scan_list_element_type(
+    target: &str,
+    param_types: &HashMap<String, Type>,
+    body: &[Statement],
+    found: &mut Option<Type>,
+    conflict: &mut bool,
+) {
+    for stmt in body {
+        match stmt {
+            Statement::ListAppend { list, value } if list == target => {
+                note_element_type(found, conflict, scalar_expr_type(value, param_types));
+            }
+            Statement::VarDecl {
+                name,
+                value: Some(Expr::ListLit { elements }),
+                ..
+            } if name == target => {
+                for e in elements {
+                    note_element_type(found, conflict, scalar_expr_type(e, param_types));
+                }
+            }
+            Statement::If {
+                then_block,
+                else_if_blocks,
+                else_block,
+                ..
+            } => {
+                scan_list_element_type(target, param_types, then_block, found, conflict);
+                for (_, blk) in else_if_blocks {
+                    scan_list_element_type(target, param_types, blk, found, conflict);
+                }
+                if let Some(blk) = else_block {
+                    scan_list_element_type(target, param_types, blk, found, conflict);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => {
+                scan_list_element_type(target, param_types, body, found, conflict);
+            }
+            Statement::OnError { actions } => {
+                scan_list_element_type(target, param_types, actions, found, conflict);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Infer a homogeneous element type for the list built through `target`
+/// (a parameter name, most often — the plan's own verified repro appends a
+/// parameter: `Append s to out.`) within one function's body. `Unknown`
+/// when the scan finds disagreement or nothing at all.
+fn infer_list_element_type(
+    target: &str,
+    param_types: &HashMap<String, Type>,
+    body: &[Statement],
+) -> Type {
+    let mut found: Option<Type> = None;
+    let mut conflict = false;
+    scan_list_element_type(target, param_types, body, &mut found, &mut conflict);
+    if conflict {
+        Type::Unknown
+    } else {
+        found.unwrap_or(Type::Unknown)
+    }
+}
+
+/// Collect every `Return <expr>.`'s value expression, recursing into
+/// control-flow bodies the same way `scan_list_element_type` does — a
+/// function may return from more than one branch.
+fn scan_return_values<'a>(body: &'a [Statement], out: &mut Vec<&'a Expr>) {
+    for stmt in body {
+        match stmt {
+            Statement::Return { value: Some(v), .. } => out.push(v),
+            Statement::If {
+                then_block,
+                else_if_blocks,
+                else_block,
+                ..
+            } => {
+                scan_return_values(then_block, out);
+                for (_, blk) in else_if_blocks {
+                    scan_return_values(blk, out);
+                }
+                if let Some(blk) = else_block {
+                    scan_return_values(blk, out);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => {
+                scan_return_values(body, out);
+            }
+            Statement::OnError { actions } => {
+                scan_return_values(actions, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Infer a homogeneous element type for a function's returned list: every
+/// `Return <list-literal>.` classifies its elements directly; every
+/// `Return <identifier>.` re-runs the parameter/append scan for that name
+/// (covering both `Return out.` for an appended-to parameter and a plain
+/// local list built and returned in the same function, as in the plan's own
+/// bare-return baseline). Anything else (a call result, disagreement across
+/// several `Return`s) gives up, same as `infer_list_element_type`.
+fn infer_return_list_element_type(param_types: &HashMap<String, Type>, body: &[Statement]) -> Type {
+    let mut returns = Vec::new();
+    scan_return_values(body, &mut returns);
+    let mut found: Option<Type> = None;
+    let mut conflict = false;
+    for expr in returns {
+        match expr {
+            Expr::ListLit { elements } => {
+                for e in elements {
+                    note_element_type(&mut found, &mut conflict, scalar_expr_type(e, param_types));
+                }
+            }
+            Expr::Identifier(name) => {
+                let mut sub_found: Option<Type> = None;
+                let mut sub_conflict = false;
+                scan_list_element_type(name, param_types, body, &mut sub_found, &mut sub_conflict);
+                if sub_conflict {
+                    conflict = true;
+                } else {
+                    note_element_type(&mut found, &mut conflict, sub_found);
+                }
+            }
+            _ => conflict = true,
+        }
+    }
+    if conflict {
+        Type::Unknown
+    } else {
+        found.unwrap_or(Type::Unknown)
+    }
+}
+
+/// Map a `.lib`-declared list element `Type` to the `VarType` a for-each
+/// loop variable / print site should use — mirrors the scalar mapping used
+/// for a declared local's own `VarType` elsewhere in this module (`VarDecl`,
+/// function parameters). `Value` maps to `Mixed`: a `list of value`
+/// element genuinely carries its own runtime tag, so this routes it through
+/// the SAME per-iteration tag-dispatch a heterogeneous list already uses.
+/// `File`/`Time`/`Timer` fall through to `Unknown`, which already prints an
+/// opaque handle as a plain integer — correct for all three. `list of
+/// <type>` only ever names one of these nine scalar nouns (`take_list_type`
+/// on the `.lib` side), so `List`/`Map` never reach here in practice.
+fn list_element_vartype(t: &Type) -> VarType {
+    match t {
+        Type::Integer => VarType::Integer,
+        Type::Float => VarType::Float,
+        Type::String => VarType::String,
+        Type::Boolean => VarType::Boolean,
+        // Buffer content is a NUL-terminated pointer, printed exactly like
+        // text (`type_to_tag`'s existing `VarType::String | VarType::Buffer
+        // => TAG_STRING` rule).
+        Type::Buffer => VarType::String,
+        Type::Value => VarType::Mixed,
+        _ => VarType::Unknown,
     }
 }
 
@@ -345,14 +589,14 @@ pub fn render_lib_file(blocks: &[LibBlock], so_filename: &str) -> String {
                         // `emit_function_call`'s `word_count`). Library authors
                         // should type their exports; see the A3 report for the
                         // caveat.
-                        let noun = param_type_noun(ptype).unwrap_or("number");
+                        let noun = type_noun(ptype).unwrap_or_else(|| "number".to_string());
                         format!("a {} called {}", noun, format_lib_name(pname))
                     })
                     .collect::<Vec<_>>()
                     .join(" and ");
                 out.push_str(&joined);
             }
-            if let Some(rnoun) = return_type_noun(&func.return_type) {
+            if let Some(rnoun) = type_noun(&func.return_type) {
                 out.push_str(&format!(", returning a {}", rnoun));
             }
             out.push_str(".\n");
@@ -504,6 +748,7 @@ impl CodeGenerator {
             uses_strings: false,
             function_return_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
+            function_return_full_types: std::collections::HashMap::new(),
             current_function_return_type: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
@@ -943,6 +1188,25 @@ impl CodeGenerator {
         // the `call` below emits.
         let label = self.resolved_call_label(name);
         let param_types = self.function_param_types.get(&label).cloned().unwrap_or_default();
+        // Plan 296: a `.lib` parameter declared `list of <type>` carries a
+        // real element type (`Type::List(Box<non-Unknown>)`) rather than the
+        // usual `Unknown`. When the argument is a plain local variable,
+        // record that element type for it here — the same table
+        // (`list_element_types`) a local `Append <literal> to x` already
+        // populates, so every later read of that variable (a `for each`
+        // print, in particular) sees a real type instead of defaulting to
+        // "don't know." This is additive only: it fires exclusively for a
+        // `.lib` import whose ToC entry spelled `list of <type>`; a bare
+        // `list` parameter (every `.lib` ever emitted before this plan)
+        // still resolves to `Type::List(Unknown)` here and changes nothing.
+        for (i, arg) in args.iter().enumerate() {
+            if let (Some(Type::List(inner)), Expr::Identifier(argname)) = (param_types.get(i), arg) {
+                if !matches!(**inner, Type::Unknown) {
+                    self.list_element_types
+                        .insert(argname.clone(), list_element_vartype(inner));
+                }
+            }
+        }
         let is_value_param = |i: usize| -> bool {
             param_types.get(i) == Some(&Type::Value)
         };
@@ -1185,6 +1449,7 @@ impl CodeGenerator {
     fn collect_function_signatures(&mut self, program: &Program) {
         self.function_return_types.clear();
         self.function_param_types.clear();
+        self.function_return_full_types.clear();
         // Track the library identity as we walk so each function is keyed by
         // its OWN `<lib>_<ver>_<func>` label, not the authored name. This is
         // what scopes the signature tables: two libraries in one .so each
@@ -1208,7 +1473,7 @@ impl CodeGenerator {
                 Statement::LibraryDecl { name, version } => {
                     current_lib = Some((name.clone(), version.clone()));
                 }
-                Statement::FunctionDef { name, params, return_type, .. } => {
+                Statement::FunctionDef { name, params, return_type, body, .. } => {
                     let key = make_function_label(
                         self.shared_lib_mode,
                         current_lib.as_ref(),
@@ -1228,6 +1493,7 @@ impl CodeGenerator {
                         _ => VarType::Unknown,
                     };
                     self.function_return_types.insert(key.clone(), vt);
+                    self.function_return_full_types.insert(key.clone(), return_type.clone());
                     self.function_param_types
                         .insert(key, params.iter().map(|(_, t)| t.clone()).collect());
 
@@ -1247,10 +1513,38 @@ impl CodeGenerator {
                                     i
                                 }
                             };
+                            // The `.lib` records a real list element type when
+                            // one can be inferred from this function's OWN
+                            // body (plan 296) — the exported interface only;
+                            // `function_param_types`/`function_return_types`
+                            // above (this compilation unit's own codegen)
+                            // keep the plain declared type unchanged.
+                            let param_env: HashMap<String, Type> =
+                                params.iter().cloned().collect();
+                            let lib_params: Vec<(String, Type)> = params
+                                .iter()
+                                .map(|(pname, ptype)| match ptype {
+                                    Type::List(inner) if matches!(**inner, Type::Unknown) => (
+                                        pname.clone(),
+                                        Type::List(Box::new(infer_list_element_type(
+                                            pname, &param_env, body,
+                                        ))),
+                                    ),
+                                    _ => (pname.clone(), ptype.clone()),
+                                })
+                                .collect();
+                            let lib_return_type = match return_type {
+                                Type::List(inner) if matches!(**inner, Type::Unknown) => {
+                                    Type::List(Box::new(infer_return_list_element_type(
+                                        &param_env, body,
+                                    )))
+                                }
+                                other => other.clone(),
+                            };
                             lib_blocks[idx].funcs.push(LibFunction {
                                 name: name.clone(),
-                                params: params.clone(),
-                                return_type: return_type.clone(),
+                                params: lib_params,
+                                return_type: lib_return_type,
                             });
                         }
                     }
@@ -1278,6 +1572,8 @@ impl CodeGenerator {
                 _ => VarType::Unknown,
             };
             self.function_return_types.insert(imp.mangled.clone(), vt);
+            self.function_return_full_types
+                .insert(imp.mangled.clone(), imp.return_type.clone());
             self.function_param_types.insert(
                 imp.mangled.clone(),
                 imp.params.iter().map(|(_, t)| t.clone()).collect(),
@@ -2764,6 +3060,23 @@ impl CodeGenerator {
                         Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
                     ) {
                         self.variable_types.insert(name.clone(), VarType::String);
+                    }
+                    // A call to a `.lib` function declared `returning a
+                    // list of <type>` carries a real element type (plan
+                    // 296) — the symmetric case to `emit_function_call`'s
+                    // parameter-side propagation above. A call to anything
+                    // else (a local function, an unannotated `.lib`
+                    // return, a runtime helper) resolves to
+                    // `Type::List(Unknown)` here, so this is a no-op for
+                    // it, exactly today's behavior.
+                    else if let Expr::FunctionCall { name: fname, .. } = val {
+                        let label = self.resolved_call_label(fname);
+                        if let Some(Type::List(inner)) = self.function_return_full_types.get(&label) {
+                            if !matches!(**inner, Type::Unknown) {
+                                self.list_element_types
+                                    .insert(name.clone(), list_element_vartype(inner));
+                            }
+                        }
                     }
                     // Initializing from another variable: inherit its type
                     // (and element type, for lists) unless the declaration
@@ -7440,6 +7753,7 @@ mod tests {
     //! so a regression in `generate_print` is caught without assembling.
     use crate::analyzer::Analyzer;
     use crate::lexer::Lexer;
+    use crate::parser::ast::Type;
     use crate::parser::Parser;
     use super::{CodeGenerator, LibBlock};
 
@@ -8963,5 +9277,166 @@ To run.\n  Print double of 21.\n";
         );
         let quoted = parse_snippet("a number called 'nothing' is 1.");
         assert!(quoted.is_ok(), "quoted 'nothing' is a legal non-canonical name; only the bare form is reserved");
+    }
+
+    // -----------------------------------------------------------------
+    // Plan 296 — full type-vocabulary parity, both `.lib` positions
+    // -----------------------------------------------------------------
+    //
+    // Regression matrix: every one of the 11 expressible types (`Type::Void`
+    // and `Type::Unknown` excluded by design — see
+    // docs/plans/296_lib_collection_types.md) must parse and emit
+    // identically as a `.lib` PARAMETER and a RETURN type. Each case goes
+    // through the real pipeline — source -> `collect_function_signatures`
+    // -> `render_lib_file` -> `parse_lib_text` — so a vocabulary drift
+    // between the emitter (`type_noun`) and the parser (`take_type`) fails
+    // here, not just a spot check of one side.
+    #[test]
+    fn plan_296_full_type_vocabulary_round_trips_both_positions() {
+        let cases: &[(&str, Type)] = &[
+            ("number", Type::Integer),
+            ("float", Type::Float),
+            ("text", Type::String),
+            ("boolean", Type::Boolean),
+            ("list", Type::List(Box::new(Type::Unknown))),
+            ("map", Type::Map(Box::new(Type::Unknown))),
+            ("buffer", Type::Buffer),
+            ("file", Type::File),
+            ("time", Type::Time),
+            ("timer", Type::Timer),
+            ("value", Type::Value),
+        ];
+        for (noun, expected) in cases {
+            let src = format!(
+                "Library matrix version \"1.0\".\nTo f with a {} called x.\n  Return a {}, x.\n",
+                noun, noun
+            );
+            let (blocks, _exports) = compile_shared_with_libs(&src);
+            assert_eq!(blocks.len(), 1, "case {}: one Library block", noun);
+            assert_eq!(blocks[0].funcs.len(), 1, "case {}: one function", noun);
+            let f = &blocks[0].funcs[0];
+            assert_eq!(f.params[0].1, *expected, "case {}: emitted parameter type", noun);
+            assert_eq!(f.return_type, *expected, "case {}: emitted return type", noun);
+
+            let emitted = super::render_lib_file(&blocks, "libmatrix.so");
+            let reparsed = crate::lib_file::parse_lib_text(&emitted).unwrap_or_else(|e| {
+                panic!("case {}: emitted .lib failed to reparse: {}\n{}", noun, e, emitted)
+            });
+            let rf = &reparsed[0].funcs[0];
+            assert_eq!(rf.params[0].1, *expected, "case {}: round-tripped parameter type; emitted:\n{}", noun, emitted);
+            assert_eq!(rf.return_type, *expected, "case {}: round-tripped return type; emitted:\n{}", noun, emitted);
+        }
+    }
+
+    // List element typing (plan 296, "Element typing crosses the .lib
+    // boundary"): every scalar noun `take_list_type` accepts as a list
+    // element must be correctly INFERRED from a single `Append <expr> to
+    // <param>` site where `<expr>` references a same-named-type parameter
+    // (the plan's own verified repro appends a parameter: `Append s to
+    // out.`), emitted as `list of <noun>`, and round-trip back through the
+    // parser to the same `Type`.
+    #[test]
+    fn plan_296_list_element_type_matrix_parameter() {
+        let cases: &[(&str, Type)] = &[
+            ("number", Type::Integer),
+            ("float", Type::Float),
+            ("text", Type::String),
+            ("boolean", Type::Boolean),
+            ("file", Type::File),
+            ("buffer", Type::Buffer),
+            ("time", Type::Time),
+            ("timer", Type::Timer),
+            ("value", Type::Value),
+        ];
+        for (noun, expected) in cases {
+            let src = format!(
+                "Library elemkit version \"1.0\".\nTo f with a {} called s and a list called out.\n  Append s to out.\n",
+                noun
+            );
+            let (blocks, _exports) = compile_shared_with_libs(&src);
+            let f = &blocks[0].funcs[0];
+            let want = Type::List(Box::new(expected.clone()));
+            assert_eq!(
+                f.params[1].1, want,
+                "case {}: inferred parameter element type; got params {:?}", noun, f.params
+            );
+
+            let emitted = super::render_lib_file(&blocks, "libelem.so");
+            assert!(
+                emitted.contains(&format!("a list of {} called out", noun)),
+                "case {}: emitted .lib must render 'list of {}'; got:\n{}", noun, noun, emitted
+            );
+            let reparsed = crate::lib_file::parse_lib_text(&emitted).expect("reparse emitted .lib");
+            assert_eq!(
+                reparsed[0].funcs[0].params[1].1, want,
+                "case {}: round-tripped parameter element type", noun
+            );
+        }
+    }
+
+    // Same matrix for a RETURNED list: the element type is inferred from a
+    // local list variable built with `Append` inside the function and
+    // returned with a declared `Return a list, <name>.` (bare, undeclared
+    // `Return <name>.` records no return type at all — see
+    // `lib_file_return_after_other_statement_carries_return_type` and
+    // LANGUAGE.md's ".lib" section: an entry with no `returning` clause
+    // means the function returns nothing, so a declared return type is the
+    // precondition for the `.lib` to say anything about the return at all).
+    #[test]
+    fn plan_296_list_element_type_matrix_return() {
+        let cases: &[(&str, Type)] = &[
+            ("number", Type::Integer),
+            ("float", Type::Float),
+            ("text", Type::String),
+            ("boolean", Type::Boolean),
+            ("file", Type::File),
+            ("buffer", Type::Buffer),
+            ("time", Type::Time),
+            ("timer", Type::Timer),
+            ("value", Type::Value),
+        ];
+        for (noun, expected) in cases {
+            let src = format!(
+                "Library elemretkit version \"1.0\".\nTo f with a {} called s.\n  a list called out is [].\n  Append s to out.\n  Return a list, out.\n",
+                noun
+            );
+            let (blocks, _exports) = compile_shared_with_libs(&src);
+            let f = &blocks[0].funcs[0];
+            let want = Type::List(Box::new(expected.clone()));
+            assert_eq!(
+                f.return_type, want,
+                "case {}: inferred return element type; got {:?}", noun, f.return_type
+            );
+
+            let emitted = super::render_lib_file(&blocks, "libelemret.so");
+            assert!(
+                emitted.contains(&format!(", returning a list of {}", noun)),
+                "case {}: emitted .lib must render 'returning a list of {}'; got:\n{}", noun, noun, emitted
+            );
+            let reparsed = crate::lib_file::parse_lib_text(&emitted).expect("reparse emitted .lib");
+            assert_eq!(
+                reparsed[0].funcs[0].return_type, want,
+                "case {}: round-tripped return element type", noun
+            );
+        }
+    }
+
+    // A list that disagrees on element type (or has none at all) must stay
+    // untyped, exactly as before this plan — a wrong guess would be worse
+    // than no annotation.
+    #[test]
+    fn plan_296_list_element_type_stays_unknown_on_disagreement_or_no_evidence() {
+        let disagreeing = "\
+Library mixedkit version \"1.0\".\n\
+To f with a text called s and a number called n and a list called out.\n  \
+Append s to out.\n  Append n to out.\n";
+        let (blocks, _) = compile_shared_with_libs(disagreeing);
+        assert_eq!(blocks[0].funcs[0].params[2].1, Type::List(Box::new(Type::Unknown)));
+
+        let no_evidence = "\
+Library emptykit version \"1.0\".\n\
+To f with a list called out.\n  Print \"noop\".\n";
+        let (blocks, _) = compile_shared_with_libs(no_evidence);
+        assert_eq!(blocks[0].funcs[0].params[0].1, Type::List(Box::new(Type::Unknown)));
     }
 }
