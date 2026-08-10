@@ -46,7 +46,7 @@ section .text
                                      ; touching rdi below - the caller may
                                      ; pass rdi itself as %1)
     mov rdx, [rsi + 8]              ; length from struct offset 8
-    add rsi, 24                     ; data starts at offset 24
+    add rsi, BUF_DATA               ; data starts at BUF_DATA
     mov rax, 1                      ; sys_write
     mov rdi, 1                      ; fd = stdout
     syscall
