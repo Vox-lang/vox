@@ -1,0 +1,44 @@
+(A1 — global map growth inside a function must keep the reallocated map
+ pointer in the global BSS mirror so a later direct use sees the new keys.)
+
+a map called m is {}.
+
+To 'grow'.
+  Set m's "a1" to 1.
+  Set m's "a2" to 2.
+  Set m's "a3" to 3.
+  Set m's "a4" to 4.
+  Set m's "a5" to 5.
+  Set m's "a6" to 6.
+  Set m's "a7" to 7.
+  Set m's "a8" to 8.
+  Set m's "a9" to 9.
+  Set m's "a10" to 10.
+  Set m's "a11" to 11.
+  Set m's "a12" to 12.
+  Set m's "a13" to 13.
+  Set m's "a14" to 14.
+  Set m's "a15" to 15.
+  Set m's "a16" to 16.
+  Set m's "a17" to 17.
+  Set m's "a18" to 18.
+  Set m's "a19" to 19.
+  Set m's "a20" to 20.
+  Set m's "a21" to 21.
+  Set m's "a22" to 22.
+  Set m's "a23" to 23.
+  Set m's "a24" to 24.
+  Set m's "a25" to 25.
+  Set m's "a26" to 26.
+  Set m's "a27" to 27.
+  Set m's "a28" to 28.
+  Set m's "a29" to 29.
+  Set m's "a30" to 30.
+
+
+To 'check'.
+  If m's "a30" is equal to 30, print "ok". Otherwise, print "missing".
+
+
+'grow'.
+'check'.

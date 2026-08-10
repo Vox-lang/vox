@@ -1,0 +1,16 @@
+(A1 — global dynamic buffer byte-set growth inside a function must keep
+ the reallocated pointer in the global BSS mirror so a later direct use
+ of the variable sees the grown capacity.)
+
+a buffer called b is "x".
+
+To 'grow'.
+  Set byte 10000 of b to 'A'.
+
+
+To 'check'.
+  If b's capacity is greater than 4096, print "grown". Otherwise, print "not grown".
+
+
+'grow'.
+'check'.

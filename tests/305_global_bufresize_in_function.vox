@@ -1,0 +1,15 @@
+(A1 — resizing a global buffer inside a function must keep the reallocated
+ pointer in the global BSS mirror so a later direct use sees the new capacity.)
+
+a buffer called buf is 4 bytes in size.
+
+To 'resizeit'.
+  Resize buf to 256 bytes.
+
+
+To 'check'.
+  If buf's capacity is equal to 256, print "ok". Otherwise, print "bad".
+
+
+'resizeit'.
+'check'.

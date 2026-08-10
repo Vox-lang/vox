@@ -1,0 +1,18 @@
+(A1 — global list growth inside a function must keep the reallocated list
+ pointer in the global BSS mirror so a later direct use sees the new length.)
+
+a list called items is [].
+
+To 'grow'.
+  a number called i is 1.
+  While i is less than or equal to 100,
+    append i to items,
+    increment i.
+
+
+To 'check'.
+  If items's length is equal to 100, print "ok". Otherwise, print "bad".
+
+
+'grow'.
+'check'.

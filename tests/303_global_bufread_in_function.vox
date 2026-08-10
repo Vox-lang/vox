@@ -1,0 +1,25 @@
+(A3 — reading from a file into a global buffer inside a function must not be
+ silently skipped; the new pointer and contents must be visible afterwards.)
+
+open a file for writing called f at "./test_303_input.txt".
+Write "hello global read" to f.
+Close f.
+
+open a file for reading called src at "./test_303_input.txt".
+a buffer called buf is "".
+Resize buf to 4 bytes.
+
+To 'readit'.
+  Read from src into buf.
+
+
+To 'check'.
+  If buf's length is greater than 0, print "read ok".
+  Print buf.
+
+
+'readit'.
+'check'.
+
+Close src.
+Delete the file "./test_303_input.txt".

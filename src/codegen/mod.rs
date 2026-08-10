@@ -831,6 +831,30 @@ impl CodeGenerator {
         }
     }
 
+    /// Store a (possibly reallocated) pointer back to a named variable,
+    /// resolving the name through the local function frame first and then
+    /// through the global BSS mirror. At top level, stack variables are also
+    /// mirrored to their global label so branch and function bodies see the
+    /// updated value.
+    fn emit_store_back_after_realloc(&mut self, name: &str, new_ptr_reg: &str) -> bool {
+        if let Some(offset) = self.get_var(name) {
+            self.emit_indent(&format!(
+                "mov [rbp-{}], {}  ; store new pointer for {}",
+                offset, new_ptr_reg, name
+            ));
+            self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+            true
+        } else if let Some(label) = self.global_var_label(name).cloned() {
+            self.emit_indent(&format!(
+                "mov [rel {}], {}  ; store new pointer for {}",
+                label, new_ptr_reg, name
+            ));
+            true
+        } else {
+            false
+        }
+    }
+
     fn emit_clear_buffer_slot(&mut self, offset: i64) {
         self.uses_buffers = true;
         self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
@@ -3986,9 +4010,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rsi, rcx  ; required capacity = index");
                 self.emit_indent("call _grow_buffer");
                 self.emit_indent("mov rbx, rax  ; new buffer pointer");
-                if let Some(offset) = self.get_var(buffer) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; update buffer pointer", offset));
-                }
+                self.emit_store_back_after_realloc(buffer, "rax");
                 self.emit_indent("pop rcx  ; restore 1-indexed position");
                 self.emit_indent(&format!("jmp {}  ; grown buffer now has space", ok_label));
 
@@ -4129,11 +4151,7 @@ impl CodeGenerator {
                 self.emit_indent("pop rdi  ; map pointer");
                 self.emit_indent("call _map_insert");
                 // Store the (possibly reallocated) map pointer back.
-                if let Some(offset) = self.get_var(map) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new map ptr", offset));
-                } else if let Some(label) = self.global_var_label(map).cloned() {
-                    self.emit_indent(&format!("mov [rel {}], rax  ; store new map ptr", label));
-                }
+                self.emit_store_back_after_realloc(map, "rax");
             }
 
             Statement::ListAppend { list, value } => {
@@ -4264,11 +4282,7 @@ impl CodeGenerator {
                     self.emit_indent("call _list_append");
 
                     // Store potentially new list pointer back to wherever it came from
-                    if let Some(offset) = self.get_var(list) {
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
-                    } else if let Some(label) = self.global_var_label(list).cloned() {
-                        self.emit_indent(&format!("mov [rel {}], rax  ; store new list ptr", label));
-                    }
+                    self.emit_store_back_after_realloc(list, "rax");
                 }
             }
 
@@ -4410,30 +4424,30 @@ impl CodeGenerator {
             }
             
             Statement::FileRead { source, buffer } => {
-                // Get source fd
                 let source_fd = if source == "stdin" {
                     "0".to_string()  // STDIN
                 } else if let Some(offset) = self.get_var(source) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(source).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
-                
-                // Use dynamic read that auto-grows buffer (only if fd is valid)
-                if let Some(buf_offset) = self.get_var(buffer) {
-                    let skip_label = self.new_label("skip_fd");
-                    self.emit_indent(&format!("mov rdi, {}", source_fd));
-                    // Skip read if fd is invalid (negative)
-                    self.emit_indent("test rdi, rdi");
-                    self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
-                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+
+                let skip_label = self.new_label("skip_fd");
+                self.emit_indent(&format!("mov rdi, {}", source_fd));
+                // Skip read if fd is invalid (negative)
+                self.emit_indent("test rdi, rdi");
+                self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
+                if self.emit_load_named_var_addr(buffer) {
+                    self.emit_indent("mov rsi, rax  ; buffer struct");
                     // Reset buffer length before reading (read replaces, not appends)
                     self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_into_buffer  ; auto-grows if needed");
                     // Update buffer pointer (may have changed if grown)
-                    self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
-                    self.emit(&format!("{}:", skip_label));
+                    self.emit_store_back_after_realloc(buffer, "rsi");
                 }
+                self.emit(&format!("{}:", skip_label));
             }
 
             Statement::FileReadLine { source, buffer } => {
@@ -4441,28 +4455,30 @@ impl CodeGenerator {
                     "0".to_string()
                 } else if let Some(offset) = self.get_var(source) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(source).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
 
-                if let Some(buf_offset) = self.get_var(buffer) {
-                    let skip_label = self.new_label("skip_fd");
-                    let done_label = self.new_label("readline_done");
-                    self.emit_indent(&format!("mov rdi, {}", source_fd));
-                    self.emit_indent("test rdi, rdi");
-                    self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
-                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+                let skip_label = self.new_label("skip_fd");
+                let done_label = self.new_label("readline_done");
+                self.emit_indent(&format!("mov rdi, {}", source_fd));
+                self.emit_indent("test rdi, rdi");
+                self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
+                if self.emit_load_named_var_addr(buffer) {
+                    self.emit_indent("mov rsi, rax  ; buffer struct");
                     self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_line_into_buffer");
                     // _read_line_into_buffer already sets _last_error (1=EOF, 2=read error)
                     // Update buffer pointer (may have changed if grown)
-                    self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
-                    self.emit_indent(&format!("jmp {}", done_label));
-                    self.emit(&format!("{}:", skip_label));
-                    // Invalid fd is an error - make On error fire
-                    self.emit_indent("mov qword [rel _last_error], 1");
-                    self.emit(&format!("{}:", done_label));
+                    self.emit_store_back_after_realloc(buffer, "rsi");
                 }
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", skip_label));
+                // Invalid fd is an error - make On error fire
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit(&format!("{}:", done_label));
             }
 
             Statement::FileSeekLine { file, line } => {
@@ -4986,11 +5002,7 @@ impl CodeGenerator {
                     self.generate_expr(new_size);
                     self.emit_indent("mov rsi, rax  ; new size");
                     self.emit_indent("call _realloc_buffer");
-                    if let Some(offset) = self.get_var(name) {
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; updated buffer pointer", offset));
-                    } else if let Some(label) = self.global_var_label(name).cloned() {
-                        self.emit_indent(&format!("mov [rel {}], rax  ; updated buffer pointer", label));
-                    }
+                    self.emit_store_back_after_realloc(name, "rax");
                 }
             }
             
