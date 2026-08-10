@@ -911,6 +911,14 @@ _grow_buffer:
     
     ; Calculate new capacity (double until >= required)
     mov rax, [rdi + BUF_CAPACITY]
+    ; A capacity of 0 never doubles (0 << 1 == 0) and would spin here
+    ; forever - e.g. a dynamic buffer resized down to 0. Floor it at 1
+    ; so the loop terminates and yields a capacity > 0 instead of
+    ; looping or being left at 0 (which would SIGSEGV on the copy).
+    test rax, rax
+    jnz .cap_floor_ok
+    mov rax, 1
+.cap_floor_ok:
 .double_loop:
     shl rax, 1              ; double it
     cmp rax, r13
@@ -931,9 +939,10 @@ _grow_buffer:
     xor r9, r9
     syscall
     
-    cmp rax, -1
-    je .failed_pop_r14
-    
+    ; Check for error (raw mmap returns -errno in [-4095,-1])
+    cmp rax, -4096
+    ja .failed_pop_r14
+
     mov rbx, rax            ; new buffer
     
     ; Initialize new header (use r14 which survived syscall)
@@ -978,6 +987,7 @@ _grow_buffer:
 .failed_pop_r14:
     pop r14                 ; balance the push
 .failed:
+    mov qword [rel _last_error], 1
     mov rax, r12            ; return old buffer on failure
     jmp .done_no_pop_r14
     
@@ -1710,7 +1720,14 @@ _realloc_buffer:
     mov rdi, r13
     call _alloc_buffer_sized
     mov rbx, rax            ; new buffer pointer
-    
+
+    ; _alloc_buffer_sized returns 0 on mmap failure. A null new buffer
+    ; would make the rep movsb below write through BUF_DATA (address 24)
+    ; and SIGSEGV. Bail out leaving the original buffer intact and
+    ; report a generic error, rather than copying into a null block.
+    test rbx, rbx
+    jz .realloc_failed
+
     ; Calculate bytes to copy: min(old_length, new_capacity)
     mov rcx, r14            ; old length
     cmp rcx, r13
@@ -1753,7 +1770,18 @@ _realloc_buffer:
     
     ; Return new buffer pointer
     mov rax, rbx
-    
+
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+.realloc_failed:
+    ; Allocation failed: report a generic error and return the original
+    ; buffer unchanged (still tracked, not freed).
+    mov qword [rel _last_error], 1
+    mov rax, r12            ; return original buffer, intact
     pop r14
     pop r13
     pop r12

@@ -1,0 +1,7 @@
+(Resizing a buffer to an impossible size must fail cleanly, not SIGSEGV)
+
+a buffer called b.
+Append "original" to b.
+Resize b to 200000000000000 bytes.
+On error Print "resize failed".
+Print b.
