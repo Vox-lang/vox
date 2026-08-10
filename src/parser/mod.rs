@@ -1177,14 +1177,17 @@ impl Parser {
             self.advance();
             self.skip_noise();
 
-            // Handle "but if" or just "if"
+            // Only `but if` (with an optional preceding comma) is the conditional
+            // continuation sugar. A bare `, if ... then, ...` is a nested `If`
+            // statement as the next item in an enclosing comma-separated body,
+            // not a suffix on `base`.
             if *self.current() == Token::But {
                 self.advance();
                 self.skip_noise();
-            }
 
-            if *self.current() == Token::If {
-                return self.parse_conditional_suffix(base);
+                if *self.current() == Token::If {
+                    return self.parse_conditional_suffix(base);
+                }
             }
 
             // Not a conditional continuation; restore parser position so
@@ -1864,16 +1867,16 @@ impl Parser {
         let mut else_if_blocks = Vec::new();
         let mut else_block = None;
         
-        self.skip_all_whitespace();
+        self.skip_noise();
         self.consume_period_before_else_chain();
-        
+
         while matches!(self.current(), Token::But | Token::Else | Token::Otherwise) {
             self.advance();
-            self.skip_all_whitespace();
-            
+            self.skip_noise();
+
             if *self.current() == Token::If || *self.current() == Token::When {
                 self.advance();
-                self.skip_all_whitespace();
+                self.skip_noise();
                 let cond = self.parse_condition()?;
                 self.skip_noise();
                 self.expect(&Token::Then);
@@ -1881,12 +1884,14 @@ impl Parser {
                 self.skip_noise();
                 let block = self.parse_block()?;
                 else_if_blocks.push((cond, block));
-                self.skip_all_whitespace();
+                self.skip_noise();
                 self.consume_period_before_else_chain();
             } else {
                 self.expect(&Token::Comma);
                 self.skip_noise();
-                // Else block consumes rest of sentence (comma-separated actions)
+                // Else block consumes the rest of the sentence (comma-separated
+                // actions, ending at the first top-level period). A nested `If`
+                // that owns its own trailing period is parsed as a single action.
                 let block = self.parse_sentence_body()?;
                 else_block = Some(block);
                 break;
@@ -4456,51 +4461,72 @@ impl Parser {
         })
     }
 
+    /// Parse the body of an `If`/`otherwise if` branch.
+    ///
+    /// A branch body is a comma-separated sequence of statements. Each statement
+    /// may itself be a nested construct (e.g. another `If`) that owns its own
+    /// trailing period. The body ends when we reach a top-level else-chain
+    /// keyword (`But`, `Else`, `Otherwise`), `EOF`, or a paragraph break. A
+    /// trailing comma immediately before the boundary is allowed.
     fn parse_block(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
-        let stmt = self.parse_statement()?;
-        statements.push(stmt);
-        let mut last_stmt_was_on_error = matches!(statements.last(), Some(Statement::OnError { .. }));
-        
+
         loop {
-            let continue_with_comma = matches!(self.current(), Token::Comma)
-                && !matches!(
-                    self.peek(1),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF
-                );
-
-            let continue_after_on_error = last_stmt_was_on_error
-                && !matches!(
-                    self.current(),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak
-                );
-
-            if !continue_with_comma && !continue_after_on_error {
+            // The next token starts the enclosing `If`'s else-chain, or we
+            // have reached the end of the input.
+            if matches!(
+                self.current(),
+                Token::But | Token::Else | Token::Otherwise | Token::EOF
+            ) {
                 break;
             }
 
-            if continue_with_comma {
-                self.advance();
-                self.skip_noise();
-                while matches!(self.current(), Token::ParagraphBreak) {
-                    self.advance();
-                    self.skip_noise();
-                }
+            let stmt = self.parse_statement()?;
+            let is_on_error = matches!(stmt, Statement::OnError { .. });
+            statements.push(stmt);
 
+            self.skip_noise();
+
+            // `On error` can chain directly into the next action without an
+            // intervening comma or period.
+            if is_on_error {
                 if matches!(
                     self.current(),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period
+                    Token::But
+                        | Token::Else
+                        | Token::Otherwise
+                        | Token::EOF
+                        | Token::Period
+                        | Token::ParagraphBreak
                 ) {
                     break;
                 }
+                continue;
             }
 
-            let stmt = self.parse_statement()?;
-            last_stmt_was_on_error = matches!(stmt, Statement::OnError { .. });
-            statements.push(stmt);
+            // A comma continues the body, a period ends the current statement
+            // and therefore the body (the period is left for the caller so
+            // standalone `if` sentences can own their own terminator).
+            if *self.current() == Token::Comma {
+                self.advance();
+                self.skip_all_whitespace();
+
+                // Trailing comma right before the else-chain boundary.
+                if matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                ) {
+                    break;
+                }
+
+                continue;
+            }
+
+            // Period, paragraph break, EOF, or an unexpected token ends the
+            // body. Leave the terminator for the caller.
+            break;
         }
-        
+
         Ok(statements)
     }
     
@@ -4509,34 +4535,50 @@ impl Parser {
     /// - on error <action>, <action>, <action>.
     /// - while <cond>, <action>, <action>.
     /// - for each X, <action>, <action>.
+    ///
+    /// The loop also stops at the start of an enclosing `If` else-chain so a
+    /// trailing comma before `But`/`Else`/`Otherwise` does not swallow the
+    /// boundary token.
     fn parse_sentence_body(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
+
         loop {
-            // Stop at end of sentence markers
-            if matches!(self.current(), Token::Period | Token::EOF | Token::ParagraphBreak) {
+            // Stop at end of sentence markers or at an enclosing if-chain.
+            if matches!(
+                self.current(),
+                Token::Period | Token::EOF | Token::ParagraphBreak
+                    | Token::But | Token::Else | Token::Otherwise
+            ) {
                 break;
             }
-            
+
             let stmt = self.parse_statement()?;
             statements.push(stmt);
             self.skip_noise();
-            
-            // Comma continues to next action, period ends
+
+            // Comma continues to next action, period ends. A comma immediately
+            // followed by an if-chain boundary ends the sentence here.
             if *self.current() == Token::Comma {
                 self.advance();
                 self.skip_noise();
+
+                if matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                ) {
+                    break;
+                }
             } else {
                 break;
             }
         }
-        
+
         // Consume the period if present
         if *self.current() == Token::Period {
             self.advance();
             self.skip_noise();
         }
-        
+
         Ok(statements)
     }
     

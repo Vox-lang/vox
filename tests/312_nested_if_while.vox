@@ -1,0 +1,6 @@
+Set i to 0.
+While i is less than 3,
+    Print i,
+    If i is equal to 1 then,
+        Print "one".
+    Set i to i add 1.

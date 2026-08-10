@@ -1,0 +1,8 @@
+To foo with a number called x.
+    If x is greater than 5 then,
+        Print "big",
+        If x is greater than 10 then,
+            Print "huge".
+
+foo with 7.
+foo with 12.

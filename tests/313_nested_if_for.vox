@@ -1,0 +1,5 @@
+For each number from 1 to 3,
+    Print number,
+    If number is equal to 2 then,
+        Print "two".
+    Print "after".

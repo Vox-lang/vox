@@ -1,0 +1,8 @@
+Set x to 0.
+Set y to 1.
+If x is greater than 0 then,
+    Print "outer then".
+Otherwise,
+    Print "outer otherwise",
+    If y is greater than 0 then,
+        Print "inner otherwise".
