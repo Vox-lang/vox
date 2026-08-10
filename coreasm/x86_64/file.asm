@@ -292,7 +292,7 @@
     mov rdi, %1                     ; fd
     mov rsi, %2                     ; buffer struct pointer
     mov rdx, [rsi + 8]              ; length from struct offset 8
-    add rsi, 24                     ; data starts at offset 24
+    add rsi, BUF_DATA               ; data starts at BUF_DATA
     syscall
     
     pop rdi

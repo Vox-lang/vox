@@ -141,6 +141,14 @@ const TAG_LIST: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_NOTHING: u8 = 6;
 
+// Header data offsets. These are numerically equal today (all three headers
+// are 24 bytes), but each names a distinct struct so the offsets do not silently
+// diverge when one header gains a field.
+const BUF_DATA_OFFSET: i64 = 24;
+const LIST_DATA_OFFSET: i64 = 24;
+#[allow(dead_code)]
+const MAP_HEADER_SIZE: i64 = 24;
+
 /// Turn an author-written name into an assembly symbol, per the project
 /// standard in `docs/SYMBOL_MANGLING.md`.
 ///
@@ -3910,11 +3918,17 @@ impl CodeGenerator {
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rax  ; + index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                     self.emit_indent(&format!("mov [rbp-{}], r11b  ; stash element's type tag", slot));
                 }
                 self.emit_indent("shl rax, 3  ; index * 8");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rbx, rax");
                 self.emit_indent("mov rax, [rbx]  ; get element");
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
@@ -4034,7 +4048,7 @@ impl CodeGenerator {
                 self.emit_indent("mov [rbx + 8], rcx  ; extend length to include this byte");
                 self.emit(&format!("{}:", noupd_label));
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent("add rbx, 24  ; skip to buffer data area");
+                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
                 self.emit_indent("mov [rbx + rcx], dl  ; write byte");
 
                 self.emit(&format!("{}:", done_label));
@@ -4085,8 +4099,8 @@ impl CodeGenerator {
                 match self.emit_time_expr_tag(value) {
                     Some(tag) => {
                         self.emit_indent(&format!(
-                            "mov byte [rbx + rdx + 24], {}  ; slot type tag",
-                            tag
+                            "mov byte [rbx + rdx + {0}], {1}  ; slot type tag",
+                            LIST_DATA_OFFSET, tag
                         ));
                     }
                     None => {
@@ -4095,9 +4109,15 @@ impl CodeGenerator {
                                 "mov al, [rbp-{}]  ; runtime tag of mixed source",
                                 slot
                             ));
-                            self.emit_indent("mov [rbx + rdx + 24], al  ; slot type tag");
+                            self.emit_indent(&format!(
+                                "mov [rbx + rdx + {}], al  ; slot type tag",
+                                LIST_DATA_OFFSET
+                            ));
                         } else {
-                            self.emit_indent("mov byte [rbx + rdx + 24], 0  ; default integer tag");
+                            self.emit_indent(&format!(
+                                "mov byte [rbx + rdx + {}], 0  ; default integer tag",
+                                LIST_DATA_OFFSET
+                            ));
                         }
                     }
                 }
@@ -4105,7 +4125,10 @@ impl CodeGenerator {
                 self.emit_indent("mov rdx, [rbx + 16]  ; element size");
                 // Calculate offset
                 self.emit_indent("imul rcx, rdx  ; index * element_size");
-                self.emit_indent("add rcx, 24  ; data starts at offset 24");
+                self.emit_indent(&format!(
+                    "add rcx, {}  ; data starts at offset {}",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 // Write element
                 self.emit_indent("mov [rbx + rcx], r8  ; write element");
 
@@ -5344,7 +5367,10 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec: value is formatted as a number, so point
                                     // rdi at the data area so the formatter reads the string.
-                                    self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                                    self.emit_indent(&format!(
+                                        "add rdi, {}  ; buffer data area (header is {} bytes)",
+                                        BUF_DATA_OFFSET, BUF_DATA_OFFSET
+                                    ));
                                     self.emit_formatted_value(var_type, fmt_spec);
                                 }
                             } else if var_type == Some(VarType::List) {
@@ -5390,7 +5416,7 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec present: adjust to data area for
                                     // the NUL-scanned formatter.
-                                    self.emit_indent("add rdi, 24  ; buffer data area");
+                                    self.emit_indent(&format!("add rdi, {}  ; buffer data area", BUF_DATA_OFFSET));
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
                             } else if expr_type == Some(VarType::Map) {
@@ -5706,7 +5732,10 @@ impl CodeGenerator {
     fn generate_cstr_expr(&mut self, expr: &Expr) {
         self.generate_expr(expr);
         if self.infer_expr_type(expr) == Some(VarType::Buffer) {
-            self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes, data is NUL-terminated)");
+            self.emit_indent(&format!(
+                "add rax, {}  ; buffer data area (header is {} bytes, data is NUL-terminated)",
+                BUF_DATA_OFFSET, BUF_DATA_OFFSET
+            ));
         }
     }
 
@@ -6176,7 +6205,7 @@ impl CodeGenerator {
                 // Each element is 8 bytes, header is 24 bytes, plus one type
                 // tag byte per slot after the data region.
                 let capacity = std::cmp::max(elements.len(), 8); // minimum capacity 8
-                let header_size = 24;
+                let header_size = LIST_DATA_OFFSET as usize;
                 let data_size = capacity * 8;
                 let total_size = header_size + data_size + capacity;
                 
@@ -6356,11 +6385,17 @@ impl CodeGenerator {
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rcx  ; + index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                 }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; multiply by 8 (element size)");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 
@@ -6501,9 +6536,15 @@ impl CodeGenerator {
                                 // tags[0] = base + 24 + capacity*8
                                 self.emit_indent("mov r11, [rax]  ; capacity");
                                 self.emit_indent("shl r11, 3  ; * element size (8)");
-                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                                self.emit_indent(&format!(
+                            "movzx r11, byte [rax + r11 + {}]  ; slot type tag",
+                            LIST_DATA_OFFSET
+                        ));
                             }
-                            self.emit_indent("mov rax, [rax + 24]  ; first element (data at offset 24)");
+                            self.emit_indent(&format!(
+                                "mov rax, [rax + {}]  ; first element (data at offset {})",
+                                LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                            ));
                             self.emit(&format!("{}:", done_label));
                         }
                         ObjectProperty::Last => {
@@ -6529,10 +6570,13 @@ impl CodeGenerator {
                                 self.emit_indent("mov r11, [rax]  ; capacity");
                                 self.emit_indent("shl r11, 3  ; * element size (8)");
                                 self.emit_indent("add r11, rbx  ; + 0-based last index");
-                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                                self.emit_indent(&format!(
+                            "movzx r11, byte [rax + r11 + {}]  ; slot type tag",
+                            LIST_DATA_OFFSET
+                        ));
                             }
                             self.emit_indent("shl rbx, 3          ; * 8");
-                            self.emit_indent("add rbx, 24         ; + header offset");
+                            self.emit_indent(&format!("add rbx, {}         ; + header offset", LIST_DATA_OFFSET));
                             self.emit_indent("add rax, rbx        ; offset to last");
                             self.emit_indent("mov rax, [rax]      ; last element");
                             self.emit(&format!("{}:", done_label));
@@ -6776,7 +6820,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
-                self.emit_indent("add rax, 24");
+                self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
                 self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
@@ -6807,7 +6851,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_parsed_arg");
-                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -6839,7 +6883,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
-                self.emit_indent("add rax, 24");
+                self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
                 self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
@@ -6868,7 +6912,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_raw_arg");
-                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -7194,7 +7238,7 @@ impl CodeGenerator {
                             let done_label = self.new_label("bool_done");
                             self.emit_indent(&format!("jz {}", null_label));
                             if src_type == Some(VarType::Buffer) {
-                                self.emit_indent("add rax, 24  ; buffer data area");
+                                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
                             }
                             self.emit_indent("mov rdi, rax");
                             self.emit_indent("call _text_to_boolean");
@@ -7258,7 +7302,10 @@ impl CodeGenerator {
                             }
 
                             self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                            self.emit_indent("add rax, 24  ; buffer data area -> NUL-terminated C string");
+                            self.emit_indent(&format!(
+                                "add rax, {}  ; buffer data area -> NUL-terminated C string",
+                                BUF_DATA_OFFSET
+                            ));
                         }
                     }
                     _ => {
@@ -7286,7 +7333,7 @@ impl CodeGenerator {
             }
             
             // Byte access: byte N of buffer (1-indexed)
-            // Buffer structure: [capacity:8][length:8][data at offset 24]
+            // Buffer structure: [capacity:8][length:8][flags:8][data at offset 24]
             // MEMORY SAFETY: Always bounds-check before access
             Expr::ByteAccess { buffer, index } => {
                 let ok_label = self.new_label("byte_ok");
@@ -7318,7 +7365,7 @@ impl CodeGenerator {
                 // Success path: safe access
                 self.emit(&format!("{}:", ok_label));
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent("add rbx, 24  ; skip to buffer data area");
+                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
                 self.emit_indent("xor rax, rax");
                 self.emit_indent("mov al, [rbx + rcx]");
 
@@ -7370,11 +7417,17 @@ impl CodeGenerator {
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rcx  ; + 0-based index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                 }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; index * 8");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 
@@ -7415,7 +7468,10 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rbp-{}], rax", tmp));
                 self.emit_format_parts_into_buffer_slot(tmp, parts, false);
                 self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; buffer data area (header is {} bytes)",
+                    BUF_DATA_OFFSET, BUF_DATA_OFFSET
+                ));
             }
         }
     }
