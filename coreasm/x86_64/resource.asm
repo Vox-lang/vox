@@ -19,6 +19,16 @@
 ; Initial buffer capacity
 %define INITIAL_BUF_CAP 4096
 
+; fstat(2) and struct stat constants (Linux x86-64). Used by the pre-size
+; path in _read_into_buffer to size a regular-file slurp in one allocation
+; instead of log2(N/4096) doubling cycles. Defined here, where they are used,
+; so the pre-size path does not depend on file.asm's include order/gating.
+%define SYS_FSTAT 5
+%define STAT_MODE_OFFSET 24     ; mode_t st_mode (4 bytes)
+%define STAT_SIZE_OFFSET 48     ; off_t st_size (8 bytes)
+%define S_IFMT  0xF000           ; 0o170000 - bit mask for the file type field
+%define S_IFREG 0x8000           ; 0o100000 - regular file
+
 section .bss
     ; File descriptor tracking table
     ; Each entry: 8 bytes (fd value, 0 = unused)
@@ -891,11 +901,16 @@ _cleanup_buffers:
     pop rbx
     ret
 
-; Grow buffer to at least new_size
-; Args: buffer pointer in rdi, required size in rsi
-; Returns: new buffer pointer in rax (may be different!)
-global _grow_buffer
-_grow_buffer:
+; Reallocate a buffer to an EXACT new capacity (no doubling).
+; Args: rdi = buffer pointer, rsi = exact new capacity (must be >= BUF_LENGTH)
+; Returns: new buffer pointer in rax (the OLD pointer on mmap failure, with
+;          _last_error set to 1). The buffer may move.
+; Copies the existing BUF_LENGTH bytes, updates the buffer-table entry to the
+; new pointer, and frees the old allocation. The flags field is not copied: the
+; new region is freshly mmapped (zeroed), so it is a dynamic buffer (flags 0),
+; matching what _grow_buffer always produced.
+global _reallocate_buffer
+_reallocate_buffer:
     push rbx
     push rcx
     push rdx
@@ -905,51 +920,33 @@ _grow_buffer:
     push r11
     push r12
     push r13
-    
-    mov r12, rdi            ; save old buffer
-    mov r13, rsi            ; save required size
-    
-    ; Calculate new capacity (double until >= required)
-    mov rax, [rdi + BUF_CAPACITY]
-    ; A capacity of 0 never doubles (0 << 1 == 0) and would spin here
-    ; forever - e.g. a dynamic buffer resized down to 0. Floor it at 1
-    ; so the loop terminates and yields a capacity > 0 instead of
-    ; looping or being left at 0 (which would SIGSEGV on the copy).
-    test rax, rax
-    jnz .cap_floor_ok
-    mov rax, 1
-.cap_floor_ok:
-.double_loop:
-    shl rax, 1              ; double it
-    cmp rax, r13
-    jl .double_loop
-    
-    ; Save new capacity in r14 (callee-saved, survives syscall)
     push r14
-    mov r14, rax            ; new capacity
-    
-    ; Allocate new buffer (+1 for null terminator)
-    add rax, BUF_DATA + 1   ; total allocation size
-    mov rsi, rax
+
+    mov r12, rdi            ; old buffer
+    mov r14, rsi            ; new (exact) capacity
+
+    ; Allocate new buffer (+ header + 1 for null terminator)
     mov rax, 9              ; SYS_MMAP
+    mov rsi, r14
+    add rsi, BUF_DATA + 1   ; total allocation size
     xor rdi, rdi
     mov rdx, 3              ; PROT_READ | PROT_WRITE
     mov r10, 34             ; MAP_PRIVATE | MAP_ANONYMOUS
     mov r8, -1
     xor r9, r9
     syscall
-    
+
     ; Check for error (raw mmap returns -errno in [-4095,-1])
     cmp rax, -4096
-    ja .failed_pop_r14
+    ja .failed
 
     mov rbx, rax            ; new buffer
-    
-    ; Initialize new header (use r14 which survived syscall)
+
+    ; Initialize new header (r14 survived the syscall)
     mov [rbx + BUF_CAPACITY], r14
     mov rax, [r12 + BUF_LENGTH]
     mov [rbx + BUF_LENGTH], rax
-    
+
     ; Copy old data to new buffer
     mov rdi, rbx
     add rdi, BUF_DATA       ; dest
@@ -957,7 +954,7 @@ _grow_buffer:
     add rsi, BUF_DATA       ; src
     mov rcx, [r12 + BUF_LENGTH]
     rep movsb
-    
+
     ; Update buffer table entry. No syscall between the lea and the uses
     ; below, so a caller-saved scratch (r11) holds the base safely.
     lea r11, [rel buf_table]
@@ -973,27 +970,76 @@ _grow_buffer:
 .update_entry:
     mov [r11 + rcx*8], rbx
 .no_entry:
-    
+
     ; Free old buffer (+1 for null terminator)
     mov rdi, r12
     mov rsi, [r12 + BUF_CAPACITY]
     add rsi, BUF_DATA + 1
     mov rax, 11             ; SYS_MUNMAP
     syscall
-    
+
     mov rax, rbx            ; return new buffer
     jmp .done
-    
-.failed_pop_r14:
-    pop r14                 ; balance the push
+
 .failed:
     mov qword [rel _last_error], 1
     mov rax, r12            ; return old buffer on failure
-    jmp .done_no_pop_r14
-    
+
 .done:
-    pop r14                 ; pop the r14 we pushed for capacity
-.done_no_pop_r14:
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; Grow buffer to at least new_size (doubles current capacity until >= required,
+; then delegates to _reallocate_buffer for the exact-sized move).
+; Args: buffer pointer in rdi, required size in rsi
+; Returns: new buffer pointer in rax (may be different!)
+global _grow_buffer
+_grow_buffer:
+    push rbx
+    push rcx
+    push rdx
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+
+    mov r12, rdi            ; save old buffer
+    mov r13, rsi            ; save required size
+
+    ; Calculate new capacity (double until >= required)
+    mov rax, [rdi + BUF_CAPACITY]
+    ; A capacity of 0 never doubles (0 << 1 == 0) and would spin here
+    ; forever - e.g. a dynamic buffer resized down to 0. Floor it at 1
+    ; so the loop terminates and yields a capacity > 0 instead of
+    ; looping or being left at 0 (which would SIGSEGV on the copy).
+    test rax, rax
+    jnz .cap_floor_ok
+    mov rax, 1
+.cap_floor_ok:
+.double_loop:
+    shl rax, 1              ; double it
+    cmp rax, r13
+    jl .double_loop
+
+    ; rax = new capacity (>= required). Delegate the move to the exact
+    ; reallocator. r14 is not used here, so it is preserved across this
+    ; function (the call's callee preserves it too).
+    mov rsi, rax            ; new capacity
+    mov rdi, r12            ; old buffer
+    call _reallocate_buffer
+    ; rax = new buffer (or old on failure, _last_error already set)
+
     pop r13
     pop r12
     pop r11
@@ -1023,7 +1069,63 @@ _read_into_buffer:
     mov r13, rsi            ; buffer
     xor r14, r14            ; total bytes read
     mov r15, [rsi + BUF_FLAGS]  ; save buffer flags
-    
+
+    ; --- B3: pre-size reads from regular files ---
+    ; When the destination is an empty dynamic buffer and the fd is a regular
+    ; file, fstat once and grow directly to st_size + 1 before the first read.
+    ; This avoids the log2(N/4096) mmap/munmap/copy cycles (and the ~2N bytes
+    ; of copying) the doubling path incurs for a file slurp. Every other case
+    ; - fixed buffers, non-empty buffers, pipes, sockets, /proc files, empty
+    ; files, fstat failure, a file that grows after fstat - falls through to
+    ; the existing doubling loop unchanged.
+    test r15, BUF_FLAG_FIXED
+    jnz .read_loop                ; fixed: keep exact capacity + overflow semantics
+    cmp qword [r13 + BUF_LENGTH], 0
+    jne .read_loop                ; non-empty: preserve append semantics. (Read
+                                  ; from itself resets length to 0 first, but a
+                                  ; direct caller may pass a populated buffer.)
+
+    ; fstat the fd into a stack-local struct stat (144 bytes on x86-64). On
+    ; any failure or non-regular/zero-size file, restore the stack and fall
+    ; back to the doubling loop without touching _last_error - the first
+    ; read(2) will surface the proper file error if there is one.
+    sub rsp, 144
+    mov rax, SYS_FSTAT
+    mov rdi, r12                  ; fd
+    mov rsi, rsp
+    syscall
+    test rax, rax
+    jnz .presize_restore          ; fstat failed - fall back, no error
+
+    mov rax, [rsp + STAT_MODE_OFFSET]
+    and rax, S_IFMT
+    cmp rax, S_IFREG
+    jne .presize_restore          ; not a regular file - fall back
+    mov rax, [rsp + STAT_SIZE_OFFSET]
+    test rax, rax
+    jz .presize_restore           ; st_size == 0 - fall back
+
+    ; target_capacity = st_size + 1 (the +1 is for the null terminator the
+    ; .done path writes). Use a caller-saved scratch (rax): r14 holds the
+    ; running byte counter and must not be clobbered here.
+    lea rax, [rax + 1]
+    cmp rax, [r13 + BUF_CAPACITY]
+    jbe .presize_restore          ; already big enough - skip pre-sizing
+
+    ; Grow to exactly target_capacity (no doubling overshoot) so a regular
+    ; file slurp allocates one buffer and copies zero bytes. On mmap failure
+    ; _reallocate_buffer returns the old pointer and sets _last_error; keep
+    ; that pointer and continue to the loop so the first read can still
+    ; proceed with whatever capacity exists.
+    mov rsi, rax                  ; exact new capacity
+    mov rdi, r13                  ; buffer
+    call _reallocate_buffer
+    mov r13, rax                  ; update buffer pointer (old ptr on failure)
+
+.presize_restore:
+    add rsp, 144
+    ; fall through to .read_loop
+
 .read_loop:
     ; Calculate available space
     mov rax, [r13 + BUF_CAPACITY]

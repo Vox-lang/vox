@@ -1,0 +1,14 @@
+(Track B3 fallback: /dev/null is a character device, not a regular file, so
+ _read_into_buffer must skip pre-sizing and fall back to the doubling loop.
+ Reading it yields zero bytes immediately; the buffer stays empty and intact,
+ capacity is unchanged, and there is no crash.)
+
+a buffer called dyn is "".
+open a file for reading called nf at "/dev/null".
+Read from nf into dyn.
+Close nf.
+
+Print "length:".
+Print dyn's size.
+Print "capacity:".
+Print dyn's capacity.

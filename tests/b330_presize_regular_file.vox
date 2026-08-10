@@ -1,0 +1,32 @@
+(Track B3: pre-size reads from regular files.
+
+ Read an 8193-byte regular file - deliberately not a power of two - into an
+ empty dynamic buffer. With pre-sizing the buffer is grown once to st_size+1
+ (8194) before the first read, so length equals the file size, capacity is
+ exactly file_size+1, and the bytes match.)
+
+(Create an 8193-byte temp file by writing a 1-byte chunk 8193 times.)
+open a file for writing called wf at "./test_b330.txt".
+a buffer called chunk is "A".
+a number called i is 0.
+While i is less than 8193,
+  Write chunk to wf,
+  i is i plus 1.
+Close wf.
+
+(Read it into an empty dynamic buffer.)
+a buffer called dyn is "".
+open a file for reading called rf at "./test_b330.txt".
+Read from rf into dyn.
+Close rf.
+
+Print "length:".
+Print dyn's size.
+Print "capacity:".
+Print dyn's capacity.
+Print "first:".
+Print byte 1 of dyn.
+Print "last:".
+Print byte 8193 of dyn.
+
+Delete the file "./test_b330.txt".
