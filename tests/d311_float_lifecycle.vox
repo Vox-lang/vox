@@ -1,0 +1,9 @@
+(Regression test: a failed float cast sets _last_error, but a later
+successful float cast clears it so a subsequent On error does not fire.)
+
+A float called bad is "not a float" as a float.
+On error print "first".
+
+A float called bad2 is "also bad" as a float.
+A float called good is "3.14" as a float.
+On error print "second".

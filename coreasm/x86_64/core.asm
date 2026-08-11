@@ -4,6 +4,9 @@
 ; Global error flag - set by runtime checks (bounds, syscalls, etc.)
 ; This is always available so bounds checks can set it
 section .bss
+    ; _last_error lifecycle: any operation that may set this flag on failure
+    ; must clear it to 0 on its success path, so a later On error only sees
+    ; errors from the most recent operation. On error itself consumes the flag.
     _last_error: resq 1      ; 0 = no error, non-zero = error code
     _call_depth: resq 1      ; current function call depth (recursion guard)
     ; Shared recursion-depth counter for the recursive printers (_list_print

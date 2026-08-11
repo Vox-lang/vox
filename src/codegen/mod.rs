@@ -4035,6 +4035,7 @@ impl CodeGenerator {
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("push rbx  ; save buffer pointer");
                 self.emit_indent("push rcx  ; save 1-indexed position");
                 // Get value
@@ -4083,6 +4084,7 @@ impl CodeGenerator {
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent("push rbx  ; save list pointer");
                 self.emit_indent("push rcx  ; save index");
@@ -6004,6 +6006,11 @@ impl CodeGenerator {
                     // Integer operations
                     self.uses_ints = true;
                     let arith = self.is_arithmetic_operator(op);
+                    if arith {
+                        self.emit_indent(
+                            "mov qword [rel _last_error], 0  ; clear error before arithmetic",
+                        );
+                    }
                     self.generate_expr(right);
                     if arith {
                         self.emit_nothing_operand_check(right);
@@ -6392,6 +6399,7 @@ impl CodeGenerator {
                 // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
                 // Data starts at offset 24
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 if is_mixed {
                     // tag_addr = base + 24 + capacity*8 + index; tag rides in
                     // r11 for the immediate consumer.
@@ -6545,6 +6553,7 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
+                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                             if is_mixed {
                                 // tags[0] = base + 24 + capacity*8
                                 self.emit_indent("mov r11, [rax]  ; capacity");
@@ -6577,6 +6586,7 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
+                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                             self.emit_indent("dec rbx             ; 0-indexed");
                             if is_mixed {
                                 // tags[len-1] = base + 24 + capacity*8 + (len-1)
@@ -7377,6 +7387,7 @@ impl CodeGenerator {
 
                 // Success path: safe access
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
                 self.emit_indent("xor rax, rax");
@@ -7422,6 +7433,7 @@ impl CodeGenerator {
                 // Success path: safe access
                 // Data starts at offset 24, 1-indexed so element 1 is at offset 24
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 if is_mixed {
                     // Runtime type tag travels in r11 (captured immediately
@@ -9572,5 +9584,93 @@ To f with a list called out.\n  Print \"noop\".\n";
         assert!(asm.contains("SYS_FSTAT"), "fstat syscall constant must be present");
         assert!(asm.contains(".exact_fit_success"),
             "the seekability-aware exact-fit decision must be present");
+    }
+
+    /// Static lint: every runtime helper that can set _last_error on failure
+    /// must also clear it to 0 on its success path. This locks the lifecycle
+    /// rule in at the asm source level so a regression is caught without
+    /// assembling/linking.
+    #[test]
+    fn last_error_runtime_helpers_clear_on_success() {
+        let int_asm = include_str!("../../coreasm/x86_64/int.asm");
+        let float_asm = include_str!("../../coreasm/x86_64/float.asm");
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+
+        fn function_body_has_clear(asm: &str, name: &str) -> bool {
+            let label = format!("{}:", name);
+            let start = asm
+                .find(&label)
+                .unwrap_or_else(|| panic!("{} label not found", name));
+            let rest = &asm[start..];
+            let lines: Vec<&str> = rest.lines().collect();
+            let end = lines
+                .iter()
+                .position(|l| l.trim() == "ret")
+                .unwrap_or_else(|| panic!("{} has no ret", name));
+            lines[..end].join("\n").contains("mov qword [rel _last_error], 0")
+        }
+
+        fn macro_body_has_clear(asm: &str, name: &str) -> bool {
+            let open = format!("%macro {} 0", name);
+            let start = asm
+                .find(&open)
+                .unwrap_or_else(|| panic!("%macro {} not found", name));
+            let rest = &asm[start..];
+            let lines: Vec<&str> = rest.lines().collect();
+            let end = lines
+                .iter()
+                .position(|l| l.trim() == "%endmacro")
+                .unwrap_or_else(|| panic!("%endmacro for {} not found", name));
+            lines[..end].join("\n").contains("mov qword [rel _last_error], 0")
+        }
+
+        assert!(
+            function_body_has_clear(int_asm, "_parse_i64"),
+            "_parse_i64 must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_int_radix"),
+            "_parse_int_radix must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_i64_bounded"),
+            "_parse_i64_bounded must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_int_radix_bounded"),
+            "_parse_int_radix_bounded must clear _last_error on success"
+        );
+        assert!(
+            macro_body_has_clear(int_asm, "INT_DIV"),
+            "INT_DIV must clear _last_error on its non-zero-divisor path"
+        );
+        assert!(
+            macro_body_has_clear(int_asm, "INT_MOD"),
+            "INT_MOD must clear _last_error on its non-zero-divisor path"
+        );
+
+        assert!(
+            function_body_has_clear(float_asm, "_parse_f64"),
+            "_parse_f64 must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(float_asm, "_parse_f64_bounded"),
+            "_parse_f64_bounded must clear _last_error on success"
+        );
+
+        assert!(
+            function_body_has_clear(list_asm, "_list_print"),
+            "_list_print must clear _last_error on its normal return path"
+        );
+
+        assert!(
+            function_body_has_clear(map_asm, "_map_lookup"),
+            "_map_lookup must clear _last_error on a hit"
+        );
+        assert!(
+            function_body_has_clear(map_asm, "_map_print"),
+            "_map_print must clear _last_error on its normal return path"
+        );
     }
 }

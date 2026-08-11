@@ -1,0 +1,8 @@
+(Regression test: a file operation failure sets _last_error, but a later
+successful non-file operation clears it so a subsequent On error does not fire.)
+
+Open a file for reading called badfile at "/nonexistent_path_for_d314_test".
+On error print "first".
+
+A number called good is "42" as a number.
+On error print "second".
