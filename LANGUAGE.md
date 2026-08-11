@@ -74,7 +74,9 @@ Comments can appear:
 
 ### Paragraph Breaks (Blank Lines)
 
-Blank lines (paragraph breaks) can be used freely to organize code into logical sections. They are optional and have no effect on program execution.
+Blank lines (paragraph breaks) organize code into logical sections. They are optional and have no effect on program execution *between two fully-terminated top-level constructs* — for example, between two function definitions or between two complete statements at the top level.
+
+Inside an open clause they are **not** cosmetic: a blank line force-closes every clause that is still open, including an enclosing function definition. Use a blank line to end a construct deliberately (after a `while`, `for each`, `repeat`, `on error`, or nested `if` body), not to add visual spacing in the middle of a body.
 
 ```
 print "Section 1".
@@ -82,7 +84,7 @@ print "Section 1".
 print "Section 2".
 ```
 
-**Note:** Function definitions are typically followed by a blank line to visually separate them from other code, but this is a style convention, not a requirement.
+**Note:** Function definitions are typically followed by a blank line to visually separate them from other code, but this is a style convention, not a requirement. A blank line inside a function body, however, ends the function early — see [The termination rule](#the-termination-rule) below.
 
 ### Sentence Consumption
 
@@ -2934,6 +2936,15 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Shutdown`/`Poweroff`, `Reboot`/`Restart`, `Halt` | `reboot(2)` - power off/restart/halt the machine |
 | `fork`, `reap` | Process control expressions - `fork(2)`/`wait4(2)` |
 
+### Flag Schema
+
+| Keyword | Purpose |
+|---------|---------|
+| `Flag` | Declare a command-line flag schema (`a flag called ...`) |
+| `Parse` | Trigger command-line flag parsing (`Parse flags.`) |
+| `Required` | Mark a flag as required |
+| `Default` | Supply a default value for a flag |
+
 ### Connectors
 
 | Keyword | Purpose |
@@ -2963,6 +2974,18 @@ The word `and` has multiple context-dependent meanings:
 - When `and` appears after a comma and before `are`, it's a list terminator
 - When `and` appears between two conditions (no comma), it's a logical operator
 - When `and` follows `with`/`of`/`to`/`on`, it separates arguments
+
+### Reserved Aliases
+
+A few alternate spellings are also reserved because the compiler recognizes them as aliases for canonical keywords:
+
+| Alias | Canonical keyword | Context |
+|-------|-------------------|---------|
+| `ms` | `milliseconds` | Time duration units (`Wait 500 ms.`) |
+| `message` | `text` | Type name (`a message called ...` is treated as `text`) |
+| `string` | `text` | Type name (already listed in the type synonyms) |
+
+These cannot be used as variable names. The canonical keyword is what appears in error messages and diagnostics.
 
 ---
 
