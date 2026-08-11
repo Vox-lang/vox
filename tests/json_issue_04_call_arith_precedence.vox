@@ -1,0 +1,10 @@
+To 'state pos' with a list called state.
+  Return a number, element 1 of state.
+
+To 'advance state' with a list called state and a number called by.
+  Set element 1 of state to 'state pos' of state add by.
+  Return a number, element 1 of state.
+
+a list called s is [0].
+'advance state' of s and 5.
+Print element 1 of s.

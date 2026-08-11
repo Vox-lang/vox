@@ -1,0 +1,8 @@
+To outer with a number called n.
+  If n is greater than 0 then,
+    If n is greater than 10 then, Return a number, 100. Otherwise, Return a number, 50.
+    Return a number, n.
+  Return a number, 0.
+
+Print outer of 15.
+Print outer of 5.

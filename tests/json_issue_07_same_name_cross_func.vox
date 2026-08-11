@@ -1,0 +1,14 @@
+To 'make map' with a buffer called src and a list called state.
+  a map called result is {}.
+  Set result's "hardcoded" to 99.
+  Return a value, result.
+
+To 'unrelated caller' with a buffer called src and a list called state.
+  a value called result is 0.
+  the result is 'make map' of src and state.
+  Return a value, result.
+
+a buffer called b is "test".
+a list called s is [1, false, ""].
+a value called v is 'make map' of b and s.
+Print v.

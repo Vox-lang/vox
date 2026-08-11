@@ -30,6 +30,20 @@ pub struct CodeGenerator {
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
     file_writable: HashMap<String, bool>,
+    // Per-function partitions of `mixed_lists`/`unprovable_scalars`, keyed by
+    // the function's assembly label. The pre-scan walks each function body on
+    // a SNAPSHOT of the global env so a function's own locals never leak into
+    // the shared sets (and thence into another function's codegen or the
+    // top-level). Two functions can declare a local with the SAME name but
+    // opposite verdicts — a proven map in one, an unprovable value in the
+    // other — and a flat global set cannot hold both, so each function's
+    // locals are stored separately and applied only while that function is
+    // being generated. `local_names` is the full set of names local to each
+    // function (params + body VarDecls); codegen removes them from the outer
+    // sets first so a local shadowing a global takes its own verdict.
+    local_mixed_lists: HashMap<String, std::collections::HashSet<String>>,
+    local_unprovable_scalars: HashMap<String, std::collections::HashSet<String>>,
+    local_names: HashMap<String, std::collections::HashSet<String>>,
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
@@ -735,6 +749,9 @@ impl CodeGenerator {
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
             file_writable: HashMap::new(),
+            local_mixed_lists: HashMap::new(),
+            local_unprovable_scalars: HashMap::new(),
+            local_names: HashMap::new(),
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
@@ -1862,6 +1879,10 @@ impl CodeGenerator {
                 }
             }
             Expr::UnaryOp { operand, .. } => self.is_float_expr(operand),
+            Expr::FunctionCall { name, .. } => {
+                self.function_return_types.get(&self.resolved_call_label(name))
+                    == Some(&VarType::Float)
+            }
             _ => false,
         }
     }
@@ -2431,9 +2452,75 @@ impl CodeGenerator {
                     }
                 }
                 Statement::While { body, .. }
-                | Statement::Repeat { body, .. }
-                | Statement::FunctionDef { body, .. } => {
+                | Statement::Repeat { body, .. } => {
                     self.prescan_walk(body, env, list_seen_tags);
+                }
+                Statement::FunctionDef { name, params, body, .. } => {
+                    // Walk the body on a SNAPSHOT of the global pre-scan state
+                    // so this function's own locals never leak into the shared
+                    // `env`/`mixed_lists` (and thence into other functions'
+                    // analysis or the top-level `unprovable_scalars` set). Two
+                    // functions can declare a same-named local with opposite
+                    // verdicts — a proven map in one, an unprovable value in
+                    // the other — and a flat global set cannot hold both, so
+                    // each function's locals are partitioned out here and
+                    // re-applied only during that function's own codegen.
+                    let func_key = self.function_label(name);
+                    let saved_env = env.clone();
+                    let saved_list_seen_tags = list_seen_tags.clone();
+                    let saved_mixed = self.mixed_lists.clone();
+                    self.prescan_walk(body, env, list_seen_tags);
+                    // The function's own locals: its parameters plus any names
+                    // the body walk newly introduced into `env` (VarDecl
+                    // locals; loop variables are save/restored by their arms
+                    // and so do not persist as new keys here).
+                    let mut fn_locals: std::collections::HashSet<String> =
+                        params.iter().map(|(n, _)| n.clone()).collect();
+                    for n in env.keys() {
+                        if !saved_env.contains_key(n) {
+                            fn_locals.insert(n.clone());
+                        }
+                    }
+                    // Per-function unprovable scalars: locals the body left
+                    // Unknowable. Globals keep the outer env's verdict.
+                    let local_unprov: std::collections::HashSet<String> = env
+                        .iter()
+                        .filter(|(n, info)| {
+                            matches!(info, TagInfo::Unknowable)
+                                && fn_locals.contains(n.as_str())
+                        })
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    // Per-function mixed lists: locals the body marked
+                    // heterogeneous (e.g. `append v to L` where `L` is a param).
+                    let local_mixed: std::collections::HashSet<String> = self
+                        .mixed_lists
+                        .iter()
+                        .filter(|n| {
+                            !saved_mixed.contains(*n) && fn_locals.contains(n.as_str())
+                        })
+                        .cloned()
+                        .collect();
+                    // Globals the body marked mixed (e.g. `append v to g` on a
+                    // top-level `g`) must stay in the shared set so the
+                    // top-level sees `g` as mixed. Capture before restoring.
+                    let added: Vec<String> = self
+                        .mixed_lists
+                        .difference(&saved_mixed)
+                        .cloned()
+                        .collect();
+                    // Restore the global pre-scan state.
+                    *env = saved_env;
+                    *list_seen_tags = saved_list_seen_tags;
+                    self.mixed_lists = saved_mixed;
+                    for n in &added {
+                        if !fn_locals.contains(n.as_str()) {
+                            self.mixed_lists.insert(n.clone());
+                        }
+                    }
+                    self.local_mixed_lists.insert(func_key.clone(), local_mixed);
+                    self.local_unprovable_scalars.insert(func_key.clone(), local_unprov);
+                    self.local_names.insert(func_key, fn_locals);
                 }
                 Statement::OnError { actions } => {
                     self.prescan_walk(actions, env, list_seen_tags);
@@ -2518,8 +2605,19 @@ impl CodeGenerator {
     fn list_expr_is_mixed(&self, e: &Expr) -> bool {
         match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
+                // A list whose element type the codegen cannot prove — a bare
+                // `list` parameter, or any list with no recorded element type —
+                // still stores a per-slot runtime tag for every element (both
+                // `_list_append` and list-literal codegen always pass a tag, see
+                // the `edx`/`mov byte` writes). Treat such a list as mixed for
+                // reads so the tag is loaded into r11 instead of trusting a
+                // static element type the slot never had. This is what lets a
+                // `value` extracted from a list *parameter* carry the right tag.
                 self.mixed_lists.contains(name)
-                    || self.list_element_types.get(name) == Some(&VarType::Mixed)
+                    || matches!(
+                        self.list_element_types.get(name),
+                        None | Some(&VarType::Mixed) | Some(&VarType::Unknown)
+                    )
             }
             // Chained read: a read from a mixed list yields a runtime-tagged
             // value, so indexing that result is again a runtime-tagged read.
@@ -3591,6 +3689,37 @@ impl CodeGenerator {
                 // trusts `variable_types` by name with no scope check.
                 let saved_variable_types = self.variable_types.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
+                // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
+                // just like `variable_types`, so they need the same
+                // clone-and-restore isolation: a function's own locals must not
+                // leak into whatever is generated after it. The pre-scan
+                // already partitioned each function's locals into
+                // `local_*`/`local_names` keyed by `func_label`; apply this
+                // function's partition on top of the outer (global) state, first
+                // dropping any names this function redeclares as locals so a
+                // local shadowing a global takes its own verdict. `list_element_types`
+                // and `file_writable` are maps overwritten per-VarDecl during
+                // body codegen, so a plain save/restore is enough for them.
+                let saved_mixed_lists = self.mixed_lists.clone();
+                let saved_unprovable_scalars = self.unprovable_scalars.clone();
+                let saved_list_element_types = self.list_element_types.clone();
+                let saved_file_writable = self.file_writable.clone();
+                if let Some(locals) = self.local_names.get(&func_label).cloned() {
+                    for n in &locals {
+                        self.mixed_lists.remove(n);
+                        self.unprovable_scalars.remove(n);
+                    }
+                    if let Some(loc) = self.local_mixed_lists.get(&func_label) {
+                        for n in loc {
+                            self.mixed_lists.insert(n.clone());
+                        }
+                    }
+                    if let Some(loc) = self.local_unprovable_scalars.get(&func_label) {
+                        for n in loc {
+                            self.unprovable_scalars.insert(n.clone());
+                        }
+                    }
+                }
 
                 // Fresh function-local state
                 self.output = String::new();
@@ -3751,6 +3880,10 @@ impl CodeGenerator {
                 self.current_function_return_type = saved_return_type;
                 self.variable_types = saved_variable_types;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
+                self.mixed_lists = saved_mixed_lists;
+                self.unprovable_scalars = saved_unprovable_scalars;
+                self.list_element_types = saved_list_element_types;
+                self.file_writable = saved_file_writable;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -3817,8 +3950,14 @@ impl CodeGenerator {
                 
                 // Determine element type from list
                 let elem_type = if let Expr::Identifier(list_name) = collection {
-                    // Get element type from list_element_types, not variable_types
-                    self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
+                    // A list parameter (or any list with no proven element type)
+                    // stores a per-slot runtime tag, so widen the loop variable
+                    // to Mixed and read the tag each iteration — see
+                    // `list_expr_is_mixed`.
+                    match self.list_element_types.get(list_name) {
+                        None | Some(&VarType::Unknown) => VarType::Mixed,
+                        Some(other) => other.clone(),
+                    }
                 } else if let Expr::PropertyAccess { object, property } = collection {
                     // `map's keys` yields a list of text pointers; `map's
                     // values` yields a mixed-tagged list (each value carries
@@ -5600,7 +5739,17 @@ impl CodeGenerator {
                 // `generate_expr` left the slot's tag in r11 and we dispatch
                 // on it (stage 1e1).
                 let elem_type = if let Expr::Identifier(name) = list.as_ref() {
-                    self.list_element_types.get(name).cloned()
+                    // A list parameter (or any list with no proven element
+                    // type) stores a per-slot runtime tag, so dispatch on it
+                    // rather than defaulting to PRINT_INT — see
+                    // `list_expr_is_mixed`. `generate_expr` left that tag in
+                    // r11 for this same unknown-element case.
+                    match self.list_element_types.get(name) {
+                        None | Some(&VarType::Mixed) | Some(&VarType::Unknown) => {
+                            Some(VarType::Mixed)
+                        }
+                        Some(other) => Some(other.clone()),
+                    }
                 } else if let Expr::ListLit { elements } = list.as_ref() {
                     if self.list_expr_is_mixed(list) {
                         Some(VarType::Mixed)
@@ -7814,9 +7963,17 @@ impl CodeGenerator {
                 }
             }
             Expr::ElementAccess { list, .. } => {
-                // For element access, return the list's element type
+                // For element access, return the list's element type. A named
+                // list with no proven element type (a bare `list` parameter, or
+                // any list the pre-scan left untyped) is runtime-tagged
+                // per-slot, so return None and let `emit_load_value_tag` use the
+                // tag `generate_expr` left in r11 — instead of defaulting to
+                // Integer, which would overwrite the real tag with 0.
                 if let Expr::Identifier(name) = list.as_ref() {
-                    self.list_element_types.get(name).cloned().or(Some(VarType::Integer))
+                    match self.list_element_types.get(name) {
+                        Some(VarType::Unknown) | None => None,
+                        Some(other) => Some(other.clone()),
+                    }
                 } else {
                     Some(VarType::Integer)
                 }

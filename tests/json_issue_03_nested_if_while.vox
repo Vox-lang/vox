@@ -1,0 +1,9 @@
+To 'count evens' with a number called n.
+  a number called i is 0.
+  a number called c is 0.
+  While i is less than n,
+    If i modulo 2 is equal to 0 then, increment c.
+    increment i.
+  Return a number, c.
+
+Print 'count evens' of 5.

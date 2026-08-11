@@ -810,8 +810,31 @@ impl Parser {
         self.advance();
         self.skip_noise();
         let mut args = Vec::new();
+        let mut first_arg = true;
         loop {
-            let arg = self.parse_expression()?;
+            // A function call is a primary and must bind tighter than the
+            // additive operators (`add`/`subtract`): `'state pos' of state
+            // add by` is `('state pos' of state) add by`, not `'state pos' of
+            // (state add by)`. The FIRST argument is therefore parsed at the
+            // `cast` level (below additive) so a trailing `add`/`subtract` is
+            // left for the caller to apply to the call result, while an
+            // argument's own `as a <type>` cast is still kept (`f of x as a
+            // number`).
+            //
+            // Once an `and` marks this as a multi-argument call, the argument
+            // boundary is explicit, so LATER arguments parse at the full
+            // `parse_expression` level: `gcd of b and aa modulo b` keeps
+            // `aa modulo b` as the second argument, and `walk of v and n
+            // subtract 1` keeps `n subtract 1`. A boolean `and` inside one
+            // argument must be braced (`f of {x and y}`), as before. This keeps
+            // comparison parsing intact: `'some call' of x and y is false
+            // and ...` still reads `f(x, y) is false and ...`.
+            let arg = if first_arg {
+                first_arg = false;
+                self.parse_cast()?
+            } else {
+                self.parse_expression()?
+            };
             args.push(arg);
             self.skip_noise();
             if *self.current() == Token::Comma {
@@ -2245,8 +2268,17 @@ impl Parser {
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
-                        // Now parse the actual return expression
-                        let value = self.parse_expression()?;
+                        // Now parse the actual return expression. Use
+                        // `parse_condition` (not `parse_expression`) so a typed
+                        // return whose body is a comparison or boolean
+                        // conjunction — `Return a boolean, A and B.` — parses
+                        // the whole condition. `parse_expression` stops at
+                        // `is`/`and`/`or`, which is why this only failed when
+                        // the Return was NOT the function's first statement: the
+                        // first-statement inline path in `parse_function_def`
+                        // already uses `parse_condition`, so the two paths must
+                        // agree.
+                        let value = self.parse_condition()?;
                         return Ok(Statement::Return { value: Some(value), declared_type: Some(declared_type) });
                     }
                 }
@@ -2254,7 +2286,10 @@ impl Parser {
                 return Err(self.err("Expected type after 'a' in return statement"));
             }
 
-            let value = self.parse_expression()?;
+            // Match the inline first-statement path: parse the value as a
+            // full condition so an untyped `Return A and B.` or `Return x is y.`
+            // parses the same whether or not it is the first body statement.
+            let value = self.parse_condition()?;
             Ok(Statement::Return { value: Some(value), declared_type: None })
         }
     }
@@ -4485,6 +4520,13 @@ impl Parser {
 
             let stmt = self.parse_statement()?;
             let is_on_error = matches!(stmt, Statement::OnError { .. });
+            // A self-terminating nested construct (If/While/For) consumes its
+            // own trailing period; see the note below for why we track this.
+            let is_self_terminated = matches!(
+                stmt,
+                Statement::If { .. } | Statement::While { .. }
+                    | Statement::ForRange { .. } | Statement::ForEach { .. }
+            );
             statements.push(stmt);
 
             self.skip_noise();
@@ -4503,6 +4545,31 @@ impl Parser {
                 ) {
                     break;
                 }
+                continue;
+            }
+
+            // A self-terminating nested construct — `If`, `While`, `For each`,
+            // `For ... to` — owns and consumes its own trailing period (see
+            // `parse_if`'s final period consume, and the body loops in
+            // `parse_while`/`parse_for`). When such a construct is an action in
+            // a comma-separated branch, the next action therefore follows with
+            // NO comma separator: the nested construct's period already served
+            // as the separator. Without this, a complete nested `If ... then,
+            // X.` followed by another action in the same branch would orphan
+            // that action (and every later one), closing the enclosing
+            // statement early. Only continue when the next token genuinely
+            // starts another action; boundaries (else-chain, period, comma,
+            // paragraph, EOF) are handled by the loop top or the arms below.
+            if is_self_terminated && !matches!(
+                self.current(),
+                Token::Comma
+                    | Token::Period
+                    | Token::ParagraphBreak
+                    | Token::EOF
+                    | Token::But
+                    | Token::Else
+                    | Token::Otherwise
+            ) {
                 continue;
             }
 
@@ -5095,15 +5162,30 @@ impl Parser {
     /// names) must not. Hand-rolling this check per statement is how
     /// `write "{x}" to f` shipped writing the braces literally.
     fn string_value_expr(&self, s: String) -> Expr {
-        if s.contains('{') && !s.starts_with("{{") {
+        // Any brace - escaped ({{ }}) or a real placeholder ({x}) - means we
+        // must run the format parser. A leading "{{" used to short-circuit
+        // this, leaving the braces in the literal verbatim. Now we always
+        // parse: real placeholders become FormatString, and an all-Literal
+        // result (pure escapes like "{{x}}" -> "{x}") is collapsed back into a
+        // plain StringLit so the escapes take effect. An unpaired "{" yields
+        // an empty-name Variable, which still triggers the codegen error -
+        // preserving the "Unknown variable" diagnostic for `Append "{" to out`.
+        if s.contains('{') || s.contains('}') {
             let parts = self.parse_format_string(&s);
-            if !parts.is_empty()
-                && parts
-                    .iter()
-                    .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
+            if parts
+                .iter()
+                .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
             {
                 return Expr::FormatString { parts };
             }
+            let collapsed: String = parts
+                .iter()
+                .filter_map(|p| match p {
+                    FormatPart::Literal(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            return Expr::StringLit(if collapsed.is_empty() { s } else { collapsed });
         }
         Expr::StringLit(s)
     }

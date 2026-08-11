@@ -1,0 +1,9 @@
+To 'walk list' with a list called lst.
+  For each item in lst, Print item.
+
+a map called m1 is {"a": 1}.
+a list called lst is [].
+append m1 to lst.
+append "hello" to lst.
+append 42 to lst.
+'walk list' of lst.
