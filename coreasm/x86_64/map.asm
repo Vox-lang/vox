@@ -496,6 +496,7 @@ _map_lookup:
     add rsi, rax
     mov rax, [rsi + MAP_ENTRY_VALUE]
     movzx r11, byte [rsi + MAP_ENTRY_TAG]
+    mov qword [rel _last_error], 0
     pop r13
     pop rbx
     ret
@@ -679,6 +680,11 @@ _map_print:
     push r12
     push r13
     push r14
+
+    ; Lifecycle: clear _last_error once at entry. Recursive calls clear for
+    ; their own frame; the depth-limit error path sets it before returning,
+    ; and unwinding frames do not clear it again.
+    mov qword [rel _last_error], 0
 
     inc qword [rel _print_depth]
     cmp qword [rel _print_depth], 64

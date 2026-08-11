@@ -1,0 +1,18 @@
+(Regular file overflow: a fixed buffer too small for a regular file must signal overflow and hold exactly capacity bytes.)
+
+(Create a 20-byte regular file.)
+open a file for writing called w at "./b342_data.txt".
+Write "01234567890123456789" to w.
+Close w.
+
+(A 10-byte fixed buffer cannot hold 20 bytes; the read fills exactly with more data ahead, so overflow is signalled.)
+a buffer called buf is 10 bytes in size.
+open a file for reading called f at "./b342_data.txt".
+Read from f into buf.
+On error print "overflow".
+Print "got: ".
+Print buf.
+Print "size: ".
+Print buf's size.
+Close f.
+Delete the file "./b342_data.txt".

@@ -1,0 +1,9 @@
+(Regression test: a failed integer cast sets _last_error, but a later
+successful integer cast clears it so a subsequent On error does not fire.)
+
+A number called bad is "not a number" as a number.
+On error print "first".
+
+A number called bad2 is "also bad" as a number.
+A number called good is "42" as a number.
+On error print "second".

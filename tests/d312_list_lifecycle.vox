@@ -1,0 +1,10 @@
+(Regression test: an out-of-bounds list access sets _last_error, but a later
+successful list access clears it so a subsequent On error does not fire.)
+
+A list called nums is [10, 20, 30].
+A number called bad is element 100 of nums.
+On error print "first".
+
+A number called bad2 is element 200 of nums.
+A number called good is element 1 of nums.
+On error print "second".

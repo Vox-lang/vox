@@ -30,6 +30,20 @@ pub struct CodeGenerator {
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
     file_writable: HashMap<String, bool>,
+    // Per-function partitions of `mixed_lists`/`unprovable_scalars`, keyed by
+    // the function's assembly label. The pre-scan walks each function body on
+    // a SNAPSHOT of the global env so a function's own locals never leak into
+    // the shared sets (and thence into another function's codegen or the
+    // top-level). Two functions can declare a local with the SAME name but
+    // opposite verdicts — a proven map in one, an unprovable value in the
+    // other — and a flat global set cannot hold both, so each function's
+    // locals are stored separately and applied only while that function is
+    // being generated. `local_names` is the full set of names local to each
+    // function (params + body VarDecls); codegen removes them from the outer
+    // sets first so a local shadowing a global takes its own verdict.
+    local_mixed_lists: HashMap<String, std::collections::HashSet<String>>,
+    local_unprovable_scalars: HashMap<String, std::collections::HashSet<String>>,
+    local_names: HashMap<String, std::collections::HashSet<String>>,
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
@@ -140,6 +154,14 @@ const TAG_BOOLEAN: u8 = 3;
 const TAG_LIST: u8 = 4;
 const TAG_MAP: u8 = 5;
 const TAG_NOTHING: u8 = 6;
+
+// Header data offsets. These are numerically equal today (all three headers
+// are 24 bytes), but each names a distinct struct so the offsets do not silently
+// diverge when one header gains a field.
+const BUF_DATA_OFFSET: i64 = 24;
+const LIST_DATA_OFFSET: i64 = 24;
+#[allow(dead_code)]
+const MAP_HEADER_SIZE: i64 = 24;
 
 /// Turn an author-written name into an assembly symbol, per the project
 /// standard in `docs/SYMBOL_MANGLING.md`.
@@ -727,6 +749,9 @@ impl CodeGenerator {
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
             file_writable: HashMap::new(),
+            local_mixed_lists: HashMap::new(),
+            local_unprovable_scalars: HashMap::new(),
+            local_names: HashMap::new(),
             stack_offset: 0,
             shared_lib_mode: false,
             exported_functions: Vec::new(),
@@ -825,6 +850,30 @@ impl CodeGenerator {
             true
         } else if let Some(label) = self.global_var_label(name).cloned() {
             self.emit_indent(&format!("mov rax, [rel {}]  ; global mirror {}", label, name));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Store a (possibly reallocated) pointer back to a named variable,
+    /// resolving the name through the local function frame first and then
+    /// through the global BSS mirror. At top level, stack variables are also
+    /// mirrored to their global label so branch and function bodies see the
+    /// updated value.
+    fn emit_store_back_after_realloc(&mut self, name: &str, new_ptr_reg: &str) -> bool {
+        if let Some(offset) = self.get_var(name) {
+            self.emit_indent(&format!(
+                "mov [rbp-{}], {}  ; store new pointer for {}",
+                offset, new_ptr_reg, name
+            ));
+            self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+            true
+        } else if let Some(label) = self.global_var_label(name).cloned() {
+            self.emit_indent(&format!(
+                "mov [rel {}], {}  ; store new pointer for {}",
+                label, new_ptr_reg, name
+            ));
             true
         } else {
             false
@@ -1830,6 +1879,10 @@ impl CodeGenerator {
                 }
             }
             Expr::UnaryOp { operand, .. } => self.is_float_expr(operand),
+            Expr::FunctionCall { name, .. } => {
+                self.function_return_types.get(&self.resolved_call_label(name))
+                    == Some(&VarType::Float)
+            }
             _ => false,
         }
     }
@@ -2399,9 +2452,75 @@ impl CodeGenerator {
                     }
                 }
                 Statement::While { body, .. }
-                | Statement::Repeat { body, .. }
-                | Statement::FunctionDef { body, .. } => {
+                | Statement::Repeat { body, .. } => {
                     self.prescan_walk(body, env, list_seen_tags);
+                }
+                Statement::FunctionDef { name, params, body, .. } => {
+                    // Walk the body on a SNAPSHOT of the global pre-scan state
+                    // so this function's own locals never leak into the shared
+                    // `env`/`mixed_lists` (and thence into other functions'
+                    // analysis or the top-level `unprovable_scalars` set). Two
+                    // functions can declare a same-named local with opposite
+                    // verdicts — a proven map in one, an unprovable value in
+                    // the other — and a flat global set cannot hold both, so
+                    // each function's locals are partitioned out here and
+                    // re-applied only during that function's own codegen.
+                    let func_key = self.function_label(name);
+                    let saved_env = env.clone();
+                    let saved_list_seen_tags = list_seen_tags.clone();
+                    let saved_mixed = self.mixed_lists.clone();
+                    self.prescan_walk(body, env, list_seen_tags);
+                    // The function's own locals: its parameters plus any names
+                    // the body walk newly introduced into `env` (VarDecl
+                    // locals; loop variables are save/restored by their arms
+                    // and so do not persist as new keys here).
+                    let mut fn_locals: std::collections::HashSet<String> =
+                        params.iter().map(|(n, _)| n.clone()).collect();
+                    for n in env.keys() {
+                        if !saved_env.contains_key(n) {
+                            fn_locals.insert(n.clone());
+                        }
+                    }
+                    // Per-function unprovable scalars: locals the body left
+                    // Unknowable. Globals keep the outer env's verdict.
+                    let local_unprov: std::collections::HashSet<String> = env
+                        .iter()
+                        .filter(|(n, info)| {
+                            matches!(info, TagInfo::Unknowable)
+                                && fn_locals.contains(n.as_str())
+                        })
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    // Per-function mixed lists: locals the body marked
+                    // heterogeneous (e.g. `append v to L` where `L` is a param).
+                    let local_mixed: std::collections::HashSet<String> = self
+                        .mixed_lists
+                        .iter()
+                        .filter(|n| {
+                            !saved_mixed.contains(*n) && fn_locals.contains(n.as_str())
+                        })
+                        .cloned()
+                        .collect();
+                    // Globals the body marked mixed (e.g. `append v to g` on a
+                    // top-level `g`) must stay in the shared set so the
+                    // top-level sees `g` as mixed. Capture before restoring.
+                    let added: Vec<String> = self
+                        .mixed_lists
+                        .difference(&saved_mixed)
+                        .cloned()
+                        .collect();
+                    // Restore the global pre-scan state.
+                    *env = saved_env;
+                    *list_seen_tags = saved_list_seen_tags;
+                    self.mixed_lists = saved_mixed;
+                    for n in &added {
+                        if !fn_locals.contains(n.as_str()) {
+                            self.mixed_lists.insert(n.clone());
+                        }
+                    }
+                    self.local_mixed_lists.insert(func_key.clone(), local_mixed);
+                    self.local_unprovable_scalars.insert(func_key.clone(), local_unprov);
+                    self.local_names.insert(func_key, fn_locals);
                 }
                 Statement::OnError { actions } => {
                     self.prescan_walk(actions, env, list_seen_tags);
@@ -2486,8 +2605,19 @@ impl CodeGenerator {
     fn list_expr_is_mixed(&self, e: &Expr) -> bool {
         match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
+                // A list whose element type the codegen cannot prove — a bare
+                // `list` parameter, or any list with no recorded element type —
+                // still stores a per-slot runtime tag for every element (both
+                // `_list_append` and list-literal codegen always pass a tag, see
+                // the `edx`/`mov byte` writes). Treat such a list as mixed for
+                // reads so the tag is loaded into r11 instead of trusting a
+                // static element type the slot never had. This is what lets a
+                // `value` extracted from a list *parameter* carry the right tag.
                 self.mixed_lists.contains(name)
-                    || self.list_element_types.get(name) == Some(&VarType::Mixed)
+                    || matches!(
+                        self.list_element_types.get(name),
+                        None | Some(&VarType::Mixed) | Some(&VarType::Unknown)
+                    )
             }
             // Chained read: a read from a mixed list yields a runtime-tagged
             // value, so indexing that result is again a runtime-tagged read.
@@ -3559,6 +3689,37 @@ impl CodeGenerator {
                 // trusts `variable_types` by name with no scope check.
                 let saved_variable_types = self.variable_types.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
+                // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
+                // just like `variable_types`, so they need the same
+                // clone-and-restore isolation: a function's own locals must not
+                // leak into whatever is generated after it. The pre-scan
+                // already partitioned each function's locals into
+                // `local_*`/`local_names` keyed by `func_label`; apply this
+                // function's partition on top of the outer (global) state, first
+                // dropping any names this function redeclares as locals so a
+                // local shadowing a global takes its own verdict. `list_element_types`
+                // and `file_writable` are maps overwritten per-VarDecl during
+                // body codegen, so a plain save/restore is enough for them.
+                let saved_mixed_lists = self.mixed_lists.clone();
+                let saved_unprovable_scalars = self.unprovable_scalars.clone();
+                let saved_list_element_types = self.list_element_types.clone();
+                let saved_file_writable = self.file_writable.clone();
+                if let Some(locals) = self.local_names.get(&func_label).cloned() {
+                    for n in &locals {
+                        self.mixed_lists.remove(n);
+                        self.unprovable_scalars.remove(n);
+                    }
+                    if let Some(loc) = self.local_mixed_lists.get(&func_label) {
+                        for n in loc {
+                            self.mixed_lists.insert(n.clone());
+                        }
+                    }
+                    if let Some(loc) = self.local_unprovable_scalars.get(&func_label) {
+                        for n in loc {
+                            self.unprovable_scalars.insert(n.clone());
+                        }
+                    }
+                }
 
                 // Fresh function-local state
                 self.output = String::new();
@@ -3719,6 +3880,10 @@ impl CodeGenerator {
                 self.current_function_return_type = saved_return_type;
                 self.variable_types = saved_variable_types;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
+                self.mixed_lists = saved_mixed_lists;
+                self.unprovable_scalars = saved_unprovable_scalars;
+                self.list_element_types = saved_list_element_types;
+                self.file_writable = saved_file_writable;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -3785,8 +3950,14 @@ impl CodeGenerator {
                 
                 // Determine element type from list
                 let elem_type = if let Expr::Identifier(list_name) = collection {
-                    // Get element type from list_element_types, not variable_types
-                    self.list_element_types.get(list_name).cloned().unwrap_or(VarType::Unknown)
+                    // A list parameter (or any list with no proven element type)
+                    // stores a per-slot runtime tag, so widen the loop variable
+                    // to Mixed and read the tag each iteration — see
+                    // `list_expr_is_mixed`.
+                    match self.list_element_types.get(list_name) {
+                        None | Some(&VarType::Unknown) => VarType::Mixed,
+                        Some(other) => other.clone(),
+                    }
                 } else if let Expr::PropertyAccess { object, property } = collection {
                     // `map's keys` yields a list of text pointers; `map's
                     // values` yields a mixed-tagged list (each value carries
@@ -3886,11 +4057,17 @@ impl CodeGenerator {
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rax  ; + index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                     self.emit_indent(&format!("mov [rbp-{}], r11b  ; stash element's type tag", slot));
                 }
                 self.emit_indent("shl rax, 3  ; index * 8");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rbx, rax");
                 self.emit_indent("mov rax, [rbx]  ; get element");
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
@@ -3986,9 +4163,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rsi, rcx  ; required capacity = index");
                 self.emit_indent("call _grow_buffer");
                 self.emit_indent("mov rbx, rax  ; new buffer pointer");
-                if let Some(offset) = self.get_var(buffer) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; update buffer pointer", offset));
-                }
+                self.emit_store_back_after_realloc(buffer, "rax");
                 self.emit_indent("pop rcx  ; restore 1-indexed position");
                 self.emit_indent(&format!("jmp {}  ; grown buffer now has space", ok_label));
 
@@ -3999,6 +4174,7 @@ impl CodeGenerator {
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("push rbx  ; save buffer pointer");
                 self.emit_indent("push rcx  ; save 1-indexed position");
                 // Get value
@@ -4012,7 +4188,7 @@ impl CodeGenerator {
                 self.emit_indent("mov [rbx + 8], rcx  ; extend length to include this byte");
                 self.emit(&format!("{}:", noupd_label));
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent("add rbx, 24  ; skip to buffer data area");
+                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
                 self.emit_indent("mov [rbx + rcx], dl  ; write byte");
 
                 self.emit(&format!("{}:", done_label));
@@ -4047,6 +4223,7 @@ impl CodeGenerator {
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent("push rbx  ; save list pointer");
                 self.emit_indent("push rcx  ; save index");
@@ -4063,8 +4240,8 @@ impl CodeGenerator {
                 match self.emit_time_expr_tag(value) {
                     Some(tag) => {
                         self.emit_indent(&format!(
-                            "mov byte [rbx + rdx + 24], {}  ; slot type tag",
-                            tag
+                            "mov byte [rbx + rdx + {0}], {1}  ; slot type tag",
+                            LIST_DATA_OFFSET, tag
                         ));
                     }
                     None => {
@@ -4073,9 +4250,15 @@ impl CodeGenerator {
                                 "mov al, [rbp-{}]  ; runtime tag of mixed source",
                                 slot
                             ));
-                            self.emit_indent("mov [rbx + rdx + 24], al  ; slot type tag");
+                            self.emit_indent(&format!(
+                                "mov [rbx + rdx + {}], al  ; slot type tag",
+                                LIST_DATA_OFFSET
+                            ));
                         } else {
-                            self.emit_indent("mov byte [rbx + rdx + 24], 0  ; default integer tag");
+                            self.emit_indent(&format!(
+                                "mov byte [rbx + rdx + {}], 0  ; default integer tag",
+                                LIST_DATA_OFFSET
+                            ));
                         }
                     }
                 }
@@ -4083,7 +4266,10 @@ impl CodeGenerator {
                 self.emit_indent("mov rdx, [rbx + 16]  ; element size");
                 // Calculate offset
                 self.emit_indent("imul rcx, rdx  ; index * element_size");
-                self.emit_indent("add rcx, 24  ; data starts at offset 24");
+                self.emit_indent(&format!(
+                    "add rcx, {}  ; data starts at offset {}",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 // Write element
                 self.emit_indent("mov [rbx + rcx], r8  ; write element");
 
@@ -4129,11 +4315,7 @@ impl CodeGenerator {
                 self.emit_indent("pop rdi  ; map pointer");
                 self.emit_indent("call _map_insert");
                 // Store the (possibly reallocated) map pointer back.
-                if let Some(offset) = self.get_var(map) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store new map ptr", offset));
-                } else if let Some(label) = self.global_var_label(map).cloned() {
-                    self.emit_indent(&format!("mov [rel {}], rax  ; store new map ptr", label));
-                }
+                self.emit_store_back_after_realloc(map, "rax");
             }
 
             Statement::ListAppend { list, value } => {
@@ -4154,6 +4336,13 @@ impl CodeGenerator {
                                 self.emit_append_runtime_value_to_buffer_ptr(self.infer_expr_type(value), fmt_spec);
                                 self.emit_indent(&format!("mov [rel {}], rax", label));
                             }
+                        }
+                        // Top-level/branch-declared buffers live in both a stack
+                        // slot and a BSS mirror. Any append that updated the stack
+                        // slot must also update the mirror so functions see the
+                        // possibly-reallocated pointer.
+                        if let Some(offset) = dst_local {
+                            self.emit_mirror_stack_var_to_global_if_needed(list, offset);
                         }
                     }
                     return;
@@ -4264,11 +4453,7 @@ impl CodeGenerator {
                     self.emit_indent("call _list_append");
 
                     // Store potentially new list pointer back to wherever it came from
-                    if let Some(offset) = self.get_var(list) {
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; store new list ptr", offset));
-                    } else if let Some(label) = self.global_var_label(list).cloned() {
-                        self.emit_indent(&format!("mov [rel {}], rax  ; store new list ptr", label));
-                    }
+                    self.emit_store_back_after_realloc(list, "rax");
                 }
             }
 
@@ -4296,6 +4481,11 @@ impl CodeGenerator {
                             self.emit_indent(&format!("mov [rel {}], rax  ; updated destination pointer", label));
                         }
                     }
+                    // Mirror any stack-slot update back to the global BSS copy so
+                    // functions see the (possibly reallocated) buffer pointer.
+                    if let Some(offset) = dst_local {
+                        self.emit_mirror_stack_var_to_global_if_needed(destination, offset);
+                    }
                 }
             }
 
@@ -4307,6 +4497,7 @@ impl CodeGenerator {
                 self.emit_indent("call _buffer_clear");
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer (unchanged pointer)", offset));
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
                     self.emit_indent(&format!("mov [rel {}], rax  ; buffer (unchanged pointer)", label));
                 }
@@ -4410,30 +4601,30 @@ impl CodeGenerator {
             }
             
             Statement::FileRead { source, buffer } => {
-                // Get source fd
                 let source_fd = if source == "stdin" {
                     "0".to_string()  // STDIN
                 } else if let Some(offset) = self.get_var(source) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(source).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
-                
-                // Use dynamic read that auto-grows buffer (only if fd is valid)
-                if let Some(buf_offset) = self.get_var(buffer) {
-                    let skip_label = self.new_label("skip_fd");
-                    self.emit_indent(&format!("mov rdi, {}", source_fd));
-                    // Skip read if fd is invalid (negative)
-                    self.emit_indent("test rdi, rdi");
-                    self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
-                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+
+                let skip_label = self.new_label("skip_fd");
+                self.emit_indent(&format!("mov rdi, {}", source_fd));
+                // Skip read if fd is invalid (negative)
+                self.emit_indent("test rdi, rdi");
+                self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
+                if self.emit_load_named_var_addr(buffer) {
+                    self.emit_indent("mov rsi, rax  ; buffer struct");
                     // Reset buffer length before reading (read replaces, not appends)
                     self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_into_buffer  ; auto-grows if needed");
                     // Update buffer pointer (may have changed if grown)
-                    self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
-                    self.emit(&format!("{}:", skip_label));
+                    self.emit_store_back_after_realloc(buffer, "rsi");
                 }
+                self.emit(&format!("{}:", skip_label));
             }
 
             Statement::FileReadLine { source, buffer } => {
@@ -4441,28 +4632,30 @@ impl CodeGenerator {
                     "0".to_string()
                 } else if let Some(offset) = self.get_var(source) {
                     format!("[rbp-{}]", offset)
+                } else if let Some(label) = self.global_var_label(source).cloned() {
+                    format!("[rel {}]", label)
                 } else {
                     "0".to_string()
                 };
 
-                if let Some(buf_offset) = self.get_var(buffer) {
-                    let skip_label = self.new_label("skip_fd");
-                    let done_label = self.new_label("readline_done");
-                    self.emit_indent(&format!("mov rdi, {}", source_fd));
-                    self.emit_indent("test rdi, rdi");
-                    self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
-                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; buffer struct", buf_offset));
+                let skip_label = self.new_label("skip_fd");
+                let done_label = self.new_label("readline_done");
+                self.emit_indent(&format!("mov rdi, {}", source_fd));
+                self.emit_indent("test rdi, rdi");
+                self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
+                if self.emit_load_named_var_addr(buffer) {
+                    self.emit_indent("mov rsi, rax  ; buffer struct");
                     self.emit_indent("mov qword [rsi + 8], 0  ; reset buffer length");
                     self.emit_indent("call _read_line_into_buffer");
                     // _read_line_into_buffer already sets _last_error (1=EOF, 2=read error)
                     // Update buffer pointer (may have changed if grown)
-                    self.emit_indent(&format!("mov [rbp-{}], rsi  ; updated buffer ptr", buf_offset));
-                    self.emit_indent(&format!("jmp {}", done_label));
-                    self.emit(&format!("{}:", skip_label));
-                    // Invalid fd is an error - make On error fire
-                    self.emit_indent("mov qword [rel _last_error], 1");
-                    self.emit(&format!("{}:", done_label));
+                    self.emit_store_back_after_realloc(buffer, "rsi");
                 }
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", skip_label));
+                // Invalid fd is an error - make On error fire
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit(&format!("{}:", done_label));
             }
 
             Statement::FileSeekLine { file, line } => {
@@ -4986,11 +5179,7 @@ impl CodeGenerator {
                     self.generate_expr(new_size);
                     self.emit_indent("mov rsi, rax  ; new size");
                     self.emit_indent("call _realloc_buffer");
-                    if let Some(offset) = self.get_var(name) {
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; updated buffer pointer", offset));
-                    } else if let Some(label) = self.global_var_label(name).cloned() {
-                        self.emit_indent(&format!("mov [rel {}], rax  ; updated buffer pointer", label));
-                    }
+                    self.emit_store_back_after_realloc(name, "rax");
                 }
             }
             
@@ -5332,7 +5521,10 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec: value is formatted as a number, so point
                                     // rdi at the data area so the formatter reads the string.
-                                    self.emit_indent("add rdi, 24  ; buffer data area (header is 24 bytes)");
+                                    self.emit_indent(&format!(
+                                        "add rdi, {}  ; buffer data area (header is {} bytes)",
+                                        BUF_DATA_OFFSET, BUF_DATA_OFFSET
+                                    ));
                                     self.emit_formatted_value(var_type, fmt_spec);
                                 }
                             } else if var_type == Some(VarType::List) {
@@ -5378,7 +5570,7 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec present: adjust to data area for
                                     // the NUL-scanned formatter.
-                                    self.emit_indent("add rdi, 24  ; buffer data area");
+                                    self.emit_indent(&format!("add rdi, {}  ; buffer data area", BUF_DATA_OFFSET));
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
                             } else if expr_type == Some(VarType::Map) {
@@ -5547,7 +5739,17 @@ impl CodeGenerator {
                 // `generate_expr` left the slot's tag in r11 and we dispatch
                 // on it (stage 1e1).
                 let elem_type = if let Expr::Identifier(name) = list.as_ref() {
-                    self.list_element_types.get(name).cloned()
+                    // A list parameter (or any list with no proven element
+                    // type) stores a per-slot runtime tag, so dispatch on it
+                    // rather than defaulting to PRINT_INT — see
+                    // `list_expr_is_mixed`. `generate_expr` left that tag in
+                    // r11 for this same unknown-element case.
+                    match self.list_element_types.get(name) {
+                        None | Some(&VarType::Mixed) | Some(&VarType::Unknown) => {
+                            Some(VarType::Mixed)
+                        }
+                        Some(other) => Some(other.clone()),
+                    }
                 } else if let Expr::ListLit { elements } = list.as_ref() {
                     if self.list_expr_is_mixed(list) {
                         Some(VarType::Mixed)
@@ -5694,7 +5896,10 @@ impl CodeGenerator {
     fn generate_cstr_expr(&mut self, expr: &Expr) {
         self.generate_expr(expr);
         if self.infer_expr_type(expr) == Some(VarType::Buffer) {
-            self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes, data is NUL-terminated)");
+            self.emit_indent(&format!(
+                "add rax, {}  ; buffer data area (header is {} bytes, data is NUL-terminated)",
+                BUF_DATA_OFFSET, BUF_DATA_OFFSET
+            ));
         }
     }
 
@@ -5950,6 +6155,11 @@ impl CodeGenerator {
                     // Integer operations
                     self.uses_ints = true;
                     let arith = self.is_arithmetic_operator(op);
+                    if arith {
+                        self.emit_indent(
+                            "mov qword [rel _last_error], 0  ; clear error before arithmetic",
+                        );
+                    }
                     self.generate_expr(right);
                     if arith {
                         self.emit_nothing_operand_check(right);
@@ -6164,7 +6374,7 @@ impl CodeGenerator {
                 // Each element is 8 bytes, header is 24 bytes, plus one type
                 // tag byte per slot after the data region.
                 let capacity = std::cmp::max(elements.len(), 8); // minimum capacity 8
-                let header_size = 24;
+                let header_size = LIST_DATA_OFFSET as usize;
                 let data_size = capacity * 8;
                 let total_size = header_size + data_size + capacity;
                 
@@ -6338,17 +6548,24 @@ impl CodeGenerator {
                 // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
                 // Data starts at offset 24
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 if is_mixed {
                     // tag_addr = base + 24 + capacity*8 + index; tag rides in
                     // r11 for the immediate consumer.
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rcx  ; + index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                 }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; multiply by 8 (element size)");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 
@@ -6485,13 +6702,20 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
+                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                             if is_mixed {
                                 // tags[0] = base + 24 + capacity*8
                                 self.emit_indent("mov r11, [rax]  ; capacity");
                                 self.emit_indent("shl r11, 3  ; * element size (8)");
-                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                                self.emit_indent(&format!(
+                            "movzx r11, byte [rax + r11 + {}]  ; slot type tag",
+                            LIST_DATA_OFFSET
+                        ));
                             }
-                            self.emit_indent("mov rax, [rax + 24]  ; first element (data at offset 24)");
+                            self.emit_indent(&format!(
+                                "mov rax, [rax + {}]  ; first element (data at offset {})",
+                                LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                            ));
                             self.emit(&format!("{}:", done_label));
                         }
                         ObjectProperty::Last => {
@@ -6511,16 +6735,20 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
+                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                             self.emit_indent("dec rbx             ; 0-indexed");
                             if is_mixed {
                                 // tags[len-1] = base + 24 + capacity*8 + (len-1)
                                 self.emit_indent("mov r11, [rax]  ; capacity");
                                 self.emit_indent("shl r11, 3  ; * element size (8)");
                                 self.emit_indent("add r11, rbx  ; + 0-based last index");
-                                self.emit_indent("movzx r11, byte [rax + r11 + 24]  ; slot type tag");
+                                self.emit_indent(&format!(
+                            "movzx r11, byte [rax + r11 + {}]  ; slot type tag",
+                            LIST_DATA_OFFSET
+                        ));
                             }
                             self.emit_indent("shl rbx, 3          ; * 8");
-                            self.emit_indent("add rbx, 24         ; + header offset");
+                            self.emit_indent(&format!("add rbx, {}         ; + header offset", LIST_DATA_OFFSET));
                             self.emit_indent("add rax, rbx        ; offset to last");
                             self.emit_indent("mov rax, [rax]      ; last element");
                             self.emit(&format!("{}:", done_label));
@@ -6764,7 +6992,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
-                self.emit_indent("add rax, 24");
+                self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
                 self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
@@ -6795,7 +7023,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_parsed_arg");
-                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -6827,7 +7055,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rax, r13");
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
-                self.emit_indent("add rax, 24");
+                self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
                 self.emit_indent("mov rsi, rax  ; size");
                 self.emit_indent("xor rdi, rdi  ; addr = NULL");
                 self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
@@ -6856,7 +7084,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_raw_arg");
-                self.emit_indent("mov [r14 + r15*8 + 24], rax");
+                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -7182,7 +7410,7 @@ impl CodeGenerator {
                             let done_label = self.new_label("bool_done");
                             self.emit_indent(&format!("jz {}", null_label));
                             if src_type == Some(VarType::Buffer) {
-                                self.emit_indent("add rax, 24  ; buffer data area");
+                                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
                             }
                             self.emit_indent("mov rdi, rax");
                             self.emit_indent("call _text_to_boolean");
@@ -7246,7 +7474,10 @@ impl CodeGenerator {
                             }
 
                             self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                            self.emit_indent("add rax, 24  ; buffer data area -> NUL-terminated C string");
+                            self.emit_indent(&format!(
+                                "add rax, {}  ; buffer data area -> NUL-terminated C string",
+                                BUF_DATA_OFFSET
+                            ));
                         }
                     }
                     _ => {
@@ -7274,7 +7505,7 @@ impl CodeGenerator {
             }
             
             // Byte access: byte N of buffer (1-indexed)
-            // Buffer structure: [capacity:8][length:8][data at offset 24]
+            // Buffer structure: [capacity:8][length:8][flags:8][data at offset 24]
             // MEMORY SAFETY: Always bounds-check before access
             Expr::ByteAccess { buffer, index } => {
                 let ok_label = self.new_label("byte_ok");
@@ -7305,8 +7536,9 @@ impl CodeGenerator {
 
                 // Success path: safe access
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent("add rbx, 24  ; skip to buffer data area");
+                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
                 self.emit_indent("xor rax, rax");
                 self.emit_indent("mov al, [rbx + rcx]");
 
@@ -7350,6 +7582,7 @@ impl CodeGenerator {
                 // Success path: safe access
                 // Data starts at offset 24, 1-indexed so element 1 is at offset 24
                 self.emit(&format!("{}:", ok_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 if is_mixed {
                     // Runtime type tag travels in r11 (captured immediately
@@ -7358,11 +7591,17 @@ impl CodeGenerator {
                     self.emit_indent("mov r11, [rbx]  ; capacity");
                     self.emit_indent("shl r11, 3  ; * element size (8)");
                     self.emit_indent("add r11, rcx  ; + 0-based index");
-                    self.emit_indent("movzx r11, byte [rbx + r11 + 24]  ; slot type tag");
+                    self.emit_indent(&format!(
+                        "movzx r11, byte [rbx + r11 + {}]  ; slot type tag",
+                        LIST_DATA_OFFSET
+                    ));
                 }
                 self.emit_indent("mov rax, rcx");
                 self.emit_indent("shl rax, 3  ; index * 8");
-                self.emit_indent("add rax, 24  ; skip header (24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; skip header ({} bytes)",
+                    LIST_DATA_OFFSET, LIST_DATA_OFFSET
+                ));
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
                 
@@ -7403,7 +7642,10 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rbp-{}], rax", tmp));
                 self.emit_format_parts_into_buffer_slot(tmp, parts, false);
                 self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                self.emit_indent("add rax, 24  ; buffer data area (header is 24 bytes)");
+                self.emit_indent(&format!(
+                    "add rax, {}  ; buffer data area (header is {} bytes)",
+                    BUF_DATA_OFFSET, BUF_DATA_OFFSET
+                ));
             }
         }
     }
@@ -7721,9 +7963,17 @@ impl CodeGenerator {
                 }
             }
             Expr::ElementAccess { list, .. } => {
-                // For element access, return the list's element type
+                // For element access, return the list's element type. A named
+                // list with no proven element type (a bare `list` parameter, or
+                // any list the pre-scan left untyped) is runtime-tagged
+                // per-slot, so return None and let `emit_load_value_tag` use the
+                // tag `generate_expr` left in r11 — instead of defaulting to
+                // Integer, which would overwrite the real tag with 0.
                 if let Expr::Identifier(name) = list.as_ref() {
-                    self.list_element_types.get(name).cloned().or(Some(VarType::Integer))
+                    match self.list_element_types.get(name) {
+                        Some(VarType::Unknown) | None => None,
+                        Some(other) => Some(other.clone()),
+                    }
                 } else {
                     Some(VarType::Integer)
                 }
@@ -9466,5 +9716,118 @@ Library emptykit version \"1.0\".\n\
 To f with a list called out.\n  Print \"noop\".\n";
         let (blocks, _) = compile_shared_with_libs(no_evidence);
         assert_eq!(blocks[0].funcs[0].params[0].1, Type::List(Box::new(Type::Unknown)));
+    }
+
+    /// Track B4 regression guard: the consuming one-byte exact-fill probe
+    /// (read 1 byte into a stack slot + lseek(-1, SEEK_CUR) to put it back)
+    /// must stay removed from the runtime. It lost a byte on unseekable fds
+    /// (issue #8). Asserted at the source level because the probe is gone from
+    /// the assembled object iff it is gone from resource.asm.
+    #[test]
+    fn b4_exact_fill_probe_is_removed_from_runtime() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("coreasm").join("x86_64").join("resource.asm");
+        let asm = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
+        assert!(!asm.contains("Probe for additional data using a scratch byte"),
+            "the consuming one-byte probe comment must be removed from resource.asm");
+        assert!(!asm.contains("mov rsi, -1"),
+            "the probe's lseek(fd, -1, SEEK_CUR) put-back must be removed from resource.asm");
+        assert!(!asm.contains(".no_more_data"),
+            "the old probe's .no_more_data branch must be removed from resource.asm");
+        assert!(asm.contains("fd_mode_table"), "fd_mode_table cache must be present");
+        assert!(asm.contains("fd_size_table"), "fd_size_table cache must be present");
+        assert!(asm.contains("S_IFREG"), "regular-file type check must be present");
+        assert!(asm.contains("SYS_FSTAT"), "fstat syscall constant must be present");
+        assert!(asm.contains(".exact_fit_success"),
+            "the seekability-aware exact-fit decision must be present");
+    }
+
+    /// Static lint: every runtime helper that can set _last_error on failure
+    /// must also clear it to 0 on its success path. This locks the lifecycle
+    /// rule in at the asm source level so a regression is caught without
+    /// assembling/linking.
+    #[test]
+    fn last_error_runtime_helpers_clear_on_success() {
+        let int_asm = include_str!("../../coreasm/x86_64/int.asm");
+        let float_asm = include_str!("../../coreasm/x86_64/float.asm");
+        let list_asm = include_str!("../../coreasm/x86_64/list.asm");
+        let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+
+        fn function_body_has_clear(asm: &str, name: &str) -> bool {
+            let label = format!("{}:", name);
+            let start = asm
+                .find(&label)
+                .unwrap_or_else(|| panic!("{} label not found", name));
+            let rest = &asm[start..];
+            let lines: Vec<&str> = rest.lines().collect();
+            let end = lines
+                .iter()
+                .position(|l| l.trim() == "ret")
+                .unwrap_or_else(|| panic!("{} has no ret", name));
+            lines[..end].join("\n").contains("mov qword [rel _last_error], 0")
+        }
+
+        fn macro_body_has_clear(asm: &str, name: &str) -> bool {
+            let open = format!("%macro {} 0", name);
+            let start = asm
+                .find(&open)
+                .unwrap_or_else(|| panic!("%macro {} not found", name));
+            let rest = &asm[start..];
+            let lines: Vec<&str> = rest.lines().collect();
+            let end = lines
+                .iter()
+                .position(|l| l.trim() == "%endmacro")
+                .unwrap_or_else(|| panic!("%endmacro for {} not found", name));
+            lines[..end].join("\n").contains("mov qword [rel _last_error], 0")
+        }
+
+        assert!(
+            function_body_has_clear(int_asm, "_parse_i64"),
+            "_parse_i64 must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_int_radix"),
+            "_parse_int_radix must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_i64_bounded"),
+            "_parse_i64_bounded must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(int_asm, "_parse_int_radix_bounded"),
+            "_parse_int_radix_bounded must clear _last_error on success"
+        );
+        assert!(
+            macro_body_has_clear(int_asm, "INT_DIV"),
+            "INT_DIV must clear _last_error on its non-zero-divisor path"
+        );
+        assert!(
+            macro_body_has_clear(int_asm, "INT_MOD"),
+            "INT_MOD must clear _last_error on its non-zero-divisor path"
+        );
+
+        assert!(
+            function_body_has_clear(float_asm, "_parse_f64"),
+            "_parse_f64 must clear _last_error on success"
+        );
+        assert!(
+            function_body_has_clear(float_asm, "_parse_f64_bounded"),
+            "_parse_f64_bounded must clear _last_error on success"
+        );
+
+        assert!(
+            function_body_has_clear(list_asm, "_list_print"),
+            "_list_print must clear _last_error on its normal return path"
+        );
+
+        assert!(
+            function_body_has_clear(map_asm, "_map_lookup"),
+            "_map_lookup must clear _last_error on a hit"
+        );
+        assert!(
+            function_body_has_clear(map_asm, "_map_print"),
+            "_map_print must clear _last_error on its normal return path"
+        );
     }
 }

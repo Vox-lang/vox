@@ -1,0 +1,11 @@
+To 'check element' with a list called lst and a number called idx.
+  a value called elem is element idx of lst.
+  a boolean called ismap is false.
+  If elem is a map then, the ismap is true.
+  Print ismap.
+  Print elem.
+
+a map called m1 is {"a": 1}.
+a list called lst is [].
+append m1 to lst.
+'check element' of lst and 1.

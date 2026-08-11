@@ -608,6 +608,12 @@ _list_print:
     push r13
     push r14
 
+    ; Lifecycle: any operation that may set _last_error on failure must clear
+    ; it on the success path. Do this once at entry so recursive calls clear
+    ; for their own frame; the depth-limit error path sets it before returning,
+    ; and the unwinding frames do not clear it again.
+    mov qword [rel _last_error], 0
+
     ; Depth guard (stage 1e1): cap recursion at 64 levels so a cyclic list
     ; (e.g. `append x to x`) terminates instead of overflowing the stack.
     ; On overflow, set the error flag, print a truncation marker, and return.

@@ -1,0 +1,7 @@
+(Growing a dynamic buffer from capacity 0 must terminate, not infinite-loop or SIGSEGV)
+
+a buffer called b.
+Resize b to 0 bytes.
+Append "hello" to b.
+On error Print "error".
+Print b.

@@ -810,8 +810,31 @@ impl Parser {
         self.advance();
         self.skip_noise();
         let mut args = Vec::new();
+        let mut first_arg = true;
         loop {
-            let arg = self.parse_expression()?;
+            // A function call is a primary and must bind tighter than the
+            // additive operators (`add`/`subtract`): `'state pos' of state
+            // add by` is `('state pos' of state) add by`, not `'state pos' of
+            // (state add by)`. The FIRST argument is therefore parsed at the
+            // `cast` level (below additive) so a trailing `add`/`subtract` is
+            // left for the caller to apply to the call result, while an
+            // argument's own `as a <type>` cast is still kept (`f of x as a
+            // number`).
+            //
+            // Once an `and` marks this as a multi-argument call, the argument
+            // boundary is explicit, so LATER arguments parse at the full
+            // `parse_expression` level: `gcd of b and aa modulo b` keeps
+            // `aa modulo b` as the second argument, and `walk of v and n
+            // subtract 1` keeps `n subtract 1`. A boolean `and` inside one
+            // argument must be braced (`f of {x and y}`), as before. This keeps
+            // comparison parsing intact: `'some call' of x and y is false
+            // and ...` still reads `f(x, y) is false and ...`.
+            let arg = if first_arg {
+                first_arg = false;
+                self.parse_cast()?
+            } else {
+                self.parse_expression()?
+            };
             args.push(arg);
             self.skip_noise();
             if *self.current() == Token::Comma {
@@ -1173,25 +1196,30 @@ impl Parser {
     /// sentence-consuming construct).
     fn maybe_parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
         let start_pos = self.pos;
-        if matches!(self.current(), Token::But | Token::Comma) {
+
+        // The conditional continuation sugar is `but if ...` with an optional
+        // leading comma. Consume the comma if present, but do not commit to it
+        // until we see the `but if` that proves this is a suffix. A bare
+        // `, if ... then, ...` is a nested `If` as the next item in an
+        // enclosing comma-separated body, so we always restore `start_pos`
+        // when `but if` is absent.
+        if *self.current() == Token::Comma {
             self.advance();
             self.skip_noise();
+        }
 
-            // Handle "but if" or just "if"
-            if *self.current() == Token::But {
-                self.advance();
-                self.skip_noise();
-            }
+        if *self.current() == Token::But {
+            self.advance();
+            self.skip_noise();
 
             if *self.current() == Token::If {
                 return self.parse_conditional_suffix(base);
             }
-
-            // Not a conditional continuation; restore parser position so
-            // outer constructs can consume the separator normally.
-            self.pos = start_pos;
         }
 
+        // Not a conditional continuation; restore parser position so
+        // outer constructs can consume the separator normally.
+        self.pos = start_pos;
         Ok(base)
     }
 
@@ -1864,16 +1892,16 @@ impl Parser {
         let mut else_if_blocks = Vec::new();
         let mut else_block = None;
         
-        self.skip_all_whitespace();
+        self.skip_noise();
         self.consume_period_before_else_chain();
-        
+
         while matches!(self.current(), Token::But | Token::Else | Token::Otherwise) {
             self.advance();
-            self.skip_all_whitespace();
-            
+            self.skip_noise();
+
             if *self.current() == Token::If || *self.current() == Token::When {
                 self.advance();
-                self.skip_all_whitespace();
+                self.skip_noise();
                 let cond = self.parse_condition()?;
                 self.skip_noise();
                 self.expect(&Token::Then);
@@ -1881,12 +1909,14 @@ impl Parser {
                 self.skip_noise();
                 let block = self.parse_block()?;
                 else_if_blocks.push((cond, block));
-                self.skip_all_whitespace();
+                self.skip_noise();
                 self.consume_period_before_else_chain();
             } else {
                 self.expect(&Token::Comma);
                 self.skip_noise();
-                // Else block consumes rest of sentence (comma-separated actions)
+                // Else block consumes the rest of the sentence (comma-separated
+                // actions, ending at the first top-level period). A nested `If`
+                // that owns its own trailing period is parsed as a single action.
                 let block = self.parse_sentence_body()?;
                 else_block = Some(block);
                 break;
@@ -2238,8 +2268,17 @@ impl Parser {
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
-                        // Now parse the actual return expression
-                        let value = self.parse_expression()?;
+                        // Now parse the actual return expression. Use
+                        // `parse_condition` (not `parse_expression`) so a typed
+                        // return whose body is a comparison or boolean
+                        // conjunction — `Return a boolean, A and B.` — parses
+                        // the whole condition. `parse_expression` stops at
+                        // `is`/`and`/`or`, which is why this only failed when
+                        // the Return was NOT the function's first statement: the
+                        // first-statement inline path in `parse_function_def`
+                        // already uses `parse_condition`, so the two paths must
+                        // agree.
+                        let value = self.parse_condition()?;
                         return Ok(Statement::Return { value: Some(value), declared_type: Some(declared_type) });
                     }
                 }
@@ -2247,7 +2286,10 @@ impl Parser {
                 return Err(self.err("Expected type after 'a' in return statement"));
             }
 
-            let value = self.parse_expression()?;
+            // Match the inline first-statement path: parse the value as a
+            // full condition so an untyped `Return A and B.` or `Return x is y.`
+            // parses the same whether or not it is the first body statement.
+            let value = self.parse_condition()?;
             Ok(Statement::Return { value: Some(value), declared_type: None })
         }
     }
@@ -4456,51 +4498,104 @@ impl Parser {
         })
     }
 
+    /// Parse the body of an `If`/`otherwise if` branch.
+    ///
+    /// A branch body is a comma-separated sequence of statements. Each statement
+    /// may itself be a nested construct (e.g. another `If`) that owns its own
+    /// trailing period. The body ends when we reach a top-level else-chain
+    /// keyword (`But`, `Else`, `Otherwise`), `EOF`, or a paragraph break. A
+    /// trailing comma immediately before the boundary is allowed.
     fn parse_block(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
-        let stmt = self.parse_statement()?;
-        statements.push(stmt);
-        let mut last_stmt_was_on_error = matches!(statements.last(), Some(Statement::OnError { .. }));
-        
+
         loop {
-            let continue_with_comma = matches!(self.current(), Token::Comma)
-                && !matches!(
-                    self.peek(1),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF
-                );
-
-            let continue_after_on_error = last_stmt_was_on_error
-                && !matches!(
-                    self.current(),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period | Token::ParagraphBreak
-                );
-
-            if !continue_with_comma && !continue_after_on_error {
+            // The next token starts the enclosing `If`'s else-chain, or we
+            // have reached the end of the input.
+            if matches!(
+                self.current(),
+                Token::But | Token::Else | Token::Otherwise | Token::EOF
+            ) {
                 break;
             }
 
-            if continue_with_comma {
-                self.advance();
-                self.skip_noise();
-                while matches!(self.current(), Token::ParagraphBreak) {
-                    self.advance();
-                    self.skip_noise();
-                }
+            let stmt = self.parse_statement()?;
+            let is_on_error = matches!(stmt, Statement::OnError { .. });
+            // A self-terminating nested construct (If/While/For) consumes its
+            // own trailing period; see the note below for why we track this.
+            let is_self_terminated = matches!(
+                stmt,
+                Statement::If { .. } | Statement::While { .. }
+                    | Statement::ForRange { .. } | Statement::ForEach { .. }
+            );
+            statements.push(stmt);
 
+            self.skip_noise();
+
+            // `On error` can chain directly into the next action without an
+            // intervening comma or period.
+            if is_on_error {
                 if matches!(
                     self.current(),
-                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::Period
+                    Token::But
+                        | Token::Else
+                        | Token::Otherwise
+                        | Token::EOF
+                        | Token::Period
+                        | Token::ParagraphBreak
                 ) {
                     break;
                 }
+                continue;
             }
 
-            let stmt = self.parse_statement()?;
-            last_stmt_was_on_error = matches!(stmt, Statement::OnError { .. });
-            statements.push(stmt);
+            // A self-terminating nested construct — `If`, `While`, `For each`,
+            // `For ... to` — owns and consumes its own trailing period (see
+            // `parse_if`'s final period consume, and the body loops in
+            // `parse_while`/`parse_for`). When such a construct is an action in
+            // a comma-separated branch, the next action therefore follows with
+            // NO comma separator: the nested construct's period already served
+            // as the separator. Without this, a complete nested `If ... then,
+            // X.` followed by another action in the same branch would orphan
+            // that action (and every later one), closing the enclosing
+            // statement early. Only continue when the next token genuinely
+            // starts another action; boundaries (else-chain, period, comma,
+            // paragraph, EOF) are handled by the loop top or the arms below.
+            if is_self_terminated && !matches!(
+                self.current(),
+                Token::Comma
+                    | Token::Period
+                    | Token::ParagraphBreak
+                    | Token::EOF
+                    | Token::But
+                    | Token::Else
+                    | Token::Otherwise
+            ) {
+                continue;
+            }
+
+            // A comma continues the body, a period ends the current statement
+            // and therefore the body (the period is left for the caller so
+            // standalone `if` sentences can own their own terminator).
+            if *self.current() == Token::Comma {
+                self.advance();
+                self.skip_all_whitespace();
+
+                // Trailing comma right before the else-chain boundary.
+                if matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                ) {
+                    break;
+                }
+
+                continue;
+            }
+
+            // Period, paragraph break, EOF, or an unexpected token ends the
+            // body. Leave the terminator for the caller.
+            break;
         }
-        
+
         Ok(statements)
     }
     
@@ -4509,34 +4604,50 @@ impl Parser {
     /// - on error <action>, <action>, <action>.
     /// - while <cond>, <action>, <action>.
     /// - for each X, <action>, <action>.
+    ///
+    /// The loop also stops at the start of an enclosing `If` else-chain so a
+    /// trailing comma before `But`/`Else`/`Otherwise` does not swallow the
+    /// boundary token.
     fn parse_sentence_body(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
+
         loop {
-            // Stop at end of sentence markers
-            if matches!(self.current(), Token::Period | Token::EOF | Token::ParagraphBreak) {
+            // Stop at end of sentence markers or at an enclosing if-chain.
+            if matches!(
+                self.current(),
+                Token::Period | Token::EOF | Token::ParagraphBreak
+                    | Token::But | Token::Else | Token::Otherwise
+            ) {
                 break;
             }
-            
+
             let stmt = self.parse_statement()?;
             statements.push(stmt);
             self.skip_noise();
-            
-            // Comma continues to next action, period ends
+
+            // Comma continues to next action, period ends. A comma immediately
+            // followed by an if-chain boundary ends the sentence here.
             if *self.current() == Token::Comma {
                 self.advance();
                 self.skip_noise();
+
+                if matches!(
+                    self.current(),
+                    Token::But | Token::Else | Token::Otherwise | Token::EOF | Token::ParagraphBreak
+                ) {
+                    break;
+                }
             } else {
                 break;
             }
         }
-        
+
         // Consume the period if present
         if *self.current() == Token::Period {
             self.advance();
             self.skip_noise();
         }
-        
+
         Ok(statements)
     }
     
@@ -5051,15 +5162,30 @@ impl Parser {
     /// names) must not. Hand-rolling this check per statement is how
     /// `write "{x}" to f` shipped writing the braces literally.
     fn string_value_expr(&self, s: String) -> Expr {
-        if s.contains('{') && !s.starts_with("{{") {
+        // Any brace - escaped ({{ }}) or a real placeholder ({x}) - means we
+        // must run the format parser. A leading "{{" used to short-circuit
+        // this, leaving the braces in the literal verbatim. Now we always
+        // parse: real placeholders become FormatString, and an all-Literal
+        // result (pure escapes like "{{x}}" -> "{x}") is collapsed back into a
+        // plain StringLit so the escapes take effect. An unpaired "{" yields
+        // an empty-name Variable, which still triggers the codegen error -
+        // preserving the "Unknown variable" diagnostic for `Append "{" to out`.
+        if s.contains('{') || s.contains('}') {
             let parts = self.parse_format_string(&s);
-            if !parts.is_empty()
-                && parts
-                    .iter()
-                    .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
+            if parts
+                .iter()
+                .any(|p| matches!(p, FormatPart::Variable { .. } | FormatPart::Expression { .. }))
             {
                 return Expr::FormatString { parts };
             }
+            let collapsed: String = parts
+                .iter()
+                .filter_map(|p| match p {
+                    FormatPart::Literal(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            return Expr::StringLit(if collapsed.is_empty() { s } else { collapsed });
         }
         Expr::StringLit(s)
     }

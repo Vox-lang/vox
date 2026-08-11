@@ -19,6 +19,7 @@ section .text
 %macro INT_DIV 0
     test rbx, rbx
     jz %%div_zero
+    mov qword [rel _last_error], 0
     cqo
     idiv rbx
     jmp %%div_done
@@ -31,6 +32,7 @@ section .text
 %macro INT_MOD 0
     test rbx, rbx
     jz %%mod_zero
+    mov qword [rel _last_error], 0
     cqo
     idiv rbx
     mov rax, rdx
@@ -137,7 +139,10 @@ _parse_i64:
 
 .pi64_done:
     test r8, r8
-    jnz .pi64_sign
+    jz .pi64_no_digits
+    mov qword [rel _last_error], 0
+    jmp .pi64_sign
+.pi64_no_digits:
     mov qword [rel _last_error], 1
 .pi64_sign:
     test rcx, rcx
@@ -216,7 +221,10 @@ _parse_int_radix:
 
 .pir_done:
     test r10, r10
-    jnz .pir_sign
+    jz .pir_no_digits
+    mov qword [rel _last_error], 0
+    jmp .pir_sign
+.pir_no_digits:
     mov qword [rel _last_error], 1
 .pir_sign:
     test r9, r9
@@ -287,7 +295,9 @@ _parse_i64_bounded:
 
 .pi64b_done:
     test r9, r9
-    jnz .pi64b_sign
+    jz .pi64b_no_digits
+    mov qword [rel _last_error], 0
+    jmp .pi64b_sign
 .pi64b_no_digits:
     mov qword [rel _last_error], 1
 .pi64b_sign:
@@ -376,7 +386,9 @@ _parse_int_radix_bounded:
 
 .pirb_done:
     test r11, r11
-    jnz .pirb_sign
+    jz .pirb_no_digits
+    mov qword [rel _last_error], 0
+    jmp .pirb_sign
 .pirb_no_digits:
     mov qword [rel _last_error], 1
 .pirb_sign:
