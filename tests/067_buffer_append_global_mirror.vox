@@ -1,0 +1,9 @@
+(Buffer append at top level must update the global mirror so functions see the grown buffer.)
+
+Create a buffer called b.
+Append "hello world this is long" to b.
+
+To printit.
+  Print b.
+
+printit.

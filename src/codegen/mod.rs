@@ -4196,6 +4196,13 @@ impl CodeGenerator {
                                 self.emit_indent(&format!("mov [rel {}], rax", label));
                             }
                         }
+                        // Top-level/branch-declared buffers live in both a stack
+                        // slot and a BSS mirror. Any append that updated the stack
+                        // slot must also update the mirror so functions see the
+                        // possibly-reallocated pointer.
+                        if let Some(offset) = dst_local {
+                            self.emit_mirror_stack_var_to_global_if_needed(list, offset);
+                        }
                     }
                     return;
                 }
@@ -4333,6 +4340,11 @@ impl CodeGenerator {
                             self.emit_indent(&format!("mov [rel {}], rax  ; updated destination pointer", label));
                         }
                     }
+                    // Mirror any stack-slot update back to the global BSS copy so
+                    // functions see the (possibly reallocated) buffer pointer.
+                    if let Some(offset) = dst_local {
+                        self.emit_mirror_stack_var_to_global_if_needed(destination, offset);
+                    }
                 }
             }
 
@@ -4344,6 +4356,7 @@ impl CodeGenerator {
                 self.emit_indent("call _buffer_clear");
                 if let Some(offset) = self.get_var(name) {
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer (unchanged pointer)", offset));
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
                     self.emit_indent(&format!("mov [rel {}], rax  ; buffer (unchanged pointer)", label));
                 }
