@@ -1,0 +1,24 @@
+(Track B2 — mremap growth past 64 MB. A dynamic buffer is grown past 64 MB by
+ appending a 4 KB chunk repeatedly, exercising repeated large no-copy mremap
+ remaps. Asserts the buffer did not crash and that size and capacity are
+ coherent, both exactly 64 MB at the final doubling boundary.)
+
+a buffer called chunk.
+a number called j is 1.
+While j is less than or equal to 64,
+  Append "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz_+" to chunk,
+  Increment j.
+
+a buffer called big.
+a number called i is 1.
+While i is less than or equal to 16384,
+  Append chunk to big,
+  Increment i.
+
+If big's size is equal to 67108864 then,
+  If big's capacity is equal to 67108864 then,
+    print "ok".
+  Otherwise,
+    print "BUG: capacity".
+Otherwise,
+  print "BUG: size".

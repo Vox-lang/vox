@@ -19,6 +19,13 @@
 ; Initial buffer capacity
 %define INITIAL_BUF_CAP 4096
 
+; mremap syscall + flag for the no-copy growth path. Defined locally here
+; (not imported from file.asm) because resource.asm is included for
+; buffer-only programs where file.asm is absent - see the codegen include
+; gating (uses_buffers || uses_files || uses_floats vs uses_files only).
+%define SYS_MREMAP     25
+%define MREMAP_MAYMOVE 1
+
 section .bss
     ; File descriptor tracking table
     ; Each entry: 8 bytes (fd value, 0 = unused)
@@ -927,7 +934,56 @@ _grow_buffer:
     ; Save new capacity in r14 (callee-saved, survives syscall)
     push r14
     mov r14, rax            ; new capacity
-    
+
+    ; --- Try mremap first: remap the existing mapping in place (or move it),
+    ; avoiding the rep movsb copy and the old-buffer munmap. Falls back to the
+    ; original mmap + copy + munmap path on any mremap error (e.g. ENOMEM). ---
+    ; old_total_size = old_capacity + BUF_DATA + 1: the size originally mmap'd
+    ; (matches _alloc_buffer / _alloc_buffer_sized / this path's own mmap).
+    ; Read old_capacity from the header here - the doubling loop clobbered the
+    ; register copy that started in rax.
+    mov rsi, [r12 + BUF_CAPACITY]
+    add rsi, BUF_DATA + 1            ; old_total_size
+    mov rdx, r14
+    add rdx, BUF_DATA + 1            ; new_total_size = new_capacity + BUF_DATA + 1
+    mov rdi, r12                      ; old_addr
+    mov r10, MREMAP_MAYMOVE          ; flags
+    mov rax, SYS_MREMAP              ; 25
+    syscall
+    ; mremap returns -errno in [-4095,-1] on failure (same idiom as mmap).
+    cmp rax, -4096
+    ja .mmap_fallback
+
+    ; mremap succeeded: rax = (possibly moved) buffer pointer. The existing
+    ; header bytes - including BUF_LENGTH and BUF_FLAGS - move with the
+    ; mapping, so only BUF_CAPACITY needs updating.
+    mov rbx, rax
+    mov [rbx + BUF_CAPACITY], r14
+    ; The old mapping was consumed by mremap - do NOT munmap it. Update
+    ; buf_table only if the pointer actually moved (a no-op scan otherwise).
+    cmp rbx, r12
+    je .mremap_done
+    lea r11, [rel buf_table]
+    xor rcx, rcx
+.mremap_find_entry:
+    cmp rcx, MAX_BUFFERS
+    jge .mremap_no_entry
+    mov rax, [r11 + rcx*8]
+    cmp rax, r12
+    je .mremap_update_entry
+    inc rcx
+    jmp .mremap_find_entry
+.mremap_update_entry:
+    mov [r11 + rcx*8], rbx
+.mremap_no_entry:
+.mremap_done:
+    mov rax, rbx            ; return new buffer
+    jmp .done
+
+.mmap_fallback:
+    ; mremap failed - fall back to the original mmap + rep movsb + munmap
+    ; path, preserving the exact same failure semantics.
+    mov rax, r14            ; new capacity (reload: the mremap syscall clobbered rax)
     ; Allocate new buffer (+1 for null terminator)
     add rax, BUF_DATA + 1   ; total allocation size
     mov rsi, rax
@@ -1709,14 +1765,59 @@ _realloc_buffer:
     push r12
     push r13
     push r14
-    
+
     mov r12, rdi            ; old buffer pointer
     mov r13, rsi            ; new size
-    
+
     ; Get old length (to preserve data)
     mov r14, [r12 + BUF_LENGTH]
-    
-    ; Allocate new buffer with new size
+
+    ; --- Growing only: try mremap first (no copy, no munmap). Shrinking or an
+    ; mremap failure falls back to the original alloc + copy path. ---
+    mov rax, [r12 + BUF_CAPACITY]   ; old_capacity
+    cmp r13, rax                     ; new_size > old_capacity ?
+    jle .realloc_fallback            ; not growing -> alloc + copy path
+    mov rsi, rax
+    add rsi, BUF_DATA + 1            ; old_total_size = old_capacity + BUF_DATA + 1
+    mov rdx, r13
+    add rdx, BUF_DATA + 1            ; new_total_size = new_size + BUF_DATA + 1
+    mov rdi, r12                      ; old_addr
+    mov r10, MREMAP_MAYMOVE          ; flags
+    mov rax, SYS_MREMAP              ; 25
+    syscall
+    cmp rax, -4096
+    ja .realloc_fallback             ; mremap failed -> alloc + copy path
+    ; mremap succeeded: rax = (possibly moved) pointer. BUF_LENGTH (old_len,
+    ; which is <= old_capacity < new_size) and BUF_FLAGS are preserved by
+    ; mremap - only BUF_CAPACITY changes.
+    mov rbx, rax
+    mov [rbx + BUF_CAPACITY], r13
+    ; The old mapping was consumed by mremap - do NOT unregister_buffer or
+    ; munmap it. Update buf_table only if the pointer moved.
+    cmp rbx, r12
+    je .realloc_mremap_return
+    lea r11, [rel buf_table]
+    xor rcx, rcx
+.realloc_find_entry:
+    cmp rcx, MAX_BUFFERS
+    jge .realloc_mremap_return
+    mov rax, [r11 + rcx*8]
+    cmp rax, r12
+    je .realloc_update_entry
+    inc rcx
+    jmp .realloc_find_entry
+.realloc_update_entry:
+    mov [r11 + rcx*8], rbx
+.realloc_mremap_return:
+    mov rax, rbx
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+.realloc_fallback:
+    ; Not growing (shrink/equal) or mremap failed: original alloc + copy path.
     mov rdi, r13
     call _alloc_buffer_sized
     mov rbx, rax            ; new buffer pointer

@@ -1,0 +1,37 @@
+(Track B2 — mremap growth happy path. A >=4 MB regular file is written from a
+ dynamic buffer of varied content, then read back into a fresh dynamic buffer.
+ The read starts at the initial 4 KB capacity and grows across several mremap
+ remaps to ~4.5 MB, so a broken no-copy growth path corrupts data or loses
+ bytes, and full buffer equality plus a matching length proves every byte
+ survived. Manual fallback of the mmap path is hard to trigger automatically:
+ run under ulimit -v 8192 so mremap returns ENOMEM and the mmap plus rep movsb
+ plus munmap fallback runs; the assertions must still hold.)
+
+a buffer called chunk.
+Append "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz_+" to chunk.
+
+a buffer called big.
+a number called i is 1.
+While i is less than or equal to 70000,
+  Append chunk to big,
+  Increment i.
+
+a number called wantlen is big's size.
+
+open a file for writing called f at "/tmp/b320_mremap_fixture.bin".
+Write big to f.
+Close f.
+
+open a file for reading called src at "/tmp/b320_mremap_fixture.bin".
+a buffer called readbuf.
+Read from src into readbuf.
+Close src.
+Delete the file "/tmp/b320_mremap_fixture.bin".
+
+If readbuf is big then,
+  If readbuf's size is equal to wantlen then,
+    print "mremap grow ok".
+  Otherwise,
+    print "BUG: length wrong".
+Otherwise,
+  print "BUG: data mismatch".
