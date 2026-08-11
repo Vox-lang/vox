@@ -19,11 +19,32 @@
 ; Initial buffer capacity
 %define INITIAL_BUF_CAP 4096
 
+; Seekability metadata for the exact-fill decision (track B4).
+; Cached per fd in _register_fd via fstat(2) so _read_into_buffer can tell
+; overflow from exact-fit WITHOUT a consuming one-byte probe - that probe
+; lost a byte on unseekable fds (pipes, sockets, character devices) because
+; lseek could not put it back. Linux x86_64 syscall numbers and stat layout.
+%define SYS_FSTAT    5
+%define SYS_LSEEK    8
+%define SEEK_CUR     1
+%define S_IFMT       0xF000      ; st_mode file-type mask
+%define S_IFREG      0x8000      ; regular file (seekable)
+%define STAT_ST_MODE 24          ; st_mode offset in struct stat (4 bytes)
+%define STAT_ST_SIZE 48          ; st_size offset in struct stat (8 bytes)
+
 section .bss
     ; File descriptor tracking table
     ; Each entry: 8 bytes (fd value, 0 = unused)
     fd_table: resq MAX_FDS
     fd_count: resq 1
+
+    ; Seekability cache (track B4): per-slot st_mode (dword) and st_size
+    ; (qword), populated by _register_fd's fstat at open time. A mode of 0
+    ; means "unknown / not regular", so _read_into_buffer treats an exact fill
+    ; as success without probing - unseekable fds never lose a byte. Slot
+    ; indices match fd_table 1:1; reuse re-fstats, so no stale data leaks.
+    fd_mode_table: resd MAX_FDS
+    fd_size_table: resq MAX_FDS
     
     ; Buffer tracking table
     ; Each entry: 8 bytes (pointer to buffer struct, 0 = unused)
@@ -52,11 +73,16 @@ section .text
 
 ; Register a file descriptor for tracking
 ; Args: fd in rdi
-; Clobbers: rax, rcx
+; Clobbers: rax, rcx, rdx, rsi (and r12, saved+restored)
+; As of track B4, also caches the fd's seekability metadata (st_mode/st_size)
+; via fstat(2) so _read_into_buffer can decide exact-fill without a probe.
 global _register_fd
 _register_fd:
     push rbx
     push rcx
+    push rdx
+    push rsi
+    push r12
 
     lea rbx, [rel fd_table]
     ; Find empty slot
@@ -73,10 +99,40 @@ _register_fd:
     jmp .find_slot
 
 .found_slot:
-    mov [rbx + rcx*8], rdi
+    mov [rbx + rcx*8], rdi      ; store fd (rdi still holds it)
     inc qword [rel fd_count]
+    mov r12, rcx                ; save slot across the fstat syscall (rcx clobbered)
+
+    ; fstat(fd, &buf) on the stack, then cache st_mode/st_size for this slot.
+    ; On fstat failure, leave mode 0 so _read_into_buffer treats an exact fill
+    ; as success (no consuming probe) - the safe choice for unseekable fds.
+    sub rsp, 144                ; struct stat (144 bytes), 16-aligned
+    mov rax, SYS_FSTAT
+    mov rdi, [rbx + r12*8]      ; fd (reload from the table)
+    mov rsi, rsp
+    syscall
+    test rax, rax
+    jnz .fstat_failed
+    lea rdx, [rel fd_mode_table]
+    mov eax, [rsp + STAT_ST_MODE]
+    mov [rdx + r12*4], eax
+    lea rdx, [rel fd_size_table]
+    mov rax, [rsp + STAT_ST_SIZE]
+    mov [rdx + r12*8], rax
+    add rsp, 144
+    jmp .table_full
+
+.fstat_failed:
+    lea rdx, [rel fd_mode_table]
+    mov dword [rdx + r12*4], 0
+    lea rdx, [rel fd_size_table]
+    mov qword [rdx + r12*8], 0
+    add rsp, 144
 
 .table_full:
+    pop r12
+    pop rsi
+    pop rdx
     pop rcx
     pop rbx
     ret
@@ -1023,7 +1079,44 @@ _read_into_buffer:
     mov r13, rsi            ; buffer
     xor r14, r14            ; total bytes read
     mov r15, [rsi + BUF_FLAGS]  ; save buffer flags
-    
+    xor ebx, ebx            ; initial fd offset (used only for fixed regular files)
+
+    ; Seekability setup for fixed buffers (track B4). For a regular file,
+    ; record the current offset once with lseek(fd, 0, SEEK_CUR) so a later
+    ; exact-fill read can decide overflow vs exact-fit from the cached st_size,
+    ; without a one-byte probe that would consume (and lose) a byte on
+    ; unseekable fds. Dynamic buffers skip this entirely.
+    test r15, BUF_FLAG_FIXED
+    jz .read_loop
+
+    ; Look up the fd's cached st_mode (set by _register_fd's fstat). An
+    ; untracked fd, or anything that is not a regular file, has no offset to
+    ; record - it is handled as an exact fit at fill time.
+    xor rcx, rcx
+    lea rdx, [rel fd_table]
+.entry_scan:
+    cmp rcx, MAX_FDS
+    jge .read_loop
+    mov rax, [rdx + rcx*8]
+    cmp rax, r12
+    je .entry_found
+    inc rcx
+    jmp .entry_scan
+.entry_found:
+    lea rdx, [rel fd_mode_table]
+    mov eax, [rdx + rcx*4]          ; cached st_mode (dword, zero-extended)
+    and rax, S_IFMT
+    cmp rax, S_IFREG
+    jne .read_loop                  ; not a regular file -> nothing to record
+    mov rax, SYS_LSEEK
+    mov rdi, r12
+    xor rsi, rsi
+    mov rdx, SEEK_CUR
+    syscall
+    test rax, rax
+    js .read_loop                   ; lseek failed (should not for a regular file)
+    mov rbx, rax                    ; initial_position, reused at exact-fill
+
 .read_loop:
     ; Calculate available space
     mov rax, [r13 + BUF_CAPACITY]
@@ -1078,41 +1171,52 @@ _read_into_buffer:
     cmp rcx, 0
     jne .done               ; still have space, we're done
 
-    ; Buffer full after a successful read. For dynamic buffers loop to read
-    ; any remaining data. For fixed buffers, exactly filling is fine IF
-    ; there's no more data waiting - but if more data exists, silently
-    ; discarding it would be silent data loss with no error signal. Peek
-    ; one more byte to tell the two cases apart.
+    ; Buffer full after a successful read. Dynamic buffers loop to read any
+    ; remaining data. Fixed buffers decide overflow vs exact-fit from the
+    ; cached stat metadata (track B4): a regular file with bytes still ahead
+    ; is genuine overflow; everything else (pipe, socket, character device,
+    ; untracked fd, or a size-0 snapshot) is an exact fit. This replaces the
+    ; old one-byte read+lseek probe, which consumed a byte that lseek could
+    ; not put back on unseekable fds, silently losing data (issue #8).
     test r15, BUF_FLAG_FIXED
     jz .read_loop            ; dynamic buffer, might have more data
 
-    ; Probe for additional data using a scratch byte on the stack.
-    push rax                 ; 8-byte scratch slot to read into
-    mov rax, 0               ; SYS_READ
-    mov rdi, r12             ; fd
-    mov rsi, rsp             ; probe destination
-    mov rdx, 1               ; try to read 1 more byte
-    syscall
-
-    cmp rax, 1
-    jne .no_more_data        ; 0 = EOF, <0 = error: either way, no data lost
-
-    ; There WAS more data waiting - this is genuine overflow, not an exact
-    ; fit. Best-effort seek back one byte so a seekable file isn't left
-    ; missing a byte (harmless no-op failure on pipes/sockets, where the
-    ; byte is unavoidably lost - but the error is still correctly signaled).
-    mov rax, 8               ; SYS_LSEEK
-    mov rdi, r12
-    mov rsi, -1
-    mov rdx, 1               ; SEEK_CUR
-    syscall
-    pop rax                  ; discard scratch
-    mov qword [rel _last_error], 1  ; buffer overflow error - data was truncated
+    ; Look up the fd's cached st_mode/st_size (set by _register_fd's fstat).
+    xor rcx, rcx
+    lea rdx, [rel fd_table]
+.fill_scan:
+    cmp rcx, MAX_FDS
+    jge .exact_fit_success       ; fd untracked -> unknown -> treat as success
+    mov rax, [rdx + rcx*8]
+    cmp rax, r12
+    je .fill_found
+    inc rcx
+    jmp .fill_scan
+.fill_found:
+    lea rax, [rel fd_mode_table]
+    mov r8d, [rax + rcx*4]        ; cached st_mode
+    lea rax, [rel fd_size_table]
+    mov r9, [rax + rcx*8]         ; cached st_size
+    ; Only a regular file with a non-zero cached size can be queried for
+    ; "more data ahead". Anything else is an exact fit (no probe, no loss).
+    mov r10, r8
+    and r10, S_IFMT
+    cmp r10, S_IFREG
+    jne .exact_fit_success
+    test r9, r9
+    jz .exact_fit_success
+    ; current_position = initial_offset (rbx) + bytes read this call (r14)
+    mov rax, rbx
+    add rax, r14
+    cmp rax, r9
+    jb .exact_fill_overflow       ; current_position < st_size -> more data -> overflow
+    ; current_position >= st_size -> no more data -> exact fit, no error
+.exact_fit_success:
     jmp .done
 
-.no_more_data:
-    pop rax                  ; discard scratch
-    jmp .done                ; genuinely an exact fit - success, no error
+.exact_fill_overflow:
+    mov qword [rel _last_error], 1  ; buffer overflow - data was truncated
+    jmp .done
 
 .read_error:
     ; Read syscall failed - set error so On error handlers fire.

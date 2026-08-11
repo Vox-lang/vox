@@ -1,0 +1,18 @@
+(Regular file exact fit: a fixed buffer that fills exactly at EOF must not signal a spurious overflow error.)
+
+(Create a 10-byte regular file.)
+open a file for writing called w at "./b341_data.txt".
+Write "0123456789" to w.
+Close w.
+
+(A 10-byte fixed buffer reading a 10-byte file fills exactly at EOF.)
+a buffer called buf is 10 bytes in size.
+open a file for reading called f at "./b341_data.txt".
+Read from f into buf.
+On error print "ERROR: false overflow on exact fit".
+Print "bytes: ".
+Print buf.
+Print "length: ".
+Print buf's size.
+Close f.
+Delete the file "./b341_data.txt".

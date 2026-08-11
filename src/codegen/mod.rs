@@ -9535,4 +9535,29 @@ To f with a list called out.\n  Print \"noop\".\n";
         let (blocks, _) = compile_shared_with_libs(no_evidence);
         assert_eq!(blocks[0].funcs[0].params[0].1, Type::List(Box::new(Type::Unknown)));
     }
+
+    /// Track B4 regression guard: the consuming one-byte exact-fill probe
+    /// (read 1 byte into a stack slot + lseek(-1, SEEK_CUR) to put it back)
+    /// must stay removed from the runtime. It lost a byte on unseekable fds
+    /// (issue #8). Asserted at the source level because the probe is gone from
+    /// the assembled object iff it is gone from resource.asm.
+    #[test]
+    fn b4_exact_fill_probe_is_removed_from_runtime() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("coreasm").join("x86_64").join("resource.asm");
+        let asm = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
+        assert!(!asm.contains("Probe for additional data using a scratch byte"),
+            "the consuming one-byte probe comment must be removed from resource.asm");
+        assert!(!asm.contains("mov rsi, -1"),
+            "the probe's lseek(fd, -1, SEEK_CUR) put-back must be removed from resource.asm");
+        assert!(!asm.contains(".no_more_data"),
+            "the old probe's .no_more_data branch must be removed from resource.asm");
+        assert!(asm.contains("fd_mode_table"), "fd_mode_table cache must be present");
+        assert!(asm.contains("fd_size_table"), "fd_size_table cache must be present");
+        assert!(asm.contains("S_IFREG"), "regular-file type check must be present");
+        assert!(asm.contains("SYS_FSTAT"), "fstat syscall constant must be present");
+        assert!(asm.contains(".exact_fit_success"),
+            "the seekability-aware exact-fit decision must be present");
+    }
 }
