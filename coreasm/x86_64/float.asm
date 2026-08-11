@@ -424,7 +424,9 @@ _parse_f64:
     test r11, r11
     jnz .pf64_sign
     mov qword [rel _last_error], 1
+    jmp .pf64_done
 .pf64_sign:
+    mov qword [rel _last_error], 0
     test r8, r8
     jz .pf64_done
     xorpd xmm1, xmm1
@@ -545,7 +547,9 @@ _parse_f64_bounded:
     jnz .pf64b_sign
 .pf64b_no_digits:
     mov qword [rel _last_error], 1
+    jmp .pf64b_done
 .pf64b_sign:
+    mov qword [rel _last_error], 0
     test r8, r8
     jz .pf64b_done
     xorpd xmm1, xmm1

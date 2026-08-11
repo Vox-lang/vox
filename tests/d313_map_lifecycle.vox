@@ -1,0 +1,10 @@
+(Regression test: a missing map key sets _last_error, but a later
+successful map key lookup clears it so a subsequent On error does not fire.)
+
+A map called m is {"a": 1, "b": 2}.
+A number called bad is m's "missing".
+On error print "first".
+
+A number called bad2 is m's "also missing".
+A number called good is m's "a".
+On error print "second".
