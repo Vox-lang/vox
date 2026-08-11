@@ -1,0 +1,27 @@
+(Track B2 — mremap realloc path. A dynamic buffer is resized up by ~1 MB,
+ exercising the mremap grow path of _realloc_buffer, then down to 5 bytes,
+ exercising the alloc plus copy shrink fallback. Asserts data is preserved
+ across both and capacity follows the requested size.)
+
+Create a buffer called b.
+Append "hello mremap world" to b.
+
+Resize b to 1000000 bytes.
+If b's capacity is equal to 1000000 then,
+  print "grow cap ok".
+Otherwise,
+  print "BUG: grow cap".
+If b is "hello mremap world" then,
+  print "grow data ok".
+Otherwise,
+  print "BUG: grow data".
+
+Resize b to 5 bytes.
+If b's capacity is equal to 5 then,
+  print "shrink cap ok".
+Otherwise,
+  print "BUG: shrink cap".
+If b is "hello" then,
+  print "shrink data ok".
+Otherwise,
+  print "BUG: shrink data".
