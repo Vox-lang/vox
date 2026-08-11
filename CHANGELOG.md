@@ -4,6 +4,26 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.5] - 2026-08-11
+
+### Fixed
+
+- **Nine compiler bugs found while building a JSON library**, all with
+  regression tests:
+  - `Print` on an inlined float-returning call no longer prints the raw
+    bit-pattern.
+  - `Return a boolean, A and B.` now parses and evaluates correctly even
+    inside an `If` branch.
+  - A nested, self-terminated `If ... .` no longer closes the outer statement
+    early (both `If` branches and `While` bodies).
+  - A function call in an arithmetic expression now binds tighter than the
+    surrounding operator instead of absorbing it as an argument.
+  - Same-named locals in different functions no longer corrupt each other's
+    list/element-type inference.
+  - Reading an element (or iterating with `For each`) from a bare `list`
+    parameter now preserves the per-slot runtime type tag.
+  - `{{` and `}}` in string literals now collapse to literal `{` and `}`.
+
 ## [0.3.4] - 2026-08-09
 
 ### Fixed
