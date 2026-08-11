@@ -138,6 +138,8 @@ Set element 1 of state to {{'state pos' of state} add by}.
 
 ## 5. `Set X to Y.` loses a `value`-local's tag across a function return; `the X is Y.` does not
 
+**Status:** fixed in v0.3.5. Regression test: `tests/json_issue_05_value_set_retains_tag.vox`.
+
 ```vox
 To 'make float value' with a float called f.
   Return a value, f.
@@ -150,13 +152,9 @@ To 'dispatch' with a boolean called wantfloat.
 
 Print 'dispatch' of true.
 ```
-Prints the raw bit-pattern again (see #1) instead of `3.14`. Replacing both
-`set result to ...` lines with `the result is ...` (otherwise identical) fixes it
-completely — the caller then sees `3.14` correctly.
-
-The docs state that `x is <value>.`, `the x is <value>.`, and `Set x to <value>.`
-are "checked the same way," which reads as implying they're interchangeable; this
-shows a real behavioral difference between them for `value`-typed retagging.
+Previously printed the raw bit-pattern (see #1) instead of `3.14`. It now
+prints `3.14` correctly, and `Set ... to ...` on a `value`-typed local preserves
+the returned tag the same way `the ... is ...` and `... is ...` do.
 
 ---
 

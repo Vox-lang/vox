@@ -1,0 +1,10 @@
+To 'make float value' with a float called f.
+  Return a value, f.
+
+To 'dispatch' with a boolean called wantfloat.
+  a value called result is 0.
+  If wantfloat is true then, set result to 'make float value' of 3.14.
+  If wantfloat is false then, set result to 42.
+  Return a value, result.
+
+Print 'dispatch' of true.
