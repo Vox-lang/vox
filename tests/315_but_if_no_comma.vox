@@ -1,0 +1,10 @@
+(Regression test for A6: bare `but if` suffix without a leading comma
+ must parse for standalone actions.)
+
+a number called x is 1.
+a list called L is [].
+
+Print "A" but if x is equal to 1 print "B".
+append 1 to L but if x is equal to 2 append 2 to L.
+
+Print element 1 of L.

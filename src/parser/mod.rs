@@ -1173,28 +1173,30 @@ impl Parser {
     /// sentence-consuming construct).
     fn maybe_parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
         let start_pos = self.pos;
-        if matches!(self.current(), Token::But | Token::Comma) {
+
+        // The conditional continuation sugar is `but if ...` with an optional
+        // leading comma. Consume the comma if present, but do not commit to it
+        // until we see the `but if` that proves this is a suffix. A bare
+        // `, if ... then, ...` is a nested `If` as the next item in an
+        // enclosing comma-separated body, so we always restore `start_pos`
+        // when `but if` is absent.
+        if *self.current() == Token::Comma {
+            self.advance();
+            self.skip_noise();
+        }
+
+        if *self.current() == Token::But {
             self.advance();
             self.skip_noise();
 
-            // Only `but if` (with an optional preceding comma) is the conditional
-            // continuation sugar. A bare `, if ... then, ...` is a nested `If`
-            // statement as the next item in an enclosing comma-separated body,
-            // not a suffix on `base`.
-            if *self.current() == Token::But {
-                self.advance();
-                self.skip_noise();
-
-                if *self.current() == Token::If {
-                    return self.parse_conditional_suffix(base);
-                }
+            if *self.current() == Token::If {
+                return self.parse_conditional_suffix(base);
             }
-
-            // Not a conditional continuation; restore parser position so
-            // outer constructs can consume the separator normally.
-            self.pos = start_pos;
         }
 
+        // Not a conditional continuation; restore parser position so
+        // outer constructs can consume the separator normally.
+        self.pos = start_pos;
         Ok(base)
     }
 
