@@ -7445,10 +7445,25 @@ impl CodeGenerator {
                         // "as text" must materialise a NUL-terminated C string
                         // pointer. Booleans become "true"/"false", integers
                         // become decimal digits, and floats become a trimmed
-                        // decimal representation. Text/buffer values are already
-                        // valid text pointers, so they are left unchanged.
+                        // decimal representation. Text values are already valid
+                        // text pointers, so they are left unchanged. A buffer is
+                        // NOT: it is a struct with a 24-byte header (BUF_DATA_OFFSET)
+                        // whose NUL-terminated character data lives at
+                        // struct + BUF_DATA_OFFSET, so the cast must return the
+                        // data-area pointer, not the struct pointer it was given.
                         let src_type = self.infer_expr_type(value);
-                        if !matches!(src_type, Some(VarType::String) | Some(VarType::Buffer)) {
+                        if matches!(src_type, Some(VarType::Buffer)) {
+                            // Buffer data is always NUL-terminated at its logical
+                            // end (_buffer_append_bytes writes a trailing NUL at
+                            // data+length; _buffer_clear zeroes the first byte), so
+                            // the data-area pointer is a valid C string. Same
+                            // adjustment the boolean cast makes for a buffer source.
+                            self.uses_buffers = true;
+                            self.emit_indent(&format!(
+                                "add rax, {}  ; buffer data area -> NUL-terminated text",
+                                BUF_DATA_OFFSET
+                            ));
+                        } else if !matches!(src_type, Some(VarType::String)) {
                             self.uses_buffers = true;
                             self.stack_offset += 8;
                             let tmp = self.stack_offset;

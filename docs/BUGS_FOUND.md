@@ -182,6 +182,8 @@ uses this for its list-value path.
 
 ### 9. `buffer as text` cast silently returns an empty string
 
+**Status:** fixed in v0.3.6. Regression test: `tests/bugs_found_09_buffer_as_text_cast.vox`.
+
 ```vox
 a buffer called b is "hello".
 a text called t1 is b as text.
