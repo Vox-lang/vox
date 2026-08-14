@@ -198,6 +198,17 @@ cargo build --release
 
 ## Installing
 
+### Fedora (Copr)
+
+Vox is available via [Copr](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/) for Fedora 43, 44, and Rawhide (x86_64, i386, ppc64le, s390x):
+
+```sh
+sudo dnf copr enable vox-lang/Vox
+sudo dnf install vox
+```
+
+### From source
+
 ```sh
 # Build and install system-wide
 make build # Skip this step if installing from .7z 
