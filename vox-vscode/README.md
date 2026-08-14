@@ -6,7 +6,7 @@
 
 ## Installation
 
-The extension is published on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox). Search for "Vox" in your editor's Extensions panel and click Install.
+The extension is published on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox) (VS Code, Windsurf, Cursor, and other compatible editors) and the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=vox-lang.vox) (VS Code). Search for "Vox" in your editor's Extensions panel and click Install.
 
 For manual installation during development, see [Manual Installation](#manual-installation) below.
 
