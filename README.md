@@ -232,6 +232,30 @@ vox example.vox
 
 ---
 
+## Releasing
+
+Maintainer-only. `release.sh` (a local script, not tracked in this repo)
+builds a portable `.7z` archive to `target/dist/` from whatever's currently
+checked out, and can also publish everywhere the project is distributed:
+
+```sh
+# Just build the archive
+./release.sh
+
+# Also publish to crates.io, trigger a Copr rebuild, and publish the
+# VS Code extension to both the Visual Studio Marketplace and Open VSX
+./release.sh --publish
+```
+
+`--publish` treats each target independently -- one failing (e.g. a version
+already published) doesn't stop the others, and a summary of any failures
+prints at the end. Since Copr doesn't reject re-submitting a version that's
+already built, `release.sh` tracks locally which version it last triggered a
+Copr build for and skips re-triggering the same one; pass `--force-copr` to
+trigger anyway (e.g. after a packaging-only fix with no version bump).
+
+---
+
 ## Roadmap
 
 Vox is under active development. Planned work includes:
