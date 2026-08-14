@@ -18,6 +18,14 @@ BuildRequires:  rust >= 1.87
 Requires:       nasm
 Requires:       binutils
 
+# find-debuginfo's source-file attribution for this LTO release binary is
+# rpm/elfutils-version-dependent: it produces a real vox-debugsource package
+# on Fedora 44, but on Fedora ELN the resulting debugsourcefiles.list comes
+# back empty, and rpm there treats an empty %files -f list as fatal ("Empty
+# %files file ... debugsourcefiles.list"). Skip debuginfo subpackage
+# generation entirely so this doesn't depend on which chroot builds it.
+%global debug_package %{nil}
+
 %description
 %{summary}.
 
