@@ -184,7 +184,7 @@ sudo apt install nasm cargo make
 ### Fedora
 
 ```sh
-sudo yum install nasm rust make
+sudo dnf install nasm rust make
 ```
 
 ---
@@ -199,13 +199,43 @@ cargo build --release
 
 ## Installing
 
-### Fedora (Copr)
+### RPM-based distros (Copr)
 
-Vox is available via [Copr](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/) for Fedora 43, 44, and Rawhide (x86_64, i386, ppc64le, s390x):
+Vox is available via [Copr](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/)
+for Fedora 43, 44, Rawhide, and ELN; RHEL, CentOS Stream 9/10, and EPEL 8/9/10;
+openSUSE Leap 16.0; Mageia 9, 10, and Cauldron; Amazon Linux 2023; Azure Linux 3;
+and openEuler 22.03/24.03 (mostly x86_64/ppc64le/s390x, some releases also i386
+-- see the [project page](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/)
+for the exact architecture list per release; aarch64 and riscv64 aren't
+supported yet).
+
+On `dnf`-based distros (Fedora, RHEL, CentOS Stream, EPEL, Amazon Linux,
+openEuler):
 
 ```sh
 sudo dnf copr enable vox-lang/Vox
 sudo dnf install vox
+```
+
+On `zypper`/`urpmi`/`tdnf`-based distros (openSUSE, Mageia, Azure Linux),
+grab the matching repo file from the project page instead.
+
+### Nix
+
+Vox also ships as a flake in this repo, so it works straight from the
+GitHub URL with no separate registry:
+
+```sh
+nix run github:Vox-lang/vox
+# or, to install it into your profile:
+nix profile install github:Vox-lang/vox
+```
+
+From a local clone:
+
+```sh
+nix build .#default
+./result/bin/vox --version
 ```
 
 ### From source
