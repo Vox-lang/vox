@@ -365,3 +365,11 @@ Also worth flagging separately: the checked-in `Cargo.lock` is in the v4 lock
 format, which requires Cargo ≥ 1.78 to even read — `cargo generate-lockfile` on
 1.75 regenerates a compatible v3 lock without incident, so this is a much
 smaller issue than the MSRV itself, just worth knowing about.
+
+**Update:** the three call sites were rewritten to their pre-1.82 equivalents
+as suggested above. The real floor turned out to be gated by a dependency, not
+vox's own code: `proc-macro2` (pulled in transitively via `thiserror` → `syn`)
+requires rustc 1.71, one minor version above the 1.70.0 this note was
+originally checking against. Verified empirically by building against rustc
+1.70 (fails, `proc-macro2` needs 1.71) and 1.71 (succeeds) in clean containers.
+`rust-version` is now `"1.71"`.

@@ -1167,7 +1167,7 @@ impl Analyzer {
                     let right_ok = line
                         .as_bytes()
                         .get(name_end)
-                        .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'));
+                        .map_or(true, |b| !(b.is_ascii_alphanumeric() || *b == b'_'));
                     let excluded_by_called = guard_against_called && line[..pat_col].ends_with("called ");
                     if left_ok && right_ok && !excluded_by_called {
                         if seen == occurrence {
