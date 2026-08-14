@@ -4,6 +4,7 @@
 ![Repo size](https://img.shields.io/github/repo-size/Vox-lang/vox?style=flat-square)
 ![Last commit](https://img.shields.io/github/last-commit/Vox-lang/vox?style=flat-square)
 ![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)
+[![Copr build status](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/)
 
 **Vox** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly — without a **resident runtime system**, virtual machine, or standard library.
 
