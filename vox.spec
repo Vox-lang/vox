@@ -11,7 +11,7 @@ Source0:        %{url}/archive/v%{version}/vox-%{version}.tar.gz
 Source1:        vox-%{version}-vendor.tar.gz
 
 BuildRequires:  cargo
-BuildRequires:  rust >= 1.87
+BuildRequires:  rust >= 1.71
 
 # vox shells out to nasm/ld only when it compiles a *user's* .vox program,
 # not to build vox itself, so these are runtime Requires, not BuildRequires.

@@ -1286,7 +1286,7 @@ impl CodeGenerator {
         let stack_word_bytes = stack_words * 8;
 
         // Align stack before call (SysV: 16B-aligned at call instruction).
-        let needs_pad = !stack_words.is_multiple_of(2);
+        let needs_pad = stack_words % 2 != 0;
         if needs_pad {
             self.emit_indent("sub rsp, 8  ; align stack before call");
         }
@@ -3822,7 +3822,7 @@ impl CodeGenerator {
                 // [rbp + 16 + pad_offset], not [rbp + 16]. Both sides derive the
                 // pad from the same word count, so they agree.
                 let stack_words = total_words.saturating_sub(param_regs.len());
-                let pad_offset: usize = if stack_words.is_multiple_of(2) { 0 } else { 8 };
+                let pad_offset: usize = if stack_words % 2 == 0 { 0 } else { 8 };
                 let mut word_index = 0usize;
                 for (param_name, param_type) in params.iter() {
                     let payload_off = self.get_var(param_name);
