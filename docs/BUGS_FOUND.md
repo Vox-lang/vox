@@ -12,6 +12,8 @@ instead, since they're worth knowing about even though they aren't compiler bugs
 
 ### 1. A float routed through `{}` interpolation into `text`/`buffer` prints the raw bit pattern
 
+**Status:** fixed in v0.3.6. Regression test: `tests/bugs_found_01_float_interp_text.vox`.
+
 ```vox
 a float called y is 3.5.
 Print "{y}".              (correct: 3.5)

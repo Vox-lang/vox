@@ -929,6 +929,21 @@ impl CodeGenerator {
                 self.emit_indent("mov rsi, rax");
                 self.emit_indent("call _buffer_append_cstr");
             }
+            Some(VarType::Float) => {
+                // A float interpolated into a text/buffer destination (e.g.
+                // `a text called t is "{y}".`) has its IEEE-754 bits in rax.
+                // Without this arm it fell through to the integer formatter
+                // and printed the raw bit pattern as a decimal integer
+                // (e.g. 3.5 -> 4615063718147915776). _buffer_append_float takes
+                // rdi = destination buffer (already loaded by the caller) and
+                // rax = raw float bits, and returns the (possibly reallocated)
+                // destination buffer in rax — matching the Buffer/String arms.
+                // The Print path never hit this because it formats through
+                // emit_formatted_value, which already had a Float arm.
+                self.uses_buffers = true;
+                self.uses_floats = true;
+                self.emit_indent("call _buffer_append_float");
+            }
             _ => {
                 self.emit_append_formatted_int_to_buffer(fmt);
             }

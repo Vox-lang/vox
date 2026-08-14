@@ -1,0 +1,6 @@
+a float called y is 3.5.
+Print "{y}".
+a text called t is "{y}".
+Print t.
+a buffer called b is "{y}".
+Print b.
