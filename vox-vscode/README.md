@@ -1,126 +1,137 @@
-# Vox - VSCode Extension
+# Vox — VS Code Extension
 
-> **Syntax highlighting for Vox (sentence based code)**
+> **Syntax highlighting for Vox (sentence-based code)**
 
-Vox is a systems-level programming language with natural language syntax. This extension provides rich syntax highlighting for `.vx`, `.vox`, `.en` and `.eng` files.
+[Vox](https://github.com/vox-lang/vox) is a systems-level programming language with a constrained, sentence-based English syntax. This extension provides syntax highlighting, bracket/comment configuration, and code folding for `.vox` files.
+
 ## Installation
 
-This extension is available on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox). Simply search for "Vox" in the Extensions panel and click Install.
+The extension is published on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox). Search for "Vox" in your editor's Extensions panel and click Install.
 
-Or see [Manual Installation](#installation-before-marketplace-release) below.
+For manual installation during development, see [Manual Installation](#manual-installation) below.
 
 ## Features
 
-- **Full syntax highlighting** for all Vox language constructs
-- **Comment support** — parenthetical comments `(like this)` with nesting
-- **Auto-closing pairs** for brackets, parentheses, and quotes
-- **Code folding** for function definitions
-- **Format string interpolation** — `{variable}` inside strings gets distinct highlighting
-- **Special highlighting** for unique Vox constructs:
-  - `each` (loop expansion) — teal + bold
-  - `but` (conditional branching) — pink + bold
+- **Syntax highlighting** for Vox language constructs.
+- **Comment support** — parenthetical comments `(like this)` with nesting.
+- **Auto-closing pairs** for brackets, parentheses, and quotes.
+- **Code folding** for function definitions and block constructs.
+- **Format-string interpolation** — `{variable}` inside double-quoted strings gets distinct highlighting.
+- **Distinct colors** for unique Vox constructs:
+  - `each` (loop expansion)
+  - `but` (conditional branching)
+
+## Supported File Extensions
+
+| Extension | Associated language |
+|-----------|---------------------|
+| `.vox`    | Vox                 |
+
+The extension also registers the aliases `Vox`, `vox`, `English`, `english`, and `en` for the language picker.
 
 ## Highlighted Elements
 
-| Element | Example | Color |
-|---------|---------|-------|
-| `each` keyword | `print each number from 1 to 10` | **Teal + Bold** |
-| `but` keyword | `but if x is true` | **Pink + Bold** |
-| Format interpolation | `"Hello {name}!"` → `name` | **Yellow + Bold** |
-| Control keywords | `If`, `While`, `For`, `Return` | Purple |
-| Action keywords | `Print`, `Set`, `Create`, `treating`, `as` | Purple |
-| Types | `number`, `text`, `boolean`, `buffer`, `float`, `list` | Teal |
-| Strings | `"Hello, World!"` | Green |
-| Numbers | `42`, `3.14`, `-5` | Orange |
-| Booleans | `true`, `false` | Blue |
-| Comments | `(this is a comment)` | Gray/Italic |
-| Function definitions | `To "function name"` | Yellow + Bold |
-| Function calls | `"function" of x` | Yellow |
-| I/O keywords | `Open`, `Read`, `Write`, `Close` | Light Green |
-| Properties | `x's absolute`, `buf's size` | Light Blue |
-| Articles | `a`, `an`, `the`, `called` | Gray (dimmed) |
+| Element                  | Example Vox syntax                                  | Scope token                              |
+|--------------------------|-----------------------------------------------------|------------------------------------------|
+| `each` keyword           | `Open ... at each filename from arguments's all`    | `entity.name.tag.each.vox`               |
+| `but` keyword            | `but if x is greater than 10 then, ...`             | `support.type.vox`                       |
+| Format interpolation     | `"Hello {name}!"`                                   | `variable.other.interpolation.vox`       |
+| Control keywords         | `If`, `While`, `For`, `Return`, `Otherwise`, `then` | `keyword.control.vox`                    |
+| Action keywords          | `Print`, `Set`, `Create`, `Append`, `Increment`     | `keyword.other.vox`                      |
+| Import keywords          | `see`, `library`, `version`, `from`                 | `keyword.control.import.vox`             |
+| I/O keywords             | `Open`, `Read`, `Write`, `Close`                    | `support.function.vox`                   |
+| Types                    | `number`, `text`, `boolean`, `buffer`, `float`      | `storage.type.vox`                       |
+| Strings                  | `"Hello, World!"`                                     | `string.quoted.double.vox`               |
+| Numbers                  | `42`, `3.14`, `-5`, `0xFF`, `0b1010`                | `constant.numeric.*.vox`                 |
+| Booleans                 | `true`, `false`                                     | `constant.language.boolean.vox`          |
+| Null literal             | `nothing`                                           | `constant.language.null.vox`             |
+| Comments                 | `(this is a comment)`                               | `comment.block.vox`                      |
+| Function definitions     | `To 'add two numbers'`                                | `entity.name.function.definition.vox`    |
+| Function calls           | `'add two numbers' of 3 and 4`                      | `entity.name.function.call.vox`          |
+| Properties               | `buf's length`, `arguments's all`                   | `variable.other.property.vox`          |
+| Articles / particles     | `a`, `an`, `the`, `called`, `of`, `from`            | `punctuation.definition.vox`             |
+
+Colors are provided as defaults in `package.json` under `contributes.configurationDefaults.editor.tokenColorCustomizations`. Your theme may override them.
 
 ---
 
-## Installation (Before Marketplace Release)
+## Manual Installation
 
 ### Option 1: Symlink (Recommended for Development)
 
-**Linux/macOS:**
+**Linux / macOS:**
 ```bash
-# For VSCode
+# VS Code
 ln -s /path/to/vox/vox-vscode ~/.vscode/extensions/vox
 
-# For Windsurf
+# Windsurf
 ln -s /path/to/vox/vox-vscode ~/.windsurf/extensions/vox
 
-# For Cursor
+# Cursor
 ln -s /path/to/vox/vox-vscode ~/.cursor/extensions/vox
 ```
 
 **Windows (PowerShell as Admin):**
 ```powershell
-# For VSCode
+# VS Code
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vox" -Target "C:\path\to\vox\vox-vscode"
 
-# For Windsurf
+# Windsurf
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.windsurf\extensions\vox" -Target "C:\path\to\vox\vox-vscode"
 ```
 
-Then **reload your editor** (`Ctrl+Shift+P` → "Reload Window").
+Then reload your editor (`Ctrl+Shift+P` → "Reload Window").
 
 ### Option 2: Copy the Folder
 
-Simply copy the `vox-vscode` folder to your extensions directory:
+Copy the `vox-vscode` folder to your editor's extensions directory and rename it to `vox`:
 
-| Editor | Extensions Directory |
-|--------|---------------------|
-| VSCode (Linux) | `~/.vscode/extensions/` |
-| VSCode (macOS) | `~/.vscode/extensions/` |
-| VSCode (Windows) | `%USERPROFILE%\.vscode\extensions\` |
-| Windsurf | `~/.windsurf/extensions/` |
-| Cursor | `~/.cursor/extensions/` |
+| Editor           | Extensions directory                        |
+|------------------|---------------------------------------------|
+| VS Code (Linux)  | `~/.vscode/extensions/`                     |
+| VS Code (macOS)  | `~/.vscode/extensions/`                     |
+| VS Code (Windows)| `%USERPROFILE%\.vscode\extensions\`          |
+| Windsurf         | `~/.windsurf/extensions/`                   |
+| Cursor           | `~/.cursor/extensions/`                     |
 
-Rename the copied folder to `vox`.
-
-### Option 3: Build and Install VSIX Package
+### Option 3: Build and Install a VSIX Package
 
 ```bash
 # Install vsce (VS Code Extension manager)
 npm install -g @vscode/vsce
 
-# Navigate to extension directory
+# Navigate to the extension directory
 cd vox-vscode
 
 # Package the extension
 vsce package
 
-# Install the generated .vsix file
-code --install-extension vox-0.2.0.vsix
+# Install the generated .vsix file (replace <version> with the version shown in package.json)
+code --install-extension vox-<version>.vsix
 # Or for Windsurf:
-windsurf --install-extension vox-0.2.0.vsix
+windsurf --install-extension vox-<version>.vsix
 ```
 
 ---
 
 ## Verifying Installation
 
-1. Open any `.vox` file
-2. Check the language mode in the bottom-right corner of the editor - it should say "Vox"
-3. If it says "Plain Text", click it and select "Vox" from the list
+1. Open any `.vox` file.
+2. Check the language mode in the bottom-right corner — it should say **Vox**.
+3. If it says **Plain Text**, click it and select **Vox** from the list.
 
 ---
 
 ## Troubleshooting
 
 **Highlighting not working?**
-- Reload the editor window (`Ctrl+Shift+P` → "Reload Window")
-- Check that the extension folder is named correctly in the extensions directory
-- Verify the `.vox` file extension is associated with the "Vox" language
+- Reload the editor window (`Ctrl+Shift+P` → "Reload Window").
+- Check that the extension folder is named `vox` in the extensions directory.
+- Verify the `.vox` file extension is associated with the **Vox** language.
 
 **Colors look different than expected?**
-- The extension provides default colors, but your theme may override them
-- Colors are defined in `package.json` under `configurationDefaults`
+- The extension provides default token colors in `package.json`.
+- Your color theme may override these defaults.
 
 ---
 
@@ -128,12 +139,16 @@ windsurf --install-extension vox-0.2.0.vsix
 
 ```
 vox-vscode/
-├── setup.sh                     # Auto-setup script for new developers
 ├── check-grammar.sh             # Drift checker: lexer keywords vs. grammar
-├── package.json                 # Extension manifest + color customizations
-├── language-configuration.json  # Brackets, comments, folding
+├── language-configuration.json  # Brackets, comments, folding rules
+├── package.json                 # Extension manifest and default token colors
+├── setup.sh                     # Auto-setup script for new developers
 ├── syntaxes/
 │   └── vox.tmLanguage.json      # TextMate grammar (token rules)
+├── tm/                          # Real-engine tokenizer test harness
+│   ├── run-fixtures.sh          # Run fixture-based grammar regression tests
+│   ├── tokenize.js              # Tokenize a .vox file with vscode-textmate
+│   └── fixtures/                # Canonical .vox samples and expected scopes
 ├── images/
 │   └── icon.png                 # Extension icon
 ├── LICENSE                      # MIT
@@ -142,16 +157,25 @@ vox-vscode/
 
 ---
 
-## Usage
-
-Once installed, simply open any `.vox` file and syntax highlighting will be applied automatically.
-
-The language will appear as **"Vox"** in the language picker.
-
 ## Contributing
 
-The grammar is defined in `syntaxes/vox.tmLanguage.json` using TextMate patterns.
-Color customizations are in `package.json` under `configurationDefaults.editor.tokenColorCustomizations`.
+- The grammar is defined in `syntaxes/vox.tmLanguage.json` using TextMate patterns.
+- Default token colors live in `package.json` under `contributes.configurationDefaults.editor.tokenColorCustomizations`.
+- The `tm/` harness uses the same `vscode-textmate` / `vscode-oniguruma` engines as VS Code itself, so the fixtures show the exact scopes the editor will apply.
+
+To run the grammar fixtures:
+
+```bash
+cd vox-vscode/tm
+npm install
+./run-fixtures.sh
+```
+
+To update expected fixture output after an intentional grammar change:
+
+```bash
+./run-fixtures.sh --update
+```
 
 ## License
 
