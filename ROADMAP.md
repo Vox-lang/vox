@@ -141,16 +141,23 @@ bounds-checked.
 ## Milestone 3 — Dynamic / Shared Library System
 
 *Design doc: [docs/SHARED_LIBRARIES_DESIGN.md](docs/SHARED_LIBRARIES_DESIGN.md).
-`--shared` and `--link` work today; `see ... version ...` is parsed but not
-yet wired — it currently emits an assembly comment and links nothing. The
-consumption path arrives with the `.lib` interface in this milestone, whose
-chain is `.vox` → `see` a `.lib` → `Location` → `.so`.*
+The producer side works today: `--shared` emits a versioned `.lib` and `.so`,
+multi-input builds support several `Library <name> version "x.y"` blocks in
+one binary, and symbols are mangled with `<lib>_<ver>_<func>`. The consumer
+side is also wired: `see '<lib>' version "<ver>" from "<path>.lib"` selects
+the matching `<lib, version>` block, resolves the `Location` `.so`, verifies
+every promised symbol against the `.so`'s `.dynsym`, and places the `.so` on
+the link line. Test coverage includes single-version consumers, two versions
+of one library consumed from the same `.lib`, and explicit diagnostics for
+missing `.lib`, absent library, version mismatch, missing `.so`, stale ToC,
+wrong arity, and wrong type.*
 
 - [ ] Harden `--shared` builds: symbol scoping (library-private vs. exported
       functions), no symbol collisions between libraries.
-- [ ] Versioning enforcement: `see "math" version "1.0"` fails clearly at
-      compile time on version mismatch; define a compatibility policy
-      (major = breaking, minor = additive).
+- [x] Versioning enforcement: `see "math" version "1.0"` fails clearly at
+      compile time on version mismatch.
+- [ ] Define a compatibility policy (major = breaking, minor = additive), so
+      a library's minor-version bump does not force dependents to recompile.
 - [ ] Define and document a **stable Vox ABI**: calling convention, buffer
       and list memory layout, error-flag propagation across library
       boundaries. Struct layout (M2) becomes part of the ABI.
