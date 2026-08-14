@@ -1,6 +1,6 @@
 {
   "name": "vox",
-  "displayName": "Vox syntax highlighting",
+  "displayName": "Vox",
   "description": "Syntax highlighting for Vox (sentence based code) (.vox files)",
   "version": "0.3.1",
   "publisher": "vox-lang",
