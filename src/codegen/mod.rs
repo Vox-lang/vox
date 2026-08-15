@@ -9,6 +9,11 @@ pub struct CodeGenerator {
     label_counter: usize,
     string_counter: usize,
     float_counter: usize,
+    // Shared `.rodata` label for the empty string, lazily created and reused
+    // by every uninitialised `text` declaration in the program - an empty
+    // string is immutable, so there is no reason to allocate one per
+    // declaration the way a fresh string literal would.
+    empty_string_label: Option<String>,
     variables: HashMap<String, i64>,
     variable_types: HashMap<String, VarType>,
     global_constants: HashMap<String, Expr>,
@@ -837,6 +842,7 @@ impl CodeGenerator {
             label_counter: 0,
             string_counter: 0,
             float_counter: 0,
+            empty_string_label: None,
             variables: HashMap::new(),
             variable_types: HashMap::new(),
             global_constants: HashMap::new(),
@@ -1663,7 +1669,17 @@ impl CodeGenerator {
         self.data_section.push_str(&format!("    {}_len: equ $ - {} - 1\n", label, label));
         label
     }
-    
+
+    // Returns the shared empty-string label, creating it on first use.
+    fn get_empty_string_label(&mut self) -> String {
+        if let Some(label) = &self.empty_string_label {
+            return label.clone();
+        }
+        let label = self.add_string("");
+        self.empty_string_label = Some(label.clone());
+        label
+    }
+
     fn add_float(&mut self, f: f64) -> String {
         let label = format!("float_{}", self.float_counter);
         self.float_counter += 1;
@@ -3909,6 +3925,53 @@ impl CodeGenerator {
                                 self.generate_expr(&Expr::ListLit { elements: vec![] });
                                 self.emit_store_rax_to_target(
                                     &target, &format!("list {}", name));
+                            }
+                            Type::Map(_) => {
+                                // Allocate an empty map so printing yields "{}"
+                                // instead of dereferencing a null pointer.
+                                self.generate_expr(&Expr::MapLit { pairs: vec![] });
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("map {}", name));
+                            }
+                            Type::Float => {
+                                self.generate_expr(&Expr::FloatLit(0.0));
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("float {}", name));
+                            }
+                            Type::String => {
+                                // A null pointer here makes the first read
+                                // (print, interpolation, 's length, ...)
+                                // dereference 0. Point at a real, shared
+                                // empty string instead.
+                                let label = self.get_empty_string_label();
+                                self.emit_indent(&format!(
+                                    "lea rax, [rel {}]  ; empty text default", label));
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("text {}", name));
+                                self.uses_strings = true;
+                            }
+                            Type::Value => {
+                                // An uninitialized `value` holds `nothing`, not
+                                // the number 0.  The payload is zero; the tag
+                                // must be TAG_NOTHING.
+                                self.emit_indent("mov rax, 0  ; nothing payload");
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("value {}", name));
+                                if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                                    if target.local_offset().is_some() {
+                                        self.emit_indent(&format!(
+                                            "mov byte [rbp-{}], {}  ; value local tag = nothing",
+                                            tag_slot, TAG_NOTHING
+                                        ));
+                                    }
+                                } else if let Some(tag_label) =
+                                    self.global_value_tag_labels.get(name).cloned()
+                                {
+                                    self.emit_indent(&format!(
+                                        "mov byte [rel {}], {}  ; value global tag = nothing",
+                                        tag_label, TAG_NOTHING
+                                    ));
+                                }
                             }
                             _ => {
                                 // Initialize to 0/null

@@ -351,6 +351,60 @@ Set a number called counter to 1.
 Create a text called greeting to "Hello".
 ```
 
+### Two Canonical Forms
+
+Every declarable type supports two equivalent forms, both routed through
+the same type resolver:
+
+- **`A TYPE called NAME is VALUE.`** — declares `NAME` and initializes it
+  to `VALUE` immediately. `Set`/`Create` with `to <value>` (above) is the
+  same form with a different lead-in word.
+- **`Create a TYPE called NAME.`** — declares `NAME` with no initializer
+  and gets that type's default (zero) value:
+
+  ```
+  Create a number called n.       (n is 0)
+  Create a float called f.        (f is 0.0)
+  Create a boolean called b.      (b is false / 0)
+  Create a list called items.     (items is [])
+  Create a map called m.          (m is {})
+  Create a buffer called buf.     (buf is empty, 0 bytes, dynamic capacity)
+  Create a value called v.        (v is nothing)
+  Create a timer called t.        (t is ready to Start)
+  ```
+
+  | Type | Default on bare `Create` |
+  |------|---------------------------|
+  | `number` | `0` |
+  | `float` | `0.0` |
+  | `text` | empty string |
+  | `boolean` | `false` (`0`) |
+  | `list` | `[]` |
+  | `map` | `{}` |
+  | `buffer` | empty (0 bytes) |
+  | `value` | `nothing` |
+  | `timer` | ready to `Start` |
+  | `file` | **not supported** — see below |
+  | `time` | **not supported** — see below |
+
+  **`file` and `time` require an initializer.** A default file or time
+  value would be meaningless (no path to open, no timestamp to hold), so
+  `Create a file called N.` and `Create a time called N.` are both
+  rejected at compile time with a message naming what to supply:
+
+  ```
+  Create a file called src.
+  (compile error: A file variable must be initialized with a path
+     Example: a file called source is "input.txt".)
+
+  Create a time called clk.
+  (compile error: A time variable must be initialized
+     Example: a time called now is current time.)
+  ```
+
+  Give them a value with the first canonical form instead: `a file called
+  source is "input.txt".` / `a time called now is current time.`
+
 ### Assignment (Existing Variable)
 
 Use `the` to reference an existing variable:
@@ -362,11 +416,12 @@ the counter is the counter add 1.
 
 ### Type Immutability
 
-**A variable's type is fixed at its declaration and never changes.** Every
-form that writes to an already-declared name — `x is <value>.`, `the x is
-<value>.`, and `Set x to <value>.` — is checked the same way: if the new
-value's type doesn't match the type `x` was declared with, that's a compile
-error, not a silent retype.
+**A variable's type is fixed at its declaration and never changes** —
+`value` is the one deliberate exception, covered below. Every form that
+writes to an already-declared name — `x is <value>.`, `the x is <value>.`,
+and `Set x to <value>.` — is checked the same way: if the new value's type
+doesn't match the type `x` was declared with, that's a compile error, not a
+silent retype.
 
 ```vox fragment
 a number called n is 5.
@@ -418,7 +473,13 @@ If 1 is equal to 2,
   sanctioned dynamic type and keeps accepting any type across reassignment,
   exactly as documented in [Dynamic Values (`value`)](#dynamic-values-value)
   below — that section's behavior is unchanged by this rule, not an
-  exception carved out of it.
+  exception carved out of it. This also covers the v0.3.6 in-place retype
+  statement `<valuevar> is a <type>.` (e.g. `numstr is a number.`), which
+  reads the variable's runtime tag, converts the value, and updates the
+  tag in place — see "A `value` can be retyped in place" below. The same
+  statement applied to a *statically*-typed variable (`n is a text.` where
+  `n` is a `number`) is still rejected by this rule exactly like any other
+  mismatched assignment; only a `value`-declared name can be retyped.
 
 **What this doesn't catch.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
@@ -1277,11 +1338,13 @@ To bump with a value called v. Return a number, v add 1.
  supported.)
 ```
 
-**A `value` can be retyped in place.** The statement `<valuevar> is a
-<type>.` reads the variable's runtime tag, performs the conversion that the
-corresponding static cast would use, and stores the result back into the
-same variable with the new tag. This works for `number`, `float`/`decimal`,
-`text`, and `boolean` targets:
+**A `value` can be retyped in place.** This is the exception named in
+[Type Immutability](#type-immutability) above: a *statically*-typed
+variable's type is fixed forever, but `value` is deliberately not one. The
+statement `<valuevar> is a <type>.` reads the variable's runtime tag,
+performs the conversion that the corresponding static cast would use, and
+stores the result back into the same variable with the new tag. This works
+for `number`, `float`/`decimal`, `text`, and `boolean` targets:
 
 ```
 a value called numstr is "357".

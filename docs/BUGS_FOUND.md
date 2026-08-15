@@ -569,6 +569,54 @@ mirroring the guard the bare-assignment arm already had. Regression tests:
 
 ---
 
+### 16. A declared-but-uninitialised `text` variable segfaults on first read
+
+**Status:** fixed in v0.3.6. Regression tests:
+`tests/bugs_found_16_text_default_declare.vox`,
+`tests/bugs_found_16_text_default_create.vox` (both declaration spellings),
+`tests/bugs_found_16_text_default_interpolation.vox`, and
+`tests/bugs_found_16_text_default_reassign.vox`.
+
+```vox
+a text called ex.
+Print ex.
+Print "survived".
+```
+```
+Segmentation fault (exit 139)
+```
+
+Nothing is printed, not even `survived` — the process dies on the first read.
+`Create a text called ex.` does the same.
+
+The no-initializer default-value codegen has dedicated arms for `buffer`,
+`list`, `map`, `float`, and `value`; every other declared type fell through to
+a generic `xor rax, rax` arm that stores a plain zero. For `text`, that zero
+is read back as a pointer, so printing, interpolating, or comparing the
+variable dereferences null. Confirmed **pre-existing** — reproduced
+identically on a clean build of the v0.3.6 release commit, so it is not a
+regression from other work landing alongside it.
+
+`text` now gets its own arm: a real pointer to a shared, immutable empty
+string in `.rodata`, created once and reused by every uninitialised `text` in
+the program. An uninitialised `text` now reads as `""`: it prints an empty
+line, interpolates as empty, compares equal to `""`, and can be reassigned a
+real value afterward exactly like any other `text` variable.
+
+**Neighbouring types checked, not just read.** The same fallback arm is also
+reachable for `number` and `boolean` — both were tested directly and are
+genuinely fine with a zero default (`0` and `false` respectively are valid
+values, not sentinels for "absent"). `file` and `time` require an initializer
+and are already rejected at analysis time before reaching codegen
+(`tests/compile_fail/declare_create_file_no_initializer.vox`,
+`tests/compile_fail/declare_create_time_no_initializer.vox`). `timer` never
+reaches this arm at all — `a timer called t.` parses to a dedicated
+`TimerDecl` statement that always emits `TIMER_INIT` over a real stack slot,
+regardless of whether the declaration has this fallback in its match. No
+other type was found holding a null pointer through this path.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only

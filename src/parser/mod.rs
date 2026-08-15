@@ -1618,38 +1618,117 @@ impl Parser {
         }
         
         // Check for typed declaration: "<type> called <name>"
-        // Handle Timer specially - it has its own statement type
-        if *self.current() == Token::Timer {
-            self.advance();
-            self.skip_noise();
-            
-            if *self.current() != Token::Called {
-                return Err(self.err("Expected 'called' after 'timer'"));
+        let var_type = self.try_parse_type_noun();
+
+        if let Some(var_type) = var_type {
+            // Types that must be followed by `called` in declaration position
+            // get their existing specific diagnostic before the generic expect.
+            match var_type {
+                Type::Buffer => self.require_called_after_type(
+                    "buffer",
+                    "a buffer called name",
+                )?,
+                Type::Time => self.require_called_after_type(
+                    "time",
+                    "a time called name is current time",
+                )?,
+                Type::Timer => self.require_called_after_type(
+                    "timer",
+                    "a timer called name",
+                )?,
+                _ => {}
             }
-            self.advance();
+
             self.skip_noise();
+            self.expect(&Token::Called);
+            self.skip_noise();
+
+            // Check for keyword used as variable name
+            self.check_not_keyword(self.current())?;
 
             let name = self.parse_name()?;
 
-            return Ok(Statement::TimerDecl { name });
+            self.skip_noise();
+
+            // Timer has its own statement type.
+            if var_type == Type::Timer {
+                return Ok(Statement::TimerDecl { name });
+            }
+
+            // Time and file variables are meaningless without an initializer.
+            if var_type == Type::Time {
+                if !matches!(self.current(), Token::Is | Token::Equals) {
+                    return Err(self.err(
+                        "A time variable must be initialized\n  \
+                         Example: a time called now is current time."
+                    ));
+                }
+                self.advance();
+                self.skip_noise();
+                let value = Some(self.parse_expression()?);
+                return Ok(Statement::VarDecl {
+                    name,
+                    var_type: Some(Type::Time),
+                    value,
+                });
+            }
+
+            if var_type == Type::File {
+                if !matches!(self.current(), Token::Is | Token::Equals) {
+                    return Err(self.err(
+                        "A file variable must be initialized with a path\n  \
+                         Example: a file called source is \"input.txt\"."
+                    ));
+                }
+                self.advance();
+                self.skip_noise();
+                let value = Some(self.parse_expression()?);
+                return Ok(Statement::VarDecl {
+                    name,
+                    var_type: Some(Type::File),
+                    value,
+                });
+            }
+
+            // Handle buffer creation with size: "Create a buffer called X with/of size N"
+            if var_type == Type::Buffer {
+                // Check for "with size N" or "of size N" syntax
+                if *self.current() == Token::With || *self.current() == Token::Of {
+                    self.advance();
+                    self.skip_noise();
+                    self.expect(&Token::Size);
+                    self.skip_noise();
+                    let size = self.parse_primary()?;
+                    return Ok(Statement::BufferDecl { name, size });
+                }
+                // No size specified - dynamic buffer
+                return Ok(Statement::BufferDecl {
+                    name,
+                    size: Expr::IntegerLit(0),
+                });
+            }
+
+            // Other types: parse value or leave it as None to get the type's default.
+            let value = if matches!(self.current(), Token::To | Token::Equals | Token::Is) {
+                self.advance();
+                self.skip_noise();
+                Some(self.parse_expression()?)
+            } else if matches!(self.current(), Token::Period | Token::Comma | Token::EOF | Token::ParagraphBreak) {
+                None
+            } else {
+                // Try to parse an expression (for cases without explicit "to")
+                Some(self.parse_expression()?)
+            };
+
+            return Ok(Statement::VarDecl {
+                name,
+                var_type: Some(var_type),
+                value,
+            });
         }
 
-        let var_type = if matches!(self.current(), Token::Number | Token::Text | Token::Boolean | Token::Buffer) {
-            let t = match self.current() {
-                Token::Number => Type::Integer,
-                Token::Text => Type::String,
-                Token::Boolean => Type::Boolean,
-                Token::Buffer => Type::Buffer,
-                _ => Type::Unknown,
-            };
-            self.advance();
-            self.skip_noise();
-            Some(t)
-        } else {
-            None
-        };
-
-        // If we have "called", get name from there
+        // No type noun: parse the name directly (with optional "called" for
+        // the bare untyped forms).
         let name = if *self.current() == Token::Called {
             self.advance();
             self.skip_noise();
@@ -1659,35 +1738,19 @@ impl Parser {
         }?;
 
         self.skip_noise();
-        
-        // Handle buffer creation with size: "Create a buffer called X with/of size N"
-        if var_type == Some(Type::Buffer) {
-            // Check for "with size N" or "of size N" syntax
-            if *self.current() == Token::With || *self.current() == Token::Of {
-                self.advance();
-                self.skip_noise();
-                self.expect(&Token::Size);
-                self.skip_noise();
-                let size = self.parse_primary()?;
-                return Ok(Statement::BufferDecl { name, size });
-            }
-            // No size specified - dynamic buffer
-            return Ok(Statement::BufferDecl { name, size: Expr::IntegerLit(0) });
-        }
-        
+
         // Check if there's a value assignment
         let value = if matches!(self.current(), Token::To | Token::Equals | Token::Is) {
             self.advance();
             self.skip_noise();
             Some(self.parse_expression()?)
         } else if matches!(self.current(), Token::Period | Token::Comma | Token::EOF | Token::ParagraphBreak) {
-            // No value - valid for buffers and other types with defaults
             None
         } else {
             // Try to parse an expression (for cases without explicit "to")
             Some(self.parse_expression()?)
         };
-        
+
         Ok(Statement::VarDecl {
             name,
             var_type,
@@ -1808,7 +1871,59 @@ impl Parser {
             default,
         })
     }
-    
+
+    /// Resolve a type noun at the current token position.
+    ///
+    /// If the current token names a declarable type, consumes it and returns
+    /// `Some(Type)`.  For the identifier `value`, this only happens when it
+    /// sits directly before `called`, so that `a value is 5.` still declares
+    /// a variable named `value`.  The function does *not* consume that `called`
+    /// token, leaving it for the caller.  If the current token is not a type
+    /// noun, returns `None` without consuming anything.
+    fn try_parse_type_noun(&mut self) -> Option<Type> {
+        match self.current() {
+            Token::Number | Token::Int => { self.advance(); Some(Type::Integer) }
+            Token::Float => { self.advance(); Some(Type::Float) }
+            Token::Text => { self.advance(); Some(Type::String) }
+            Token::Boolean => { self.advance(); Some(Type::Boolean) }
+            Token::File => { self.advance(); Some(Type::File) }
+            Token::List => { self.advance(); Some(Type::List(Box::new(Type::Unknown))) }
+            Token::Map => { self.advance(); Some(Type::Map(Box::new(Type::Unknown))) }
+            Token::Buffer => { self.advance(); Some(Type::Buffer) }
+            Token::Time => { self.advance(); Some(Type::Time) }
+            Token::Timer => { self.advance(); Some(Type::Timer) }
+            // `value` is not a reserved keyword, so it only denotes the dynamic
+            // type when it sits directly before `called`.  `a value is 5.` still
+            // declares a variable named `value`.
+            Token::Identifier(n) if n == "value" && *self.peek(1) == Token::Called => {
+                self.advance();
+                Some(Type::Value)
+            }
+            _ => None,
+        }
+    }
+
+    /// Verify that a type noun which requires `called` in declaration position
+    /// is actually followed by it.  Callers that resolve a type via
+    /// `try_parse_type_noun` use this for `buffer`, `time`, and `timer` to keep
+    /// their diagnostic messages specific.
+    fn require_called_after_type(
+        &mut self,
+        type_name: &str,
+        syntax: &str,
+    ) -> Result<(), Box<CompileError>> {
+        self.skip_noise();
+        if *self.current() != Token::Called {
+            return Err(self.err(
+                &format!(
+                    "Missing 'called' after '{}'\n  Syntax: {}.",
+                    type_name, syntax
+                )
+            ));
+        }
+        Ok(())
+    }
+
     fn parse_typed_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'a' or 'an'
         self.skip_noise();
@@ -1817,171 +1932,30 @@ impl Parser {
             return self.parse_flag_schema_decl();
         }
         
-        // Parse type: number, int, float, text, boolean, list, buffer, file
-        let var_type = match self.current() {
-            Token::Number | Token::Int => { self.advance(); Some(Type::Integer) }
-            Token::Float => { self.advance(); Some(Type::Float) }
-            Token::Text => { self.advance(); Some(Type::String) }
-            Token::Boolean => { self.advance(); Some(Type::Boolean) }
-            // `value` is not a reserved keyword, so it only denotes the dynamic
-            // type when it sits in a type position - here, directly before
-            // `called`. `a value is 5.` still declares a variable named value.
-            Token::Identifier(n) if n == "value" && *self.peek(1) == Token::Called => {
-                self.advance();
-                Some(Type::Value)
+        // Parse type noun: number, int, float, text, boolean, list, map,
+        // buffer, file, time, timer, value.
+        let var_type = self.try_parse_type_noun();
+
+        // Types that must be followed by `called` in declaration position
+        // get their existing specific diagnostic before the generic expect.
+        if let Some(ref var_type) = var_type {
+            match var_type {
+                Type::Buffer => self.require_called_after_type(
+                    "buffer",
+                    "a buffer called name",
+                )?,
+                Type::Time => self.require_called_after_type(
+                    "time",
+                    "a time called name is current time",
+                )?,
+                Type::Timer => self.require_called_after_type(
+                    "timer",
+                    "a timer called name",
+                )?,
+                _ => {}
             }
-            Token::List => { self.advance(); Some(Type::List(Box::new(Type::Unknown))) }
-            Token::Map => { self.advance(); Some(Type::Map(Box::new(Type::Unknown))) }
-            Token::Buffer => {
-                self.advance();
-                self.skip_noise();
-                
-                if *self.current() != Token::Called {
-                    return Err(self.err(
-                        "Missing 'called' after 'buffer'\n  \
-                         Syntax: a buffer called name.\n  \
-                         Example: a buffer called content."
-                    ));
-                }
-                self.advance();
-                self.skip_noise();
+        }
 
-                // Check for keyword used as buffer name
-                self.check_not_keyword(self.current())?;
-
-                let name = self.parse_name()?;
-
-                self.skip_noise();
-                
-                // Parse first, classify second - check for "is" clause
-                if self.expect(&Token::Is) {
-                    self.skip_noise();
-                    let expr = self.parse_primary()?;
-                    self.skip_noise();
-                    
-                    // Check if this is a size clause (has "bytes" keyword) or an initializer
-                    if *self.current() == Token::Bytes {
-                        // This is a size clause - advance past "bytes"
-                        self.advance();
-                        self.skip_noise();
-                        
-                        // Handle optional "in size" suffix
-                        if *self.current() == Token::In {
-                            self.advance();
-                            self.skip_noise();
-                            if !self.expect(&Token::Size) {
-                                return Err(self.error_expected_token("size", self.current()));
-                            }
-                        }
-                        
-                        // Validate that the size expression is a positive integer literal
-                        // This is critical for memory safety - we need compile-time known sizes
-                        match &expr {
-                            Expr::IntegerLit(n) => {
-                                if *n <= 0 {
-                                    return Err(self.error_invalid_buffer_size(
-                                        &name,
-                                        "Buffer size must be a positive integer",
-                                        "a buffer called buf is 1024 bytes."
-                                    ));
-                                }
-                                // Check for unreasonably large buffer sizes (prevent DoS via memory exhaustion)
-                                const MAX_BUFFER_SIZE: i64 = 1024 * 1024 * 1024; // 1 GB limit
-                                if *n > MAX_BUFFER_SIZE {
-                                    return Err(self.error_invalid_buffer_size(
-                                        &name,
-                                        &format!("Buffer size exceeds maximum allowed ({} bytes)", MAX_BUFFER_SIZE),
-                                        "Consider using smaller buffers or streaming for large data."
-                                    ));
-                                }
-                            }
-                            Expr::Identifier(_var_name) => {
-                                // Allow variable references for size - will be validated at compile time
-                                // This enables patterns like: a buffer called buf is config_size bytes.
-                                // The type checker must verify this is a compile-time constant integer
-                            }
-                            _ => {
-                                return Err(self.error_invalid_buffer_size(
-                                    &name,
-                                    "Buffer size must be a numeric literal or constant variable",
-                                    "a buffer called buf is 1024 bytes."
-                                ));
-                            }
-                        }
-                        
-                        return Ok(Statement::BufferDecl { name, size: expr });
-                    } else {
-                        // No "bytes" keyword - this is an initializer expression
-                        // The buffer will be sized based on the initializer at compile time
-                        return Ok(Statement::VarDecl {
-                            name,
-                            var_type: Some(Type::Buffer),
-                            value: Some(expr),
-                        });
-                    }
-                } else {
-                    // No "is" clause - this is a zero-capacity dynamic buffer
-                    // Emit a warning as this is likely unintentional
-                    self.warn_uninitialized_buffer(&name);
-                    return Ok(Statement::BufferDecl { 
-                        name, 
-                        size: Expr::IntegerLit(0) 
-                    });
-                }
-            }
-            Token::Timer => {
-                self.advance();
-                self.skip_noise();
-                
-                if *self.current() != Token::Called {
-                    return Err(self.err(
-                        "Missing 'called' after 'timer'\n  \
-                         Syntax: a timer called name.\n  \
-                         Example: Create a timer called 'job timer'."
-                    ));
-                }
-                self.advance();
-                self.skip_noise();
-
-                let name = self.parse_name()?;
-
-                return Ok(Statement::TimerDecl { name });
-            }
-            Token::Time => {
-                self.advance();
-                self.skip_noise();
-
-                if *self.current() != Token::Called {
-                    return Err(self.err(
-                        "Missing 'called' after 'time'\n  \
-                         Syntax: a time called name is current time."
-                    ));
-                }
-                self.advance();
-                self.skip_noise();
-
-                let name = self.parse_name()?;
-
-                self.skip_noise();
-                
-                // Parse "is current time" or similar
-                let value = if matches!(self.current(), Token::Is | Token::Equals) {
-                    self.advance();
-                    self.skip_noise();
-                    Some(self.parse_expression()?)
-                } else {
-                    None
-                };
-                
-                return Ok(Statement::VarDecl {
-                    name,
-                    var_type: Some(Type::Time),
-                    value,
-                });
-            }
-            _ => None,
-        };
-        
         self.skip_noise();
         self.expect(&Token::Called);
         self.skip_noise();
@@ -1994,7 +1968,120 @@ impl Parser {
         let name = self.parse_name()?;
 
         self.skip_noise();
-        
+
+        // Timer has its own statement type.
+        if var_type == Some(Type::Timer) {
+            return Ok(Statement::TimerDecl { name });
+        }
+
+        // File and time variables are meaningless without an initializer.
+        if var_type == Some(Type::File) {
+            if !matches!(self.current(), Token::Is | Token::Equals) {
+                return Err(self.err(
+                    "A file variable must be initialized with a path\n  \
+                     Example: a file called source is \"input.txt\"."
+                ));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = Some(self.parse_expression()?);
+            return Ok(Statement::VarDecl {
+                name,
+                var_type: Some(Type::File),
+                value,
+            });
+        }
+
+        if var_type == Some(Type::Time) {
+            if !matches!(self.current(), Token::Is | Token::Equals) {
+                return Err(self.err(
+                    "A time variable must be initialized\n  \
+                     Example: a time called now is current time."
+                ));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = Some(self.parse_expression()?);
+            return Ok(Statement::VarDecl {
+                name,
+                var_type: Some(Type::Time),
+                value,
+            });
+        }
+
+        // Handle buffer creation with size or initializer.
+        if var_type == Some(Type::Buffer) {
+            if self.expect(&Token::Is) {
+                self.skip_noise();
+                let expr = self.parse_primary()?;
+                self.skip_noise();
+
+                // Check if this is a size clause (has "bytes" keyword) or an initializer
+                if *self.current() == Token::Bytes {
+                    // Size clause
+                    self.advance();
+                    self.skip_noise();
+
+                    // Handle optional "in size" suffix
+                    if *self.current() == Token::In {
+                        self.advance();
+                        self.skip_noise();
+                        if !self.expect(&Token::Size) {
+                            return Err(self.error_expected_token("size", self.current()));
+                        }
+                    }
+
+                    // Validate that the size expression is a positive integer literal
+                    // or constant variable. This is critical for memory safety.
+                    match &expr {
+                        Expr::IntegerLit(n) => {
+                            if *n <= 0 {
+                                return Err(self.error_invalid_buffer_size(
+                                    &name,
+                                    "Buffer size must be a positive integer",
+                                    "a buffer called buf is 1024 bytes."
+                                ));
+                            }
+                            const MAX_BUFFER_SIZE: i64 = 1024 * 1024 * 1024; // 1 GB limit
+                            if *n > MAX_BUFFER_SIZE {
+                                return Err(self.error_invalid_buffer_size(
+                                    &name,
+                                    &format!("Buffer size exceeds maximum allowed ({} bytes)", MAX_BUFFER_SIZE),
+                                    "Consider using smaller buffers or streaming for large data."
+                                ));
+                            }
+                        }
+                        Expr::Identifier(_var_name) => {
+                            // Allow variable references for size - validated at compile time
+                        }
+                        _ => {
+                            return Err(self.error_invalid_buffer_size(
+                                &name,
+                                "Buffer size must be a numeric literal or constant variable",
+                                "a buffer called buf is 1024 bytes."
+                            ));
+                        }
+                    }
+
+                    return Ok(Statement::BufferDecl { name, size: expr });
+                } else {
+                    // No "bytes" keyword - this is an initializer expression
+                    return Ok(Statement::VarDecl {
+                        name,
+                        var_type: Some(Type::Buffer),
+                        value: Some(expr),
+                    });
+                }
+            } else {
+                // No "is" clause - this is a zero-capacity dynamic buffer
+                self.warn_uninitialized_buffer(&name);
+                return Ok(Statement::BufferDecl {
+                    name,
+                    size: Expr::IntegerLit(0),
+                });
+            }
+        }
+
         // Parse value if present: "is <value>"
         let value = if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();
@@ -2003,41 +2090,39 @@ impl Parser {
         } else {
             None
         };
-        
+
         Ok(Statement::VarDecl {
             name,
             var_type,
             value,
         })
     }
-    
+
     fn parse_the_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'the'
         self.skip_noise();
-        
-        // Could be "the <name> is <value>" (assignment) or just a reference
-        let name = match self.current().clone() {
-            // Handle "the number called <name>" or "the number" (loop iterator)
-            Token::Number | Token::Text | Token::Boolean | Token::Buffer => {
-                self.advance(); // consume type
+
+        // Could be "the <type> called <name>" (typed reference) or just a name.
+        let var_type = self.try_parse_type_noun();
+        let name = if let Some(_) = var_type {
+            self.skip_noise();
+            if *self.current() == Token::Called {
+                self.advance();
                 self.skip_noise();
-                if *self.current() == Token::Called {
-                    self.advance();
-                    self.skip_noise();
-                    self.parse_name()?
-                } else if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
-                    self.parse_name()?
-                } else {
-                    // "the number" without "called" - could be loop iterator reference
-                    // But as a statement, this needs "is" to be an assignment
-                    "_iter".to_string()
-                }
+                self.parse_name()?
+            } else if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+                self.parse_name()?
+            } else {
+                // "the number" without "called" - could be loop iterator reference
+                // But as a statement, this needs "is" to be an assignment
+                "_iter".to_string()
             }
-            _ => self.parse_name()?,
+        } else {
+            self.parse_name()?
         };
-        
+
         self.skip_noise();
-        
+
         // Check for assignment: "is <value>"
         if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();

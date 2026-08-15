@@ -7,6 +7,8 @@ mod errors;
 mod lib_file;
 #[cfg(test)]
 mod compile_fail_tests;
+#[cfg(test)]
+mod declare_create_type_coverage;
 
 use std::collections::HashSet;
 use std::env;

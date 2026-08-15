@@ -101,6 +101,27 @@ adheres to [Semantic Versioning](https://semver.org/).
   intended. Covers all three assignment spellings (`Set v to`, `the v is`,
   `v is`) and a function reassigning a top-level `value` global.
 
+- **A declared-but-uninitialized `text` variable held a null pointer, so
+  printing, interpolating, or comparing it segfaulted the process on the
+  first read** (`a text called ex.` / `Create a text called ex.`, then
+  `Print ex.`). Every other default-initializing type had a real, safe
+  default; `text` fell through to a generic zero-fill that later reads
+  dereferenced. An uninitialized `text` now points at a real, shared empty
+  string, so it reads, prints, and interpolates as `""` and can be
+  reassigned normally afterward.
+
+- **`Create a TYPE called NAME.` (and the bare `a TYPE called NAME.` form
+  with no initializer) now default-initializes every declarable type
+  uniformly**, routed through one shared type resolver instead of a
+  hardcoded subset. Previously only `number`, `text`, `boolean`, and
+  `buffer` default-initialized this way; `float`, `list`, `map`, `value`,
+  and `timer` now do too. `file` and `time` still require an explicit
+  initializer — a default value would be meaningless for either (no path
+  to open, no timestamp to hold) — and are rejected at compile time with a
+  message naming what to supply.
+  - An uninitialized `value` now defaults to `nothing`, not the number `0`.
+  - An empty `map` now prints `{}`, not `{`.
+
 ### Changed
 
 - **A reserved-word error now names the word you wrote.** Declaring a
