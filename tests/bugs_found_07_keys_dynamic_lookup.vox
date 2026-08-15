@@ -1,0 +1,15 @@
+a map called m is {"a": 1, "b": 2}.
+a list called ks is m's keys.
+
+For each k in ks,
+  a value called v is m's "{k}",
+  print "from keys: [{k}] lookup={v}".
+
+a list called lit is ["a", "b"].
+For each k2 in lit,
+  a value called v2 is m's "{k2}",
+  print "from literal: [{k2}] lookup={v2}".
+
+a text called direct is "a".
+a value called v3 is m's "{direct}".
+print "from text var: lookup={v3}".

@@ -1,0 +1,9 @@
+(Bug #15 regression: the symmetric direction — a `value` holding an integer reassigned to a float must move the tag to float, so `is a float` holds and `is a number` does not. Before the fix this direction only printed correctly by accident: the static type was clobbered to float on the second assignment, matching the runtime value, but the predicate still folded on the static type rather than the tag.)
+
+a value called v is 1.
+Set v to 3.5.
+Print v.
+If v is a number, print "num".
+Otherwise print "NOT num".
+If v is a float, print "float".
+Otherwise print "NOT float".

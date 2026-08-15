@@ -203,11 +203,11 @@
     "property-keywords": {
       "comment": "Standalone property/predicate keywords (reserved words, always the keyword): 'is empty', 'is zero', 'of size 16', etc.",
       "name": "variable.other.property.vox",
-      "match": "(?<![\\w-])(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|values|zero|abs|fd|odd))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|type|values|zero|abs|fd|odd))(?![\\w-])"
     },
     "properties": {
       "comment": "Possessive property access: X's capacity / X's first / X's all / X's count.",
-      "match": "('s)\\s*(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|values|zero|count|all|abs|fd|odd))(?![\\w-])",
+      "match": "('s)\\s*(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|type|values|zero|count|all|abs|fd|odd))(?![\\w-])",
       "captures": {
         "1": { "name": "punctuation.accessor.vox" },
         "2": { "name": "variable.other.property.vox" }

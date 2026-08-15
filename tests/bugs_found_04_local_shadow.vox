@@ -1,0 +1,11 @@
+(Bug #4 regression: a function-local declaration must shadow the top-level global instead of mutating it.)
+
+a number called g is 10.
+
+To shadow.
+  a number called g is 99.
+  Set g to g add 1.
+  Print g.
+
+shadow.
+Print g.

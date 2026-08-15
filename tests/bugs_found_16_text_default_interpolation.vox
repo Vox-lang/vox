@@ -1,0 +1,3 @@
+a text called ex.
+Print "[{ex}]".
+If ex is "" then, Print "empty as expected".

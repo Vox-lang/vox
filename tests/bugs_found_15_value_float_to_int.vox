@@ -1,0 +1,9 @@
+(Bug #15 regression: reassigning a `value` that holds a float to an integer must move the runtime tag to integer, not leave it stale at float. A stale tag makes Print reinterpret the integer's bits as a double — 1 prints as 0.0 — and makes `is a number` falsely false. The predicate assertions prove the tag moved with the payload, not just that the printed value changed.)
+
+a value called v is 3.5.
+Set v to 1.
+Print v.
+If v is a number, print "num".
+Otherwise print "NOT num".
+If v is a float, print "float".
+Otherwise print "NOT float".

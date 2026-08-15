@@ -1,0 +1,13 @@
+(Bug #14 regression: a period NOT followed by `but` must still end the whole
+chain, same as before the fix. The final branch's period is followed by a
+blank line and an unrelated statement, which must run exactly once after the
+loop completes -- not once per loop iteration, and not absorbed into the
+chain as another branch.)
+
+a list called fs is ["x", "y", "z"].
+For each f in fs,
+  Continue,
+    but if f is equal to "x" print "got x".
+    but if f is equal to "y" print "got y".
+
+Print "loop done".

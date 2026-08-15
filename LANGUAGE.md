@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.2.0**
+**Version 0.3.6**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -84,7 +84,7 @@ print "Section 1".
 print "Section 2".
 ```
 
-**Note:** Function definitions are typically followed by a blank line to visually separate them from other code, but this is a style convention, not a requirement. A blank line inside a function body, however, ends the function early — see [The termination rule](#the-termination-rule) below.
+**Note:** A function definition is closed by a **blank line (paragraph break)** — this is *required*, not a style convention. A period closes only the innermost open clause (rule 1 below), so the period ending a body statement does **not** close the function. Without a blank line after the body, every statement following the signature is absorbed into the function body; since the function is typically not called from within itself, the program then silently does nothing (exit 0, no output). A following `To` or `Library` does begin a new top-level construct and so ends the body, but any other statement is absorbed. The compiler warns when a function definition is still open at end of file. See [The termination rule](#the-termination-rule) below.
 
 ### Sentence Consumption
 
@@ -248,7 +248,7 @@ The action executes once per item in the collection or range, with the loop vari
 
 ### Conditional Branching with `but if`
 
-The `but if` clause allows conditional output within loops. It's available in both `for each` loops and loop expansion (`print each`).
+The `but if` clause is a generic conditional branch over a base action. It is available in both `for each` loops and loop expansion (`<action> each ... from ...`).
 
 ```
 (FizzBuzz example - print number, but override with word if divisible)
@@ -261,25 +261,33 @@ print each number from 1 to 15,
 print each number from 1 to 10,
     but if the number modulo 2 is equal to 0 print "even".
 
+(Append to a list with a conditional override)
+append each number from 1 to 5 to out,
+    but if the number modulo 2 is equal to 0 append 0.
+
 (With for-each loop)
 For each number from 1 to 15,
   print the number,
     but if divisible of the number and 3 is true print "divisible by 3".
 ```
 
-**Syntax:** `print each <var> from <collection>, but if <condition> print <value>, but if <condition> print <value>.`
+**Syntax:** `<base action>, but if <condition> <alternative action>, but if <condition> <alternative action>, ... [otherwise <default alternative action>].`
 
 **How it works:**
-1. The default action is to print the loop variable
-2. Each `but if` clause is checked in order
-3. If a condition is true, that value is printed instead
-4. If no conditions match, the default value is printed
+1. The default action is the base statement.
+2. Each `but if` clause is checked in order.
+3. If a condition is true, that alternative action runs instead of the default.
+4. If no conditions match, the default action runs.
+5. An optional trailing `otherwise` clause provides a final alternative.
 
 **Key points:**
 - Conditions are checked in order - first match wins
 - Multiple `but if` clauses can be chained
+- The alternative action can be any valid Vox statement
+- `otherwise` provides a catch-all alternative
 - Works with both ranges and collections
 - The loop variable (`the number`) is available in conditions
+- In an `append` branch, the `to <list/buffer>` target may be omitted and is inherited from the base append statement; retargeting to a different list/buffer is not allowed
 
 ### Inline Substitution with `treating`
 
@@ -343,6 +351,60 @@ Set a number called counter to 1.
 Create a text called greeting to "Hello".
 ```
 
+### Two Canonical Forms
+
+Every declarable type supports two equivalent forms, both routed through
+the same type resolver:
+
+- **`A TYPE called NAME is VALUE.`** — declares `NAME` and initializes it
+  to `VALUE` immediately. `Set`/`Create` with `to <value>` (above) is the
+  same form with a different lead-in word.
+- **`Create a TYPE called NAME.`** — declares `NAME` with no initializer
+  and gets that type's default (zero) value:
+
+  ```
+  Create a number called n.       (n is 0)
+  Create a float called f.        (f is 0.0)
+  Create a boolean called b.      (b is false / 0)
+  Create a list called items.     (items is [])
+  Create a map called m.          (m is {})
+  Create a buffer called buf.     (buf is empty, 0 bytes, dynamic capacity)
+  Create a value called v.        (v is nothing)
+  Create a timer called t.        (t is ready to Start)
+  ```
+
+  | Type | Default on bare `Create` |
+  |------|---------------------------|
+  | `number` | `0` |
+  | `float` | `0.0` |
+  | `text` | empty string |
+  | `boolean` | `false` (`0`) |
+  | `list` | `[]` |
+  | `map` | `{}` |
+  | `buffer` | empty (0 bytes) |
+  | `value` | `nothing` |
+  | `timer` | ready to `Start` |
+  | `file` | **not supported** — see below |
+  | `time` | **not supported** — see below |
+
+  **`file` and `time` require an initializer.** A default file or time
+  value would be meaningless (no path to open, no timestamp to hold), so
+  `Create a file called N.` and `Create a time called N.` are both
+  rejected at compile time with a message naming what to supply:
+
+  ```
+  Create a file called src.
+  (compile error: A file variable must be initialized with a path
+     Example: a file called source is "input.txt".)
+
+  Create a time called clk.
+  (compile error: A time variable must be initialized
+     Example: a time called now is current time.)
+  ```
+
+  Give them a value with the first canonical form instead: `a file called
+  source is "input.txt".` / `a time called now is current time.`
+
 ### Assignment (Existing Variable)
 
 Use `the` to reference an existing variable:
@@ -354,11 +416,12 @@ the counter is the counter add 1.
 
 ### Type Immutability
 
-**A variable's type is fixed at its declaration and never changes.** Every
-form that writes to an already-declared name — `x is <value>.`, `the x is
-<value>.`, and `Set x to <value>.` — is checked the same way: if the new
-value's type doesn't match the type `x` was declared with, that's a compile
-error, not a silent retype.
+**A variable's type is fixed at its declaration and never changes** —
+`value` is the one deliberate exception, covered below. Every form that
+writes to an already-declared name — `x is <value>.`, `the x is <value>.`,
+and `Set x to <value>.` — is checked the same way: if the new value's type
+doesn't match the type `x` was declared with, that's a compile error, not a
+silent retype.
 
 ```vox fragment
 a number called n is 5.
@@ -410,7 +473,13 @@ If 1 is equal to 2,
   sanctioned dynamic type and keeps accepting any type across reassignment,
   exactly as documented in [Dynamic Values (`value`)](#dynamic-values-value)
   below — that section's behavior is unchanged by this rule, not an
-  exception carved out of it.
+  exception carved out of it. This also covers the v0.3.6 in-place retype
+  statement `<valuevar> is a <type>.` (e.g. `numstr is a number.`), which
+  reads the variable's runtime tag, converts the value, and updates the
+  tag in place — see "A `value` can be retyped in place" below. The same
+  statement applied to a *statically*-typed variable (`n is a text.` where
+  `n` is a `number`) is still rejected by this rule exactly like any other
+  mismatched assignment; only a `value`-declared name can be retyped.
 
 **What this doesn't catch.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
@@ -523,6 +592,17 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 - Variables declared at top level are global and can be used inside functions.
 - Variables declared inside a function are local to that function and are not available at top level.
 - Referencing an unknown variable inside a function is a compile-time error.
+- Assigning to a top-level variable inside a function (`Set g to ...` /
+  `the g is ...`) mutates the global itself, so the new value is visible after
+  the call returns and to every other function.
+- Declaring a variable inside a function **shadows** a top-level variable of
+  the same name (`a number called g is 5.` inside a function creates a local
+  `g`); the global is left untouched. Recursion still gets a fresh set of
+  locals per call. This applies to `value` too: its payload and runtime type
+  tag are stored as a pair, in whichever storage (function-local, or the
+  top-level global's own pair of storage locations) that particular `value`
+  uses, so a mutation inside one function is never visible to another unless
+  it is genuinely the same global.
 
 ### Parameter and Local Types (v0.1.16)
 
@@ -1247,9 +1327,9 @@ set r to 7.
 If r is a number, print "now a number".
 ```
 
-**A `value` is not usable in arithmetic, and cannot currently be converted
-or narrowed either.** Because a `value` might hold a string or a decimal,
-the compiler rejects bare arithmetic on it:
+**Bare arithmetic on a `value` is still rejected.** Because a `value` might
+hold a string or a decimal, the compiler refuses to use it directly in
+arithmetic:
 
 ```
 To bump with a value called v. Return a number, v add 1.
@@ -1258,31 +1338,63 @@ To bump with a value called v. Return a number, v add 1.
  supported.)
 ```
 
-This is a real, open gap (plan 294 finding 21), not just an unhelpful
-message — the two paths that would normally get you out of a check like
-this don't currently work for a `value` whose tag is only known at
-runtime, and it's worth knowing why rather than hitting a wall twice:
+**A `value` can be retyped in place.** This is the exception named in
+[Type Immutability](#type-immutability) above: a *statically*-typed
+variable's type is fixed forever, but `value` is deliberately not one. The
+statement `<valuevar> is a <type>.` reads the variable's runtime tag,
+performs the conversion that the corresponding static cast would use, and
+stores the result back into the same variable with the new tag. This works
+for `number`, `float`/`decimal`, `text`, and `boolean` targets:
 
-- **A type-predicate guard does not narrow.** `if v is a number, … v add 1
-  …` still rejects `v add 1` *inside* the `If` body — the guard proves the
-  branch is live only when the tag matches, but nothing today propagates
-  that proof into `v`'s tracked type for the statements inside it. Full
-  flow-sensitive narrowing is a later decision; see the roadmap.
-- **A cast is rejected outright, deliberately, rather than silently
-  computing garbage.** `v as a number` used to compile but skip the
-  conversion when the tag didn't already match the target's native
-  representation — a text pointer reinterpreted as an integer, not parsed.
-  Casting a `value` whose tag isn't known at compile time is now a compile
-  error instead. (A `value` whose tag genuinely *is* knowable at compile
-  time — one holding a literal number right where it's declared, for
-  instance — is still dynamically typed by declaration and gets the same
-  rejection; the compiler does not special-case it.)
+```
+a value called numstr is "357".
+numstr is a number.
+print numstr add 1.           (prints: 358)
+```
 
-There is currently no supported way to use, convert, or narrow a genuinely
-dynamically-tagged `value` in arithmetic from within the language. The
-predicate idiom (`is a number` / `is a text`) remains useful for branching
-and for `Print`, which does dispatch correctly on the runtime tag; it just
-does not yet unlock arithmetic or casting inside the branch it guards.
+The same phrase in **condition** position keeps its old meaning: `If numstr
+is a number then, ...` is still a type predicate that tests the runtime
+tag and returns a boolean. Position — statement versus condition — is what
+distinguishes a cast from a predicate:
+
+```
+a value called numstr is "357".
+if numstr is a number then, print "num".
+otherwise, print "not num".
+(prints: not num)
+```
+
+After a successful in-place retype, the variable is tracked with the new
+type for the rest of its lifetime, so arithmetic and further casts behave
+accordingly. Retyping to the type it already holds is a no-op.
+
+**Failed conversions set `_last_error` and leave the variable as 0.** A
+text that cannot be parsed as a number, for instance, results in 0 and
+raises the error flag so `On error` can catch it:
+
+```
+a value called bad is "abc".
+bad is a number.
+on error print "cast failed".
+print bad.
+(prints: cast failed / 0)
+```
+
+**Inspecting a `value`'s current type.** The universal `type` property reads the variable's runtime tag and returns a text description such as `Text (dynamic)`, `Number (dynamic)`, `Float (dynamic)`, `Boolean (dynamic)`, `List (dynamic)`, `Map (dynamic)`, or `Nothing (dynamic)`. Because it reads the tag, the reported type changes with reassignment:
+
+```
+a value called v is "hello".
+print v's type.          (prints: Text (dynamic))
+set v to 42.
+print v's type.          (prints: Number (dynamic))
+```
+
+This is a display helper for debugging and logging; type tests still belong in the `is a <type>` predicate.
+
+**Retyping a statically-typed variable is a compile error.** `n is a
+text.` is only valid when `n` was declared as a `value`; for a `number`
+variable the compiler reports the actual declared type and points at the
+explicit cast (`a text called t is n as text.`) as the correct rewrite.
 
 **Recursion with `value` works.** A `value` parameter threads its tag
 through every frame, so a recursive walker over mixed data classifies
@@ -1574,9 +1686,9 @@ print each x from [1, 2, 3].  (prints 1, 2, 3)
 print the x.                  (prints 3 - last iteration value)
 ```
 
-### Conditional Output with `but if`
+### Conditional Branching with `but if`
 
-Use `but if` to conditionally override output within loops:
+Use `but if` as a generic conditional branch over any base action, including inside loops and loop expansion:
 
 ```
 (Print numbers, but override with words for certain values)
@@ -1588,19 +1700,27 @@ print each number from 1 to 15,
 (Simple even/odd labeling)
 print each number from 1 to 10,
     but if the number modulo 2 is equal to 0 print "even".
+
+(Conditional append in a loop)
+append each number from 1 to 5 to out,
+    but if the number modulo 2 is equal to 0 append 0.
 ```
 
 **How it works:**
-1. The default action is to print the loop variable
-2. Each `but if` clause is checked in order
-3. If a condition is true, that value is printed instead
-4. If no conditions match, the default value is printed
+1. The default action is the base statement.
+2. Each `but if` clause is checked in order.
+3. If a condition is true, that alternative action runs instead of the default.
+4. If no conditions match, the default action runs.
+5. An optional `otherwise` clause provides a final alternative.
 
 **Key points:**
 - Conditions are checked in order - first match wins
 - Multiple `but if` clauses can be chained
+- The alternative action can be any valid Vox statement
+- `otherwise` provides a catch-all alternative
 - Works with both ranges and collections
 - The loop variable is available in conditions
+- In an `append` branch, the `to <list/buffer>` target may be omitted and is inherited from the base append statement; retargeting to a different list/buffer is not allowed
 
 ### Inline Value Substitution with `treating`
 
@@ -1820,6 +1940,26 @@ print myfile's size.
 If mybuffer's size is equal to mybuffer's capacity then,
     print "Buffer is full!".
 ```
+
+#### Universal Properties
+
+Every variable has a `type` property that reports its declared type as text:
+
+```
+a number called n is 3.
+a value called v is "hello".
+
+print n's type.     (prints: Number (static))
+print v's type.     (prints: Text (dynamic))
+```
+
+| Property | Description | Example |
+|----------|-------------|---------|
+| `type` | Declared type name plus `(static)` or `(dynamic)` | `Number (static)`, `Text (dynamic)` |
+
+Statically-typed variables (`number`, `float`, `text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`) report their type with `(static)` because the compiler knows the type from the declaration. A `value` variable reports whatever its runtime tag currently holds, so it always uses `(dynamic)`.
+
+This property is intended for printing and logging. For type *tests*, use the `is a <type>` predicate — comparing the display string is stringly-typed and can drift from the predicate.
 
 #### Buffer Properties
 
@@ -2984,8 +3124,11 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `ms` | `milliseconds` | Time duration units (`Wait 500 ms.`) |
 | `message` | `text` | Type name (`a message called ...` is treated as `text`) |
 | `string` | `text` | Type name (already listed in the type synonyms) |
+| `length` | `size` | Collection/buffer property (`x's length` is the same as `x's size`) |
 
-These cannot be used as variable names. The canonical keyword is what appears in error messages and diagnostics.
+These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called length is ...` reports `'length'` as an alternate spelling of `'size'`, not the internal canonical name.
+
+Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'`, `'length'` — if you genuinely need it.)
 
 ---
 

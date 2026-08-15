@@ -1,0 +1,14 @@
+a map called m is {"status": "ok", "count": 3}.
+a list called vs is m's values.
+
+a value called sep is element 1 of vs.
+print "separate: {sep}".
+
+a value called ch is element 1 of m's values.
+print "chained values: {ch}".
+
+a value called ck is element 1 of m's keys.
+print "chained keys: {ck}".
+
+a number called ln is m's length.
+print "length: {ln}".

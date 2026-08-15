@@ -1,0 +1,28 @@
+(Bug #4 regression: top-level globals of non-number scalar types also retain mutations made inside functions.)
+
+a float called f is 1.5.
+a boolean called flag_value is false.
+a text called s is "hi".
+a buffer called b is "x".
+
+To 'incf'.
+  Set f to {f add 2.5}.
+
+To 'toggle'.
+  Set flag_value to not flag_value.
+
+To 'extend'.
+  Set s to "{s}!".
+
+To 'grow'.
+  Append "y" to b.
+
+
+'incf'.
+'toggle'.
+'extend'.
+'grow'.
+Print f.
+Print flag_value.
+Print s.
+Print b.

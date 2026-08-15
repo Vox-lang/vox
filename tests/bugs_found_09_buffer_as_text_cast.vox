@@ -1,0 +1,6 @@
+a buffer called b is "hello".
+a text called t1 is b as text.
+Print "[{t1}]".
+
+a text called t2 is "{b}".
+Print "[{t2}]".

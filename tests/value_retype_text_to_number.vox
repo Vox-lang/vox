@@ -1,0 +1,6 @@
+(Regression: a `value` variable holding text can be retyped to number and used in arithmetic.)
+
+a value called numstr is "357".
+numstr is a number.
+print numstr add 1.
+

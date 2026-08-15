@@ -1,0 +1,12 @@
+(Bug #4 regression: two functions using the same local-stack offset for different top-level globals must not collide.)
+
+a number called g is 0.
+a number called h is 0.
+
+To bump. Set g to g add 1.
+To also. Set h to h add 10.
+
+bump.
+also.
+Print g.
+Print h.

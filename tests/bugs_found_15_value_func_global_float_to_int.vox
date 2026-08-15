@@ -1,0 +1,13 @@
+(Bug #15 regression: a function reassigning a top-level `value` global from a float to an integer must move the global's BSS tag byte. The function body's `Set` routes through the same VarDecl arm as a top-level assignment, so it shared the static-type clobber before the fix.)
+
+a value called vg is 3.5.
+
+To reinteger. Set vg to 1.
+
+reinteger.
+
+Print vg.
+If vg is a number, print "num".
+Otherwise print "NOT num".
+If vg is a float, print "float".
+Otherwise print "NOT float".

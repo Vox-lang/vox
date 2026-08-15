@@ -1,0 +1,10 @@
+(Regression: `value`'s type property follows the runtime tag, not the declaration.)
+
+a value called v is "hello".
+Print "{v's type}".
+set v to 42.
+Print "{v's type}".
+set v to 2.5.
+Print "{v's type}".
+set v to nothing.
+Print "{v's type}".

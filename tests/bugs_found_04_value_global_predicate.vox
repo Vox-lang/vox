@@ -1,0 +1,12 @@
+(Bug #4 regression: an `is a text`/`is a number` predicate on a top-level `value` global must see the runtime tag left by a function-boundary mutation, not the global's original static tag.)
+
+a value called vg is 0.
+To settext. Set vg to "hello".
+
+If vg is a number, print "before: number".
+Otherwise print "before: not number".
+
+settext.
+
+If vg is a text, print "after: text".
+Otherwise print "after: not text".

@@ -1,0 +1,7 @@
+(Bug #4 regression: a top-level `value` global's tag survives a function-boundary mutation to a float - must print 3.5, not its raw IEEE-754 bit pattern.)
+
+a value called vg is 0.
+To setfloat. Set vg to 3.5.
+
+setfloat.
+Print vg.

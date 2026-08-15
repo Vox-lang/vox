@@ -1,0 +1,13 @@
+(A `but if` branch can be any action, not just print or append.  Here the
+branch is a `set` assignment, showing that a non-output action is a valid
+alternative to the base print action.)
+
+a number called x is 0.
+a number called n is 4.
+print n, but if n modulo 2 is equal to 0 set x to 1.
+print the x.
+
+a number called y is 0.
+a number called m is 3.
+print m, but if m modulo 2 is equal to 0 set y to 1.
+print the y.

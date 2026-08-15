@@ -1,0 +1,7 @@
+(Bug #4 regression: a top-level `value` global keeps its runtime tag paired with the payload across a function-boundary mutation - storing text inside a function must print as text, not as a raw pointer.)
+
+a value called vg is 0.
+To settext. Set vg to "hello".
+
+settext.
+Print vg.

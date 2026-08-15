@@ -1,0 +1,40 @@
+(Regression test for the declaration-form unification (v0.3.6): `Create a
+ T called N.` now routes every declarable type through one shared type
+ resolver instead of a hardcoded `Token::Number | Token::Text | Token::
+ Boolean | Token::Buffer` subset. This asserts the DEFAULT value each
+ supporting type gets when Created with no initializer. `file` and `time`
+ deliberately reject a bare `Create` - see tests/compile_fail/declare_
+ create_file_no_initializer.vox and declare_create_time_no_initializer.vox.
+ `text`'s bare default is NOT asserted here: `Create a text called n.`
+ parses fine, but its codegen default-init falls through the generic
+ zero/null fallback and stores a null pointer instead of a valid empty
+ string, so printing it segfaults - a pre-existing codegen gap flagged
+ separately, not fixed by this test. `a text called n is "".` (the typed
+ is-value form) is unaffected and is covered in declare_create_is_form.vox.)
+
+Create a number called n.
+Print n.
+
+Create a float called f.
+Print f.
+
+Create a boolean called b.
+Print b.
+
+Create a list called l.
+Print l.
+
+Create a map called m.
+Print m.
+
+Create a buffer called buf.
+Print "size={buf's size}".
+Print "empty={buf's empty}".
+
+Create a value called v.
+Print v.
+if v is nothing, print "v is nothing".
+if v is not nothing, print "v is not nothing (BUG)".
+
+Create a timer called tm.
+Print "timer created ok".

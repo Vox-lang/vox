@@ -1,0 +1,11 @@
+(Bug #4 regression: a `value` declared inside a function must shadow the top-level `value` global instead of mutating it.)
+
+a value called vg is 1.
+
+To shadow.
+  a value called vg is 99.
+  Set vg to 100.
+  Print vg.
+
+shadow.
+Print vg.

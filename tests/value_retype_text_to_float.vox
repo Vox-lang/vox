@@ -1,0 +1,6 @@
+(Regression: a `value` variable holding text can be retyped to float.)
+
+a value called fstr is "3.5".
+fstr is a float.
+print fstr.
+

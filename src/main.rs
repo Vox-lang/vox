@@ -7,6 +7,8 @@ mod errors;
 mod lib_file;
 #[cfg(test)]
 mod compile_fail_tests;
+#[cfg(test)]
+mod declare_create_type_coverage;
 
 use std::collections::HashSet;
 use std::env;
@@ -448,7 +450,9 @@ fn main() {
         let mut lexer = Lexer::new(&source);
         let tokens = lexer.tokenize();
 
-        let mut parser = Parser::new(tokens).with_source(source_path, &source);
+        let mut parser = Parser::new(tokens)
+            .with_source(source_path, &source)
+            .with_shared_mode(build_shared);
         let mut program = match parser.parse() {
             Ok(p) => p,
             Err(e) => {
@@ -456,6 +460,13 @@ fn main() {
                 std::process::exit(1);
             }
         };
+
+        // Parser-level warnings (e.g. a function definition still open at end
+        // of file, BUGS_FOUND #5) are non-fatal but never silent. Print them
+        // now, the same way analyzer warnings are printed below.
+        for warning in &parser.warnings {
+            eprintln!("{}", warning);
+        }
 
         // Process includes (see statements) with circular dependency tracking,
         // relative to this input's directory.

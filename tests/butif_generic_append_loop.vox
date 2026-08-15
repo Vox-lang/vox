@@ -1,0 +1,8 @@
+(Probe B from the bug report: `but if` must work with append in loop expansion,
+not just in the plain form.  The default action appends the loop variable; the
+branch appends 0 when the variable is even.)
+
+a list called source is [1, 2, 3].
+a list called dest is [].
+append each n from source to dest, but if n modulo 2 is equal to 0 append 0.
+print dest.
