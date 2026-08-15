@@ -1,0 +1,23 @@
+(Regression: the `type` property reports every static declared type.)
+
+a number called num is 3.
+a float called flt is 3.5.
+a text called txt is "hello".
+a boolean called flg is true.
+a list called lst is [1, 2].
+a map called mp is {"k": 1}.
+a buffer called buf is "hi".
+open a file for reading called handle at "/dev/null".
+create a timer called tmr.
+a time called now is current time.
+
+Print "{num's type}".
+Print "{flt's type}".
+Print "{txt's type}".
+Print "{flg's type}".
+Print "{lst's type}".
+Print "{mp's type}".
+Print "{buf's type}".
+Print "{handle's type}".
+Print "{tmr's type}".
+Print "{now's type}".

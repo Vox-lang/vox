@@ -1,0 +1,9 @@
+(Regression: a `value` variable holding text can be retyped to boolean.)
+
+a value called myflag is "true".
+myflag is a boolean.
+print myflag.
+set myflag to "false".
+myflag is a boolean.
+print myflag.
+

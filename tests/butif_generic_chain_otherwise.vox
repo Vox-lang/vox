@@ -1,0 +1,20 @@
+(Chained `but if` plus a trailing `otherwise`, using an append base.  The
+first matching branch wins; `otherwise` is the catch-all.)
+
+a list called out is [].
+a number called n is 15.
+append "x" to out,
+    but if n modulo 15 is equal to 0 append "fizzbuzz",
+    but if n modulo 3 is equal to 0 append "fizz",
+    but if n modulo 5 is equal to 0 append "buzz",
+    otherwise append "none".
+print out.
+
+a list called out2 is [].
+a number called m is 7.
+append "x" to out2,
+    but if m modulo 15 is equal to 0 append "fizzbuzz",
+    but if m modulo 3 is equal to 0 append "fizz",
+    but if m modulo 5 is equal to 0 append "buzz",
+    otherwise append "none".
+print out2.

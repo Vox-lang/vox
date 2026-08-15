@@ -1,0 +1,9 @@
+(Bug #15 regression: the reported scope — a top-level `value` global holding a float, reassigned to an integer at top level, must move the BSS tag byte to integer. Before the fix the static type was clobbered to float at declaration, so Print emitted PRINT_FLOAT (reinterpreting the integer 1 as the denormal 0.0) and `is a number` folded statically to false instead of reading the runtime tag.)
+
+a value called vg is 3.5.
+Set vg to 1.
+Print vg.
+If vg is a number, print "num".
+Otherwise print "NOT num".
+If vg is a float, print "float".
+Otherwise print "NOT float".

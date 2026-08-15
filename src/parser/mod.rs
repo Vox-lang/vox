@@ -25,6 +25,36 @@ pub struct Parser {
     // itself - see `parse_primary_reserving`.
     suppress_to_connector: bool,
     suppress_of_connector: bool,
+    // True while parsing the body of one `but if`/`otherwise` branch.  The
+    // branch is already inside the outer conditional-sugar chain, so any
+    // `but if` suffix on the branch statement itself must be ignored; the
+    // outer chain owns all of the conditions.  This keeps the branch parser
+    // generic: it can hand any statement kind to the normal statement parser
+    // and still not double-consume the chain.
+    suppress_conditional_suffix: bool,
+    // True when parsing a `--shared` library input. A library file is a
+    // collection of function definitions and legitimately ends mid-body at
+    // EOF (its last function has no trailing blank line), so the
+    // "function still open at end of file" warning (BUGS_FOUND #5) is
+    // suppressed in this mode — it only fires for an executable program,
+    // where a function body that runs to EOF has almost certainly swallowed
+    // the program's top-level entry code.
+    shared_mode: bool,
+    // True once a `Library <name> version "..."` declaration has been
+    // parsed at the top level. A library file legitimately consists only
+    // of function definitions with no top-level entry code, so its last
+    // function body routinely runs to EOF with no closing blank line —
+    // exactly the shape the BUGS_FOUND #5 "function still open at end of
+    // file" warning misreads as "the program was swallowed". Like
+    // `shared_mode`, this suppresses that warning, but it also covers the
+    // case where a library file is compiled *without* `--shared` (e.g. the
+    // `examples/` compile check in `test.sh`): a library with no
+    // top-level entry is correct by construction, not a mistake.
+    saw_library_decl: bool,
+    // Non-fatal diagnostics collected during parsing (currently the #5
+    // "function still open at end of file" warning). The driver prints
+    // these after a successful parse; they never abort compilation.
+    pub warnings: Vec<CompileError>,
 }
 
 #[cfg(test)]
@@ -622,11 +652,29 @@ mod file_line_read_and_seek_tests {
 
 impl Parser {
     pub fn new(tokens: Vec<TokenInfo>) -> Self {
-        Parser { tokens, pos: 0, source_file: None, suppress_to_connector: false, suppress_of_connector: false }
+        Parser {
+            tokens,
+            pos: 0,
+            source_file: None,
+            suppress_to_connector: false,
+            suppress_of_connector: false,
+            suppress_conditional_suffix: false,
+            shared_mode: false,
+            saw_library_decl: false,
+            warnings: Vec::new(),
+        }
     }
-    
+
     pub fn with_source(mut self, filename: &str, content: &str) -> Self {
         self.source_file = Some(SourceFile::new(filename, content));
+        self
+    }
+
+    /// Mark this parse as a `--shared` library build, suppressing the
+    /// "function still open at end of file" warning (legitimate for a
+    /// library file whose last function has no trailing blank line).
+    pub fn with_shared_mode(mut self, shared: bool) -> Self {
+        self.shared_mode = shared;
         self
     }
     
@@ -644,6 +692,34 @@ impl Parser {
         } else {
             None
         }
+    }
+
+    /// Recover the identifier spelling the user actually wrote at the
+    /// current token. The lexer canonicalises aliases (`length` →
+    /// `Token::Size`, `ms` → `Token::Milliseconds`, …) so by the time
+    /// `check_not_keyword` runs the original text is gone from the token;
+    /// this reads it back from the source line so the diagnostic can name
+    /// the word the user typed rather than the internal canonical keyword
+    /// (BUGS_FOUND #6).
+    fn current_lexeme(&self) -> Option<String> {
+        let loc = self.current_location()?;
+        let chars: Vec<char> = loc.line_content.chars().collect();
+        let start = loc.column.saturating_sub(1);
+        let mut iter = chars.into_iter().skip(start);
+        let first = iter.next()?;
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return None;
+        }
+        let mut out = String::new();
+        out.push(first);
+        for c in iter {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                out.push(c);
+            } else {
+                break;
+            }
+        }
+        Some(out)
     }
     
     fn make_error(&self, message: &str) -> Box<CompileError> {
@@ -710,12 +786,28 @@ impl Parser {
     
     /// Check if a token is a reserved keyword and return an error if so.
     /// This catches ALL language keywords, not just a hardcoded subset.
+    ///
+    /// The diagnostic names the identifier the user *actually typed*, not
+    /// the compiler's internal canonical keyword: the lexer folds aliases
+    /// like `length` onto `Token::Size` before this runs, so without
+    /// recovering the source spelling the message would blame `size` for a
+    /// `length` the user wrote (BUGS_FOUND #6). When the typed spelling is
+    /// an alias of the canonical keyword, the message says so.
     fn check_not_keyword(&self, token: &Token) -> Result<(), Box<CompileError>> {
         if let Some(keyword) = token.as_keyword() {
+            let typed = self.current_lexeme().unwrap_or_else(|| keyword.to_string());
+            let alias_note = if typed != keyword {
+                format!(
+                    "\n  '{}' is an alternate spelling of the reserved keyword '{}'.",
+                    typed, keyword
+                )
+            } else {
+                String::new()
+            };
             Err(self.make_error(&format!(
-                "Cannot use '{}' as a variable name - it's a reserved keyword.\n  \
+                "Cannot use '{}' as a variable name - it's a reserved keyword.{}\n  \
                  Tip: Try a more descriptive name like '{}_value' or 'my_{}'",
-                keyword, keyword, keyword
+                typed, alias_note, typed, typed
             )))
         } else {
             Ok(())
@@ -962,7 +1054,7 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
 
-        match self.current().clone() {
+        let stmt = match self.current().clone() {
             Token::Print => self.parse_print(),
             Token::Set => self.parse_var_decl(),
             Token::Create => {
@@ -1079,6 +1171,21 @@ impl Parser {
                 Err(self.err_string_as_name(&s))
             }
             _ => Err(self.err_expected("a statement", self.current())),
+        };
+
+        // After parsing any statement, give it a chance to carry a `but if`/
+        // `otherwise` conditional-sugar suffix.  This is the single central
+        // hook that makes the *base* action generic; individual statement
+        // parsers no longer need to repeat the suffix logic.  Loop-expansion
+        // still handles its own `but if` because the suffix applies to the loop
+        // action rather than the loop statement itself.
+        //
+        // `maybe_parse_conditional_suffix` restores parser position when no
+        // suffix is present, and `suppress_conditional_suffix` keeps branch
+        // bodies from consuming an outer chain's suffix.
+        match stmt {
+            Ok(base) => self.maybe_parse_conditional_suffix(base),
+            Err(e) => Err(e),
         }
     }
 
@@ -1181,20 +1288,24 @@ impl Parser {
             false
         };
         
-        // Check for conditional print patterns: "print X, but if Y" or "print X but if Y"
-        // IMPORTANT: do not consume a plain trailing comma here, because it may belong
-        // to an enclosing sentence-consuming construct (if/while/for/on error).
-        self.maybe_parse_conditional_suffix(Statement::Print { value, without_newline })
+        Ok(Statement::Print { value, without_newline })
     }
 
     /// Detects an optional `, but if ...` / `but if ...` conditional-sugar
-    /// suffix after a fully-parsed base statement (currently `print` or
-    /// `append`) and, if present, dispatches to `parse_conditional_suffix`.
-    /// If no `but if` follows, restores the parser position and returns
-    /// `base` unchanged so outer constructs can consume the separator
-    /// normally (e.g. a plain trailing comma belonging to an enclosing
-    /// sentence-consuming construct).
+    /// suffix after a fully-parsed base statement and, if present, dispatches
+    /// to `parse_conditional_suffix`.  If no `but if` follows, restores the
+    /// parser position and returns `base` unchanged so outer constructs can
+    /// consume the separator normally (e.g. a plain trailing comma belonging
+    /// to an enclosing sentence-consuming construct).
+    ///
+    /// When `suppress_conditional_suffix` is set (while parsing a `but if`
+    /// branch body), the suffix is ignored unconditionally so that the outer
+    /// chain keeps ownership of every condition.
     fn maybe_parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
+        if self.suppress_conditional_suffix {
+            return Ok(base);
+        }
+
         let start_pos = self.pos;
 
         // The conditional continuation sugar is `but if ...` with an optional
@@ -1224,10 +1335,9 @@ impl Parser {
     }
 
     /// Builds the nested `Statement::If` chain for `but if` conditional
-    /// sugar, sharing one grammar across base statement kinds. `base` is
-    /// the already-parsed default statement (used as-is in the innermost
-    /// `else`); each branch's own grammar is dispatched by
-    /// `parse_conditional_branch` off `base`'s shape.
+    /// sugar. `base` is the already-parsed default statement (used as-is in
+    /// the innermost `else`); each branch's own statement is parsed by
+    /// `parse_conditional_branch` using the normal statement parser.
     fn parse_conditional_suffix(&mut self, base: Statement) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume 'if'
         self.skip_noise();
@@ -1241,8 +1351,24 @@ impl Parser {
         // Skip newlines before checking for continuation (allows multi-line but if)
         self.skip_noise();
         loop {
-            // Check for continuation: comma, but, or and
-            if !matches!(self.current(), Token::But | Token::Comma | Token::And) {
+            // Check for continuation: comma, but, and — or a period that
+            // belongs to a nested clause rather than closing the chain. Per
+            // LANGUAGE.md termination rule 1, a period closes only the
+            // innermost open clause; when the branch body opened its own
+            // clause (e.g. `On error ...`), that period is *its* terminator,
+            // not the chain's. Only treat the period as chain continuation
+            // when it is immediately followed by `but` — a period with
+            // nothing but blank-line/EOF/anything else after it still ends
+            // the whole chain.
+            if *self.current() == Token::Period {
+                let saved = self.pos;
+                self.advance();
+                self.skip_noise();
+                if *self.current() != Token::But {
+                    self.pos = saved;
+                    break;
+                }
+            } else if !matches!(self.current(), Token::But | Token::Comma | Token::And) {
                 break;
             }
 
@@ -1278,7 +1404,7 @@ impl Parser {
         for (cond, val) in conditions.into_iter().rev() {
             result = Statement::If {
                 condition: cond,
-                then_block: vec![val],
+                then_block: val,
                 else_if_blocks: vec![],
                 else_block: Some(vec![result]),
             };
@@ -1287,84 +1413,132 @@ impl Parser {
         Ok(result)
     }
 
-    /// Parses one `but if`/`otherwise` branch's body, using the base
-    /// statement's own value grammar (e.g. `print` gets its own
-    /// independent `without newline`; `append` reuses the same
-    /// value-parsing helpers `parse_append` itself uses, and always
-    /// targets the base statement's own list — branches do not
-    /// re-specify a target).
-    fn parse_conditional_branch(&mut self, base: &Statement) -> Result<Statement, Box<CompileError>> {
-        match base {
-            Statement::Print { .. } => {
-                if !self.expect(&Token::Print) {
-                    return Err(self.err("Expected 'print' in 'but if' branch"));
-                }
-                self.skip_noise();
-                let val = self.parse_primary()?;
-                self.skip_noise();
-                let without_newline = if *self.current() == Token::Without {
-                    self.advance();
-                    self.skip_noise();
-                    if *self.current() == Token::Newline
-                        || matches!(self.current(), Token::Identifier(s) if s.to_lowercase() == "newline")
-                    {
-                        self.advance();
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                Ok(Statement::Print { value: val, without_newline })
-            }
-            Statement::ListAppend { list, .. } => {
-                if !self.expect(&Token::Append) {
-                    return Err(self.err("Expected 'append' in 'but if' branch"));
-                }
-                self.skip_noise();
-                let mut val = self.parse_append_value_primary()?;
-                val = self.parse_append_value_ops(val, 0)?;
-                self.skip_noise();
+    /// Parses one `but if`/`otherwise` branch's body.
+    ///
+    /// A branch body can be more than one action — `open a file ..., On
+    /// error print ...` is the fallible-action-plus-handler shape (bug
+    /// #14). We reuse `parse_block`'s comma-separated, on-error-aware body
+    /// parser so a branch can hold its own trailing clause the same way an
+    /// `If`/`otherwise if` branch does, with conditional-suffix parsing
+    /// suppressed so that chained `but if`s stay owned by the outer
+    /// `parse_conditional_suffix` loop. `parse_block` leaves a genuinely
+    /// chain-ending terminator (period, paragraph break, EOF) for the
+    /// caller — it does not consume it.
+    ///
+    /// The only special case is the terse `append <value>` form, where the
+    /// branch may omit `to <name>` and inherit the base statement's target.
+    /// That inheritance is handled here as a narrow fallback rather than a
+    /// growing match over every statement kind.
+    fn parse_conditional_branch(
+        &mut self,
+        base: &Statement,
+    ) -> Result<Vec<Statement>, Box<CompileError>> {
+        // The terse append form is the one place where a branch is allowed to
+        // leave out a target and inherit it from the base.  `append <value>`
+        // is not a valid standalone statement (the full grammar requires
+        // `to <list>`), so it cannot be handed to the generic parser.
+        if *self.current() == Token::Append {
+            return Ok(vec![self.parse_terse_append_branch(base)?]);
+        }
 
-                // A branch may mirror the base statement's own `to <name>`
-                // (users naturally repeat it for symmetry) or omit it
-                // entirely (the plan 291 canonical form). Either is valid,
-                // but if present it is consumed here rather than left for
-                // the enclosing sentence — an unconsumed `to` previously
-                // desynced the top-level parser into reinterpreting the
-                // rest of the file as a new statement (plan 295 finding 1).
-                // Retargeting to a different list/buffer is not supported.
-                if *self.current() == Token::To {
+        // Every other branch body is parsed like an `If` branch, but with
+        // conditional-suffix parsing disabled so that chained `but if`s are
+        // owned by the outer `parse_conditional_suffix` loop.
+        let saved = self.suppress_conditional_suffix;
+        self.suppress_conditional_suffix = true;
+        let result = self.parse_block();
+        self.suppress_conditional_suffix = saved;
+        result
+    }
+
+    /// Parses `append <value> [to <name>]` as a `but if`/`otherwise` branch.
+    /// The target is optional when the base statement is an append whose
+    /// target can be inherited; if the branch does name a target, it must
+    /// match the base's.  If the base is not an append statement, an
+    /// explicit target is required.
+    fn parse_terse_append_branch(
+        &mut self,
+        base: &Statement,
+    ) -> Result<Statement, Box<CompileError>> {
+        self.advance(); // consume 'append'
+        self.skip_noise();
+
+        let mut value = self.parse_append_value_primary()?;
+        value = self.parse_append_value_ops(value, 0)?;
+        self.skip_noise();
+
+        // Optional type predicate on the append value, e.g.
+        // `append item is a number to flags`.
+        if matches!(self.current(), Token::Is | Token::Are) {
+            self.advance();
+            self.skip_noise();
+            let negated = *self.current() == Token::Not;
+            if negated {
+                self.advance();
+                self.skip_noise();
+            }
+            if !matches!(self.current(), Token::A | Token::An) {
+                return Err(self.err(
+                    "Expected 'a'/'an' and a type noun after 'is' in append value"
+                ));
+            }
+            let type_noun = self.parse_type_noun_after_article()?;
+            let check = Expr::TypeCheck {
+                value: Box::new(value),
+                type_noun,
+            };
+            value = if negated {
+                Expr::UnaryOp { op: UnaryOperator::Not, operand: Box::new(check) }
+            } else {
+                check
+            };
+        }
+
+        self.skip_noise();
+
+        // Resolve the target: inherit from the base if omitted, or check that
+        // an explicit target matches the base's list/buffer.
+        let list = if *self.current() == Token::To {
+            self.advance();
+            self.skip_noise();
+            let target = match self.current().clone() {
+                Token::Identifier(n) => { self.advance(); n }
+                Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
+                Token::The => {
                     self.advance();
                     self.skip_noise();
-                    let target = match self.current().clone() {
+                    match self.current().clone() {
                         Token::Identifier(n) => { self.advance(); n }
                         Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
-                        Token::The => {
-                            self.advance();
-                            self.skip_noise();
-                            match self.current().clone() {
-                                Token::Identifier(n) => { self.advance(); n }
-                                Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
-                                _ => return Err(self.err("Expected list name after 'the'")),
-                            }
-                        }
-                        _ => return Err(self.err("Expected list name after 'to' in 'but if' branch")),
-                    };
-                    if target != *list {
-                        return Err(self.err(&format!(
-                            "'but if' append branch targets '{}', but the base statement targets '{}' — \
-                             a conditional append branch cannot retarget to a different list/buffer",
-                            target, list
-                        )));
+                        _ => return Err(self.err("Expected list name after 'the'")),
                     }
                 }
+                _ => return Err(self.err("Expected list name after 'to' in 'but if' branch")),
+            };
 
-                Ok(Statement::ListAppend { list: list.clone(), value: val })
+            if let Statement::ListAppend { list: base_list, .. } = base {
+                if target != *base_list {
+                    return Err(self.err(&format!(
+                        "'but if' append branch targets '{}', but the base statement targets '{}' — \
+                         a conditional append branch cannot retarget to a different list/buffer",
+                        target, base_list
+                    )));
+                }
+                base_list.clone()
+            } else {
+                // The base is not an append, so the branch is fully explicit.
+                target
             }
-            _ => unreachable!("conditional sugar is only built for Print/ListAppend bases"),
-        }
+        } else if let Statement::ListAppend { list, .. } = base {
+            // Terse form: no `to` on the branch, inherit from the base.
+            list.clone()
+        } else {
+            return Err(self.err(
+                "Expected 'to <list>' after value in 'but if' append branch"
+            ));
+        };
+
+        Ok(Statement::ListAppend { list, value })
     }
 
     fn parse_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
@@ -1868,10 +2042,14 @@ impl Parser {
         if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();
             self.skip_noise();
+            // In-place retype of a `value` variable: `the name is a number.`.
+            if let Some(target_type) = self.try_parse_scalar_type_noun_after_is() {
+                return Ok(Statement::ValueRetype { name, target_type });
+            }
             let value = self.parse_expression()?;
             return Ok(Statement::Assignment { name, value });
         }
-        
+
         // Otherwise it's just a reference (shouldn't be a statement on its own)
         Err(self.err(&format!("Expected 'is' after 'the {}'", name)))
     }
@@ -2775,28 +2953,25 @@ impl Parser {
     
     /// Wrap a statement in a ForEach loop with the given variable and collection.
     /// Parses any additional comma-separated statements as part of the loop body.
-    /// Supports "but if" conditional branching for print statements.
+    /// Supports "but if" conditional branching for any action in the loop.
     fn wrap_in_loop_expansion(&mut self, variable: String, collection: Expr, base_stmt: Statement) -> Result<Statement, Box<CompileError>> {
         let mut body = vec![base_stmt];
-        
+
         // Check for comma to parse additional body statements or "but if" conditionals
         if *self.current() == Token::Comma {
             self.advance();
             self.skip_noise();
-            
-            // Check for "but if" conditional branching (modifies the base print statement)
+
+            // Check for "but if" conditional branching (wraps the base statement
+            // in a conditional chain, regardless of what kind of statement it is).
             if *self.current() == Token::But {
                 self.advance();
                 self.skip_noise();
-                
+
                 if *self.current() == Token::If {
-                    // Extract the default value from the base print statement
-                    if let Statement::Print { value: default_value, .. } = body.pop().unwrap() {
-                        let conditional_print = self.parse_conditional_suffix(Statement::Print { value: default_value, without_newline: false })?;
-                        body.push(conditional_print);
-                    } else {
-                        return Err(self.err("'but if' conditional branching only works with print statements"));
-                    }
+                    let base_stmt = body.pop().unwrap();
+                    let conditional_stmt = self.parse_conditional_suffix(base_stmt)?;
+                    body.push(conditional_stmt);
                 } else {
                     return Err(self.err("Expected 'if' after 'but'"));
                 }
@@ -3967,7 +4142,7 @@ impl Parser {
             _ => return Err(self.err("Expected list name after 'to'")),
         };
 
-        self.maybe_parse_conditional_suffix(Statement::ListAppend { list, value })
+        Ok(Statement::ListAppend { list, value })
     }
 
     fn parse_copy(&mut self) -> Result<Statement, Box<CompileError>> {
@@ -4085,6 +4260,13 @@ impl Parser {
         // the *version* is a string literal (data, not a name).
         self.advance(); // consume 'library'
         self.skip_noise();
+
+        // Record that this translation unit declares itself a library. A
+        // library file has no top-level entry by design, so its last
+        // function body legitimately runs to EOF — the BUGS_FOUND #5
+        // "function still open at end of file" warning is suppressed for
+        // the rest of this parse (see `parse_function_def`).
+        self.saw_library_decl = true;
 
         // Get library name (a bare or quoted identifier, never a string).
         let name = self.parse_name()?;
@@ -4224,6 +4406,31 @@ impl Parser {
         Ok(Statement::See { path, lib_name, lib_version })
     }
     
+    /// After an `is`/`equals` in a statement, check whether the next tokens
+    /// form a scalar type noun (`a number`, `a text`, `a float`, `a boolean`).
+    /// If so, consume them and return the target `Type` so the caller can
+    /// produce `Statement::ValueRetype`.  Non-scalar types (list/map) and
+    /// anything else are left untouched so they follow their normal path.
+    fn try_parse_scalar_type_noun_after_is(&mut self) -> Option<Type> {
+        if !matches!(self.current(), Token::A | Token::An) {
+            return None;
+        }
+        let saved = self.pos;
+        self.advance(); // consume a/an
+        self.skip_noise();
+        let t = match self.current() {
+            Token::Number | Token::Int => { self.advance(); Type::Integer }
+            Token::Float => { self.advance(); Type::Float }
+            Token::Text => { self.advance(); Type::String }
+            Token::Boolean => { self.advance(); Type::Boolean }
+            _ => {
+                self.pos = saved;
+                return None;
+            }
+        };
+        Some(t)
+    }
+
     fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         let name = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
@@ -4236,6 +4443,13 @@ impl Parser {
         if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();
             self.skip_noise();
+            // In-place retype of a `value` variable: `name is a number.`.
+            // The same words in condition position (`If name is a number`)
+            // still parse as a TypeCheck predicate because they go through
+            // `parse_condition`, not this statement path.
+            if let Some(target_type) = self.try_parse_scalar_type_noun_after_is() {
+                return Ok(Statement::ValueRetype { name, target_type });
+            }
             let value = self.parse_expression()?;
             return Ok(Statement::Assignment { name, value });
         }
@@ -4289,6 +4503,9 @@ impl Parser {
     }
     
     fn parse_function_def(&mut self) -> Result<Statement, Box<CompileError>> {
+        // Location of the `To` keyword, used by the "function still open at
+        // end of file" warning (BUGS_FOUND #5) to point at the definition.
+        let def_loc = self.current_location();
         self.advance(); // consume 'To'
         self.skip_noise();
         
@@ -4434,6 +4651,12 @@ impl Parser {
         // exported it. Terminating on `To`/`Library` keeps the successor
         // top-level where it belongs.
         let mut body_ended_early: Option<SourceLocation> = None;
+        // Set when the body terminated because a Gate B `Return` (a Return
+        // that is not the function's first statement) closed it — distinct
+        // from `body_ended_at_return` (inline first-statement Return) and
+        // used to suppress the "still open at EOF" warning for a function
+        // that legitimately ends in a Return with no trailing blank line.
+        let mut ended_via_return = false;
         while !body_ended_at_return
             && !matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library)
         {
@@ -4469,6 +4692,7 @@ impl Parser {
             // A top-level Return parsed as a body statement terminates the
             // body; consume its trailing period and stop.
             if is_return {
+                ended_via_return = true;
                 self.skip_noise();
                 if matches!(self.current(), Token::Period | Token::Comma) {
                     self.advance();
@@ -4483,7 +4707,49 @@ impl Parser {
                 self.skip_noise();
             }
         }
-        
+
+        // BUGS_FOUND #5: a function definition whose body ran all the way to
+        // end of file — no closing blank line, no Return, no following `To`/
+        // `Library` — has no closing blank line, so everything after the
+        // signature is read as part of the body. When the author meant the
+        // trailing statements as top-level entry code, that code is silently
+        // swallowed and the program typically does nothing (exit 0, no
+        // output). A blank line is the ONLY thing that closes a function body
+        // (LANGUAGE.md "The termination rule" rule 2), so warn the author
+        // rather than compiling a do-nothing program.
+        //
+        // Suppressed when the unit declares itself a `Library` (or is built
+        // `--shared`): a library file legitimately consists only of function
+        // definitions with no top-level entry, so its last function body
+        // ending at EOF is correct by construction, not an absorption.
+        //
+        // The parser cannot tell, from structure alone, whether the trailing
+        // body statements were *intended* as the body (a function that is
+        // simply last in the file) or as top-level entry code that got
+        // swallowed. The message therefore states only the structural fact
+        // (the body reached EOF with no closing blank line) and gives the
+        // blank-line fix as *conditional* advice, so it stays truthful in
+        // both shapes — it never asserts that statements were absorbed when
+        // none were.
+        let body_ended_at_eof = !body_ended_at_return
+            && !ended_via_return
+            && matches!(self.current(), Token::EOF);
+        if body_ended_at_eof && !body.is_empty() && !self.shared_mode && !self.saw_library_decl {
+            let mut warn = CompileError::new(&format!(
+                "Function '{}' is still open at end of file: its body reached \
+                 EOF with no closing blank line. A function body is closed by a \
+                 blank line (paragraph break), not by EOF, so without one \
+                 everything after the signature is read as part of the body. If \
+                 statements after the body were meant to run at the top level, \
+                 add a blank line after the function body to close it.",
+                name
+            ));
+            if let Some(loc) = def_loc {
+                warn = warn.with_location(loc);
+            }
+            self.warnings.push(warn.as_warning());
+        }
+
         // Consume paragraph break
         if *self.current() == Token::ParagraphBreak {
             self.advance();
@@ -5795,6 +6061,7 @@ impl Parser {
                                 Token::Identifier(ref id) if id.to_lowercase() == "start" => ObjectProperty::StartTime,
                                 Token::Identifier(ref id) if id.to_lowercase() == "end" => ObjectProperty::EndTime,
                                 Token::Running => ObjectProperty::Running,
+                                Token::Identifier(ref id) if id.to_lowercase() == "type" => ObjectProperty::Type,
 
                                 _ => return Err(self.err_expected("property name", self.current())),
                             };

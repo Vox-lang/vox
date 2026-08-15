@@ -118,6 +118,28 @@ pub struct CodeGenerator {
     parsed_args_active: bool,
     global_var_labels: HashMap<String, String>,
     global_var_counter: usize,
+    // BSS label holding the runtime type tag byte for a top-level `value`
+    // global, keyed by the variable's author-facing name. A top-level
+    // `value` needs the SAME pairing discipline as a local one (payload and
+    // tag always updated together, see `mixed_tag_slots`) but must be
+    // reachable from every function, not just the frame that declared it -
+    // so both halves live in BSS instead of one frame's stack. Lazily
+    // populated by `ensure_global_value_tag_label`, mirroring how
+    // `global_var_labels` mirrors the payload. `mixed_element_tag_slot`
+    // checks `mixed_tag_slots` (local) first and falls back here, so a
+    // function-local `value` of the same name still shadows correctly.
+    global_value_tag_labels: HashMap<String, String>,
+    // Declared type of each user variable, populated from VarDecl, function
+    // parameters, `open ... called`, and `start a timer called`. Used by the
+    // `type` property to choose between a static literal and runtime tag
+    // dispatch (a `value` is the only dynamic case).
+    declared_types: HashMap<String, Type>,
+    // Top-level global variables whose BSS mirror has already received an
+    // initial value (allocated buffer, list, map, etc.). For buffer targets
+    // this avoids clearing/appending into a null pointer on redeclaration or
+    // assignment; for other types the initial `generate_expr` already produces
+    // a valid pointer/value.
+    initialized_globals: std::collections::HashSet<String>,
     in_function_codegen: bool,
     target_arch: String,
 }
@@ -143,6 +165,30 @@ enum VarType {
     Mixed,       // Runtime-tagged value from a heterogeneous list; the
                  // actual type is dispatched via a per-slot tag byte
     Unknown,
+}
+
+/// Storage target selected for a variable declaration or assignment.
+/// `Local` keeps a per-frame stack slot; `Global` uses the BSS mirror so
+/// top-level code and every function share the same location.
+enum VarTarget {
+    Local(i64),
+    Global(String),
+}
+
+impl VarTarget {
+    fn local_offset(&self) -> Option<i64> {
+        match self {
+            VarTarget::Local(o) => Some(*o),
+            VarTarget::Global(_) => None,
+        }
+    }
+
+    fn global_label(&self) -> Option<&str> {
+        match self {
+            VarTarget::Local(_) => None,
+            VarTarget::Global(l) => Some(l.as_str()),
+        }
+    }
 }
 
 // Per-slot list type tags. Must match LIST_TAG_* in coreasm/*/list.asm.
@@ -687,6 +733,56 @@ enum RuntimeTagSource {
     R11,
     /// A Mixed variable's tag, at this rbp offset.
     ShadowSlot(i64),
+    /// A top-level `value` global's tag, in this BSS label.
+    ShadowSlotGlobal(String),
+}
+
+impl RuntimeTagSource {
+    /// The `movzx r11, byte <operand>` source operand for a shadow-slot tag,
+    /// or `None` for `R11` (the tag is already there - nothing to load).
+    fn shadow_operand(&self) -> Option<String> {
+        match self {
+            RuntimeTagSource::ShadowSlot(off) => Some(format!("[rbp-{}]", off)),
+            RuntimeTagSource::ShadowSlotGlobal(label) => Some(format!("[rel {}]", label)),
+            RuntimeTagSource::R11 => None,
+        }
+    }
+}
+
+/// Where a Mixed variable's shadow tag slot lives: a local stack offset
+/// (function locals, params, for-each variables, and a function-local
+/// `value`), or a BSS label (a top-level `value` global). See
+/// `CodeGenerator::mixed_element_tag_slot`.
+enum ShadowTagLoc {
+    Local(i64),
+    Global(String),
+}
+
+impl ShadowTagLoc {
+    fn operand(&self) -> String {
+        match self {
+            ShadowTagLoc::Local(off) => format!("[rbp-{}]", off),
+            ShadowTagLoc::Global(label) => format!("[rel {}]", label),
+        }
+    }
+}
+
+/// Author-facing display name for the `type` property on a statically-
+/// typed variable. `value` is dynamic and handled separately.
+fn type_property_display_name(t: &Type) -> Option<&'static str> {
+    match t {
+        Type::Integer => Some("Number"),
+        Type::Float => Some("Float"),
+        Type::String => Some("Text"),
+        Type::Boolean => Some("Boolean"),
+        Type::List(_) => Some("List"),
+        Type::Map(_) => Some("Map"),
+        Type::Buffer => Some("Buffer"),
+        Type::File => Some("File"),
+        Type::Time => Some("Time"),
+        Type::Timer => Some("Timer"),
+        _ => None,
+    }
 }
 
 /// Author-facing name for a type-predicate noun, for asm comments.
@@ -780,6 +876,9 @@ impl CodeGenerator {
             parsed_args_active: false,
             global_var_labels: HashMap::new(),
             global_var_counter: 0,
+            global_value_tag_labels: HashMap::new(),
+            declared_types: HashMap::new(),
+            initialized_globals: std::collections::HashSet::new(),
             in_function_codegen: false,
             target_arch: "x86_64".to_string(),
         }
@@ -797,6 +896,26 @@ impl CodeGenerator {
 
     fn global_var_label(&self, name: &str) -> Option<&String> {
         self.global_var_labels.get(name)
+    }
+
+    /// Lazily allocate (or return the existing) BSS label for a top-level
+    /// `value` global's runtime tag byte. Named off the payload's own label
+    /// so the two stay visibly paired in the emitted asm. Zero-filled BSS
+    /// means an uninitialized tag defaults to `TAG_INTEGER` (0), matching
+    /// the payload's own zero default - see the no-initializer VarDecl path.
+    fn ensure_global_value_tag_label(&mut self, name: &str) -> String {
+        if let Some(label) = self.global_value_tag_labels.get(name) {
+            return label.clone();
+        }
+        let payload_label = self
+            .global_var_label(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let label = format!("{}_tag", payload_label);
+        self.global_value_tag_labels
+            .insert(name.to_string(), label.clone());
+        self.bss_section.push_str(&format!("    {}: resb 1\n", label));
+        label
     }
 
     /// Assign bss mirror labels to every definitely-declared main-line
@@ -877,6 +996,53 @@ impl CodeGenerator {
             true
         } else {
             false
+        }
+    }
+
+    fn emit_store_rax_to_target(&mut self, target: &VarTarget, name: &str) {
+        match target {
+            VarTarget::Local(offset) => {
+                self.emit_indent(&format!("mov [rbp-{}], rax  ; store {}", offset, name));
+            }
+            VarTarget::Global(label) => {
+                self.emit_indent(
+                    &format!("mov [rel {}], rax  ; global store {}", label, name),
+                );
+            }
+        }
+    }
+
+    fn emit_clear_buffer_target(&mut self, target: &VarTarget) {
+        self.uses_buffers = true;
+        match target {
+            VarTarget::Local(offset) => {
+                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                self.emit_indent("call _buffer_clear");
+                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+            }
+            VarTarget::Global(label) => {
+                self.emit_indent(&format!("mov rdi, [rel {}]", label));
+                self.emit_indent("call _buffer_clear");
+                self.emit_indent(&format!("mov [rel {}], rax", label));
+            }
+        }
+    }
+
+    fn emit_append_runtime_value_to_buffer_target(
+        &mut self,
+        target: &VarTarget,
+        value_type: Option<VarType>,
+        fmt: FormatSpec,
+    ) {
+        match target {
+            VarTarget::Local(offset) => {
+                self.emit_append_runtime_value_to_buffer_slot(*offset, value_type, fmt);
+            }
+            VarTarget::Global(label) => {
+                self.emit_indent(&format!("mov rdi, [rel {}]", label));
+                self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt);
+                self.emit_indent(&format!("mov [rel {}], rax", label));
+            }
         }
     }
 
@@ -1135,6 +1301,7 @@ impl CodeGenerator {
         dst_local: Option<i64>,
         dst_global: Option<&str>,
     ) -> bool {
+        self.uses_buffers = true;
         let emit_dst_load = |this: &mut Self| {
             if let Some(offset) = dst_local {
                 this.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
@@ -2407,6 +2574,9 @@ impl CodeGenerator {
                         env.insert(name.clone(), info);
                     }
                 }
+                // In-place `value` retyping does not change the prescan tag
+                // facts: the variable stays `value`/Mixed at compile time.
+                Statement::ValueRetype { .. } => {}
                 Statement::ListAppend { list, value } => {
                     let tag = self.prescan_expr_tag(value, env, list_seen_tags);
                     self.prescan_note_list_value(list, tag, list_seen_tags);
@@ -2655,6 +2825,16 @@ impl CodeGenerator {
                 }
                 tags.len() > 1
             }
+            // `map's keys` and `map's values` both build fresh lists that store
+            // a runtime type tag per slot (string for keys, the value's own tag
+            // for values). Element access on the temporary must read that tag,
+            // otherwise a chained read like `element 1 of m's values` treats the
+            // loaded pointer as an untagged integer and prints garbage.
+            Expr::PropertyAccess { property, .. }
+                if matches!(property, ObjectProperty::Keys | ObjectProperty::Values) =>
+            {
+                true
+            }
             _ => false,
         }
     }
@@ -2669,8 +2849,11 @@ impl CodeGenerator {
     /// comparing against it reads garbage - callers must fall back to a static
     /// answer instead.
     fn runtime_tag_source(&self, e: &Expr) -> Option<RuntimeTagSource> {
-        if let Some(off) = self.mixed_element_tag_slot(e) {
-            return Some(RuntimeTagSource::ShadowSlot(off));
+        if let Some(loc) = self.mixed_element_tag_slot(e) {
+            return Some(match loc {
+                ShadowTagLoc::Local(off) => RuntimeTagSource::ShadowSlot(off),
+                ShadowTagLoc::Global(label) => RuntimeTagSource::ShadowSlotGlobal(label),
+            });
         }
         if self.expr_leaves_tag_in_r11(e) {
             return Some(RuntimeTagSource::R11);
@@ -2723,9 +2906,9 @@ impl CodeGenerator {
         let Some(src) = self.runtime_tag_source(e) else {
             return;
         };
-        if let RuntimeTagSource::ShadowSlot(off) = src {
+        if let Some(operand) = src.shadow_operand() {
             self.emit_indent(&format!(
-                "movzx r11, byte [rbp-{}]  ; operand tag (shadow slot)", off
+                "movzx r11, byte {}  ; operand tag (shadow slot)", operand
             ));
         }
         let ok = self.new_label("arith_not_nothing");
@@ -2752,11 +2935,18 @@ impl CodeGenerator {
 
     /// If `e` is a reference to a Mixed-typed variable with a shadow tag
     /// slot, return that slot's rbp offset.
-    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<i64> {
+    fn mixed_element_tag_slot(&self, e: &Expr) -> Option<ShadowTagLoc> {
         match e {
             Expr::Identifier(name) | Expr::StringLit(name) => {
                 if self.variable_types.get(name) == Some(&VarType::Mixed) {
-                    self.mixed_tag_slots.get(name).copied()
+                    if let Some(&off) = self.mixed_tag_slots.get(name) {
+                        Some(ShadowTagLoc::Local(off))
+                    } else {
+                        self.global_value_tag_labels
+                            .get(name)
+                            .cloned()
+                            .map(ShadowTagLoc::Global)
+                    }
                 } else {
                     None
                 }
@@ -2877,14 +3067,258 @@ impl CodeGenerator {
         match self.emit_time_expr_tag(expr) {
             Some(t) => self.emit_indent(&format!("mov r11, {}  ; value tag (static)", t)),
             None => match self.mixed_element_tag_slot(expr) {
-                Some(off) => self
-                    .emit_indent(&format!("movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off)),
+                Some(loc) => self.emit_indent(&format!(
+                    "movzx r11, byte {}  ; value tag (shadow slot)",
+                    loc.operand()
+                )),
                 None => {
                     // r11 already holds the tag: a fresh mixed element read or a
                     // value-returning function call left it there. Nothing to do.
                 }
             },
         }
+    }
+
+    /// Emit an in-place cast of a `value` variable: load the runtime tag,
+    /// dispatch on it to the conversion that already exists for that source
+    /// type, store the converted payload back, and update the shadow tag slot.
+    /// On an unconvertible source tag or a failed text-to-number/float parse,
+    /// set `_last_error` and leave the payload at 0.
+    fn emit_value_retype(&mut self, name: &str, target_type: &Type) {
+        let target_tag = match target_type {
+            Type::Integer => TAG_INTEGER,
+            Type::Float => TAG_FLOAT,
+            Type::String => TAG_STRING,
+            Type::Boolean => TAG_BOOLEAN,
+            _ => {
+                self.emit_indent("; value retype to non-scalar target is unsupported");
+                self.emit_indent("mov qword [rel _last_error], 1");
+                return;
+            }
+        };
+
+        // Locate the payload and tag slots.
+        let payload_op = if let Some(offset) = self.get_var(name) {
+            format!("[rbp-{}]", offset)
+        } else if let Some(label) = self.global_var_label(name).cloned() {
+            format!("[rel {}]", label)
+        } else {
+            self.emit_indent("; value retype target variable not found");
+            self.emit_indent("mov qword [rel _last_error], 1");
+            return;
+        };
+        let tag_loc = match self.mixed_element_tag_slot(&Expr::Identifier(name.to_string())) {
+            Some(loc) => loc,
+            None => {
+                self.emit_indent("; value retype target has no tag slot");
+                self.emit_indent("mov qword [rel _last_error], 1");
+                return;
+            }
+        };
+
+        let is_text_target = target_tag == TAG_STRING;
+
+        self.emit_indent(&format!(
+            "; in-place retype of '{}' to {}",
+            name,
+            type_noun_name(target_type)
+        ));
+
+        // Load payload and tag.
+        self.emit_indent(&format!("mov rax, {}  ; value payload", payload_op));
+        self.emit_load_value_tag(&Expr::Identifier(name.to_string()));
+
+        let l_int = self.new_label("vr_int");
+        let l_flt = self.new_label("vr_flt");
+        let l_str = self.new_label("vr_str");
+        let l_bool = self.new_label("vr_bool");
+        let l_fail = self.new_label("vr_fail");
+        let l_store = self.new_label("vr_store");
+        let l_done = self.new_label("vr_done");
+
+        self.emit_indent(&format!("cmp r11, {}  ; integer?", TAG_INTEGER));
+        self.emit_indent(&format!("je {}", l_int));
+        self.emit_indent(&format!("cmp r11, {}  ; float?", TAG_FLOAT));
+        self.emit_indent(&format!("je {}", l_flt));
+        self.emit_indent(&format!("cmp r11, {}  ; string/text?", TAG_STRING));
+        self.emit_indent(&format!("je {}", l_str));
+        self.emit_indent(&format!("cmp r11, {}  ; boolean?", TAG_BOOLEAN));
+        self.emit_indent(&format!("je {}", l_bool));
+        // list/map/nothing fall through to failure
+        self.emit_indent(&format!("jmp {}", l_fail));
+
+        // ---- integer source ----
+        self.emit(&format!("{}:", l_int));
+        match target_tag {
+            TAG_INTEGER => {
+                self.emit_indent("; integer -> integer (no-op)");
+            }
+            TAG_FLOAT => {
+                self.emit_indent("; integer -> float");
+                self.emit_indent("cvtsi2sd xmm0, rax");
+                self.emit_indent("XMM0_TO_RAX");
+                self.uses_floats = true;
+            }
+            TAG_STRING => {
+                self.emit_indent("; integer -> text");
+                self.stack_offset += 8;
+                let tmp = self.stack_offset;
+                self.uses_buffers = true;
+                self.emit_indent("push rax  ; integer to format");
+                self.emit_indent("mov rdi, 1024");
+                self.emit_indent("call _alloc_buffer");
+                self.emit_indent(&format!("mov [rbp-{}], rax  ; format buffer", tmp));
+                self.emit_indent(&format!("mov rdi, [rbp-{}]", tmp));
+                self.emit_indent("pop rax  ; restore integer");
+                self.emit_indent("mov rsi, rax");
+                self.emit_indent("xor rdx, rdx");
+                self.emit_indent("xor rcx, rcx");
+                self.emit_indent("xor r8, r8");
+                self.emit_indent("xor r9, r9");
+                self.emit_indent("call _buffer_append_formatted_int");
+                self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
+                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
+            }
+            TAG_BOOLEAN => {
+                self.emit_indent("; integer -> boolean");
+                self.emit_indent("test rax, rax");
+                self.emit_indent("setne al");
+                self.emit_indent("movzx rax, al");
+            }
+            _ => unreachable!(),
+        }
+        self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
+        self.emit_indent(&format!("jmp {}", l_done));
+
+        // ---- float source ----
+        self.emit(&format!("{}:", l_flt));
+        match target_tag {
+            TAG_INTEGER => {
+                self.emit_indent("; float -> integer");
+                self.emit_indent("RAX_TO_XMM0");
+                self.emit_indent("cvttsd2si rax, xmm0");
+                self.uses_floats = true;
+            }
+            TAG_FLOAT => {
+                self.emit_indent("; float -> float (no-op)");
+            }
+            TAG_STRING => {
+                self.emit_indent("; float -> text");
+                self.stack_offset += 8;
+                let tmp = self.stack_offset;
+                self.uses_buffers = true;
+                self.uses_floats = true;
+                self.emit_indent("push rax  ; float bits to format");
+                self.emit_indent("mov rdi, 1024");
+                self.emit_indent("call _alloc_buffer");
+                self.emit_indent(&format!("mov [rbp-{}], rax  ; format buffer", tmp));
+                self.emit_indent(&format!("mov rdi, [rbp-{}]", tmp));
+                self.emit_indent("pop rax  ; restore float bits");
+                self.emit_indent("call _buffer_append_float");
+                self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
+                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
+            }
+            TAG_BOOLEAN => {
+                self.emit_indent("; float -> boolean");
+                self.emit_indent("test rax, rax");
+                self.emit_indent("setne al");
+                self.emit_indent("movzx rax, al");
+            }
+            _ => unreachable!(),
+        }
+        self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
+        self.emit_indent(&format!("jmp {}", l_done));
+
+        // ---- string/text source ----
+        self.emit(&format!("{}:", l_str));
+        match target_tag {
+            TAG_INTEGER => {
+                self.emit_indent("; text -> number");
+                self.uses_ints = true;
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _parse_i64");
+            }
+            TAG_FLOAT => {
+                self.emit_indent("; text -> float");
+                self.uses_floats = true;
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _parse_f64");
+            }
+            TAG_STRING => {
+                self.emit_indent("; text -> text (no-op)");
+            }
+            TAG_BOOLEAN => {
+                self.emit_indent("; text -> boolean");
+                self.uses_strings = true;
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}_str_false", l_bool));
+                self.emit_indent("mov rdi, rax");
+                self.emit_indent("call _text_to_boolean");
+                // rax now holds 1 for "true", 0 for anything else.
+                // Skip over the null/failure path so we keep the helper result.
+                self.emit_indent(&format!("jmp {}", l_store));
+                self.emit(&format!("{}_str_false:", l_bool));
+                self.emit_indent("xor rax, rax");
+            }
+            _ => unreachable!(),
+        }
+        self.emit(&format!("{}:", l_store));
+        self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
+        self.emit_indent(&format!("jmp {}", l_done));
+
+        // ---- boolean source ----
+        self.emit(&format!("{}:", l_bool));
+        match target_tag {
+            TAG_INTEGER => {
+                self.emit_indent("; boolean -> integer (no-op)");
+            }
+            TAG_FLOAT => {
+                self.emit_indent("; boolean -> float");
+                self.emit_indent("cvtsi2sd xmm0, rax");
+                self.emit_indent("XMM0_TO_RAX");
+                self.uses_floats = true;
+            }
+            TAG_STRING => {
+                self.emit_indent("; boolean -> text");
+                let true_label = self.add_string("true");
+                let false_label = self.add_string("false");
+                let l_true = self.new_label("vr_bool_true");
+                let l_bool_done = self.new_label("vr_bool_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jnz {}", l_true));
+                self.emit_indent(&format!("lea rax, [rel {}]", false_label));
+                self.emit_indent(&format!("jmp {}", l_bool_done));
+                self.emit(&format!("{}:", l_true));
+                self.emit_indent(&format!("lea rax, [rel {}]", true_label));
+                self.emit(&format!("{}:", l_bool_done));
+            }
+            TAG_BOOLEAN => {
+                self.emit_indent("; boolean -> boolean (no-op)");
+            }
+            _ => unreachable!(),
+        }
+        self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
+        self.emit_indent(&format!("jmp {}", l_done));
+
+        // ---- failure (list/map/nothing or future unsupported) ----
+        self.emit(&format!("{}:", l_fail));
+        self.emit_indent("; unsupported source tag for retype");
+        if is_text_target {
+            let empty_label = self.add_string("");
+            self.emit_indent(&format!("lea rax, [rel {}]  ; empty text on failure", empty_label));
+        } else {
+            self.emit_indent("xor rax, rax");
+        }
+        self.emit_indent("mov qword [rel _last_error], 1");
+        self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
+
+        // ---- store result back ----
+        self.emit(&format!("{}:", l_done));
+        self.emit_indent(&format!("mov {}, rax  ; updated payload", payload_op));
+        self.emit_indent(&format!(
+            "mov byte {}, r11b  ; updated tag",
+            tag_loc.operand()
+        ));
     }
 
     /// Whether `generate_expr(expr)` leaves the value's runtime tag in r11, so a
@@ -3149,18 +3583,49 @@ impl CodeGenerator {
             }
             
             Statement::VarDecl { name, var_type, value } => {
-                // Reuse existing slot for reassignment, otherwise allocate new
+                // Decide whether this statement updates a local stack slot or
+                // the global BSS mirror.  A typed declaration (`a number called
+                // x is ...`) always gets a local slot so it can shadow a
+                // top-level variable of the same name.  A bare assignment
+                // (`Set x to ...` / `the x is ...`) with no local in scope
+                // writes the global BSS mirror directly, matching the read
+                // path's local-then-global resolution.
                 let had_existing_slot = self.variables.contains_key(name);
-                let offset = if let Some(&existing) = self.variables.get(name) {
-                    existing
+                let target = if had_existing_slot {
+                    // A local slot already exists (branch-declared name, loop
+                    // variable, function parameter, or local shadow).
+                    VarTarget::Local(self.get_var(name).unwrap())
+                } else if let Some(label) = self.global_var_label(name).cloned() {
+                    // The name has a BSS mirror.  Use it for:
+                    //   - bare assignments (`Set x to ...`, `the x is ...`)
+                    //   - top-level typed declarations, `value` included (so
+                    //     top-level code and functions share one storage; see
+                    //     `global_value_tag_labels` for how a `value`'s tag
+                    //     half stays paired with this payload half)
+                    // Typed declarations inside a function still allocate a
+                    // local slot to shadow the global. A `value` declared
+                    // inside a function is included here too (`var_type` is
+                    // `Some(Type::Value)`), so its runtime tag slot stays
+                    // paired with the payload in the SAME frame
+                    // (docs/BUGS_FOUND.md #4's local/shadowing case).
+                    if var_type.is_some() && self.in_function_codegen {
+                        self.stack_offset += 8;
+                        self.variables.insert(name.clone(), self.stack_offset);
+                        VarTarget::Local(self.stack_offset)
+                    } else {
+                        VarTarget::Global(label)
+                    }
                 } else {
+                    // No global mirror (e.g. a branch-only declaration): local.
                     self.stack_offset += 8;
                     self.variables.insert(name.clone(), self.stack_offset);
-                    self.stack_offset
+                    VarTarget::Local(self.stack_offset)
                 };
-                
+                let is_fresh_local = matches!(target, VarTarget::Local(_)) && !had_existing_slot;
+
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
+                    self.declared_types.insert(name.clone(), t.clone());
                     let vt = match t {
                         Type::String => VarType::String,
                         Type::Integer => VarType::Integer,
@@ -3176,15 +3641,38 @@ impl CodeGenerator {
                         _ => VarType::Unknown,
                     };
                     self.variable_types.insert(name.clone(), vt);
-                    if matches!(t, Type::Value) && !self.mixed_tag_slots.contains_key(name) {
-                        let tag_slot = self.alloc_var(&format!("{}_mixtag", name));
-                        self.mixed_tag_slots.insert(name.clone(), tag_slot);
+                    if matches!(t, Type::Value) {
+                        if matches!(target, VarTarget::Global(_)) {
+                            // Top-level `value`: tag lives in BSS, paired with
+                            // the payload's own global mirror.
+                            self.ensure_global_value_tag_label(name);
+                        } else if !self.mixed_tag_slots.contains_key(name) {
+                            let tag_slot = self.alloc_var(&format!("{}_mixtag", name));
+                            self.mixed_tag_slots.insert(name.clone(), tag_slot);
+                        }
                     }
                 }
                 
                 if let Some(val) = value {
+                    // A declared `value` (Mixed) carries its runtime type in a
+                    // shadow tag slot (local) or BSS tag byte (global), dispatched
+                    // on at every read. Demoting it to a concrete type from the
+                    // initializer's static shape would make later reads ignore the
+                    // tag and dispatch on the static type instead — the
+                    // tag/payload desync of BUGS_FOUND #15: a `value` holding 3.5
+                    // reassigned to 1 printed 0.0 because `Print` emitted
+                    // PRINT_FLOAT from the clobbered static type while the tag (and
+                    // payload) said integer. The bare-assignment arm already skips
+                    // this for value locals via `is_value_local`; this is the same
+                    // guard for the declare and `Set x to` / `the x is` spellings,
+                    // which also route through VarDecl.
+                    let is_value_var = matches!(var_type, Some(Type::Value))
+                        || self.variable_types.get(name) == Some(&VarType::Mixed)
+                        || self.mixed_tag_slots.contains_key(name)
+                        || self.global_value_tag_labels.contains_key(name);
                     // Track list type and element type for lists
-                    if let Expr::ListLit { elements } = val {
+                    if !is_value_var {
+                        if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
                         // A nested map-literal element makes this a list-of-maps;
                         // the element type is Map so a for-each loop var prints
@@ -3264,7 +3752,27 @@ impl CodeGenerator {
                         };
                         if let Some(src) = src_name {
                             if let Some(vt) = self.variable_types.get(src).cloned() {
-                                self.variable_types.insert(name.clone(), vt);
+                                // A `value` (Mixed) source carries a runtime-tagged
+                                // payload whose bits/pointer are reinterpreted as the
+                                // destination's declared type, so it must NOT overwrite
+                                // a concrete-typed declaration: `a list called xs is
+                                // item.` with item: value would otherwise demote xs to
+                                // Mixed, making `{xs}` print the raw pointer and
+                                // `xs's length` route to the file fallback (-1). Only
+                                // inherit the source's type when the destination has no
+                                // concrete type of its own. The declare-with-initializer
+                                // paths for float/map never enter this branch, which is
+                                // why only the `list` arm was broken. Sibling of the
+                                // v0.3.5 fix (COMPILER-ISSUES #5).
+                                let dst_concrete = matches!(
+                                    self.variable_types.get(name),
+                                    Some(VarType::Integer | VarType::Float | VarType::String
+                                        | VarType::Buffer | VarType::List | VarType::Map
+                                        | VarType::Boolean)
+                                );
+                                if vt != VarType::Mixed || !dst_concrete {
+                                    self.variable_types.insert(name.clone(), vt);
+                                }
                             }
                             if let Some(et) = self.list_element_types.get(src).cloned() {
                                 self.list_element_types.insert(name.clone(), et);
@@ -3283,13 +3791,32 @@ impl CodeGenerator {
                             || matches!(
                                 val,
                                 Expr::PropertyAccess { property, .. }
-                                    if matches!(property, ObjectProperty::First | ObjectProperty::Last)
+                                    if matches!(
+                                        property,
+                                        ObjectProperty::First
+                                            | ObjectProperty::Last
+                                            | ObjectProperty::Keys
+                                            | ObjectProperty::Values
+                                    )
                             );
                         if matches!(var_type, Some(Type::List(_))) && reads_element {
-                            self.list_element_types.insert(name.clone(), VarType::Mixed);
+                            let elem_type =
+                                if matches!(
+                                    val,
+                                    Expr::PropertyAccess { property: ObjectProperty::Keys, .. }
+                                ) {
+                                    // `map's keys` always yields text pointers.
+                                    VarType::String
+                                } else {
+                                    // `first`/`last`/`values` and element reads
+                                    // carry runtime tags per slot.
+                                    VarType::Mixed
+                                };
+                            self.list_element_types.insert(name.clone(), elem_type);
                         }
                     }
-                    
+                    } // end `if !is_value_var` — a `value` keeps Mixed
+
                     // Special handling for buffer initialization/assignment with text/format/buffer source
                     let is_buffer_target = matches!(var_type, Some(Type::Buffer))
                         || self.variable_types.get(name) == Some(&VarType::Buffer);
@@ -3298,68 +3825,109 @@ impl CodeGenerator {
                             // Buffer declarations initialized from function calls should take
                             // the returned buffer pointer directly (rax), not format-append it.
                             self.generate_expr(val);
-                            self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                             self.uses_buffers = true;
+                            self.emit_store_rax_to_target(
+                                &target, &format!("buffer {}", name));
+                            if target.global_label().is_some() {
+                                self.initialized_globals.insert(name.clone());
+                            }
                         } else {
-                        if !had_existing_slot {
-                            self.emit_indent("mov rdi, 1024  ; default buffer size");
-                            self.emit_indent("call _alloc_buffer");
-                            self.emit_indent(&format!("mov [rbp-{}], rax", offset));
-                            self.uses_buffers = true;
-                        }
+                            let is_fresh_global_buffer = target.global_label().is_some()
+                                && !self.initialized_globals.contains(name);
+                            if is_fresh_local || is_fresh_global_buffer {
+                                self.emit_indent("mov rdi, 1024  ; default buffer size");
+                                self.emit_indent("call _alloc_buffer");
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("buffer {}", name));
+                                self.uses_buffers = true;
+                                if is_fresh_global_buffer {
+                                    self.initialized_globals.insert(name.clone());
+                                }
+                            }
 
-                        if !self.emit_copy_expr_into_buffer_slot(val, true, Some(offset), None) {
-                            // Clear before materializing the value: _buffer_clear
-                            // returns the (possibly reallocated) buffer pointer in
-                            // rax and would clobber a value loaded first.
-                            self.emit_clear_buffer_slot(offset);
-                            self.generate_expr(val);
-                            let fmt_spec = self.parse_format_spec(None);
-                            self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(val), fmt_spec);
-                        }
+                            if !self.emit_copy_expr_into_buffer_slot(
+                                val,
+                                true,
+                                target.local_offset(),
+                                target.global_label(),
+                            ) {
+                                // Clear before materializing the value: _buffer_clear
+                                // returns the (possibly reallocated) buffer pointer in
+                                // rax and would clobber a value loaded first.
+                                self.emit_clear_buffer_target(&target);
+                                self.generate_expr(val);
+                                let fmt_spec = self.parse_format_spec(None);
+                                self.emit_append_runtime_value_to_buffer_target(
+                                    &target,
+                                    self.infer_expr_type(val),
+                                    fmt_spec,
+                                );
+                            }
                         }
                     } else {
                         self.generate_expr(val);
-                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
-                        // A declared `value` local stores its runtime tag in the
-                        // shadow slot alongside the payload.
+                        self.emit_store_rax_to_target(&target, &format!("{}", name));
+                        // A declared `value` stores its runtime tag alongside
+                        // the payload, in whichever storage (local shadow
+                        // slot or global BSS mirror) the payload itself used.
                         if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
+                            if target.local_offset().is_some() {
+                                self.emit_load_value_tag(val);
+                                self.emit_indent(&format!(
+                                    "mov [rbp-{}], r11b  ; value local tag",
+                                    tag_slot
+                                ));
+                            }
+                        } else if let Some(tag_label) =
+                            self.global_value_tag_labels.get(name).cloned()
+                        {
                             self.emit_load_value_tag(val);
                             self.emit_indent(&format!(
-                                "mov [rbp-{}], r11b  ; value local tag",
-                                tag_slot
+                                "mov [rel {}], r11b  ; value global tag",
+                                tag_label
                             ));
                         }
                     }
                 } else {
-                    // No initial value - initialize based on type
+                    // No initial value - initialize based on type.
                     if let Some(ref t) = var_type {
                         match t {
                             Type::Buffer => {
                                 // Allocate an empty buffer with proper initialization
                                 self.emit_indent("mov rdi, 1024  ; default buffer size");
                                 self.emit_indent("call _alloc_buffer");
-                                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("buffer {}", name));
                                 self.uses_buffers = true;
+                                if target.global_label().is_some() {
+                                    self.initialized_globals.insert(name.clone());
+                                }
                             }
                             Type::List(_) => {
                                 // Allocate an empty list; a null pointer here
                                 // would make the first append dereference 0.
                                 self.generate_expr(&Expr::ListLit { elements: vec![] });
-                                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("list {}", name));
                             }
                             _ => {
                                 // Initialize to 0/null
-                                self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
+                                self.emit_indent("xor rax, rax");
+                                self.emit_store_rax_to_target(
+                                    &target, &format!("{}", name));
                             }
                         }
                     } else {
                         // No type info - initialize to 0
-                        self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
+                        self.emit_indent("xor rax, rax");
+                        self.emit_store_rax_to_target(
+                            &target, &format!("{}", name));
                     }
                 }
 
-                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                if let Some(offset) = target.local_offset() {
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                }
             }
 
             Statement::FlagSchemaDecl { name, value_type, default, .. } => {
@@ -3411,10 +3979,22 @@ impl CodeGenerator {
                                     self.variable_types.insert(name.clone(), VarType::Float);
                                 }
                                 VarType::Integer | VarType::Boolean | VarType::String | VarType::List
-                                | VarType::Map | VarType::Mixed => {
+                                | VarType::Map => {
                                     self.variable_types.insert(name.clone(), vt);
                                 }
-                                VarType::Buffer | VarType::Unknown => {}
+                                // A `value` (Mixed) source carries a runtime-tagged
+                                // payload whose bits/pointer are reinterpreted as the
+                                // destination's existing type, so it must NOT demote a
+                                // concrete-typed local: `the y is vf.` / `Set y to vf.`
+                                // with y: float would otherwise print the raw IEEE bits
+                                // (4615063718147915776) instead of 3.5. The destination
+                                // keeps its declared type, exactly as the
+                                // declare-with-initializer path does. The value-local
+                                // reassignment case is already skipped via
+                                // `is_value_local` above. Sibling of the v0.3.5 fix
+                                // (COMPILER-ISSUES #5), which covered value->value tag
+                                // retention but missed value->concrete extraction.
+                                VarType::Buffer | VarType::Unknown | VarType::Mixed => {}
                             }
                         }
                     }
@@ -3446,15 +4026,56 @@ impl CodeGenerator {
                     }
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
-                    self.generate_expr(value);
-                    self.emit_indent(&format!("mov [rel {}], rax", label));
+                    if self.variable_types.get(name) == Some(&VarType::Buffer) {
+                        // Reassigning an existing global buffer: copy/append the
+                        // source into the buffer, preserving the allocated struct,
+                        // rather than storing a raw string pointer over it.
+                        if !self.emit_copy_expr_into_buffer_slot(
+                            value,
+                            true,
+                            None,
+                            Some(&label),
+                        ) {
+                            let target = VarTarget::Global(label);
+                            self.emit_clear_buffer_target(&target);
+                            self.generate_expr(value);
+                            let fmt_spec = self.parse_format_spec(None);
+                            self.emit_append_runtime_value_to_buffer_target(
+                                &target,
+                                self.infer_expr_type(value),
+                                fmt_spec,
+                            );
+                        }
+                    } else {
+                        self.generate_expr(value);
+                        self.emit_indent(
+                            &format!("mov [rel {}], rax", label));
+                        // A top-level `value` keeps its runtime tag paired
+                        // with the payload in a parallel BSS byte, updated on
+                        // every assignment exactly like the local `value`
+                        // case above — including a reassignment from inside a
+                        // function, which is the whole point of routing a
+                        // `value` global through BSS instead of a stack slot.
+                        if self.variable_types.get(name) == Some(&VarType::Mixed) {
+                            let tag_label = self.ensure_global_value_tag_label(name);
+                            self.emit_load_value_tag(value);
+                            self.emit_indent(&format!(
+                                "mov [rel {}], r11b  ; value global tag",
+                                tag_label
+                            ));
+                        }
+                    }
                 } else {
                     self.generate_expr(value);
                     let offset = self.alloc_var(name);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                 }
             }
-            
+
+            Statement::ValueRetype { name, target_type } => {
+                self.emit_value_retype(name, target_type);
+            }
+
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
                 let end_label = self.new_label("if_end");
                 let else_label = self.new_label("else");
@@ -3703,6 +4324,7 @@ impl CodeGenerator {
                 // `emit_time_expr_tag`'s `Expr::StringLit` handling, which
                 // trusts `variable_types` by name with no scope check.
                 let saved_variable_types = self.variable_types.clone();
+                let saved_declared_types = self.declared_types.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
                 // just like `variable_types`, so they need the same
@@ -3762,6 +4384,7 @@ impl CodeGenerator {
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
                 for (param_name, param_type) in params.iter() {
+                    self.declared_types.insert(param_name.clone(), param_type.clone());
                     let var_type = match param_type {
                         Type::Integer => VarType::Integer,
                         Type::Float => VarType::Float,
@@ -3894,6 +4517,7 @@ impl CodeGenerator {
                 self.in_function_codegen = saved_in_function_codegen;
                 self.current_function_return_type = saved_return_type;
                 self.variable_types = saved_variable_types;
+                self.declared_types = saved_declared_types;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
@@ -4260,10 +4884,10 @@ impl CodeGenerator {
                         ));
                     }
                     None => {
-                        if let Some(slot) = self.mixed_element_tag_slot(value) {
+                        if let Some(loc) = self.mixed_element_tag_slot(value) {
                             self.emit_indent(&format!(
-                                "mov al, [rbp-{}]  ; runtime tag of mixed source",
-                                slot
+                                "mov al, {}  ; runtime tag of mixed source",
+                                loc.operand()
                             ));
                             self.emit_indent(&format!(
                                 "mov [rbx + rdx + {}], al  ; slot type tag",
@@ -4314,10 +4938,10 @@ impl CodeGenerator {
                         self.emit_indent(&format!("mov ecx, {}  ; value type tag", tag));
                     }
                     None => {
-                        if let Some(slot) = self.mixed_element_tag_slot(value) {
+                        if let Some(loc) = self.mixed_element_tag_slot(value) {
                             self.emit_indent(&format!(
-                                "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
-                                slot
+                                "movzx ecx, byte {}  ; runtime tag of mixed source",
+                                loc.operand()
                             ));
                         } else if self.expr_leaves_tag_in_r11(value) {
                             self.emit_indent("mov ecx, r11d  ; forward runtime tag from r11");
@@ -4447,10 +5071,10 @@ impl CodeGenerator {
                         None => {
                             // Mixed-typed source variable: forward its
                             // runtime tag from the shadow slot.
-                            if let Some(slot) = self.mixed_element_tag_slot(value) {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
                                 self.emit_indent(&format!(
-                                    "movzx edx, byte [rbp-{}]  ; runtime tag of mixed source",
-                                    slot
+                                    "movzx edx, byte {}  ; runtime tag of mixed source",
+                                    loc.operand()
                                 ));
                             } else if self.expr_leaves_tag_in_r11(value) {
                                 // A freshly-read mixed element or a value-returning
@@ -4520,6 +5144,7 @@ impl CodeGenerator {
             
             Statement::FileOpen { name, path, mode } => {
                 self.uses_files = true;
+                self.declared_types.insert(name.clone(), Type::File);
                 let path_is_fd = self.is_fd_path_expr(path);
                 
                 // Track if file is writable based on mode
@@ -5227,6 +5852,7 @@ impl CodeGenerator {
             // Time and Timer statements
             Statement::TimerDecl { name } => {
                 self.uses_time = true;
+                self.declared_types.insert(name.clone(), Type::Timer);
                 // Allocate the 8-byte name slot; the timer struct itself needs
                 // TIMER_SIZE (56) bytes below it. Account for the full struct in
                 // the frame size so later variables do not overlap the timer.
@@ -5517,13 +6143,17 @@ impl CodeGenerator {
                             // avoids the NUL-scan stale-byte bug). For all other types, rdi
                             // already holds the correct value/pointer.
                             if var_type == Some(VarType::Mixed) {
-                                // Heterogeneous-list element: dispatch on its
-                                // runtime tag. Format specs are parsed but
-                                // only the default spec is honored for now.
-                                if let Some(slot) = self.mixed_tag_slots.get(name.as_str()).copied() {
+                                // Heterogeneous-list element or `value`:
+                                // dispatch on its runtime tag (local shadow
+                                // slot, or a top-level `value` global's BSS
+                                // mirror). Format specs are parsed but only
+                                // the default spec is honored for now.
+                                if let Some(loc) =
+                                    self.mixed_element_tag_slot(&Expr::Identifier(name.clone()))
+                                {
                                     self.emit_indent(&format!(
-                                        "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
-                                        slot
+                                        "movzx r11, byte {}  ; element's runtime type tag",
+                                        loc.operand()
                                     ));
                                     self.emit_mixed_print_dispatch("r11");
                                 } else {
@@ -5618,10 +6248,10 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(s).cloned();
                     match var_type {
                         Some(VarType::Mixed) => {
-                            if let Some(slot) = self.mixed_tag_slots.get(s).copied() {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
                                 self.emit_indent(&format!(
-                                    "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
-                                    slot
+                                    "movzx r11, byte {}  ; element's runtime type tag",
+                                    loc.operand()
                                 ));
                                 self.emit_mixed_print_dispatch("r11");
                             } else {
@@ -5695,10 +6325,10 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(name).cloned();
                     match var_type {
                         Some(VarType::Mixed) => {
-                            if let Some(slot) = self.mixed_tag_slots.get(name).copied() {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
                                 self.emit_indent(&format!(
-                                    "movzx r11, byte [rbp-{}]  ; element's runtime type tag",
-                                    slot
+                                    "movzx r11, byte {}  ; element's runtime type tag",
+                                    loc.operand()
                                 ));
                                 self.emit_mixed_print_dispatch("r11");
                             } else {
@@ -5845,9 +6475,9 @@ impl CodeGenerator {
                 let tag_source = self.runtime_tag_source(value);
                 self.generate_expr(value);
                 if let Some(src) = tag_source {
-                    if let RuntimeTagSource::ShadowSlot(off) = src {
+                    if let Some(operand) = src.shadow_operand() {
                         self.emit_indent(&format!(
-                            "movzx r11, byte [rbp-{}]  ; value tag (shadow slot)", off
+                            "movzx r11, byte {}  ; value tag (shadow slot)", operand
                         ));
                     }
                     self.emit_indent("mov rdi, rax");
@@ -5952,6 +6582,64 @@ impl CodeGenerator {
         matches!(expr, Expr::NothingLit)
     }
 
+    /// Emit the `type` property for a variable: static types produce a fixed
+    /// text literal, `value` dispatches on the runtime tag already kept in its
+    /// shadow slot (local) or BSS mirror (global).
+    fn emit_type_property(&mut self, object: &str) {
+        if let Some(declared) = self.declared_types.get(object) {
+            if *declared != Type::Value {
+                let name = type_property_display_name(declared).unwrap_or("Unknown");
+                let text = format!("{} (static)", name);
+                let label = self.add_string(&text);
+                self.emit_indent(&format!("lea rax, [rel {}]  ; {}'s type: {}", label, object, text));
+                return;
+            }
+        }
+
+        // Dynamic: dispatch on the runtime tag in r11.
+        self.emit_load_value_tag(&Expr::Identifier(object.to_string()));
+
+        let arms = [
+            (TAG_INTEGER, "Number"),
+            (TAG_STRING, "Text"),
+            (TAG_FLOAT, "Float"),
+            (TAG_BOOLEAN, "Boolean"),
+            (TAG_LIST, "List"),
+            (TAG_MAP, "Map"),
+            (TAG_NOTHING, "Nothing"),
+        ];
+
+        let mut case_labels = Vec::new();
+        for (tag, _name) in &arms {
+            let case_label = self.new_label(&format!("type_case_{}", tag));
+            case_labels.push((*tag, case_label));
+        }
+        let unknown_label = self.new_label("type_unknown");
+        let done_label = self.new_label("type_done");
+
+        for (i, (tag, _name)) in arms.iter().enumerate() {
+            let case_label = &case_labels[i].1;
+            self.emit_indent(&format!("cmp r11, {}  ; {}?", tag, _name));
+            self.emit_indent(&format!("je {}", case_label));
+        }
+        self.emit_indent(&format!("jmp {}", unknown_label));
+
+        for (i, (_tag, name)) in arms.iter().enumerate() {
+            let case_label = &case_labels[i].1;
+            let text = format!("{} (dynamic)", name);
+            let label = self.add_string(&text);
+            self.emit(&format!("{}:", case_label));
+            self.emit_indent(&format!("lea rax, [rel {}]  ; {}'s type: {}", label, object, text));
+            self.emit_indent(&format!("jmp {}", done_label));
+        }
+
+        let unknown_text = "Unknown (dynamic)";
+        let unknown_str = self.add_string(unknown_text);
+        self.emit(&format!("{}:", unknown_label));
+        self.emit_indent(&format!("lea rax, [rel {}]  ; {}'s type: {}", unknown_str, object, unknown_text));
+        self.emit(&format!("{}:", done_label));
+    }
+
     fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -6032,10 +6720,10 @@ impl CodeGenerator {
                                 self.generate_expr(value);
                                 match self.runtime_tag_source(value) {
                                     Some(src) => {
-                                        if let RuntimeTagSource::ShadowSlot(off) = src {
+                                        if let Some(operand) = src.shadow_operand() {
                                             self.emit_indent(&format!(
-                                                "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                                off
+                                                "movzx r11, byte {}  ; load mixed element tag",
+                                                operand
                                             ));
                                         }
                                         self.emit_indent("xor rax, rax");
@@ -6345,10 +7033,10 @@ impl CodeGenerator {
                         self.generate_expr(value);
                         match self.runtime_tag_source(value) {
                             Some(src) => {
-                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                if let Some(operand) = src.shadow_operand() {
                                     self.emit_indent(&format!(
-                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                        off
+                                        "movzx r11, byte {}  ; load mixed element tag",
+                                        operand
                                     ));
                                 }
                                 self.emit_indent("xor rax, rax");
@@ -6446,10 +7134,10 @@ impl CodeGenerator {
                         None => {
                             // Mixed-typed source variable: copy its runtime
                             // tag from the shadow slot.
-                            if let Some(slot) = self.mixed_element_tag_slot(elem) {
+                            if let Some(loc) = self.mixed_element_tag_slot(elem) {
                                 self.emit_indent(&format!(
-                                    "mov cl, [rbp-{}]  ; runtime tag of mixed source",
-                                    slot
+                                    "mov cl, {}  ; runtime tag of mixed source",
+                                    loc.operand()
                                 ));
                                 self.emit_indent(&format!(
                                     "mov [rbx+{}], cl  ; slot {} type tag",
@@ -6502,10 +7190,10 @@ impl CodeGenerator {
                             ));
                         }
                         None => {
-                            if let Some(slot) = self.mixed_element_tag_slot(value) {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
                                 self.emit_indent(&format!(
-                                    "movzx ecx, byte [rbp-{}]  ; runtime tag of mixed source",
-                                    slot
+                                    "movzx ecx, byte {}  ; runtime tag of mixed source",
+                                    loc.operand()
                                 ));
                             } else if self.expr_leaves_tag_in_r11(value) {
                                 self.emit_indent(
@@ -6606,6 +7294,12 @@ impl CodeGenerator {
                     let var_type = self.variable_types.get(object).cloned().unwrap_or(VarType::Unknown);
 
                     match property {
+                        // Universal property: reports the variable's type as text.
+                        // Does not need the variable's payload; static types fold
+                        // to a literal, `value` dispatches on its runtime tag.
+                        ObjectProperty::Type => {
+                            self.emit_type_property(object);
+                        }
                         // Buffer/List properties
                         ObjectProperty::Size => {
                             if var_type == VarType::Buffer {
@@ -7743,10 +8437,10 @@ impl CodeGenerator {
                         self.generate_expr(value);
                         match self.runtime_tag_source(value) {
                             Some(src) => {
-                                if let RuntimeTagSource::ShadowSlot(off) = src {
+                                if let Some(operand) = src.shadow_operand() {
                                     self.emit_indent(&format!(
-                                        "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                        off
+                                        "movzx r11, byte {}  ; load mixed element tag",
+                                        operand
                                     ));
                                 }
                                 self.emit_indent(&format!(
@@ -7828,10 +8522,10 @@ impl CodeGenerator {
                                     self.generate_expr(value);
                                     match self.runtime_tag_source(value) {
                                         Some(src) => {
-                                            if let RuntimeTagSource::ShadowSlot(off) = src {
+                                            if let Some(operand) = src.shadow_operand() {
                                                 self.emit_indent(&format!(
-                                                    "movzx r11, byte [rbp-{}]  ; load mixed element tag",
-                                                    off
+                                                    "movzx r11, byte {}  ; load mixed element tag",
+                                                    operand
                                                 ));
                                             }
                                             self.emit_indent("xor rax, rax");
@@ -7979,6 +8673,7 @@ impl CodeGenerator {
             Expr::PropertyAccess { object, property } => {
                 // For First/Last on lists, return the list's element type
                 match property {
+                    ObjectProperty::Type => Some(VarType::String),
                     ObjectProperty::First | ObjectProperty::Last => {
                         if self.variable_types.get(object) == Some(&VarType::List) {
                             self.list_element_types.get(object).cloned()
@@ -7999,13 +8694,22 @@ impl CodeGenerator {
                 // per-slot, so return None and let `emit_load_value_tag` use the
                 // tag `generate_expr` left in r11 — instead of defaulting to
                 // Integer, which would overwrite the real tag with 0.
-                if let Expr::Identifier(name) = list.as_ref() {
-                    match self.list_element_types.get(name) {
+                match list.as_ref() {
+                    Expr::Identifier(name) => match self.list_element_types.get(name) {
                         Some(VarType::Unknown) | None => None,
                         Some(other) => Some(other.clone()),
+                    },
+                    // `element N of m's keys` is a string; `element N of m's
+                    // values` is runtime-tagged like a mixed list.
+                    Expr::PropertyAccess { property, .. }
+                        if matches!(property, ObjectProperty::Keys | ObjectProperty::Values) =>
+                    {
+                        match property {
+                            ObjectProperty::Keys => Some(VarType::String),
+                            _ => None, // Values: runtime tag, do not guess
+                        }
                     }
-                } else {
-                    Some(VarType::Integer)
+                    _ => Some(VarType::Integer),
                 }
             }
             // A map key read yields a runtime-tagged value (the value's type

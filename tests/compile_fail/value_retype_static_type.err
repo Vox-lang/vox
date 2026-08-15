@@ -1,0 +1,3 @@
+In-place retyping applies only to variables declared as 'value'
+'n' is declared as a number
+convert explicitly instead: a text called t is n as text.

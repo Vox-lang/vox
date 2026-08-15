@@ -1,0 +1,13 @@
+(Bug #14 regression, shape A: each `but if` branch is a fallible action
+followed by its own `On error` handler, so each branch's own period closes
+only that `On error` sentence -- not the whole chain. Every branch must get
+its chance to fire, not just the first.)
+
+a list called fs is ["proc", "sysfs", "tmpfs", "other"].
+For each f in fs,
+  Continue,
+    but if f is equal to "proc" Open a file for reading called fa at "/nonexistent_dir/p", On error print "FAILED proc".
+    but if f is equal to "sysfs" Open a file for reading called fb at "/nonexistent_dir/s", On error print "FAILED sysfs".
+    but if f is equal to "tmpfs" Open a file for reading called fc at "/nonexistent_dir/t", On error print "FAILED tmpfs".
+
+Print "done".

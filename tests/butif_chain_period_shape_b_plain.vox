@@ -1,0 +1,11 @@
+(Bug #14 regression, shape B: plain period-separated `but if` branches with
+no `On error` involved. Each branch's own trailing period must not close the
+whole chain, or later branches (and their variables) are silently lost.)
+
+a list called fs is ["proc", "sysfs", "other"].
+For each f in fs,
+  Continue,
+    but if f is equal to "proc" print "did proc".
+    but if f is equal to "sysfs" print "did sysfs".
+
+Print "done".

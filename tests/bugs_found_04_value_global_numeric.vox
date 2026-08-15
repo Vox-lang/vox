@@ -1,0 +1,7 @@
+(Bug #4 regression: a top-level `value` global retains a numeric mutation made inside a function - the one type the original fix carved out.)
+
+a value called vg is 0.
+To bumpv. Set vg to 7.
+
+bumpv.
+Print vg.

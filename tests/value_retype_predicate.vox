@@ -1,0 +1,6 @@
+(Regression: `is a number` in condition position must remain a type predicate, not a cast.)
+
+a value called numstr is "357".
+if numstr is a number then, print "num".
+otherwise, print "not num".
+

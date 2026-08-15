@@ -1,0 +1,9 @@
+(Bug #15 regression: a `value` holding text reassigned to an integer must move the tag to integer. This direction already worked because a text initializer never clobbered the static type, but it is locked in so a future static-type clobber cannot silently regress it.)
+
+a value called v is "text".
+Set v to 7.
+Print v.
+If v is a number, print "num".
+Otherwise print "NOT num".
+If v is a text, print "text".
+Otherwise print "NOT text".

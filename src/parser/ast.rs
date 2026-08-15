@@ -281,6 +281,9 @@ pub enum ObjectProperty {
     StartTime,  // timer's start time
     EndTime,    // timer's end time
     Running,    // timer's running status
+
+    // Universal property: every variable reports its type as text.
+    Type,       // x's type -> "Number (static)" / "Text (dynamic)" etc.
 }
 
 #[derive(Debug, Clone)]
@@ -311,7 +314,15 @@ pub enum Statement {
         name: String,
         value: Expr,
     },
-    
+
+    // In-place cast/retype of a `value` variable: `<name> is a <type>.`.
+    // Statement position only; the same phrase in condition position is a
+    // TypeCheck predicate.
+    ValueRetype {
+        name: String,
+        target_type: Type,
+    },
+
     If {
         condition: Expr,
         then_block: Vec<Statement>,

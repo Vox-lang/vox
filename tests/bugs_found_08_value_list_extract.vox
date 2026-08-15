@@ -1,0 +1,7 @@
+To inspect with a value called item.
+  print "direct: {item}".
+  a list called xs is item.
+  print "extracted: {xs}".
+  print "extracted length: {xs's length}".
+
+inspect with [10, 20, 30].

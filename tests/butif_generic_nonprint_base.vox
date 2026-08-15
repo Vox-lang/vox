@@ -1,0 +1,8 @@
+(A non-print, non-append statement can be the base action of a `but if`
+conditional branch.  The default assignment sets total to 1; the branch
+overrides it with 99 when the condition is true.)
+
+a number called total is 0.
+a number called n is 4.
+Set total to 1, but if n modulo 2 is equal to 0 set total to 99.
+Print total.

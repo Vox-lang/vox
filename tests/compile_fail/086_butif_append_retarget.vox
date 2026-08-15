@@ -1,0 +1,4 @@
+a buffer called line is 64 bytes in size.
+a buffer called other is 64 bytes in size.
+a number called v is 1.
+Append "." to line, but if v is equal to 1 append "#" to other.

@@ -1,0 +1,7 @@
+(Probe A: the terse no-target append form.  The base statement supplies the
+list/buffer target, so the branch only needs to say `append 0`.)
+
+a list called dest is [].
+a number called n is 4.
+append n to dest, but if n modulo 2 is equal to 0 append 0.
+print dest.

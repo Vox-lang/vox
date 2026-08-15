@@ -1736,6 +1736,11 @@ impl Analyzer {
             Expr::StringLit(s) => {
                 // A quoted name may reference a variable; otherwise this is a
                 // bare text literal, which is not valid in arithmetic.
+                if let Some(t) = self.scalar_types.get(s) {
+                    if !matches!(t, Type::Value) {
+                        return Some(t.clone());
+                    }
+                }
                 if self.value_typed_names.contains(s) {
                     Some(Type::Value)
                 } else {
@@ -1744,6 +1749,16 @@ impl Analyzer {
             }
             Expr::FormatString { .. } => Some(Type::String),
             Expr::Identifier(name) => {
+                // A `value`-typed name that has been explicitly retyped
+                // (`v is a number.`) carries the concrete target type in
+                // `scalar_types`; prefer that so arithmetic works after the
+                // retype while the variable remains a `value` for all other
+                // purposes (type lock, tag slot, etc.).
+                if let Some(t) = self.scalar_types.get(name) {
+                    if !matches!(t, Type::Value) {
+                        return Some(t.clone());
+                    }
+                }
                 // A `value`-typed name is dynamic: reject it from arithmetic
                 // until the author checks its type with a predicate (stage 1c).
                 if self.value_typed_names.contains(name) {
@@ -1944,6 +1959,7 @@ impl Analyzer {
             | Expr::EnvironmentVariableAt { .. } => Some(Type::String),
             Expr::BoolLit(_) | Expr::ArgumentEmpty | Expr::EnvironmentVariableEmpty | Expr::EnvironmentVariableExists { .. }
             | Expr::PropertyCheck { .. } | Expr::TypeCheck { .. } => Some(Type::Boolean),
+            Expr::PropertyAccess { property: ObjectProperty::Type, .. } => Some(Type::String),
             Expr::ListLit { .. } | Expr::ArgumentAll | Expr::ArgumentRaw => Some(Type::List(Box::new(Type::Unknown))),
             Expr::MapLit { .. } => Some(Type::Map(Box::new(Type::Unknown))),
             Expr::Identifier(name) => {
@@ -2654,6 +2670,61 @@ impl Analyzer {
                             self.declared_locations.insert(name.clone(), loc);
                         }
                     }
+                }
+            }
+
+            Statement::ValueRetype { name, target_type } => {
+                if !self.is_variable_available(name) {
+                    let mut err = CompileError::new(
+                        &format!("Cannot retype '{}': it is not declared", name)
+                    );
+                    if let Some(loc) = self.find_write_site_location(name, 0) {
+                        err = err.with_location(loc.clone());
+                        err = err.with_underline_note(name.len().max(1), "this attempts an in-place retype");
+                    }
+                    err = err.with_help_line(
+                        &format!("declare '{}' as a value first: a value called {} is <value>.", name, name)
+                    );
+                    self.errors.push(err);
+                } else if !self.value_typed_names.contains(name) {
+                    let declared = self.named_value_type(name).unwrap_or(Type::Unknown);
+                    let mut err = CompileError::new(
+                        &format!(
+                            "In-place retyping applies only to variables declared as 'value'; '{}' is declared as a {}",
+                            name,
+                            self.type_name(&declared)
+                        )
+                    );
+                    if let Some(loc) = self.find_write_site_location(name, 0) {
+                        err = err.with_location(loc.clone());
+                        err = err.with_underline_note(name.len().max(1), "this attempts an in-place retype");
+                    }
+                    if let Some(decl_loc) = self.declared_locations.get(name) {
+                        err = err.with_note_line(
+                            &format!(
+                                "'{}' was declared as {} at {}:{}:{}",
+                                name,
+                                self.type_name(&declared),
+                                decl_loc.file,
+                                decl_loc.line,
+                                decl_loc.column
+                            )
+                        );
+                    }
+                    err = err.with_help_line(
+                        &format!(
+                            "convert explicitly instead: a {} called t is {} as {}.",
+                            self.type_name(target_type),
+                            name,
+                            self.type_name(target_type)
+                        )
+                    );
+                    self.errors.push(err);
+                } else {
+                    // Record the concrete target type so subsequent reads and
+                    // arithmetic see the variable as that type while it remains
+                    // a `value` (runtime-tagged slot) for storage purposes.
+                    self.scalar_types.insert(name.clone(), target_type.clone());
                 }
             }
 
@@ -3522,6 +3593,10 @@ impl Analyzer {
                     let is_text =
                         matches!(self.scalar_types.get(object.as_str()), Some(Type::String));
                     match property {
+                        // `type` is a universal property: every variable,
+                        // regardless of its declared type, reports its type as
+                        // text. No further validation needed.
+                        ObjectProperty::Type => {}
                         ObjectProperty::Size | ObjectProperty::Empty => {
                             if !is_buf && !is_list && !is_map && !is_file {
                                 self.push_error(
@@ -3767,6 +3842,29 @@ impl Analyzer {
                             self.analyze_expr(expr);
                         }
                         FormatPart::Variable { name, .. } => {
+                            if name.is_empty() {
+                                // BUGS_FOUND #10: a bare or unmatched `{` in a
+                                // string literal. The format parser found a `{`
+                                // with no variable/expression before the closing
+                                // `}` (or no closing `}` at all), producing an
+                                // empty-named placeholder. Report the real cause
+                                // and the `{{` escape instead of the old
+                                // empty-named "Unknown variable: ". The caret
+                                // still lands on the offending `{`:
+                                // find_symbol_location("") matches the first
+                                // `{` in the source.
+                                self.push_error_with_hint(
+                                    "Unmatched `{` in a string literal. A single \
+                                     `{` begins a format interpolation, but no \
+                                     variable or expression followed it. To write \
+                                     a literal brace, double it: `{{` for `{` and \
+                                     `}}` for `}`."
+                                        .to_string(),
+                                    Some(""),
+                                    None,
+                                );
+                                continue;
+                            }
                             self.track_identifier(name);
                             if !self.is_variable_available(name) && name != "_iter" {
                                 if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {

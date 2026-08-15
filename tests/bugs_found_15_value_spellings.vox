@@ -1,0 +1,13 @@
+(Bug #15 regression: the float-to-integer tag move must hold across all three assignment spellings — `Set v to`, `the v is`, and `v is` — which all parse to the same VarDecl arm and so all shared the static-type clobber before the fix. Each reassignment is followed by a predicate asserting the tag reached integer.)
+
+a value called v is 3.5.
+the v is 1.
+Print v.
+If v is a number, print "the: num".
+Otherwise print "the: NOT num".
+
+a value called w is 3.5.
+w is 1.
+Print w.
+If w is a number, print "bare: num".
+Otherwise print "bare: NOT num".

@@ -1,0 +1,9 @@
+(Bug #4 regression: top-level number global retains mutations made inside a function.)
+
+a number called g is 0.
+To bump. Set g to g add 1.
+
+bump.
+bump.
+bump.
+Print g.

@@ -1,0 +1,13 @@
+(Regression: a `value` variable reports its runtime tag as a dynamic type.)
+
+a value called vtxt is "hello".
+a value called vnum is 42.
+a value called vflt is 3.5.
+a value called vbool is true.
+a value called vnil is nothing.
+
+Print "{vtxt's type}".
+Print "{vnum's type}".
+Print "{vflt's type}".
+Print "{vbool's type}".
+Print "{vnil's type}".

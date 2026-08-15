@@ -1,0 +1,6 @@
+(Regression: retyping a `value` variable to its current type is a no-op and the value stays usable.)
+
+a value called n is 42.
+n is a number.
+print n add 8.
+

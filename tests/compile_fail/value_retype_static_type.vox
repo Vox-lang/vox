@@ -1,0 +1,5 @@
+(Compile-fail: in-place retyping is only valid for `value` variables.)
+
+a number called n is 5.
+n is a text.
+

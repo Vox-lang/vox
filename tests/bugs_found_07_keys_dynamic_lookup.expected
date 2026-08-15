@@ -1,0 +1,5 @@
+from keys: [a] lookup=1
+from keys: [b] lookup=2
+from literal: [a] lookup=1
+from literal: [b] lookup=2
+from text var: lookup=1

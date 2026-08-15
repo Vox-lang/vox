@@ -1,0 +1,7 @@
+(Regression: a failed runtime conversion sets _last_error and leaves the variable as 0.)
+
+a value called bad is "abc".
+bad is a number.
+on error print "cast failed".
+print bad.
+

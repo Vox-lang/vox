@@ -41,6 +41,13 @@ pub struct CompileError {
     /// is at the offending assignment). Plain text, same reasoning as
     /// `help_line`.
     pub note_line: Option<String>,
+    /// When true, the diagnostic renders as a `warning:` (yellow) instead of
+    /// an `error:` (red) and is non-fatal. Used for parser-level warnings
+    /// such as a function definition whose body is still open at end of file
+    /// (BUGS_FOUND #5) — the program still compiles, but the author almost
+    /// certainly did not intend every following top-level statement to be
+    /// absorbed into a never-called function body.
+    pub is_warning: bool,
 }
 
 impl CompileError {
@@ -55,6 +62,7 @@ impl CompileError {
             underline_note: None,
             help_line: None,
             note_line: None,
+            is_warning: false,
         }
     }
 
@@ -106,6 +114,13 @@ impl CompileError {
         self.help_line = Some(help.to_string());
         self
     }
+
+    /// Mark this diagnostic as a non-fatal warning. The Display impl then
+    /// renders a yellow `warning:` header instead of a red `error:` one.
+    pub fn as_warning(mut self) -> Self {
+        self.is_warning = true;
+        self
+    }
 }
 
 impl From<String> for CompileError {
@@ -131,8 +146,10 @@ impl fmt::Display for CompileError {
         const RESET: &str = "\x1b[0m";
         const BOLD: &str = "\x1b[1m";
 
-        // Error header
-        if let Some(ref code) = self.error_code {
+        // Error header (or `warning:` when marked non-fatal)
+        if self.is_warning {
+            write!(f, "{}warning{}: {}{}\n", YELLOW, RESET, BOLD, self.message)?;
+        } else if let Some(ref code) = self.error_code {
             write!(f, "{}error[{}]{}: {}{}\n", RED, code, RESET, BOLD, self.message)?;
         } else {
             write!(f, "{}error{}: {}{}\n", RED, RESET, BOLD, self.message)?;

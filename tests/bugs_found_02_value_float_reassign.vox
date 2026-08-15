@@ -1,0 +1,19 @@
+To identity with a value called v. Return a value, v.
+
+a value called vf is identity of 3.5.
+
+a float called y is 0.0.
+the y is vf.
+Print y.
+
+a float called y2 is vf.
+Print y2.
+
+To extract with a value called w.
+  a float called f is 0.0.
+  the f is w.
+  Print f.
+  Set f to w.
+  Print f.
+
+extract with identity of 2.5.

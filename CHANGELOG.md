@@ -4,6 +4,118 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.6] - 2026-08-14
+
+### Added
+
+- **`but if` is now a general conditional branch.** Both the default action
+  and each branch action may be any valid statement, in the plain form and in
+  loop expansion — previously only `print` (and, outside loop expansion,
+  `append`) could carry a `but if`, and anything else was rejected with
+  "'but if' conditional branching only works with print statements". A branch
+  body is parsed with the ordinary statement parser rather than a
+  per-statement-kind grammar, so new statement kinds gain `but if` support
+  automatically. The terse `append <value>` form, which inherits its target
+  from the base statement, still works, and a branch naming a different list
+  or buffer than the base is still a compile error.
+
+- **In-place retyping for `value` variables.** The statement
+  `<valuevar> is a <type>.` converts a `value` variable in place and updates
+  its runtime tag. Supported targets are `number`, `float`/`decimal`, `text`,
+  and `boolean`; the conversion follows the same rules as the static cast
+  table. The same phrase in condition position (`If v is a number then, ...`)
+  remains a type predicate. A failed runtime conversion sets `_last_error` and
+  leaves the variable holding `0` so `On error` can catch it; retyping a
+  statically-typed variable is a compile error with a remedy pointing at the
+  explicit cast.
+
+- **A warning when a function is still open at end of file.** A function body
+  is closed by a blank line, so without one the rest of the file is read as
+  part of the body and the program silently does nothing. The compiler now
+  points at the function definition instead of compiling a do-nothing binary
+  in silence. Suppressed for `Library` files and `--shared` builds, where a
+  trailing function ending at EOF is correct by construction. This is a
+  diagnostic only — the parsing behaviour is unchanged.
+
+- **A `type` property on every variable.** `<var>'s type` returns a text
+  description of the variable's declared type, e.g. `Number (static)` for a
+  `number` or `Text (dynamic)` for a `value`. Statically-typed variables fold
+  to a compile-time literal; `value` variables dispatch on the runtime tag
+  already kept in their shadow slot or BSS mirror. Intended for debugging and
+  logging — type tests still use the `is a <type>` predicate.
+
+### Fixed
+
+- **Seven compiler bugs found while building a JSON library**, all with
+  regression tests:
+  - A `float` interpolated into a `text`/`buffer` destination
+    (`a text called t is "{y}".`) printed the raw IEEE-754 bit pattern
+    instead of the number.
+  - `buffer as text` returned the buffer's struct pointer rather than its
+    character data, so the cast silently produced an empty string.
+  - Extracting a `float` from a `value` by reassignment (`the y is v.` /
+    `Set y to v.`) produced the raw bit pattern; only declaration with an
+    initializer worked. A `value` source no longer overwrites the
+    destination's declared type.
+  - Extracting a `list` from a `value` produced a bogus pointer and a length
+    of `-1`, while the same extraction into a `float` or `map` worked.
+  - **Assignments to a top-level variable inside a function did not persist,
+    and could read another function's local.** Top-level `number`, `float`,
+    `text`, `boolean`, `buffer`, and `value` variables now live in one storage
+    location shared by top-level code and every function, so a write inside a
+    function is visible after it returns. Previously such a write allocated
+    an uninitialised per-call stack slot, so a counter could read an
+    unrelated function's local instead of its own value. For `value`
+    specifically, its runtime type tag is stored alongside the payload in its
+    own shared location too, kept paired with it on every read and write, so
+    the value keeps behaving as the type it currently holds — not just an
+    integer that happens to round-trip. Declaring a variable of the same name
+    inside a function still shadows the global, and recursion still gets
+    per-call locals.
+  - A map key taken from `map's keys` never matched on lookup, always
+    returning the not-found sentinel, even though the key printed correctly.
+  - Chaining an index over a property read (`element 1 of m's values`)
+    produced garbage; the same read split across two statements was correct.
+
+- **A `but if` chain was closed by a period belonging to a nested clause, so
+  every later branch was silently lost.** A period closes only the innermost
+  open clause, but a `but if` branch consumed one that belonged to a clause
+  *inside* it — most visibly an `On error` handler attached to a fallible
+  action in the branch. A dispatch loop giving each branch its own failure
+  handling ran only its first branch, with no error; the same structure
+  without `On error` produced a misattributed `Unknown variable` error
+  pointing at an unrelated, valid line. A branch body is now parsed as a
+  block, like an `If` branch, so it can hold its own trailing clause, and a
+  period followed by `but` continues the chain instead of ending it. A period
+  that genuinely ends the chain still ends it.
+
+- **Reassigning a `value` that held a `float` to an integer left the static
+  type stale at `float`.** The runtime tag was written correctly, but declaring
+  `a value called v is 3.5.` let the initializer's type-inference demote the
+  `value` from its `Mixed` (runtime-tagged) type to a concrete `Float`, so
+  every later read dispatched on the stale static type instead of the tag:
+  `Print v` emitted `PRINT_FLOAT` and reinterpreted the integer `1` as the
+  denormal `0.0`, and `If v is a number` folded statically to false. A declared
+  `value` now keeps `Mixed` through its initializer — the same guard the
+  bare-assignment arm already had — so reads dispatch on the runtime tag as
+  intended. Covers all three assignment spellings (`Set v to`, `the v is`,
+  `v is`) and a function reassigning a top-level `value` global.
+
+### Changed
+
+- **A reserved-word error now names the word you wrote.** Declaring a
+  variable called `length` reported that `'size'` was reserved, because the
+  lexer canonicalises the alias before the check runs. It now reads
+  "Cannot use 'length' as a variable name" and explains that `length` is an
+  alternate spelling of `size`. `length`/`size` is also documented in the
+  reserved-alias table.
+- **An unmatched `{` in a string literal has a real diagnostic.** It
+  previously failed with an empty-named `Unknown variable: `; it now names
+  the unmatched brace and points at `{{` / `}}` as the literal-brace escape.
+- **LANGUAGE.md's blank-line rule corrected.** It claimed a blank line after
+  a function definition was "a style convention, not a requirement". A blank
+  line is in fact the only thing that closes a function body.
+
 ## [0.3.5] - 2026-08-11
 
 ### Fixed

@@ -276,7 +276,18 @@ where they were built. Isolating a full workaround is in progress.
 
 ---
 
-## Documentation says `{{` / `}}` escape to literal braces; they never do
+## `{{` / `}}` escape to literal braces — RESOLVED (was: "they never do")
+
+**Status:** resolved in v0.3.6. The `{{` / `}}` escapes now work as documented:
+`Print "{{}}".` prints `{}`, `Print "{{x}}"` prints `{x}`, across `text`
+initialization, `buffer` initialization, and inline `Print`. The original report
+below (kept for the record) described them as never collapsing — that was accurate
+against the build it was written against, but is no longer reproducible.
+
+The related trap — a single **unmatched** `{` in a string literal producing an
+empty-named "Unknown variable: " error — is also addressed: the diagnostic now reads
+"Unmatched `{` in a string literal" with a `{{`/`}}` escape hint (see BUGS_FOUND #10).
+A bare `}` is accepted as a literal `}`, so only `{` triggers this.
 
 ```vox
 a text called t is "{{x}}".
@@ -326,7 +337,7 @@ all — that sidesteps the whole issue, since it isn't about runtime string
 
 ---
 
-## Undocumented reserved words
+## Undocumented reserved words — RESOLVED (naming) / partially (coverage)
 
 Found by hitting them and reading the resulting error, not by systematic search,
 so this list is almost certainly incomplete. None of these appear in the
@@ -342,6 +353,15 @@ keyword" error — but for `ms`, the error names `milliseconds` rather than `ms`
 itself, and for `message`, the error text says `'text'` rather than `message`
 (pointing at a plausible-looking but wrong token), which makes the actual
 offending identifier harder to spot than it should be from the message alone.
+
+**Status:** resolved in v0.3.6 (BUGS_FOUND #6). The diagnostic now names the
+identifier the user actually typed and notes which canonical keyword it aliases,
+so `ms` reports `'ms'` (alternate spelling of `'milliseconds'`) and `message`
+reports `'message'` (alternate spelling of `'text'`) — no more plausible-looking
+but wrong token in the message. `ms`, `message`, `flag`, `empty`, and `length`/
+`size` are now documented in `LANGUAGE.md`'s Reserved Aliases / reserved-words
+reference. (The reserved-word *set* is unchanged; only the message and the docs
+were fixed.)
 
 ---
 

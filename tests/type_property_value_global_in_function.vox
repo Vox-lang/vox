@@ -1,0 +1,12 @@
+(Regression: a top-level `value` global mutated inside a function is read via its BSS tag mirror, not a stale local tag.)
+
+a value called vg is 0.
+
+To settext.
+    Set vg to "hello".
+
+Print "before: {vg's type}".
+
+settext.
+
+Print "after: {vg's type}".
