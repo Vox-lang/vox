@@ -317,6 +317,26 @@ just a different trigger.
 
 ### 12. A nested if/but-if chain with no trailing `Otherwise`, as the last action in an outer branch, silently breaks everything after it
 
+**Status: CONFIRMED, still open as of v0.3.6.** Reproduced 2026-08-15 against
+`main` with a minimal case — see
+[`docs/FINDINGS-bug12-confirmed.md`](FINDINGS-bug12-confirmed.md) for the
+repro, the narrowing, and the design options. Shape A reproduces exactly as
+described: the program hangs forever, printing nothing, and adding an
+`Otherwise` to the *inner* chain fixes it outright.
+
+The underlying defect is broader than a missing `Otherwise`: a nested
+construct as the last action of an outer `if … then,` branch leaves that outer
+branch open, and it keeps consuming following statements — through the rest of
+the loop body and *past the enclosing loop*. The hang is a consequence of the
+loop's own increment being swallowed. Not a regression from 0.3.6; the
+original report is against 0.3.5.
+
+An earlier assessment in this session recorded #12 as unreproducible. That was
+wrong — only Shape B had been tested. The findings document explains how the
+mistake happened.
+
+---
+
 This is the deepest and most consequential bug I found — I hit it in two
 different shapes, and it's worth stating as a general pattern rather than two
 unrelated reports.
