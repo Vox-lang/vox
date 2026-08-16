@@ -4,7 +4,7 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.7] - 2026-08-16
 
 ### Changed
 
@@ -116,6 +116,16 @@ adheres to [Semantic Versioning](https://semver.org/).
   two and three periods, the equivalent empty `Otherwise,.` form, and
   `tests/nested_clause_close_levels.vox` pins the behaviour. No compiler
   change: the parser was correct throughout.
+
+- **A "Projects built with Vox" section in the README.** Lists actively
+  developed FOSS projects written in Vox, with an invitation to add yours by
+  emailing vox-lang@tegosec.com.
+
+- **A design document for splitting the monolithic compiler phase modules**
+  (`docs/MODULE_SPLIT_DESIGN.md`). Records the approved strategy for breaking
+  the large `codegen`/`parser`/`analyzer`/`lexer` `mod.rs` files into focused
+  topical submodules as pure, behaviour-preserving code motion. Design only;
+  no code moved in this release.
 
 ## [0.3.6] - 2026-08-14
 
