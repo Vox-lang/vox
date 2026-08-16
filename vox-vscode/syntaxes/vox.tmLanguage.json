@@ -168,7 +168,7 @@
     },
     "control-keywords": {
       "name": "keyword.control.vox",
-      "match": "(?<![\\w-])(?i:(otherwise|returns|return|terminate|continue|begin|finish|repeat|break|stop|while|when|then|else|exit|quit|skip|give|times|for|if))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(otherwise|returns|return|terminate|continue|repeat|break|while|when|then|else|exit|quit|skip|give|times|for|if))(?![\\w-])"
     },
     "import-keywords": {
       "comment": "Library/import keywords: see, library, version (stray occurrences; the library-declaration and see-import patterns colour them in context).",
