@@ -6,6 +6,19 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`begin`, `stop`, and `finish` are no longer reserved words.** They now
+  behave exactly like `start` always did: the parser claims them for a timer
+  statement only when a name operand follows (`Start the t.`, `stop t.`),
+  and everywhere else they are ordinary identifiers — `a number called stop
+  is 0.` now compiles instead of being rejected as a reserved keyword. The
+  timer dispatch also gained that one-token lookahead for all four words, so
+  a program can define and call its own zero-argument `start.`/`stop.`
+  function; previously a bare `start.` was swallowed by the timer parser and
+  died with "Expected timer name". Strictly widening: no previously-valid
+  program changes meaning.
+
 ### Fixed
 
 - **Appending a format string to a list stored a corrupt element** (BUGS_FOUND
@@ -81,6 +94,11 @@ adheres to [Semantic Versioning](https://semver.org/).
   `tests/bugs_found_20_no_collision.vox`, `tests/bugs_found_20_float_collision.vox`,
   `tests/bugs_found_20_number_boolean_list.vox`, `tests/bugs_found_20_not_equal.vox`,
   `tests/bugs_found_20_buffer_text_positive.vox`, `tests/bugs_found_20_return_position.vox`.
+
+- **`End` is no longer documented as a timer-stop spelling.** It never
+  worked: `end` lexes into the `exit` keyword family, so `End the t.` was a
+  parse error despite LANGUAGE.md listing it beside `Stop`/`Finish`. The
+  spelling list now matches the compiler.
 
 ### Documentation
 

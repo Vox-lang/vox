@@ -63,7 +63,7 @@ pub enum Token {
     Argument, Arguments, Environment, Variable, Count, Raw,
     
     // Time and Timers
-    Wait, Sleep, Timer, Stop, Begin, Finish,
+    Wait, Sleep, Timer,
     Get, Current, Time, Second, Seconds, Millisecond, Milliseconds,
     Duration, Elapsed, Hour, Minute, Day, Month, Year, Unix,
     Running, As,
@@ -127,7 +127,6 @@ impl Token {
             "each" => Some("each"),
             "repeat" => Some("repeat"),
             "break" => Some("break"),
-            "stop" => Some("stop"),
             "continue" | "skip" => Some("continue"),
             "return" | "give" | "respond" | "reply" => Some("return"),
             "exit" | "quit" | "terminate" | "end" | "halt" | "abort" => Some("exit"),
@@ -228,8 +227,6 @@ impl Token {
             "wait" | "pause" => Some("wait"),
             "sleep" | "delay" => Some("sleep"),
             "timer" | "stopwatch" => Some("timer"),
-            "begin" => Some("begin"),
-            "finish" => Some("stop"),
             "get" | "fetch" | "retrieve" => Some("get"),
             "current" => Some("current"),
             "time" => Some("time"),
@@ -391,9 +388,6 @@ impl Token {
             Token::Wait => Some("wait"),
             Token::Sleep => Some("sleep"),
             Token::Timer => Some("timer"),
-            Token::Stop => Some("stop"),
-            Token::Begin => Some("begin"),
-            Token::Finish => Some("finish"),
             Token::Get => Some("get"),
             Token::Current => Some("current"),
             Token::Time => Some("time"),
@@ -795,7 +789,6 @@ impl<'a> Lexer<'a> {
             "repeat" => Token::Repeat,
             "times" => Token::Times,
             "break" => Token::Break,
-            "stop" => Token::Stop,
             "exit" | "quit" | "terminate" => Token::Exit,
             "continue" | "skip" => Token::Continue,
             "return" | "returns" | "give" => Token::Return,
@@ -897,9 +890,14 @@ impl<'a> Lexer<'a> {
             "wait" | "pause" => Token::Wait,
             "sleep" | "delay" => Token::Sleep,
             "timer" | "stopwatch" => Token::Timer,
+            // start/begin/stop/finish are contextual, not reserved: the
+            // parser claims them for a timer statement only when a name
+            // operand follows; everywhere else they are ordinary
+            // identifiers, normalized to lowercase like `start` always was.
             "start" => Token::Identifier("start".to_string()),
-            "begin" => Token::Begin,
-            "finish" => Token::Finish,
+            "begin" => Token::Identifier("begin".to_string()),
+            "stop" => Token::Identifier("stop".to_string()),
+            "finish" => Token::Identifier("finish".to_string()),
             "get" | "fetch" | "retrieve" => Token::Get,
             "current" => Token::Current,
             "time" => Token::Time,
