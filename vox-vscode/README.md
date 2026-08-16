@@ -27,7 +27,7 @@ For manual installation during development, see [Manual Installation](#manual-in
 |-----------|---------------------|
 | `.vox`    | Vox                 |
 
-The extension also registers the aliases `Vox`, `vox`, `English`, `english`, and `en` for the language picker.
+The extension also registers the aliases `Vox`, `vox`, `VoxLang`, and `voxlang` for the language picker.
 
 ## Highlighted Elements
 

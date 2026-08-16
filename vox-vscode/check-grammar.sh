@@ -45,11 +45,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LEXER="${SCRIPT_DIR}/../src/lexer/mod.rs"
+LEXER_DIR="${SCRIPT_DIR}/../src/lexer"
 GRAMMAR="${SCRIPT_DIR}/syntaxes/vox.tmLanguage.json"
 
-if [ ! -f "$LEXER" ]; then
-    echo "check-grammar: lexer not found at $LEXER" >&2
+# The lexer is a directory of modules, not a single file: `as_keyword` and
+# `string_is_keyword` live in tokens.rs, `read_word` in scan.rs. Concatenate
+# every .rs in the directory so this keeps working wherever those functions
+# sit -- looking in mod.rs alone silently stopped finding them when the
+# lexer was split into submodules.
+if [ ! -d "$LEXER_DIR" ]; then
+    echo "check-grammar: lexer directory not found at $LEXER_DIR" >&2
+    exit 2
+fi
+LEXER="$(mktemp)"
+trap 'rm -f "$LEXER"' EXIT
+cat "$LEXER_DIR"/*.rs > "$LEXER"
+
+if [ ! -s "$LEXER" ]; then
+    echo "check-grammar: no lexer sources found in $LEXER_DIR" >&2
     exit 2
 fi
 if [ ! -f "$GRAMMAR" ]; then
