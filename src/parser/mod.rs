@@ -102,15 +102,15 @@ impl Parser {
         self.shared_mode = shared;
         self
     }
-    
+
     fn current(&self) -> &Token {
         self.tokens.get(self.pos).map(|t| &t.token).unwrap_or(&Token::EOF)
     }
-    
+
     fn current_info(&self) -> Option<&TokenInfo> {
         self.tokens.get(self.pos)
     }
-    
+
     fn current_location(&self) -> Option<SourceLocation> {
         if let (Some(info), Some(ref src)) = (self.current_info(), &self.source_file) {
             Some(src.make_location(info.line, info.column))
@@ -146,38 +146,23 @@ impl Parser {
         }
         Some(out)
     }
-    
-    
-    
-    
-    
-
-
-    
-
-
-
-
-
-
 
     fn peek(&self, offset: usize) -> &Token {
         self.tokens.get(self.pos + offset).map(|t| &t.token).unwrap_or(&Token::EOF)
     }
 
-    
     fn advance(&mut self) -> Token {
         let tok = self.current().clone();
         self.pos += 1;
         tok
     }
-    
+
     fn skip_noise(&mut self) {
         while matches!(self.current(), Token::Newline) {
             self.advance();
         }
     }
-    
+
     fn skip_all_whitespace(&mut self) {
         while matches!(self.current(), Token::Newline | Token::ParagraphBreak) {
             self.advance();
@@ -199,14 +184,14 @@ impl Parser {
             self.pos = saved;
         }
     }
-    
+
     #[allow(dead_code)]
     fn skip_newlines(&mut self) {
         while matches!(self.current(), Token::Newline | Token::ParagraphBreak) {
             self.advance();
         }
     }
-    
+
     fn expect(&mut self, expected: &Token) -> bool {
         if self.current() == expected {
             self.advance();
@@ -215,99 +200,6 @@ impl Parser {
             false
         }
     }
-    
-    
 
-    
-
-
-
-
-
-
-
-
-
-
-    
-    
-    
-    
-    
-
-
-    
-    
-    
-
-
-    
-    // File I/O parsing functions
-    
-    
-    
-    
-    
-    
-    
-    
-
-    
-    
-    
-
-
-
-
-
-
-
-    // Filesystem operations parsing
-
-
-
-
-
-    
-    
-    
-    
-    
-
-
-
-
-    
-    
-    
-
-    
-
-    
-    
-    
-    
-    
-    
-
-    
-
-    
-    
-    
-    
-
-    
-    
-    
-    // ========================================================================
-    // Time and Timer parsing
-    // ========================================================================
-    
-    
-    
-    
 }
-
-
 
