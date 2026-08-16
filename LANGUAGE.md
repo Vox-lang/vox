@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.3.6**
+**Version 0.3.7**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
