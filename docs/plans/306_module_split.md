@@ -138,6 +138,17 @@ Each extraction moves one topical group out of a phase's `mod.rs` into a new sib
 
 - [ ] **A. Identify the byte ranges.** In the phase `mod.rs`, list the line ranges of the methods (and any free fns) belonging to this module by the spec's responsibility rule. Grep the method signatures to get exact start lines; each method ends at its closing `}` at the method's indentation.
 
+  **Start each range at the item's FIRST attached line, not the `fn` line** —
+  walk upward from `fn` and include every immediately preceding `///` doc
+  comment, `//` comment block, and `#[attribute]` line, stopping at the first
+  blank line or the previous item's closing brace. Learned in the analyzer
+  phase: ranges begun at the `fn` line stranded every moved method's doc
+  comment in `mod.rs`, which the asm gate cannot catch (comments don't affect
+  codegen) and which only surfaced as a compile error once an extraction left
+  an `impl` block containing nothing but orphaned comments. Repairing it
+  afterwards costs a git-history trace per comment; taking the range from the
+  doc comment costs nothing.
+
 - [ ] **B. Create the new module file** with the preamble, then append the moved ranges:
 
 ```bash
