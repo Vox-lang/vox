@@ -673,6 +673,81 @@ other type was found holding a null pointer through this path.
 
 ---
 
+### 17. Appending a format string to a list stores a corrupt element — printing or reading it back segfaults or leaks a raw pointer
+
+**Status: open.** Found 2026-08-16 while building a text-utilities shared
+library (`textkit`) against `main` post-v0.3.6. Not library-specific — the
+minimal repro is a four-line standalone executable.
+
+```vox
+a list called out is [].
+a text called x is "x".
+append "fmt {x}" to out.
+Print the out.
+```
+```
+Segmentation fault (exit 139)
+```
+
+Element access (`a text called t is element 1 of out. Print t.`) and
+`For each w from out, print "<{w}>".` segfault identically, so the stored
+element itself is bad, not merely the whole-list print path. The failure mode
+depends on what the format string interpolates:
+
+| appended expression | result of `Print the out.` |
+|---|---|
+| `"literal"` (no interpolation) | correct: `["literal"]` |
+| `"fmt {x}"` — `x` a text | **SIGSEGV** |
+| `"n {k}"` — `k` a number | `[139846434144280]` — a raw pointer |
+| `"{w}"` — `w` a buffer | `[140144756633624]` — a raw pointer |
+
+A text variable *initialized* from a format string and then appended by name
+(`a text called tok is "fmt {x}". append tok to out.`) crashes the same way,
+so the corruption travels with the value, not the append syntax. A text
+variable initialized from a plain literal and appended by name is fine.
+
+Both spec promises this breaks are explicit: list `append` "works with any
+value", and format strings are first-class values (v0.1.17) usable
+"everywhere" (v0.1.21). The pointer-printing variants are also a
+memory-safety wart in their own right — the program prints an address
+instead of the bytes.
+
+Workaround: route the value through a function with a declared `text` return
+(`To 'text of' with a buffer called w. a text called r is "{w}". Return a
+text, r.` — then `append 'text of' of w to out.`). The call's declared return
+type is credited by the element tagger, and the appended element is stored
+and printed correctly. This is how `textkit`'s `'split words'` works around
+the bug.
+
+---
+
+### 18. The `.lib` list-element-type inference credits fewer shapes than the runtime element tagger — provably-`text` elements ship as plain `list`
+
+**Status: open.** Same session as #17; mild, no crash. LANGUAGE.md ("The
+`.lib` file") says a `--shared` build scans the exported function's body and
+writes `list of <type>` "when every appended/returned element provably agrees
+on one type". In practice the scan credits only two shapes. One library, six
+exported functions, each appending exactly one element to a fresh list and
+returning it with a declared `Return a list, out.`:
+
+| element appended | `.lib` records | consumer prints |
+|---|---|---|
+| `append "literal" to out` | `list of text` | correct |
+| `append "fmt {x}" to out` | `list` | **SIGSEGV** (bug #17) |
+| text local from literal, appended by name | `list` | correct |
+| text local from format string, appended by name | `list` | SIGSEGV (bug #17) |
+| text parameter appended by name | `list of text` | correct |
+| call to a function with declared `text` return | `list` | correct |
+
+Rows 3 and 6 are the gap this entry is about: the element is provably `text`
+(row 3 by its declaration and literal initializer, row 6 by the callee's
+declared return type), the runtime tagger agrees — the consumer prints real
+strings — but the table of contents still says plain `list`, so the consumer
+loses the static element type the docs promise. The two SIGSEGV rows are
+bug #17 wearing a `.so`; they are listed here only to complete the matrix.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only
