@@ -1,5 +1,3 @@
-use super::*;
-
 /// Turn an author-written name into an assembly symbol, per the project
 /// standard in `docs/SYMBOL_MANGLING.md`.
 ///

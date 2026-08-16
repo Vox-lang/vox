@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Actions
