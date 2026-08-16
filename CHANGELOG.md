@@ -65,6 +65,23 @@ adheres to [Semantic Versioning](https://semver.org/).
   `tests/bugs_found_19_other_name_print_direct.vox`,
   `tests/bugs_found_19_predicate.vox`.
 
+- **Comparing a `text`/`buffer`/string literal to a `number`, `float`,
+  `boolean`, `list`, or `map` for equality dereferenced the non-stringy
+  operand as a string pointer** (BUGS_FOUND #20). `If "abc" is equal to 3.5
+  then, ...` segfaulted with no variable or name collision involved at all;
+  `list`/`map` operands didn't crash but gave a wrong answer via a suspected
+  out-of-bounds read. Pre-existing, but the #19 fix made it commonly
+  reachable: a literal that happens to share a variable's name (e.g. `"pi"
+  is equal to pi`) previously took a different, wrong-but-non-crashing path
+  by accident, and now correctly reaches this one. Comparing a stringy
+  operand against a *provably* non-stringy one now folds to a compile-time
+  constant (`is equal to` → false, `is not equal to` → true) without
+  evaluating either operand; `text`/`buffer` comparisons, and comparisons
+  involving a dynamic `value` operand, are unaffected. Regression tests:
+  `tests/bugs_found_20_no_collision.vox`, `tests/bugs_found_20_float_collision.vox`,
+  `tests/bugs_found_20_number_boolean_list.vox`, `tests/bugs_found_20_not_equal.vox`,
+  `tests/bugs_found_20_buffer_text_positive.vox`, `tests/bugs_found_20_return_position.vox`.
+
 ### Documentation
 
 - **Documented how to close more than one level of nesting.** A period closes

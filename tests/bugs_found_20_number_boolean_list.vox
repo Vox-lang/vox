@@ -1,0 +1,4 @@
+If "abc" is equal to 3 then, print "1:wrong". Otherwise, print "1:correct".
+If "abc" is equal to true then, print "2:wrong". Otherwise, print "2:correct".
+a list called xs is [1, 2].
+If "abc" is equal to xs then, print "3:wrong". Otherwise, print "3:correct".

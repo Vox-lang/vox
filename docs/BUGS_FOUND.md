@@ -906,6 +906,75 @@ unchanged after the removal. Regression tests:
 `tests/bugs_found_19_other_name_print_direct.vox`,
 `tests/bugs_found_19_predicate.vox`.
 
+**See also #20:** a red team pass on this fix found that it makes a
+*separate*, pre-existing crash commonly reachable — comparing a string
+literal against a same-named `float`/`number`/`boolean` variable for
+equality (e.g. `"pi" is equal to pi`) now correctly infers the literal as
+text (this fix) and so reaches equality-dispatch code that dereferences the
+non-stringy operand as a string pointer (#20's own defect, not this one).
+
+---
+
+### 20. Equality dispatch treats a non-stringy operand as a string pointer and dereferences it
+
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 by a red team
+pass on the #19 fix. **Pre-existing** — reproduces with #19 reverted too —
+but #19 made it commonly reachable: before #19, a string literal whose text
+matched a `float` variable's name was (wrongly) inferred as `Float`, so
+`"pi" is equal to pi` took the numeric comparison path, giving a wrong
+answer but not crashing. #19 correctly makes a literal always infer
+`String`, so that same, ordinary-to-write comparison now reaches this
+defect instead.
+
+```vox
+If "abc" is equal to 3.5 then, print "a". Otherwise, print "b".
+```
+```
+Segmentation fault (exit 139)
+```
+No name collision needed at all. `number`, `float`, and `boolean` operands
+all crash, in both operand orders, for both `is equal to` and `is not equal
+to`. A `list`/`map` operand doesn't crash (a heap pointer happens to be
+readable) but gives a wrong answer via a suspected out-of-bounds read.
+`buffer`-vs-`text` and `text`-vs-`text` were already correct and had to stay
+correct — both sides are genuinely byte sequences there.
+
+**Root cause.** Comparing a **stringy** value (`text`, `buffer`, or a string
+literal) to anything else for equality took the same content-comparison path
+whenever *at least one* side was stringy (`is_stringy_expr(left) ||
+is_stringy_expr(right)`, in both `generate_condition` and its structurally
+identical expression-position twin in `generate_expr`). That path
+(`emit_stringy_equality` → `generate_cstr_expr`) special-cases only `Buffer`;
+every other type's raw value — a float's bit pattern, an integer, a
+boolean's 0/1, a list/map struct pointer — is passed through unchanged and
+handed to `_str_eq`/`_mem_eq`, which dereferences it as a NUL-terminated
+C-string pointer.
+
+**Fix.** The content-comparison path is now taken only when *both* operands
+are stringy, or when one side is stringy and the other is `value`/`Mixed`
+(a dynamic operand whose runtime tag might be text — not provably
+incompatible, so the existing behaviour there is preserved exactly:
+correct when the `value` does hold text, unchanged — still a latent,
+separate crash, out of this fix's scope — when it holds something else).
+When one side is stringy and the other is a *provably* non-stringy type
+(`number`, `float`, `boolean`, `list`, `map`), the two representations can
+never be byte-equal: `is equal to` folds to a compile-time-constant `false`
+and `is not equal to` to `true`, without evaluating or dereferencing either
+operand. Both call sites (`generate_condition` and `generate_expr`) got the
+identical fix; a genuine surface-syntax repro was found for both
+(`Return a boolean, "abc" is equal to 3.` reaches the `generate_expr` site
+and crashed pre-fix, confirmed by testing against the pre-fix binary —
+broader reach than the red team's own search had found). Regression tests:
+`tests/bugs_found_20_no_collision.vox`, `tests/bugs_found_20_float_collision.vox`
+(includes the `"pi" is equal to pi` collision case), `tests/bugs_found_20_number_boolean_list.vox`,
+`tests/bugs_found_20_not_equal.vox`, `tests/bugs_found_20_buffer_text_positive.vox`,
+`tests/bugs_found_20_return_position.vox`, plus three codegen unit tests
+(`stringy_vs_non_stringy_condition_never_dereferences`,
+`stringy_vs_non_stringy_expression_never_dereferences`,
+`both_stringy_equality_still_dereferences_correctly`) pinning that no
+`_str_eq`/`_mem_eq` call is emitted for a mismatch, while a genuine
+stringy-vs-stringy comparison still is.
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway

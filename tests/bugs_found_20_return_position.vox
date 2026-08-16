@@ -1,0 +1,6 @@
+To is_match.
+  Return a boolean, "abc" is equal to 3.
+To is_mismatch.
+  Return a boolean, "abc" is not equal to 3.
+Print is_match.
+Print is_mismatch.

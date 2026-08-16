@@ -6740,6 +6740,37 @@ impl CodeGenerator {
         matches!(self.infer_expr_type(expr), Some(VarType::String) | Some(VarType::Buffer))
     }
 
+    /// True when `expr`'s type is a concrete, known type that can never be
+    /// `String`/`Buffer` (BUGS_FOUND #20). Comparing such an operand for
+    /// equality against a stringy operand can never be true - the two
+    /// representations aren't comparable. `Mixed`/`Unknown`/unclassifiable
+    /// expressions stay `false`: a `value` might hold text at runtime and
+    /// `is_stringy_expr` can't rule that out statically, so a stringy-vs-
+    /// dynamic comparison keeps taking the existing `emit_stringy_equality`
+    /// path (correct when the value does hold text, unchanged from before
+    /// this fix when it doesn't - not this bug's scope).
+    fn is_definitely_non_stringy_expr(&self, expr: &Expr) -> bool {
+        matches!(
+            self.infer_expr_type(expr),
+            Some(VarType::Integer)
+                | Some(VarType::Float)
+                | Some(VarType::Boolean)
+                | Some(VarType::List)
+                | Some(VarType::Map)
+        )
+    }
+
+    /// True when comparing `left`/`right` for equality reaches the stringy-
+    /// vs-provably-non-stringy mismatch (BUGS_FOUND #20): one side is
+    /// `String`/`Buffer` and the other is a concrete type that never is.
+    /// The two representations can never be byte-equal, and evaluating the
+    /// non-stringy side as if it were a C-string pointer is what crashed
+    /// (or, for `list`/`map`, read out of bounds) before this fix.
+    fn is_stringy_type_mismatch(&self, left: &Expr, right: &Expr) -> bool {
+        (self.is_stringy_expr(left) && self.is_definitely_non_stringy_expr(right))
+            || (self.is_stringy_expr(right) && self.is_definitely_non_stringy_expr(left))
+    }
+
     /// True if `expr` is a `nothing`/`null`/`nil` literal (stage 1e3, tag 6).
     /// Used by the nothing-equality guard in `generate_condition`.
     fn is_nothing_expr(&self, expr: &Expr) -> bool {
@@ -7010,9 +7041,29 @@ impl CodeGenerator {
                         self.emit_indent("XMM0_TO_RAX");
                     }
                 } else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && self.is_stringy_type_mismatch(left, right)
+                {
+                    // Stringy vs a provably non-stringy operand (BUGS_FOUND
+                    // #20): the two representations can never be byte-equal.
+                    // Fold to a constant without evaluating (and
+                    // dereferencing) either operand - the wider guard below
+                    // treated the non-stringy operand's raw value as a
+                    // C-string pointer and dereferenced it. Expression-
+                    // position twin of the same fix in generate_condition;
+                    // no known surface syntax reaches this arm today, but it
+                    // carries the identical defect and must not regress.
+                    let never_equal_result = if matches!(op, BinaryOperator::Equal) { 0 } else { 1 };
+                    self.emit_indent(&format!(
+                        "mov rax, {}  ; stringy vs non-stringy operand: never equal",
+                        never_equal_result
+                    ));
+                } else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (self.is_stringy_expr(left) || self.is_stringy_expr(right))
                 {
-                    // Content comparison via _str_eq/_mem_eq - see emit_stringy_equality.
+                    // Content comparison via _str_eq/_mem_eq - see
+                    // emit_stringy_equality. Reached when both sides are
+                    // stringy, or one side is stringy and the other is
+                    // `value`/Mixed (whose runtime tag might be text).
                     self.emit_stringy_equality(left, right);
                     if matches!(op, BinaryOperator::NotEqual) {
                         self.emit_indent("xor rax, 1  ; 1=equal -> 0=notequal");
@@ -8717,10 +8768,33 @@ impl CodeGenerator {
                         }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.is_stringy_type_mismatch(left, right) =>
+                    {
+                        // Stringy vs a provably non-stringy operand
+                        // (BUGS_FOUND #20): the two representations can
+                        // never be byte-equal. Fold to a compile-time
+                        // constant without evaluating (and dereferencing)
+                        // either operand - the old, wider guard below
+                        // treated the non-stringy operand's raw value as a
+                        // C-string pointer and dereferenced it.
+                        if matches!(op, BinaryOperator::Equal) {
+                            self.emit_indent(&format!(
+                                "jmp {}  ; stringy vs non-stringy operand: never equal",
+                                false_label
+                            ));
+                        }
+                        // `is not equal to` is always true here - the
+                        // condition holds, so fall through with no jump.
+                    }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
                         if self.is_stringy_expr(left) || self.is_stringy_expr(right) =>
                     {
-                        // Content comparison - see emit_stringy_equality for why
-                        // _mem_eq is used when either side is a buffer.
+                        // Content comparison - see emit_stringy_equality for
+                        // why _mem_eq is used when either side is a buffer.
+                        // Reached when both sides are stringy, or one side
+                        // is stringy and the other is `value`/Mixed (whose
+                        // runtime tag might be text - the mismatch arm
+                        // above only fires for a PROVABLY non-stringy type).
                         self.emit_stringy_equality(left, right);
                         self.emit_indent("test rax, rax");
                         let jmp = if matches!(op, BinaryOperator::Equal) { "jz" } else { "jnz" };
@@ -10820,6 +10894,55 @@ Otherwise, a number called s is 1, append s to out.\n";
             blocks[0].funcs[0].params[1].1,
             Type::List(Box::new(Type::Unknown)),
             "a local declared with conflicting types across branches must not be credited"
+        );
+    }
+
+    // ---- Plan 305 — BUGS_FOUND #20: stringy-vs-non-stringy equality must
+    // never dereference the non-stringy operand. Pinned at the codegen
+    // level (no _str_eq/_mem_eq/_buffer_length call emitted) in addition to
+    // the tests/bugs_found_20_*.vox end-to-end coverage, since a refactor
+    // that kept an exit-0 answer by accident (e.g. a coincidentally-valid
+    // read) wouldn't be caught by output alone. ----
+
+    #[test]
+    fn stringy_vs_non_stringy_condition_never_dereferences() {
+        // generate_condition's Equal/NotEqual arm (BUGS_FOUND #20 site 1).
+        let asm = compile_to_asm(
+            "If \"abc\" is equal to 3.5 then, print \"a\". Otherwise, print \"b\".\n",
+        );
+        assert!(
+            !asm.contains("call _str_eq") && !asm.contains("call _mem_eq"),
+            "a stringy-vs-float mismatch must not reach the byte-comparison path"
+        );
+    }
+
+    #[test]
+    fn stringy_vs_non_stringy_expression_never_dereferences() {
+        // generate_expr's structurally identical Equal/NotEqual arm
+        // (BUGS_FOUND #20 site 2). `Return a boolean, <comparison>.` is real
+        // surface syntax that reaches it (confirmed against the pre-fix
+        // binary: SIGSEGV; the red team's own search hadn't found this one).
+        let asm = compile_to_asm(
+            "To f.\n  Return a boolean, \"abc\" is equal to 3.\n",
+        );
+        assert!(
+            !asm.contains("call _str_eq") && !asm.contains("call _mem_eq"),
+            "a stringy-vs-integer mismatch in expression position must not \
+             reach the byte-comparison path"
+        );
+    }
+
+    #[test]
+    fn both_stringy_equality_still_dereferences_correctly() {
+        // Contrast with the above: two genuinely stringy operands must still
+        // take the real content-comparison path - the fix narrows the guard,
+        // it must not disable it.
+        let asm = compile_to_asm(
+            "a text called t is \"hi\".\nIf t is equal to \"hi\" then, print \"a\". Otherwise, print \"b\".\n",
+        );
+        assert!(
+            asm.contains("call _str_eq"),
+            "a text-vs-literal equality must still use byte comparison"
         );
     }
 
