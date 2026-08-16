@@ -1,6 +1,13 @@
 use super::*;
 
 impl Analyzer {
+    /// The key under which a function DEFINED in the current library is filed
+    /// in the per-function tables: the `<lib>_<ver>_<func>` mangled label in
+    /// shared mode (with an identity set), else `mangle_symbol(name)`. This is
+    /// the same rule codegen's `function_label` uses, so the two agree on a
+    /// function's identity and a call that the analyzer accepts also resolves
+    /// at the call site. Reads `current_library`, which the statement walk sets
+    /// as it passes each `Library` declaration.
     pub(crate) fn func_key(&self, name: &str) -> String {
         crate::codegen::make_function_label(self.shared_mode, self.current_library.as_ref(), name)
     }
@@ -60,6 +67,11 @@ impl Analyzer {
         }
     }
 
+    /// Validate that a function call supplies exactly the number of
+    /// arguments the function declares. A mismatch previously compiled
+    /// to undefined runtime behaviour: too few arguments read stale
+    /// register values (silently using 0 or garbage), while too many
+    /// were silently dropped.
     fn validate_function_call_args(&mut self, name: &str, args: &[Expr]) {
         if let Some(&expected) = self.function_param_counts.get(&self.func_key(name)) {
             if args.len() != expected {
@@ -77,6 +89,13 @@ impl Analyzer {
         }
     }
 
+    /// How a call to `name` resolves under Stage A4's import rules.
+    /// Local-first is deliberate: adding an unrelated `see` must never
+    /// silently redirect an existing call, so a local definition shadows a
+    /// same-named import (a pre-pass warning names the shadowed library).
+    /// Two imports exporting the same name are ambiguous by identity — a
+    /// re-see of the SAME <lib,version> is one import, but two different
+    /// libraries, or two versions of one library, are two.
     fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
         let mut providers: Vec<&crate::lib_file::ImportedFunction> = Vec::new();
         for imp in &self.imports {
@@ -97,6 +116,13 @@ impl Analyzer {
         self.functions.contains(&self.func_key(name))
     }
 
+    /// Plan 270 G4: a bare or quoted identifier in *expression* position
+    /// that names a zero-argument function is a call, not a variable lookup.
+    /// True iff `name` resolves to a callable declaring zero parameters — a
+    /// local function (looked up via `func_key`, so shared-mode mangling
+    /// matches the definition) or a single unambiguous import. A name that is
+    /// a variable in scope is decided by the caller *before* consulting this;
+    /// a variable shadows a same-named zero-arg function.
     fn is_zero_arg_function(&self, name: &str) -> bool {
         if self.is_local_function(name) {
             return self.function_param_counts.get(&self.func_key(name)) == Some(&0);
@@ -108,6 +134,11 @@ impl Analyzer {
         providers.len() == 1 && providers[0].params.is_empty()
     }
 
+    /// Resolve and validate a call site shared by `Statement::FunctionCall`
+    /// and `Expr::FunctionCall`: local definition, then a single import (with
+    /// the same arity message as any other call, plus argument-type checks,
+    /// which an import needs at the call site because it has no body to fail
+    /// in), then ambiguity, then the existing unknown-function error.
     pub(crate) fn check_function_call(&mut self, name: &str, args: &[Expr]) {
         let providers = self.imported_providers(name);
         if self.is_local_function(name) {
@@ -140,6 +171,13 @@ impl Analyzer {
         }
     }
 
+    /// Arity and argument-type validation for a call to an imported function.
+    /// The arity message is the same one any Vox call gets. Type validation
+    /// is static-only: an argument whose category is provably incompatible
+    /// with the declared parameter type is an error (an import has no body
+    /// whose arithmetic check would catch it, so the call site is the only
+    /// place it can be caught); a dynamically-typed argument is trusted, as
+    /// it is for local calls.
     fn validate_import_call_args(
         &mut self,
         imp: &crate::lib_file::ImportedFunction,
@@ -184,6 +222,10 @@ impl Analyzer {
         }
     }
 
+    /// The provable type category of an argument expression, if there is one:
+    /// literals always, identifiers only when their tracked category is
+    /// definite. Anything dynamic (a `value`, a call result, an expression)
+    /// is `None` and skipped by the import type check.
     fn static_expr_category(&self, e: &Expr) -> Option<Type> {
         match e {
             Expr::IntegerLit(_) => Some(Type::Integer),
@@ -210,6 +252,10 @@ impl Analyzer {
         }
     }
 
+    /// Whether a statically-known argument category may go to a parameter of
+    /// the declared type. Booleans ride as numbers in the ABI (0/1) and file
+    /// parameters accept number-like handles, so the rejects are the true
+    /// category clashes: pointers where scalars are expected and the reverse.
     fn param_accepts(param: &Type, actual: &Type) -> bool {
         use Type::*;
         match param {

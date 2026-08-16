@@ -39,6 +39,33 @@ impl Analyzer {
         self.typo_candidates.insert(name.to_string());
     }
 
+    /// Core of `find_write_site_location`/`find_bind_site_location`: search
+    /// `patterns` in order, skipping `exclude_line` (the declaration, when
+    /// known) and requiring a left word boundary so a shorter name doesn't
+    /// match as a suffix of a longer one (symbol "x", pattern "x is "
+    /// matching inside "max is " - each pattern's own trailing space
+    /// already enforces the right boundary). `guard_against_called`
+    /// additionally excludes a match immediately preceded by "called " -
+    /// the canonical declaration syntax `a <type> called X is <value>.`
+    /// contains `X is ` right after it, so an "X is "-shaped pattern needs
+    /// this guard as a second line of defence alongside `exclude_line`
+    /// (which only covers the *recorded* declaration line, e.g. if a
+    /// declaration and something else ever shared one line). A
+    /// construct-specific pattern that legitimately targets "called X"
+    /// itself (`FileOpen`'s own syntax) must pass `false` here so it does
+    /// not exclude its own match.
+    /// Search `patterns` (each expected to contain `symbol` as a
+    /// substring) for the statement that binds/writes `symbol`, returning
+    /// the location of `symbol` itself within the match - not the
+    /// pattern's own start. That distinction matters: a pattern like
+    /// `"Set {symbol} to "` has the symbol sitting *inside* it, offset by
+    /// `len("Set ")`, so anchoring on the pattern's start would draw the
+    /// caret under `Set` while claiming to point at the variable. Boundary
+    /// checks (word boundary on both sides of `symbol`, and optionally
+    /// "not immediately preceded by `called `") are applied around the
+    /// symbol's own span for the same reason - a boundary check anchored on
+    /// the pattern's start protects the wrong substring whenever the symbol
+    /// isn't at offset 0.
     pub(crate) fn find_pattern_location(
         &self,
         symbol: &str,
@@ -85,6 +112,13 @@ impl Analyzer {
         None
     }
 
+    /// Like `find_symbol_location`, but for pointing at the specific
+    /// statement that *writes* to `symbol` (`Set symbol to ...` / `symbol is
+    /// ...` / `the symbol is ...`), not just any occurrence of the name.
+    /// `find_symbol_location`'s own preference order (`{symbol` first, for
+    /// format-string interpolation) is wrong here: a name that also appears
+    /// in an unrelated `Print "{n}"` elsewhere in the file would anchor the
+    /// type-lock error there instead of at the offending assignment.
     pub(crate) fn find_write_site_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
         let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
         let write_patterns = [
@@ -96,6 +130,14 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
+    /// Like `find_write_site_location`, for a statement that *binds* `name`
+    /// through some construct-specific syntax rather than `is`/`to`
+    /// (a for-range/for-each loop header, `open ... called X`, `Allocate N
+    /// for X`). `patterns` are the construct's own syntax fragments
+    /// (e.g. `"each {name} "`, `"called {name} "`); `guard_against_called`
+    /// should be `false` when a pattern itself targets `"called X"`; a
+    /// caller doing that must instead disambiguate the declaration via
+    /// `exclude_line`.
     pub(crate) fn find_bind_site_location(
         &self,
         symbol: &str,
@@ -108,6 +150,16 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
+    /// Where `name` was declared, for `declared_locations`. Deliberately
+    /// does NOT use `find_symbol_location`: that function prefers `{name`
+    /// (format-string interpolation) as its first pattern, which is right
+    /// for "where is this name used" but wrong here - a `Print "{src}"`
+    /// anywhere in the file would outrank the actual `a text called src
+    /// is ...` declaration, since interpolation is usually textually
+    /// earlier or just as likely to hit occurrence 0. Tries the `called
+    /// NAME` declaration syntax first (typed declarations, `Allocate`,
+    /// `FileOpen`, ...), then falls back to bare/loop-header forms that
+    /// have no `called` keyword at all (`NAME is <value>.`, `each NAME `).
     pub(crate) fn find_declaration_location(&self, name: &str) -> Option<SourceLocation> {
         let called_patterns = [format!("called {} is", name), format!("called {} ", name)];
         self.find_pattern_location(name, &called_patterns, 0, None, false)
@@ -342,6 +394,10 @@ impl Analyzer {
         self.map_variables.contains(name)
     }
 
+    /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
+    /// flag, or a unix timestamp) rather than a pointer or handle. Number
+    /// and time properties read the raw slot, so applying them to a
+    /// buffer/list/file/timer loads a pointer or fd and yields garbage.
     pub(crate) fn is_scalar_variable(&self, name: &str) -> bool {
         !self.is_buffer_variable(name)
             && !self.is_list_variable(name)
