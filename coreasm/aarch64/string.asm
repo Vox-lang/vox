@@ -1,4 +1,4 @@
-; string.asm - String operations for English Compiler
+; string.asm - String operations for Vox
 
 section .text
 

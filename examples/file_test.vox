@@ -4,7 +4,7 @@ a buffer called data is 256 bytes in size.
 
 print "Creating and writing to file...".
 open a file for writing called output at "./test_output.txt".
-Write "Hello from English Compiler!" to output.
+Write "Hello from Vox!" to output.
 Write a newline to output.
 Write "This is line 2." to output.
 Close the output.

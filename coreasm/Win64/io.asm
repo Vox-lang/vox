@@ -1,4 +1,4 @@
-; io_win64.asm - Input/Output macros for English Compiler (Windows 11 / x64)
+; io_win64.asm - Input/Output macros for Vox (Windows 11 / x64)
 ; NASM syntax, COFF64 output (nasm -f win64)
 
 %define crlf 1
