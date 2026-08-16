@@ -43,6 +43,28 @@ adheres to [Semantic Versioning](https://semver.org/).
   `plan_303_function_call_return_type_scoped_per_library`,
   `plan_303_local_declared_type_conflict_stays_unknown`.
 
+- **A string literal's content was silently resolved against known variable
+  (or top-level constant) names at codegen time** (BUGS_FOUND #19). The
+  crash form: `a text called x is "x".` reads `x`'s own not-yet-written slot
+  instead of the literal (its declared type is registered before its
+  initializer is generated), segfaulting on first use. The much wider,
+  silent form: `a text called greeting is "hello". a text called b is
+  "greeting". Print b.` printed `hello`, not `greeting` — any literal whose
+  text coincides with any in-scope variable's name, in an initializer or a
+  bare `Print "literal".`, silently took that variable's value instead, and
+  a literal matching a `float`/`buffer` variable's name could flip an `is a`
+  type predicate or an equality comparison's codegen strategy. Every
+  `Expr::StringLit` codegen site now treats its payload as text
+  unconditionally, with no variable-table or constant-table lookup on its
+  content — matching LANGUAGE.md's post-0.3.0 rule that a double-quoted
+  token is data everywhere, never a name. Identifier-based resolution (bare
+  and single-quoted names, map lookups, `{name}` format-string
+  interpolation) is unchanged. Regression tests:
+  `tests/bugs_found_19_self_name_initializer.vox`,
+  `tests/bugs_found_19_other_name_initializer.vox`,
+  `tests/bugs_found_19_other_name_print_direct.vox`,
+  `tests/bugs_found_19_predicate.vox`.
+
 ### Documentation
 
 - **Documented how to close more than one level of nesting.** A period closes

@@ -812,15 +812,16 @@ guard still passes unchanged).
 
 ---
 
-### 19. A scalar declared with an initializer literal equal to its own name reads its own uninitialised slot instead of the literal
+### 19. A string literal's content resolved against known variable names at codegen time — crash on self-name collision, silent wrong data on any other collision
 
-**Status: open.** Found 2026-08-16 while isolating bug #17: the plan's own
-Phase 1 repro used a variable named `x` initialized to the string `"x"`, and
-segfaulted for a *second*, unrelated reason once #17's actual defect (wrong
-element type tag on an appended format string) was fixed. Not list- or
-format-string-specific — the minimal repro is two lines with no list, buffer,
-or interpolation involved at all:
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while isolating
+bug #17: the plan's own Phase 1 repro used a variable named `x` initialized
+to the string `"x"`, and segfaulted for a *second*, unrelated reason once
+#17's actual defect (wrong element type tag on an appended format string)
+was fixed. Not list- or format-string-specific — plan 304 found two
+manifestations, one far worse than the other.
 
+**Crash, self-name collision** (the original finding):
 ```vox
 a text called x is "x".
 Print x.
@@ -829,62 +830,81 @@ Print x.
 Segmentation fault (exit 139)
 ```
 
-Nothing is printed before the crash. Renaming either side so they no longer
-match (`a text called greeting is "hello".`) makes the identical shape print
-correctly, which is what isolates the collision as the cause rather than
-anything about declaring or printing a `text`.
+**Silent wrong data, any-other-name collision** (escalation found while
+scoping the fix — no crash, no diagnostic, just the wrong value):
+```vox
+a text called greeting is "hello".
+a text called b is "greeting".
+Print b.
+```
+prints `hello`, not `greeting`. Every program is affected the moment a
+string literal's content coincides with *any* in-scope variable name — an
+ordinary thing for real programs to do (`"count"`, `"line"`, `"name"`, …).
+The same substitution happened for a literal used directly in a `Print`
+statement (`Print "greeting".` also printed `hello`), and could silently
+flip a `is a float`/`is a buffer` type predicate's answer when a literal's
+text happened to match a same-typed variable's name.
 
-**Root cause.** `Statement::VarDecl` codegen registers the declared
-variable's type — and, for a global, allocates its BSS mirror label — into
-`self.variable_types`/`self.global_var_label` *before* generating the
-initializer expression (`src/codegen/mod.rs`, the `Statement::VarDecl` arm,
-around the `self.variable_types.insert(name.clone(), vt)` line, which runs
-ahead of the `if let Some(val) = value { ... self.generate_expr(val) ... }`
-block that follows it). Separately, `Expr::StringLit`'s codegen arm in
-`generate_expr` does not treat its payload as string data unconditionally —
-it first calls `emit_load_named_var_into_rax(s)`, which checks whether `s`
-(the literal's *text content*) matches a currently-known variable name, and
-if so emits a variable load instead of materializing the literal bytes. For
-`a text called x is "x".`, by the time the initializer `"x"` is generated,
-`x` is already a known variable (just registered, one line above, with an
-as-yet-unwritten slot). `emit_load_named_var_into_rax("x")` finds it and
-loads `x`'s own slot — which is BSS-zeroed / stack-garbage at this point,
-not a valid string pointer — instead of emitting `lea rax, [rel <label for
-the literal "x">]`. The declaration then stores that null/garbage payload
-back into `x`, and the later `Print x.` dereferences it.
+**Root cause.** `Expr::StringLit`'s codegen did not treat its payload as
+string data unconditionally — several sites checked whether the literal's
+own *text content* matched a currently-known variable name (or, in one
+case, a folded top-level constant's name) and substituted that instead of
+materializing the literal bytes:
 
-**The tension.** LANGUAGE.md's *Naming Rules* section states this
-unconditionally: "A name is an **identifier**, never a string literal,"
-and rule 1 under it: "`\"...\"` is never an identifier, in any position.
-Where an identifier is expected and a string literal is found, that is a
-compile error." The *Names and strings* section right after it recounts why:
-before v0.3.0 a double-quoted token was read as string-literal-or-identifier
-depending on position, that overload caused silent wrong answers (a variable
-receiving a function pointer instead of a call result, printed as a number,
-no error), and v0.3.0 explicitly split the two so a double-quoted token is
-"a string literal everywhere." That split is real at the grammar/parser
-level — the language does reject `"..."` in identifier position at parse
-time. But `emit_load_named_var_into_rax`'s use inside the `Expr::StringLit`
-codegen arm re-introduces exactly the pre-0.3.0 disambiguation *at codegen
-time*, on the string literal's own content, for every `Expr::StringLit`
-generated as an expression's value — not just the cases the parser
-legitimately treats as name references. A `StringLit` that reaches codegen
-has already been through the parser and, per the Naming Rules, is data, not
-a name; the codegen should never re-open that question by comparing its
-bytes against the variable table. This entry does not change any code for
-it — filed for a future pass to either justify the codegen-level check with
-a narrower guard (e.g. only when the parser marked this specific `StringLit`
-as a resolved name reference) or remove it in favor of trusting the parser's
-already-settled classification.
+- `generate_expr`'s `Expr::StringLit` arm called `emit_load_named_var_into_rax(s)`
+  before falling back to the literal — the direct cause of both repros above
+  (for the self-name case, `x` is already a registered variable with an
+  unwritten slot by the time its own initializer is generated, per
+  `Statement::VarDecl` registering the declared type/BSS label *before*
+  generating the initializer expression; the load reads that
+  not-yet-written slot instead of the literal).
+- `generate_print`'s `Expr::StringLit` arm did the same, *plus* a second,
+  independent fallback to `emit_global_constant_format_fallback(s, None)` —
+  a lookup of `s` against `self.global_constants` (top-level literal-valued
+  declarations) — reached whenever the first check failed. Removing only the
+  first check would have left this second one to reproduce the exact same
+  bug through a different table; both had to go.
+- `is_float_expr`, `is_buffer_expr`, and `has_float_operands` each consulted
+  `quoted_name_var_type(s)` (a thin wrapper over the same variable tables)
+  to decide these predicates for a `StringLit`, so a literal spelled like a
+  float/buffer variable could flip a type check or pick the wrong equality
+  comparison strategy.
+- `infer_expr_type`'s `Expr::StringLit` arm called the same
+  `quoted_name_var_type` as a first-choice override before its `Some(VarType::String)`
+  fallback.
 
-Not yet investigated: whether this reaches beyond `text` (the buggy
-`emit_load_named_var_into_rax` fallback is generic, so any scalar type whose
-initializer literal happens to equal its own declared name is a plausible
-candidate — `number`, `boolean`, etc. — untested); whether it reproduces for
-a function-local declaration as well as the top-level/global case shown
-here; and whether other `Expr::StringLit`-consulting call sites across
-codegen (the `Expr::StringLit(name) | Expr::Identifier(name)` pattern
-recurs throughout `src/codegen/mod.rs`) have the same or a related exposure.
+**The tension (why this was a violation, not a feature).** LANGUAGE.md's
+*Naming Rules* section states this unconditionally: "A name is an
+**identifier**, never a string literal," and rule 1 under it: "`\"...\"` is
+never an identifier, in any position. Where an identifier is expected and a
+string literal is found, that is a compile error." The *Names and strings*
+section recounts why: before v0.3.0 a double-quoted token was read as
+string-literal-or-identifier depending on position, that overload caused
+silent wrong answers (a variable receiving a function pointer instead of a
+call result, printed as a number, no error), and v0.3.0 explicitly split the
+two so a double-quoted token is "a string literal everywhere." That split
+was real at the grammar/parser level, but every codegen site above
+re-introduced the identical pre-0.3.0 disambiguation *after* parsing, on the
+literal's own bytes — not on anything the parser had marked as a name
+reference. A `StringLit` reaching any of these sites had already been
+through the parser and, per the Naming Rules, was data, not a name up for
+re-negotiation.
+
+**Fix.** All five sites now treat `Expr::StringLit` as text, unconditionally
+— no variable-table or constant-table lookup on its content. `quoted_name_var_type`
+and `emit_global_constant_format_fallback` are deleted (the fix removed
+every call site of each). `emit_load_named_var_into_rax` and
+`self.global_constants` themselves are untouched and still used correctly
+elsewhere for genuine identifier/`{name}`-interpolation resolution (map
+key/value access by the map variable's own name, a `Print` of a plain
+`Expr::Identifier`, and `{name}` format-string interpolation, which is a
+name by construction of the `{...}` syntax, never an ambiguous literal).
+No existing test relied on the removed behaviour — the full suite passed
+unchanged after the removal. Regression tests:
+`tests/bugs_found_19_self_name_initializer.vox`,
+`tests/bugs_found_19_other_name_initializer.vox`,
+`tests/bugs_found_19_other_name_print_direct.vox`,
+`tests/bugs_found_19_predicate.vox`.
 
 ---
 

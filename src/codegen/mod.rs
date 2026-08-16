@@ -1559,17 +1559,6 @@ impl CodeGenerator {
         }
     }
 
-    fn quoted_name_var_type(&self, name: &str) -> Option<VarType> {
-        self.variable_types
-            .get(name)
-            .cloned()
-            .or_else(|| {
-                self.global_var_label(name)
-                    .map(|_| self.variable_types.get(name).cloned().unwrap_or(VarType::Unknown))
-            })
-            .filter(|t| *t != VarType::Unknown)
-    }
-    
     fn emit_function_call(&mut self, name: &str, args: &[Expr]) {
         let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 
@@ -2195,37 +2184,12 @@ impl CodeGenerator {
         let _ = next_check_label;
     }
 
-    fn emit_global_constant_format_fallback(&mut self, name: &str, format: Option<&String>) -> bool {
-        let Some(expr) = self.global_constants.get(name).cloned() else {
-            return false;
-        };
-
-        match expr {
-            Expr::StringLit(s) => {
-                let label = self.add_string(&s);
-                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
-                true
-            }
-            Expr::IntegerLit(n) => {
-                self.emit_indent(&format!("mov rdi, {}", n));
-                let fmt_spec = self.parse_format_spec(format.map(|s| s.as_str()));
-                self.emit_formatted_value(Some(VarType::Integer), fmt_spec);
-                true
-            }
-            Expr::BoolLit(b) => {
-                self.emit_indent(&format!("mov rdi, {}", if b { 1 } else { 0 }));
-                let fmt_spec = self.parse_format_spec(format.map(|s| s.as_str()));
-                self.emit_formatted_value(Some(VarType::Integer), fmt_spec);
-                true
-            }
-            _ => false,
-        }
-    }
-    
     fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
             Expr::FloatLit(_) => true,
-            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Float),
+            // A string literal is text, unconditionally - never resolved
+            // against a same-spelled variable's type (BUGS_FOUND #19).
+            Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
@@ -2255,7 +2219,9 @@ impl CodeGenerator {
 
     fn is_buffer_expr(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Buffer),
+            // A string literal is text, unconditionally - never resolved
+            // against a same-spelled variable's type (BUGS_FOUND #19).
+            Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Buffer)
             }
@@ -2360,7 +2326,9 @@ impl CodeGenerator {
     fn has_float_operands(&self, expr: &Expr) -> bool {
         match expr {
             Expr::FloatLit(_) => true,
-            Expr::StringLit(s) => self.quoted_name_var_type(s) == Some(VarType::Float),
+            // A string literal is text, unconditionally - never resolved
+            // against a same-spelled variable's type (BUGS_FOUND #19).
+            Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
@@ -6476,56 +6444,17 @@ impl CodeGenerator {
                 return;
             }
             
+            // A string literal prints its own bytes, unconditionally - its
+            // content is never resolved against a same-spelled variable or
+            // global constant (BUGS_FOUND #19). The `emit_global_constant_-
+            // format_fallback` call this arm used to make on `s` was the
+            // same violation through a second mechanism: `s` is data that
+            // happens to have been typed by the author, not a name lookup
+            // key, even when it coincides with a folded top-level constant's
+            // name.
             Expr::StringLit(s) => {
-                // Check if this string literal is actually a variable reference
-                if self.emit_load_named_var_into_rax(s) {
-                    self.emit_indent("mov rdi, rax");
-                    let var_type = self.variable_types.get(s).cloned();
-                    match var_type {
-                        Some(VarType::Mixed) => {
-                            if let Some(loc) = self.mixed_element_tag_slot(value) {
-                                self.emit_indent(&format!(
-                                    "movzx r11, byte {}  ; element's runtime type tag",
-                                    loc.operand()
-                                ));
-                                self.emit_mixed_print_dispatch("r11");
-                            } else {
-                                self.emit_indent("PRINT_INT rdi");
-                            }
-                        }
-                        Some(VarType::Buffer) => {
-                            self.emit_indent("PRINT_BUF rdi");
-                        }
-                        Some(VarType::String) => {
-                            self.emit_indent("PRINT_CSTR rdi");
-                        }
-                        Some(VarType::Float) => {
-                            self.emit_indent("movq xmm0, rdi");
-                            self.emit_indent("PRINT_FLOAT");
-                            self.uses_floats = true;
-                        }
-                        Some(VarType::List) => {
-                            // String literal that is actually a list variable
-                            // reference - render the whole list.
-                            self.uses_lists = true;
-                            self.emit_indent("call _list_print");
-                        }
-                        Some(VarType::Map) => {
-                            // String literal that is actually a map variable
-                            // reference - render the whole map. (stage 1e2)
-                            self.uses_maps = true;
-                            self.emit_indent("call _map_print");
-                        }
-                        _ => {
-                            self.emit_indent("PRINT_INT rdi");
-                        }
-                    }
-                } else {
-                    if !self.emit_global_constant_format_fallback(s, None) {
-                        let label = self.add_string(s);
-                        self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
-                    }
-                }
+                let label = self.add_string(s);
+                self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
             }
             
             Expr::IntegerLit(n) => {
@@ -6902,13 +6831,12 @@ impl CodeGenerator {
                 self.emit_indent("xor rax, rax  ; nothing literal, payload 0 (tag 6 set by caller)");
             }
             
+            // A string literal materializes its own bytes, unconditionally -
+            // its content is never resolved against a same-spelled variable
+            // (BUGS_FOUND #19).
             Expr::StringLit(s) => {
-                // Check if this string literal is actually a variable reference
-                if self.emit_load_named_var_into_rax(s) {
-                } else {
-                    let label = self.add_string(s);
-                    self.emit_indent(&format!("lea rax, [rel {}]", label));
-                }
+                let label = self.add_string(s);
+                self.emit_indent(&format!("lea rax, [rel {}]", label));
             }
             
             Expr::Identifier(name) => {
@@ -8874,7 +8802,9 @@ impl CodeGenerator {
         match expr {
             Expr::IntegerLit(_) => Some(VarType::Integer),
             Expr::FloatLit(_) => Some(VarType::Float),
-            Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
+            // A string literal is text, unconditionally - never resolved
+            // against a same-spelled variable's type (BUGS_FOUND #19).
+            Expr::StringLit(_) => Some(VarType::String),
             // A format string always materializes text (bug #17): its
             // interpolated parts affect the bytes, never the result type.
             Expr::FormatString { .. } => Some(VarType::String),
