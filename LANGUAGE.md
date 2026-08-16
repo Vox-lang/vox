@@ -131,7 +131,7 @@ In the example above, the period after the inner `if` closes only that `if`. The
 
 Two rules govern where a construct's body ends, and together they explain everything above precisely:
 
-1. **A period closes the most recently opened clause** — the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`.
+1. **A period closes the most recently opened clause** — the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`. One period closes one level; to close more than one, write more than one — see [Closing more than one level](#closing-more-than-one-level).
 2. **A blank line (paragraph break) force-closes every open clause at once** — including an enclosing function definition. Think of nested HTML `<div>`s: a paragraph boundary closes all of them together, the same way you would never continue a single sentence across a paragraph break in English.
 
 ```
@@ -187,6 +187,74 @@ While retries is less than 3,
 
     increment retries.
 ```
+
+### Closing more than one level
+
+Rule 1 closes exactly one level, and rule 2 closes all of them. When you are nested several levels deep and want to come back up **some** of the way, **periods stack: write one period per level you want to close.**
+
+```
+(Three nested ifs, so three periods to get all the way back out)
+a number called n is 0.
+If n is equal to 1 then,
+    If n is equal to 1 then,
+        If n is equal to 1 then, print "innermost"...
+print "back at the top".
+```
+
+This prints `back at the top`. The three periods close the innermost `if`, then the middle one, then the outer one, so `print "back at the top".` runs at the top level. Written with one period or two, it would still be inside an `if` whose condition is false, and would print nothing at all — with no error.
+
+Indentation is **not** what decides this. Vox ignores leading whitespace entirely, so a program can be minified without changing its meaning; the period count is the only thing that closes a clause.
+
+#### This is how you choose which `if` an `Otherwise` belongs to
+
+An `Otherwise` (or `But if`) continues the innermost `if` that is still open. Closing that `if` first is therefore how you hand the `Otherwise` to an enclosing one. These two programs differ by a **single character** and behave differently:
+
+```
+(ONE period: the Otherwise belongs to the INNER if)
+a number called m is 5.
+If m is equal to 1 then,
+    If m is equal to 2 then,
+        print "inner then".
+    Otherwise,
+        print "outer else".
+
+Print "done".
+```
+
+prints only `done`. The `Otherwise` continued the inner `if`, so the whole construct sits inside `If m is equal to 1`, which is false — nothing in it runs.
+
+```
+(TWO periods: the inner if is closed, so the Otherwise belongs to the OUTER one)
+a number called m is 5.
+If m is equal to 1 then,
+    If m is equal to 2 then,
+        print "inner then"..
+    Otherwise,
+        print "outer else".
+
+Print "done".
+```
+
+prints `outer else` then `done`, which is what the indentation in both versions suggests — but only the second one actually says it.
+
+An empty `Otherwise,.` closes an inner chain the same way and is easier to read than a run of periods, since it names the thing being closed instead of asking you to count:
+
+```
+(Same result as two periods, spelled out instead of counted)
+a number called m is 5.
+If m is equal to 1 then,
+    If m is equal to 2 then,
+        print "inner then".
+    Otherwise,.
+    Otherwise,
+        print "outer else".
+
+Print "done".
+```
+
+This also prints `outer else` then `done`. The first `Otherwise,.` takes the inner `if`'s else branch and does nothing with it, which closes that chain; the second one is then free to continue the outer `if`.
+
+**Get the count wrong and nothing tells you.** Too few periods and the following statements are absorbed into a clause you thought you had left; too many and they escape one you meant to stay in. Either way the program still compiles and still runs. If a branch never seems to execute, or a loop that should finish hangs instead, count the periods between it and the construct it belongs to — and remember the hanging case is the same one described above under rule 2: the absorbed statement is the loop's own increment.
 
 ### Ranges
 

@@ -1,5 +1,14 @@
 # BUGS_FOUND #12 — CONFIRMED, with a minimal repro
 
+> **SUPERSEDED.** The conclusion below — that this is a defect needing a
+> parser change — is **wrong**. Periods stack: one period closes one open
+> clause, so N periods close N levels, and that is how an author chooses
+> which `if` an `Otherwise` continues. The compiler was correct throughout;
+> what was missing was documentation. See LANGUAGE.md, *Closing more than one
+> level*, and the #12 entry in `BUGS_FOUND.md`. The reproductions in this
+> document are accurate and still worth reading; every conclusion drawn from
+> them is not. Retained as a record of the mistake.
+
 **Status:** confirmed 2026-08-15 against `main` at v0.3.6 (post-merge of
 PR #143, i.e. with the #14 chain-termination fix already in). **Not fixed.**
 Not a regression from the 0.3.6 work — the original reporter hit it on 0.3.5.

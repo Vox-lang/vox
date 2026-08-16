@@ -317,23 +317,59 @@ just a different trigger.
 
 ### 12. A nested if/but-if chain with no trailing `Otherwise`, as the last action in an outer branch, silently breaks everything after it
 
-**Status: CONFIRMED, still open as of v0.3.6.** Reproduced 2026-08-15 against
-`main` with a minimal case — see
-[`docs/FINDINGS-bug12-confirmed.md`](FINDINGS-bug12-confirmed.md) for the
-repro, the narrowing, and the design options. Shape A reproduces exactly as
-described: the program hangs forever, printing nothing, and adding an
-`Otherwise` to the *inner* chain fixes it outright.
+**Status: NOT A COMPILER DEFECT — documentation gap, documented in v0.3.7.**
+The reported behaviour is real and reproduces exactly as described, but the
+compiler is behaving correctly and consistently throughout. What was missing
+was any written account of how to close more than one level of nesting.
 
-The underlying defect is broader than a missing `Otherwise`: a nested
-construct as the last action of an outer `if … then,` branch leaves that outer
-branch open, and it keeps consuming following statements — through the rest of
-the loop body and *past the enclosing loop*. The hang is a consequence of the
-loop's own increment being swallowed. Not a regression from 0.3.6; the
-original report is against 0.3.5.
+**Periods stack: one period closes one open clause, so N periods close N
+levels.** Nothing else was ever needed. Three nested `if`s take three periods
+to leave all three:
 
-An earlier assessment in this session recorded #12 as unreproducible. That was
-wrong — only Shape B had been tested. The findings document explains how the
-mistake happened.
+```
+a number called n is 0.
+If n is equal to 1 then,
+    If n is equal to 1 then,
+        If n is equal to 1 then, print "innermost"...
+print "back at the top".
+```
+
+This is also how an author chooses which `if` an `Otherwise` belongs to. An
+`Otherwise` continues the innermost `if` still open, so closing that `if`
+first hands the `Otherwise` to the enclosing one — a **one character**
+difference:
+
+| inner branch ends with | the following `Otherwise` continues |
+|---|---|
+| `print "inner then".` | the **inner** `if` |
+| `print "inner then"..` | the **outer** `if` |
+
+An empty `Otherwise,.` closes an inner chain the same way and reads better
+than counting periods.
+
+So the reporter's original program was simply under-punctuated: adding one
+period, or giving the inner chain its own `Otherwise`, makes it behave as
+intended. No binding rule was wrong and no parse was incorrect.
+
+The genuine problem is that **miscounting fails silently** — too few periods
+and following statements are absorbed into a clause you thought you had left;
+if one of them is a loop's increment, the loop hangs with no output and no
+error. That failure mode is inherent to rule 1 and is the same one already
+documented for blank lines under rule 2; it is not specific to `Otherwise`.
+
+Fixed by documentation: see LANGUAGE.md, *Closing more than one level*, and
+the regression test `tests/nested_clause_close_levels.vox`.
+
+**Two earlier assessments in this session were wrong** and are recorded here
+so the reasoning is not repeated. The first called #12 unreproducible, having
+tested only Shape B. The second called it a parser defect — "one OPEN but two
+CLOSEs when nested" — and a fix was drafted to make a chain keyword bind to
+the innermost *still-open* clause. That rule is incorrect: it makes ordinary
+two-level `if`/`Otherwise` nesting a compile error, failing 420 of 896
+generated branching programs against 90 for the shipped compiler. Both errors
+came from generalising off a handful of hand-built cases instead of the
+grammar. `docs/FINDINGS-bug12-confirmed.md` reflects the superseded second
+assessment and is retained only as a record of it.
 
 ---
 

@@ -4,6 +4,25 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Documentation
+
+- **Documented how to close more than one level of nesting.** A period closes
+  one open clause and a blank line closes every open clause, but nothing
+  described the space between them: periods stack, so N periods close N
+  levels. This is also how an author chooses which `if` an `Otherwise` or
+  `But if` continues — an else-chain continues the innermost `if` still open,
+  so closing that `if` first hands the branch to the enclosing one, a
+  one-character difference in the source. Undocumented, this was easy to get
+  wrong in a way that produces no error: too few periods and following
+  statements are absorbed into a clause the author believed was closed, and
+  if one of them is a loop's increment the program hangs silently. LANGUAGE.md
+  gains a *Closing more than one level* section with worked examples at one,
+  two and three periods, the equivalent empty `Otherwise,.` form, and
+  `tests/nested_clause_close_levels.vox` pins the behaviour. No compiler
+  change: the parser was correct throughout.
+
 ## [0.3.6] - 2026-08-14
 
 ### Added
