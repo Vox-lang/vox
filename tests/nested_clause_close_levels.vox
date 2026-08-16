@@ -1,0 +1,21 @@
+a number called n is 0.
+If n is equal to 1 then,
+    If n is equal to 1 then,
+        If n is equal to 1 then, print "innermost"...
+print "back at the top".
+
+a number called m is 5.
+If m is equal to 1 then,
+    If m is equal to 2 then,
+        print "inner then"..
+    Otherwise,
+        print "outer else".
+
+If m is equal to 1 then,
+    If m is equal to 2 then,
+        print "inner then".
+    Otherwise,.
+    Otherwise,
+        print "closed by empty otherwise".
+
+Print "done".

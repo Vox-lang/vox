@@ -1,0 +1,4 @@
+a float called pi is 3.5.
+a text called b is "pi".
+If b is a float, print "wrong: treated as float".
+Otherwise, print "correct: text".

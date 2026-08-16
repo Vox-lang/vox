@@ -1,0 +1,5 @@
+a list called out is [].
+a text called greeting is "hello".
+append "fmt {greeting}" to out.
+a text called t is element 1 of out.
+Print t.

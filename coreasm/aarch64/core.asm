@@ -1,4 +1,4 @@
-; core.asm - Core macros for English Compiler
+; core.asm - Core macros for Vox
 ; Always included - provides essential functionality
 
 %ifdef SHARED_LIB

@@ -1,4 +1,4 @@
-; io.asm - Input/Output macros for English Compiler
+; io.asm - Input/Output macros for Vox
 
 section .data
     newline_char: db 10

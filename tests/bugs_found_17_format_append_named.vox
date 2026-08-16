@@ -1,0 +1,5 @@
+a list called out is [].
+a text called greeting is "hi".
+a text called tok is "fmt {greeting}".
+append tok to out.
+Print the out.

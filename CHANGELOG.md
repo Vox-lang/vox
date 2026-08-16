@@ -4,6 +4,141 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.7] - 2026-08-16
+
+### Changed
+
+- **`begin`, `stop`, and `finish` are no longer reserved words.** They now
+  behave exactly like `start` always did: the parser claims them for a timer
+  statement only when a name operand follows (`Start the t.`, `stop t.`),
+  and everywhere else they are ordinary identifiers — `a number called stop
+  is 0.` now compiles instead of being rejected as a reserved keyword. The
+  timer dispatch also gained that one-token lookahead for all four words, so
+  a program can define and call its own zero-argument `start.`/`stop.`
+  function; previously a bare `start.` was swallowed by the timer parser and
+  died with "Expected timer name". Strictly widening: no previously-valid
+  program changes meaning.
+
+- **The compiler source is reorganised into focused modules.** Each
+  compilation phase was a single very large `mod.rs` — codegen 11,061 lines,
+  parser 7,224, analyzer 4,032, lexer 1,091 — which made the code hard to
+  navigate, review, and contribute to. Every phase is now a directory of
+  topical modules (for example `codegen/expr.rs`, `codegen/tags.rs`,
+  `parser/control_flow.rs`, `analyzer/scope.rs`), with `mod.rs` reduced to
+  the phase's type, shared constants, and module declarations: 494, 205, 200,
+  and 52 lines respectively. This is **pure code motion — no behaviour
+  change**. Every step was verified by compiling the whole example and test
+  corpus and confirming the emitted assembly stayed byte-identical to the
+  pre-refactor compiler's, alongside the full test suite. Nothing about the
+  language, the CLI, or any public interface changes; the difference is
+  purely that the source is now navigable.
+
+### Fixed
+
+- **Appending a format string to a list stored a corrupt element** (BUGS_FOUND
+  #17). `append "fmt {x}" to out.` — and a `text` local initialized from a
+  format string and appended by name — wrote the element's runtime type tag
+  as plain integer instead of text, because neither the pre-scan nor the
+  emit-time tag selector recognised `Expr::FormatString` as always producing
+  text. Reading the corrupted element (whole-list print, `element N of`, or
+  `for each`) then reinterpreted a valid string pointer as an integer:
+  sometimes a raw pointer address printed in place of the text, sometimes a
+  crash, depending on what surrounding code did with the misread value. Fixed
+  by teaching both the pre-scan (`prescan_expr_tag`) and the emit-time
+  fallback (`infer_expr_type`) that a format string is always `text`.
+  Regression tests: `tests/bugs_found_17_format_append_text.vox`,
+  `tests/bugs_found_17_format_append_number.vox`,
+  `tests/bugs_found_17_format_append_buffer.vox`,
+  `tests/bugs_found_17_format_append_named.vox`,
+  `tests/bugs_found_17_element_access.vox`, `tests/bugs_found_17_for_each.vox`,
+  plus three codegen unit tests pinning the tag write and the no-spurious-
+  widening behaviour.
+
+- **The `.lib` table of contents under-reported list element types for
+  provably-`text` elements** (BUGS_FOUND #18). A `--shared` build's element-
+  type scan credited only a direct literal or a parameter's declared type,
+  so a `text` local's declared type, a called function's declared `text`
+  return, and a format-string append (once #17 made the element itself
+  sound) all shipped as plain `list` instead of `list of text`, even though
+  the runtime tagger already agreed on `text` and consumers already printed
+  correctly. The scan now credits all three. A genuinely mixed or
+  evidence-free list is unaffected — still plain `list`. Regression tests:
+  `plan_303_local_declared_type_credits_element_parameter`,
+  `plan_303_call_declared_return_type_credits_element_parameter`,
+  `plan_303_format_string_credits_element_parameter`,
+  `plan_303_newly_credited_shapes_in_return_position`,
+  `plan_303_function_call_return_type_scoped_per_library`,
+  `plan_303_local_declared_type_conflict_stays_unknown`.
+
+- **A string literal's content was silently resolved against known variable
+  (or top-level constant) names at codegen time** (BUGS_FOUND #19). The
+  crash form: `a text called x is "x".` reads `x`'s own not-yet-written slot
+  instead of the literal (its declared type is registered before its
+  initializer is generated), segfaulting on first use. The much wider,
+  silent form: `a text called greeting is "hello". a text called b is
+  "greeting". Print b.` printed `hello`, not `greeting` — any literal whose
+  text coincides with any in-scope variable's name, in an initializer or a
+  bare `Print "literal".`, silently took that variable's value instead, and
+  a literal matching a `float`/`buffer` variable's name could flip an `is a`
+  type predicate or an equality comparison's codegen strategy. Every
+  `Expr::StringLit` codegen site now treats its payload as text
+  unconditionally, with no variable-table or constant-table lookup on its
+  content — matching LANGUAGE.md's post-0.3.0 rule that a double-quoted
+  token is data everywhere, never a name. Identifier-based resolution (bare
+  and single-quoted names, map lookups, `{name}` format-string
+  interpolation) is unchanged. Regression tests:
+  `tests/bugs_found_19_self_name_initializer.vox`,
+  `tests/bugs_found_19_other_name_initializer.vox`,
+  `tests/bugs_found_19_other_name_print_direct.vox`,
+  `tests/bugs_found_19_predicate.vox`.
+
+- **Comparing a `text`/`buffer`/string literal to a `number`, `float`,
+  `boolean`, `list`, or `map` for equality dereferenced the non-stringy
+  operand as a string pointer** (BUGS_FOUND #20). `If "abc" is equal to 3.5
+  then, ...` segfaulted with no variable or name collision involved at all;
+  `list`/`map` operands didn't crash but gave a wrong answer via a suspected
+  out-of-bounds read. Pre-existing, but the #19 fix made it commonly
+  reachable: a literal that happens to share a variable's name (e.g. `"pi"
+  is equal to pi`) previously took a different, wrong-but-non-crashing path
+  by accident, and now correctly reaches this one. Comparing a stringy
+  operand against a *provably* non-stringy one now folds to a compile-time
+  constant (`is equal to` → false, `is not equal to` → true) without
+  evaluating either operand; `text`/`buffer` comparisons, and comparisons
+  involving a dynamic `value` operand, are unaffected. Regression tests:
+  `tests/bugs_found_20_no_collision.vox`, `tests/bugs_found_20_float_collision.vox`,
+  `tests/bugs_found_20_number_boolean_list.vox`, `tests/bugs_found_20_not_equal.vox`,
+  `tests/bugs_found_20_buffer_text_positive.vox`, `tests/bugs_found_20_return_position.vox`.
+
+- **`End` is no longer documented as a timer-stop spelling.** It never
+  worked: `end` lexes into the `exit` keyword family, so `End the t.` was a
+  parse error despite LANGUAGE.md listing it beside `Stop`/`Finish`. The
+  spelling list now matches the compiler.
+
+### Documentation
+
+- **Documented how to close more than one level of nesting.** A period closes
+  one open clause and a blank line closes every open clause, but nothing
+  described the space between them: periods stack, so N periods close N
+  levels. This is also how an author chooses which `if` an `Otherwise` or
+  `But if` continues — an else-chain continues the innermost `if` still open,
+  so closing that `if` first hands the branch to the enclosing one, a
+  one-character difference in the source. Undocumented, this was easy to get
+  wrong in a way that produces no error: too few periods and following
+  statements are absorbed into a clause the author believed was closed, and
+  if one of them is a loop's increment the program hangs silently. LANGUAGE.md
+  gains a *Closing more than one level* section with worked examples at one,
+  two and three periods, the equivalent empty `Otherwise,.` form, and
+  `tests/nested_clause_close_levels.vox` pins the behaviour. No compiler
+  change: the parser was correct throughout.
+
+- **A "Projects built with Vox" section in the README.** Lists actively
+  developed FOSS projects written in Vox, with an invitation to add yours by
+  emailing vox-lang@tegosec.com.
+
+- **A design document and implementation plan for the module split**
+  (`docs/MODULE_SPLIT_DESIGN.md`, `docs/plans/306_module_split.md`), recording
+  the strategy and the procedure the refactor below followed.
+
 ## [0.3.6] - 2026-08-14
 
 ### Added

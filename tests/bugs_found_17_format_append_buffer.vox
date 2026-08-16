@@ -1,0 +1,4 @@
+a list called out is [].
+a buffer called w is "buf".
+append "{w}" to out.
+Print the out.

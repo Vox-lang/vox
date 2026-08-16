@@ -1,4 +1,4 @@
-; string_win64.asm - String operations for English Compiler (Windows 11 / x64)
+; string_win64.asm - String operations for Vox (Windows 11 / x64)
 
 bits 64
 default rel

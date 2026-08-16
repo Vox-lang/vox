@@ -1,0 +1,4 @@
+a list called out is [].
+a number called k is 7.
+append "n {k}" to out.
+Print the out.

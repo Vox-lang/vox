@@ -290,6 +290,18 @@ Vox is under active development. Planned work includes:
 
 ---
 
+## Projects built with Vox
+
+Actively developed, free and open-source projects written in Vox:
+
+- **[voxos](https://github.com/TheJostler/voxos)** — a collection of utilities
+  and an init for a minimal operating system, written in pure Vox.
+
+Building something in Vox? We'd like this list to point to real, actively
+maintained FOSS projects — email **vox-lang@tegosec.com** to have yours added.
+
+---
+
 ## Non-Goals
 
 * Free-form natural language interpretation

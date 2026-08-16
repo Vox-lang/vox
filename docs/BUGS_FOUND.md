@@ -317,23 +317,59 @@ just a different trigger.
 
 ### 12. A nested if/but-if chain with no trailing `Otherwise`, as the last action in an outer branch, silently breaks everything after it
 
-**Status: CONFIRMED, still open as of v0.3.6.** Reproduced 2026-08-15 against
-`main` with a minimal case — see
-[`docs/FINDINGS-bug12-confirmed.md`](FINDINGS-bug12-confirmed.md) for the
-repro, the narrowing, and the design options. Shape A reproduces exactly as
-described: the program hangs forever, printing nothing, and adding an
-`Otherwise` to the *inner* chain fixes it outright.
+**Status: NOT A COMPILER DEFECT — documentation gap, documented in v0.3.7.**
+The reported behaviour is real and reproduces exactly as described, but the
+compiler is behaving correctly and consistently throughout. What was missing
+was any written account of how to close more than one level of nesting.
 
-The underlying defect is broader than a missing `Otherwise`: a nested
-construct as the last action of an outer `if … then,` branch leaves that outer
-branch open, and it keeps consuming following statements — through the rest of
-the loop body and *past the enclosing loop*. The hang is a consequence of the
-loop's own increment being swallowed. Not a regression from 0.3.6; the
-original report is against 0.3.5.
+**Periods stack: one period closes one open clause, so N periods close N
+levels.** Nothing else was ever needed. Three nested `if`s take three periods
+to leave all three:
 
-An earlier assessment in this session recorded #12 as unreproducible. That was
-wrong — only Shape B had been tested. The findings document explains how the
-mistake happened.
+```
+a number called n is 0.
+If n is equal to 1 then,
+    If n is equal to 1 then,
+        If n is equal to 1 then, print "innermost"...
+print "back at the top".
+```
+
+This is also how an author chooses which `if` an `Otherwise` belongs to. An
+`Otherwise` continues the innermost `if` still open, so closing that `if`
+first hands the `Otherwise` to the enclosing one — a **one character**
+difference:
+
+| inner branch ends with | the following `Otherwise` continues |
+|---|---|
+| `print "inner then".` | the **inner** `if` |
+| `print "inner then"..` | the **outer** `if` |
+
+An empty `Otherwise,.` closes an inner chain the same way and reads better
+than counting periods.
+
+So the reporter's original program was simply under-punctuated: adding one
+period, or giving the inner chain its own `Otherwise`, makes it behave as
+intended. No binding rule was wrong and no parse was incorrect.
+
+The genuine problem is that **miscounting fails silently** — too few periods
+and following statements are absorbed into a clause you thought you had left;
+if one of them is a loop's increment, the loop hangs with no output and no
+error. That failure mode is inherent to rule 1 and is the same one already
+documented for blank lines under rule 2; it is not specific to `Otherwise`.
+
+Fixed by documentation: see LANGUAGE.md, *Closing more than one level*, and
+the regression test `tests/nested_clause_close_levels.vox`.
+
+**Two earlier assessments in this session were wrong** and are recorded here
+so the reasoning is not repeated. The first called #12 unreproducible, having
+tested only Shape B. The second called it a parser defect — "one OPEN but two
+CLOSEs when nested" — and a fix was drafted to make a chain keyword bind to
+the innermost *still-open* clause. That rule is incorrect: it makes ordinary
+two-level `if`/`Otherwise` nesting a compile error, failing 420 of 896
+generated branching programs against 90 for the shipped compiler. Both errors
+came from generalising off a handful of hand-built cases instead of the
+grammar. `docs/FINDINGS-bug12-confirmed.md` reflects the superseded second
+assessment and is retained only as a record of it.
 
 ---
 
@@ -634,6 +670,310 @@ reaches this arm at all — `a timer called t.` parses to a dedicated
 `TimerDecl` statement that always emits `TIMER_INIT` over a real stack slot,
 regardless of whether the declaration has this fallback in its match. No
 other type was found holding a null pointer through this path.
+
+---
+
+### 17. Appending a format string to a list stores a corrupt element — printing or reading it back segfaults or leaks a raw pointer
+
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while building a
+text-utilities shared library (`textkit`) against `main` post-v0.3.6. Not
+library-specific — the minimal repro is a four-line standalone executable.
+
+Root cause: `Expr::FormatString` had no arm in either `prescan_expr_tag` (the
+whole-program pre-scan that proves list homogeneity and scalar provability)
+or `infer_expr_type` (the emit-time fallback that `emit_time_expr_tag`
+consults). Both fell through to their generic default, which reports a
+format string's type as plain integer. The *payload* `generate_expr` builds
+for a format string was always a sound, durable string pointer — only the
+*tag* written alongside it was wrong, so a reader dispatching on that tag
+reinterpreted a valid pointer as an integer. Fixed by adding an explicit
+`Expr::FormatString { .. } => TAG_STRING`/`VarType::String` arm to both
+functions — a format string can only ever produce text, so this is always a
+safe proof, unlike a declared-but-unproven scalar type. Regression tests:
+`tests/bugs_found_17_format_append_text.vox`,
+`tests/bugs_found_17_format_append_number.vox`,
+`tests/bugs_found_17_format_append_buffer.vox`,
+`tests/bugs_found_17_format_append_named.vox`,
+`tests/bugs_found_17_element_access.vox`, `tests/bugs_found_17_for_each.vox`,
+plus `format_string_append_tags_string`,
+`format_string_append_does_not_spuriously_widen_list`, and
+`format_string_local_appended_by_name_tags_string` in `src/codegen/mod.rs`.
+
+**A note on the original repro below: it reproduces a *different*, still-open
+bug, not this one — see #19.** Its variable is named `x` and initialized to
+the literal `"x"`, the same text as its own name; the reproduction matrix
+below has been re-verified with non-colliding names to isolate bug #17
+specifically.
+
+As originally found (this exact source still segfaults — see the note above
+on why, and why that's not this bug):
+
+```vox
+a list called out is [].
+a text called x is "x".
+append "fmt {x}" to out.
+Print the out.
+```
+```
+Segmentation fault (exit 139)
+```
+
+Element access (`a text called t is element 1 of out. Print t.`) and
+`For each w from out, print "<{w}>".` were reported broken identically, so
+the stored element itself was bad, not merely the whole-list print path. The
+failure mode as originally observed depended on what the format string
+interpolated:
+
+| appended expression | result of `Print the out.` as originally observed |
+|---|---|
+| `"literal"` (no interpolation) | correct: `["literal"]` |
+| `"fmt {x}"` — `x` a text | **SIGSEGV** (the `x`/`"x"` name collision above) |
+| `"n {k}"` — `k` a number | `[139846434144280]` — a raw pointer |
+| `"{w}"` — `w` a buffer | `[140144756633624]` — a raw pointer |
+
+A text variable *initialized* from a format string and then appended by name
+(`a text called tok is "fmt {x}". append tok to out.`) crashed the same way —
+again the `x`/`"x"` collision, confirmed by rerunning with a non-colliding
+interpolant name.
+
+**Re-verified post-fix with non-colliding names** — every row now prints
+correctly with exit 0, via whole-list print, `element N of`, and `for each`:
+
+| appended expression | result of `Print the out.` |
+|---|---|
+| `"literal"` (no interpolation) | `["literal"]` |
+| `"fmt {greeting}"` — `greeting` a text | `["fmt hello"]` |
+| `"n {k}"` — `k` a number | `["n 7"]` |
+| `"{w}"` — `w` a buffer | `["buf"]` |
+| text local from a format string, appended by name | `["fmt hi"]` |
+
+Both spec promises this broke are explicit: list `append` "works with any
+value", and format strings are first-class values (v0.1.17) usable
+"everywhere" (v0.1.21). The pointer-printing variants were also a
+memory-safety wart in their own right — the program printed an address
+instead of the bytes.
+
+The workaround previously documented here — routing the value through a
+function with a declared `text` return — is no longer necessary; direct
+format-string append now works.
+
+---
+
+### 18. The `.lib` list-element-type inference credits fewer shapes than the runtime element tagger — provably-`text` elements ship as plain `list`
+
+**Status: fixed on `main` (Unreleased).** Same session as #17; mild, no
+crash. LANGUAGE.md ("The `.lib` file") says a `--shared` build scans the
+exported function's body and writes `list of <type>` "when every
+appended/returned element provably agrees on one type". Before this fix the
+scan credited only two shapes. One library, six exported functions, each
+appending exactly one element to a fresh list and returning it with a
+declared `Return a list, out.`:
+
+| element appended | `.lib` recorded before this fix | records now |
+|---|---|---|
+| `append "literal" to out` | `list of text` | `list of text` |
+| `append "fmt {x}" to out` | `list` | `list of text` (bug #17 fixed the element itself first) |
+| text local from literal, appended by name | `list` | `list of text` |
+| text local from format string, appended by name | `list` | `list of text` |
+| text parameter appended by name | `list of text` | `list of text` |
+| call to a function with declared `text` return | `list` | `list of text` |
+
+Rows 3, 4, and 6 were the gap this entry was about: the element was provably
+`text` (row 3 by its declaration and literal initializer, row 4 by #17 plus
+row 3's reasoning, row 6 by the callee's declared return type), the runtime
+tagger already agreed — the consumer printed real strings — but the table of
+contents still said plain `list`, so the consumer lost the static element
+type the docs promise.
+
+Root cause: `scan_list_element_type`/`scalar_expr_type` (the narrow,
+single-pass, non-flow-sensitive scan `.lib` emission uses — deliberately
+separate from the whole-program pre-scan #17 fixed) only ever credited a
+direct literal or a *parameter's* declared type. A local's declared type and
+a called function's declared return type were both real, sound evidence the
+scan simply never looked at. Fixed by: (1) collecting every `VarDecl`-declared
+scalar local's type from the function body (dropping a name declared with
+two disagreeing types across branches, rather than guessing which one a
+later read sees); (2) a `Expr::FunctionCall` arm crediting the callee's
+declared return type, looked up in a `(library, version)`-scoped map built
+ahead of time so a call to a function defined *later* in source order is
+still resolved, and so two libraries in one file defining a same-named
+function with different return types can't leak into each other's `.lib`;
+and (3) an `Expr::FormatString` arm (always text — sound now that #17 is
+fixed). The runtime tag-forging guard (`declared_type_does_not_forge_a_string_tag`)
+is a separate, deliberately more conservative mechanism and was not touched.
+Regression tests: `plan_303_local_declared_type_credits_element_parameter`,
+`plan_303_call_declared_return_type_credits_element_parameter`,
+`plan_303_format_string_credits_element_parameter`,
+`plan_303_newly_credited_shapes_in_return_position`,
+`plan_303_function_call_return_type_scoped_per_library`,
+`plan_303_local_declared_type_conflict_stays_unknown` in `src/codegen/mod.rs`
+(the existing `plan_296_list_element_type_stays_unknown_on_disagreement_or_no_evidence`
+guard still passes unchanged).
+
+---
+
+### 19. A string literal's content resolved against known variable names at codegen time — crash on self-name collision, silent wrong data on any other collision
+
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while isolating
+bug #17: the plan's own Phase 1 repro used a variable named `x` initialized
+to the string `"x"`, and segfaulted for a *second*, unrelated reason once
+#17's actual defect (wrong element type tag on an appended format string)
+was fixed. Not list- or format-string-specific — plan 304 found two
+manifestations, one far worse than the other.
+
+**Crash, self-name collision** (the original finding):
+```vox
+a text called x is "x".
+Print x.
+```
+```
+Segmentation fault (exit 139)
+```
+
+**Silent wrong data, any-other-name collision** (escalation found while
+scoping the fix — no crash, no diagnostic, just the wrong value):
+```vox
+a text called greeting is "hello".
+a text called b is "greeting".
+Print b.
+```
+prints `hello`, not `greeting`. Every program is affected the moment a
+string literal's content coincides with *any* in-scope variable name — an
+ordinary thing for real programs to do (`"count"`, `"line"`, `"name"`, …).
+The same substitution happened for a literal used directly in a `Print`
+statement (`Print "greeting".` also printed `hello`), and could silently
+flip a `is a float`/`is a buffer` type predicate's answer when a literal's
+text happened to match a same-typed variable's name.
+
+**Root cause.** `Expr::StringLit`'s codegen did not treat its payload as
+string data unconditionally — several sites checked whether the literal's
+own *text content* matched a currently-known variable name (or, in one
+case, a folded top-level constant's name) and substituted that instead of
+materializing the literal bytes:
+
+- `generate_expr`'s `Expr::StringLit` arm called `emit_load_named_var_into_rax(s)`
+  before falling back to the literal — the direct cause of both repros above
+  (for the self-name case, `x` is already a registered variable with an
+  unwritten slot by the time its own initializer is generated, per
+  `Statement::VarDecl` registering the declared type/BSS label *before*
+  generating the initializer expression; the load reads that
+  not-yet-written slot instead of the literal).
+- `generate_print`'s `Expr::StringLit` arm did the same, *plus* a second,
+  independent fallback to `emit_global_constant_format_fallback(s, None)` —
+  a lookup of `s` against `self.global_constants` (top-level literal-valued
+  declarations) — reached whenever the first check failed. Removing only the
+  first check would have left this second one to reproduce the exact same
+  bug through a different table; both had to go.
+- `is_float_expr`, `is_buffer_expr`, and `has_float_operands` each consulted
+  `quoted_name_var_type(s)` (a thin wrapper over the same variable tables)
+  to decide these predicates for a `StringLit`, so a literal spelled like a
+  float/buffer variable could flip a type check or pick the wrong equality
+  comparison strategy.
+- `infer_expr_type`'s `Expr::StringLit` arm called the same
+  `quoted_name_var_type` as a first-choice override before its `Some(VarType::String)`
+  fallback.
+
+**The tension (why this was a violation, not a feature).** LANGUAGE.md's
+*Naming Rules* section states this unconditionally: "A name is an
+**identifier**, never a string literal," and rule 1 under it: "`\"...\"` is
+never an identifier, in any position. Where an identifier is expected and a
+string literal is found, that is a compile error." The *Names and strings*
+section recounts why: before v0.3.0 a double-quoted token was read as
+string-literal-or-identifier depending on position, that overload caused
+silent wrong answers (a variable receiving a function pointer instead of a
+call result, printed as a number, no error), and v0.3.0 explicitly split the
+two so a double-quoted token is "a string literal everywhere." That split
+was real at the grammar/parser level, but every codegen site above
+re-introduced the identical pre-0.3.0 disambiguation *after* parsing, on the
+literal's own bytes — not on anything the parser had marked as a name
+reference. A `StringLit` reaching any of these sites had already been
+through the parser and, per the Naming Rules, was data, not a name up for
+re-negotiation.
+
+**Fix.** All five sites now treat `Expr::StringLit` as text, unconditionally
+— no variable-table or constant-table lookup on its content. `quoted_name_var_type`
+and `emit_global_constant_format_fallback` are deleted (the fix removed
+every call site of each). `emit_load_named_var_into_rax` and
+`self.global_constants` themselves are untouched and still used correctly
+elsewhere for genuine identifier/`{name}`-interpolation resolution (map
+key/value access by the map variable's own name, a `Print` of a plain
+`Expr::Identifier`, and `{name}` format-string interpolation, which is a
+name by construction of the `{...}` syntax, never an ambiguous literal).
+No existing test relied on the removed behaviour — the full suite passed
+unchanged after the removal. Regression tests:
+`tests/bugs_found_19_self_name_initializer.vox`,
+`tests/bugs_found_19_other_name_initializer.vox`,
+`tests/bugs_found_19_other_name_print_direct.vox`,
+`tests/bugs_found_19_predicate.vox`.
+
+**See also #20:** a red team pass on this fix found that it makes a
+*separate*, pre-existing crash commonly reachable — comparing a string
+literal against a same-named `float`/`number`/`boolean` variable for
+equality (e.g. `"pi" is equal to pi`) now correctly infers the literal as
+text (this fix) and so reaches equality-dispatch code that dereferences the
+non-stringy operand as a string pointer (#20's own defect, not this one).
+
+---
+
+### 20. Equality dispatch treats a non-stringy operand as a string pointer and dereferences it
+
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 by a red team
+pass on the #19 fix. **Pre-existing** — reproduces with #19 reverted too —
+but #19 made it commonly reachable: before #19, a string literal whose text
+matched a `float` variable's name was (wrongly) inferred as `Float`, so
+`"pi" is equal to pi` took the numeric comparison path, giving a wrong
+answer but not crashing. #19 correctly makes a literal always infer
+`String`, so that same, ordinary-to-write comparison now reaches this
+defect instead.
+
+```vox
+If "abc" is equal to 3.5 then, print "a". Otherwise, print "b".
+```
+```
+Segmentation fault (exit 139)
+```
+No name collision needed at all. `number`, `float`, and `boolean` operands
+all crash, in both operand orders, for both `is equal to` and `is not equal
+to`. A `list`/`map` operand doesn't crash (a heap pointer happens to be
+readable) but gives a wrong answer via a suspected out-of-bounds read.
+`buffer`-vs-`text` and `text`-vs-`text` were already correct and had to stay
+correct — both sides are genuinely byte sequences there.
+
+**Root cause.** Comparing a **stringy** value (`text`, `buffer`, or a string
+literal) to anything else for equality took the same content-comparison path
+whenever *at least one* side was stringy (`is_stringy_expr(left) ||
+is_stringy_expr(right)`, in both `generate_condition` and its structurally
+identical expression-position twin in `generate_expr`). That path
+(`emit_stringy_equality` → `generate_cstr_expr`) special-cases only `Buffer`;
+every other type's raw value — a float's bit pattern, an integer, a
+boolean's 0/1, a list/map struct pointer — is passed through unchanged and
+handed to `_str_eq`/`_mem_eq`, which dereferences it as a NUL-terminated
+C-string pointer.
+
+**Fix.** The content-comparison path is now taken only when *both* operands
+are stringy, or when one side is stringy and the other is `value`/`Mixed`
+(a dynamic operand whose runtime tag might be text — not provably
+incompatible, so the existing behaviour there is preserved exactly:
+correct when the `value` does hold text, unchanged — still a latent,
+separate crash, out of this fix's scope — when it holds something else).
+When one side is stringy and the other is a *provably* non-stringy type
+(`number`, `float`, `boolean`, `list`, `map`), the two representations can
+never be byte-equal: `is equal to` folds to a compile-time-constant `false`
+and `is not equal to` to `true`, without evaluating or dereferencing either
+operand. Both call sites (`generate_condition` and `generate_expr`) got the
+identical fix; a genuine surface-syntax repro was found for both
+(`Return a boolean, "abc" is equal to 3.` reaches the `generate_expr` site
+and crashed pre-fix, confirmed by testing against the pre-fix binary —
+broader reach than the red team's own search had found). Regression tests:
+`tests/bugs_found_20_no_collision.vox`, `tests/bugs_found_20_float_collision.vox`
+(includes the `"pi" is equal to pi` collision case), `tests/bugs_found_20_number_boolean_list.vox`,
+`tests/bugs_found_20_not_equal.vox`, `tests/bugs_found_20_buffer_text_positive.vox`,
+`tests/bugs_found_20_return_position.vox`, plus three codegen unit tests
+(`stringy_vs_non_stringy_condition_never_dereferences`,
+`stringy_vs_non_stringy_expression_never_dereferences`,
+`both_stringy_equality_still_dereferences_correctly`) pinning that no
+`_str_eq`/`_mem_eq` call is emitted for a mismatch, while a genuine
+stringy-vs-stringy comparison still is.
 
 ---
 

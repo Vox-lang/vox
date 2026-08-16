@@ -1,0 +1,1 @@
+If "abc" is equal to 3.5 then, print "wrong: crashed or matched". Otherwise, print "correct: not equal".

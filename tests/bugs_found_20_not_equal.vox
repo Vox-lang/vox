@@ -1,0 +1,2 @@
+If 3.5 is not equal to "abc" then, print "1:correct". Otherwise, print "1:wrong".
+If "abc" is not equal to 3 then, print "2:correct". Otherwise, print "2:wrong".

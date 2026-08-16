@@ -1,0 +1,4 @@
+a list called out is [].
+a text called greeting is "hello".
+append "fmt {greeting}" to out.
+For each w from out, print "<{w}>".

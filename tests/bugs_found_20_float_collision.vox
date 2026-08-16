@@ -1,0 +1,5 @@
+a float called ratio is 3.5.
+If "abc" is equal to ratio then, print "1:wrong". Otherwise, print "1:correct".
+If ratio is equal to "abc" then, print "2:wrong". Otherwise, print "2:correct".
+a float called pi is 3.5.
+If "pi" is equal to pi then, print "3:wrong". Otherwise, print "3:correct".
