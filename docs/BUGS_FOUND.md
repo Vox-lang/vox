@@ -761,28 +761,54 @@ format-string append now works.
 
 ### 18. The `.lib` list-element-type inference credits fewer shapes than the runtime element tagger — provably-`text` elements ship as plain `list`
 
-**Status: open.** Same session as #17; mild, no crash. LANGUAGE.md ("The
-`.lib` file") says a `--shared` build scans the exported function's body and
-writes `list of <type>` "when every appended/returned element provably agrees
-on one type". In practice the scan credits only two shapes. One library, six
-exported functions, each appending exactly one element to a fresh list and
-returning it with a declared `Return a list, out.`:
+**Status: fixed on `main` (Unreleased).** Same session as #17; mild, no
+crash. LANGUAGE.md ("The `.lib` file") says a `--shared` build scans the
+exported function's body and writes `list of <type>` "when every
+appended/returned element provably agrees on one type". Before this fix the
+scan credited only two shapes. One library, six exported functions, each
+appending exactly one element to a fresh list and returning it with a
+declared `Return a list, out.`:
 
-| element appended | `.lib` records | consumer prints |
+| element appended | `.lib` recorded before this fix | records now |
 |---|---|---|
-| `append "literal" to out` | `list of text` | correct |
-| `append "fmt {x}" to out` | `list` | **SIGSEGV** (bug #17) |
-| text local from literal, appended by name | `list` | correct |
-| text local from format string, appended by name | `list` | SIGSEGV (bug #17) |
-| text parameter appended by name | `list of text` | correct |
-| call to a function with declared `text` return | `list` | correct |
+| `append "literal" to out` | `list of text` | `list of text` |
+| `append "fmt {x}" to out` | `list` | `list of text` (bug #17 fixed the element itself first) |
+| text local from literal, appended by name | `list` | `list of text` |
+| text local from format string, appended by name | `list` | `list of text` |
+| text parameter appended by name | `list of text` | `list of text` |
+| call to a function with declared `text` return | `list` | `list of text` |
 
-Rows 3 and 6 are the gap this entry is about: the element is provably `text`
-(row 3 by its declaration and literal initializer, row 6 by the callee's
-declared return type), the runtime tagger agrees — the consumer prints real
-strings — but the table of contents still says plain `list`, so the consumer
-loses the static element type the docs promise. The two SIGSEGV rows are
-bug #17 wearing a `.so`; they are listed here only to complete the matrix.
+Rows 3, 4, and 6 were the gap this entry was about: the element was provably
+`text` (row 3 by its declaration and literal initializer, row 4 by #17 plus
+row 3's reasoning, row 6 by the callee's declared return type), the runtime
+tagger already agreed — the consumer printed real strings — but the table of
+contents still said plain `list`, so the consumer lost the static element
+type the docs promise.
+
+Root cause: `scan_list_element_type`/`scalar_expr_type` (the narrow,
+single-pass, non-flow-sensitive scan `.lib` emission uses — deliberately
+separate from the whole-program pre-scan #17 fixed) only ever credited a
+direct literal or a *parameter's* declared type. A local's declared type and
+a called function's declared return type were both real, sound evidence the
+scan simply never looked at. Fixed by: (1) collecting every `VarDecl`-declared
+scalar local's type from the function body (dropping a name declared with
+two disagreeing types across branches, rather than guessing which one a
+later read sees); (2) a `Expr::FunctionCall` arm crediting the callee's
+declared return type, looked up in a `(library, version)`-scoped map built
+ahead of time so a call to a function defined *later* in source order is
+still resolved, and so two libraries in one file defining a same-named
+function with different return types can't leak into each other's `.lib`;
+and (3) an `Expr::FormatString` arm (always text — sound now that #17 is
+fixed). The runtime tag-forging guard (`declared_type_does_not_forge_a_string_tag`)
+is a separate, deliberately more conservative mechanism and was not touched.
+Regression tests: `plan_303_local_declared_type_credits_element_parameter`,
+`plan_303_call_declared_return_type_credits_element_parameter`,
+`plan_303_format_string_credits_element_parameter`,
+`plan_303_newly_credited_shapes_in_return_position`,
+`plan_303_function_call_return_type_scoped_per_library`,
+`plan_303_local_declared_type_conflict_stays_unknown` in `src/codegen/mod.rs`
+(the existing `plan_296_list_element_type_stays_unknown_on_disagreement_or_no_evidence`
+guard still passes unchanged).
 
 ---
 

@@ -402,22 +402,56 @@ fn type_noun(t: &Type) -> Option<String> {
 // two sites) makes it give up and report `Unknown` — the safe fallback that
 // exactly matches today's behavior (no annotation), never a wrong guess.
 
+/// Whether `t` is one of the scalar types this scan can credit as evidence
+/// for a list's element type: a parameter's or local's declared type, or a
+/// called function's declared return type. The same set `scalar_expr_type`'s
+/// `Identifier` arm has always trusted (plan 296) — factored out so the new
+/// `FunctionCall` arm and the local-declared-type collector (plan 303 phase
+/// 2) apply the identical rule instead of drifting from it.
+fn is_trackable_scalar_type(t: &Type) -> bool {
+    matches!(
+        t,
+        Type::Integer
+            | Type::Float
+            | Type::String
+            | Type::Boolean
+            | Type::File
+            | Type::Buffer
+            | Type::Time
+            | Type::Timer
+            | Type::Value
+    )
+}
+
 /// A scalar expression's `Type`, for the handful of shapes this scan
-/// understands: a literal, or a reference to a parameter whose own
-/// (non-collection) type is already known. Anything else — a function call,
-/// an element/property read, a local built from something this scan didn't
-/// already trace — is `None`, which the caller treats as "give up."
-fn scalar_expr_type(expr: &Expr, param_types: &HashMap<String, Type>) -> Option<Type> {
+/// understands: a literal; a format string (always text — BUGS_FOUND #17
+/// made the element itself sound, so the TOC can now say so too); a
+/// reference to a name (parameter or local) whose own declared
+/// (non-collection) type is already known; or a call to a function in the
+/// same library whose declared return type is known. Anything else — an
+/// element/property read, a call whose callee isn't in `fn_return_types`
+/// (an import, or a forward reference this narrow scan didn't resolve), a
+/// local built from something this scan didn't already trace — is `None`,
+/// which the caller treats as "give up."
+fn scalar_expr_type(
+    expr: &Expr,
+    scalar_types: &HashMap<String, Type>,
+    fn_return_types: &HashMap<String, Type>,
+) -> Option<Type> {
     match expr {
         Expr::StringLit(_) => Some(Type::String),
         Expr::IntegerLit(_) => Some(Type::Integer),
         Expr::FloatLit(_) => Some(Type::Float),
         Expr::BoolLit(_) => Some(Type::Boolean),
-        Expr::Identifier(n) => param_types.get(n).and_then(|t| match t {
-            Type::Integer | Type::Float | Type::String | Type::Boolean | Type::File
-            | Type::Buffer | Type::Time | Type::Timer | Type::Value => Some(t.clone()),
-            _ => None,
-        }),
+        Expr::FormatString { .. } => Some(Type::String),
+        Expr::Identifier(n) => scalar_types
+            .get(n)
+            .filter(|t| is_trackable_scalar_type(t))
+            .cloned(),
+        Expr::FunctionCall { name, .. } => fn_return_types
+            .get(name)
+            .filter(|t| is_trackable_scalar_type(t))
+            .cloned(),
         _ => None,
     }
 }
@@ -437,11 +471,80 @@ fn note_element_type(found: &mut Option<Type>, conflict: &mut bool, observed: Op
 }
 
 /// Recurse into a statement list's control-flow bodies the same shape
+/// `prescan_walk` does, collecting every `VarDecl` with an explicit,
+/// trackable scalar `var_type` into `found` — a local's declared type is
+/// authoritative for its reads, the same way a parameter's is (plan 303
+/// phase 2). A name declared with two disagreeing scalar types (e.g. once in
+/// each arm of an `if`) is dropped from `found` entirely rather than
+/// guessed: this scan is non-flow-sensitive and can't tell which
+/// declaration a later read sees, so neither is trustworthy evidence.
+fn collect_declared_scalar_types_walk(
+    body: &[Statement],
+    found: &mut HashMap<String, Type>,
+    conflicted: &mut std::collections::HashSet<String>,
+) {
+    for stmt in body {
+        match stmt {
+            Statement::VarDecl {
+                name,
+                var_type: Some(t),
+                ..
+            } if is_trackable_scalar_type(t) => match found.get(name) {
+                Some(prev) if prev != t => {
+                    conflicted.insert(name.clone());
+                }
+                Some(_) => {}
+                None => {
+                    found.insert(name.clone(), t.clone());
+                }
+            },
+            Statement::If {
+                then_block,
+                else_if_blocks,
+                else_block,
+                ..
+            } => {
+                collect_declared_scalar_types_walk(then_block, found, conflicted);
+                for (_, blk) in else_if_blocks {
+                    collect_declared_scalar_types_walk(blk, found, conflicted);
+                }
+                if let Some(blk) = else_block {
+                    collect_declared_scalar_types_walk(blk, found, conflicted);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => {
+                collect_declared_scalar_types_walk(body, found, conflicted);
+            }
+            Statement::OnError { actions } => {
+                collect_declared_scalar_types_walk(actions, found, conflicted);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Every `VarDecl`-declared scalar local's `Type` in `body`, regardless of
+/// nesting or control-flow position — see `collect_declared_scalar_types_walk`.
+fn collect_declared_scalar_types(body: &[Statement]) -> HashMap<String, Type> {
+    let mut found = HashMap::new();
+    let mut conflicted = std::collections::HashSet::new();
+    collect_declared_scalar_types_walk(body, &mut found, &mut conflicted);
+    for name in &conflicted {
+        found.remove(name);
+    }
+    found
+}
+
+/// Recurse into a statement list's control-flow bodies the same shape
 /// `prescan_walk` does, collecting every `Append <expr> to target` and every
 /// `a list called target is [...]` literal that names `target`.
 fn scan_list_element_type(
     target: &str,
-    param_types: &HashMap<String, Type>,
+    scalar_types: &HashMap<String, Type>,
+    fn_return_types: &HashMap<String, Type>,
     body: &[Statement],
     found: &mut Option<Type>,
     conflict: &mut bool,
@@ -449,7 +552,11 @@ fn scan_list_element_type(
     for stmt in body {
         match stmt {
             Statement::ListAppend { list, value } if list == target => {
-                note_element_type(found, conflict, scalar_expr_type(value, param_types));
+                note_element_type(
+                    found,
+                    conflict,
+                    scalar_expr_type(value, scalar_types, fn_return_types),
+                );
             }
             Statement::VarDecl {
                 name,
@@ -457,7 +564,11 @@ fn scan_list_element_type(
                 ..
             } if name == target => {
                 for e in elements {
-                    note_element_type(found, conflict, scalar_expr_type(e, param_types));
+                    note_element_type(
+                        found,
+                        conflict,
+                        scalar_expr_type(e, scalar_types, fn_return_types),
+                    );
                 }
             }
             Statement::If {
@@ -466,22 +577,22 @@ fn scan_list_element_type(
                 else_block,
                 ..
             } => {
-                scan_list_element_type(target, param_types, then_block, found, conflict);
+                scan_list_element_type(target, scalar_types, fn_return_types, then_block, found, conflict);
                 for (_, blk) in else_if_blocks {
-                    scan_list_element_type(target, param_types, blk, found, conflict);
+                    scan_list_element_type(target, scalar_types, fn_return_types, blk, found, conflict);
                 }
                 if let Some(blk) = else_block {
-                    scan_list_element_type(target, param_types, blk, found, conflict);
+                    scan_list_element_type(target, scalar_types, fn_return_types, blk, found, conflict);
                 }
             }
             Statement::While { body, .. }
             | Statement::ForRange { body, .. }
             | Statement::ForEach { body, .. }
             | Statement::Repeat { body, .. } => {
-                scan_list_element_type(target, param_types, body, found, conflict);
+                scan_list_element_type(target, scalar_types, fn_return_types, body, found, conflict);
             }
             Statement::OnError { actions } => {
-                scan_list_element_type(target, param_types, actions, found, conflict);
+                scan_list_element_type(target, scalar_types, fn_return_types, actions, found, conflict);
             }
             _ => {}
         }
@@ -491,15 +602,23 @@ fn scan_list_element_type(
 /// Infer a homogeneous element type for the list built through `target`
 /// (a parameter name, most often — the plan's own verified repro appends a
 /// parameter: `Append s to out.`) within one function's body. `Unknown`
-/// when the scan finds disagreement or nothing at all.
+/// when the scan finds disagreement or nothing at all. `param_types` and
+/// `body`'s own declared-scalar locals are merged into one lookup table (a
+/// local re-declaring a parameter's name shadows it, matching codegen's own
+/// slot-reuse for that case); `fn_return_types` is this function's library,
+/// scoped by `collect_lib_function_return_types` so a same-named function in
+/// a different library/version never leaks in.
 fn infer_list_element_type(
     target: &str,
     param_types: &HashMap<String, Type>,
+    fn_return_types: &HashMap<String, Type>,
     body: &[Statement],
 ) -> Type {
+    let mut scalar_types = param_types.clone();
+    scalar_types.extend(collect_declared_scalar_types(body));
     let mut found: Option<Type> = None;
     let mut conflict = false;
-    scan_list_element_type(target, param_types, body, &mut found, &mut conflict);
+    scan_list_element_type(target, &scalar_types, fn_return_types, body, &mut found, &mut conflict);
     if conflict {
         Type::Unknown
     } else {
@@ -548,23 +667,34 @@ fn scan_return_values<'a>(body: &'a [Statement], out: &mut Vec<&'a Expr>) {
 /// (covering both `Return out.` for an appended-to parameter and a plain
 /// local list built and returned in the same function, as in the plan's own
 /// bare-return baseline). Anything else (a call result, disagreement across
-/// several `Return`s) gives up, same as `infer_list_element_type`.
-fn infer_return_list_element_type(param_types: &HashMap<String, Type>, body: &[Statement]) -> Type {
+/// several `Return`s) gives up, same as `infer_list_element_type`. See
+/// `infer_list_element_type` for what `param_types`/`fn_return_types` cover.
+fn infer_return_list_element_type(
+    param_types: &HashMap<String, Type>,
+    fn_return_types: &HashMap<String, Type>,
+    body: &[Statement],
+) -> Type {
     let mut returns = Vec::new();
     scan_return_values(body, &mut returns);
+    let mut scalar_types = param_types.clone();
+    scalar_types.extend(collect_declared_scalar_types(body));
     let mut found: Option<Type> = None;
     let mut conflict = false;
     for expr in returns {
         match expr {
             Expr::ListLit { elements } => {
                 for e in elements {
-                    note_element_type(&mut found, &mut conflict, scalar_expr_type(e, param_types));
+                    note_element_type(
+                        &mut found,
+                        &mut conflict,
+                        scalar_expr_type(e, &scalar_types, fn_return_types),
+                    );
                 }
             }
             Expr::Identifier(name) => {
                 let mut sub_found: Option<Type> = None;
                 let mut sub_conflict = false;
-                scan_list_element_type(name, param_types, body, &mut sub_found, &mut sub_conflict);
+                scan_list_element_type(name, &scalar_types, fn_return_types, body, &mut sub_found, &mut sub_conflict);
                 if sub_conflict {
                     conflict = true;
                 } else {
@@ -579,6 +709,36 @@ fn infer_return_list_element_type(param_types: &HashMap<String, Type>, body: &[S
     } else {
         found.unwrap_or(Type::Unknown)
     }
+}
+
+/// Every function's declared return `Type`, scoped by the `(library,
+/// version)` it's defined in. Built once, ahead of the per-function pass in
+/// `collect_function_signatures`, so `scalar_expr_type`'s `FunctionCall` arm
+/// can credit a call to a function defined LATER in source order than its
+/// caller — Vox places no ordering requirement on function definitions, so a
+/// single forward pass over the program would miss those. Scoped per library
+/// identity (not a flat name -> Type map) so two libraries in one file
+/// defining a same-named function with different return types can't leak
+/// into each other's `.lib` inference.
+fn collect_lib_function_return_types(program: &Program) -> HashMap<(String, String), HashMap<String, Type>> {
+    let mut out: HashMap<(String, String), HashMap<String, Type>> = HashMap::new();
+    let mut current_lib: Option<(String, String)> = None;
+    for stmt in &program.statements {
+        match stmt {
+            Statement::LibraryDecl { name, version } => {
+                current_lib = Some((name.clone(), version.clone()));
+            }
+            Statement::FunctionDef { name, return_type, .. } => {
+                if let Some(lib) = &current_lib {
+                    out.entry(lib.clone())
+                        .or_default()
+                        .insert(name.clone(), return_type.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Map a `.lib`-declared list element `Type` to the `VarType` a for-each
@@ -1720,6 +1880,7 @@ impl CodeGenerator {
     // happened to read the correct type from a different code path and
     // was unaffected, which is what made this easy to miss.
     fn collect_function_signatures(&mut self, program: &Program) {
+        let lib_fn_return_types = collect_lib_function_return_types(program);
         self.function_return_types.clear();
         self.function_param_types.clear();
         self.function_return_full_types.clear();
@@ -1788,19 +1949,26 @@ impl CodeGenerator {
                             };
                             // The `.lib` records a real list element type when
                             // one can be inferred from this function's OWN
-                            // body (plan 296) — the exported interface only;
-                            // `function_param_types`/`function_return_types`
-                            // above (this compilation unit's own codegen)
-                            // keep the plain declared type unchanged.
+                            // body (plan 296, widened by plan 303 phase 2 to
+                            // also credit a local's declared type and a
+                            // same-library call's declared return type) — the
+                            // exported interface only; `function_param_types`/
+                            // `function_return_types` above (this compilation
+                            // unit's own codegen) keep the plain declared type
+                            // unchanged.
                             let param_env: HashMap<String, Type> =
                                 params.iter().cloned().collect();
+                            let empty_fn_returns: HashMap<String, Type> = HashMap::new();
+                            let fn_return_env = lib_fn_return_types
+                                .get(&(lib.clone(), ver.clone()))
+                                .unwrap_or(&empty_fn_returns);
                             let lib_params: Vec<(String, Type)> = params
                                 .iter()
                                 .map(|(pname, ptype)| match ptype {
                                     Type::List(inner) if matches!(**inner, Type::Unknown) => (
                                         pname.clone(),
                                         Type::List(Box::new(infer_list_element_type(
-                                            pname, &param_env, body,
+                                            pname, &param_env, fn_return_env, body,
                                         ))),
                                     ),
                                     _ => (pname.clone(), ptype.clone()),
@@ -1809,7 +1977,7 @@ impl CodeGenerator {
                             let lib_return_type = match return_type {
                                 Type::List(inner) if matches!(**inner, Type::Unknown) => {
                                     Type::List(Box::new(infer_return_list_element_type(
-                                        &param_env, body,
+                                        &param_env, fn_return_env, body,
                                     )))
                                 }
                                 other => other.clone(),
@@ -10574,6 +10742,155 @@ Library emptykit version \"1.0\".\n\
 To f with a list called out.\n  Print \"noop\".\n";
         let (blocks, _) = compile_shared_with_libs(no_evidence);
         assert_eq!(blocks[0].funcs[0].params[0].1, Type::List(Box::new(Type::Unknown)));
+    }
+
+    // ---- Plan 303 phase 2 — BUGS_FOUND #18: the four shapes the plan 296
+    // scan under-credited, plus the newly-sound format-string shape (BUGS_FOUND
+    // #17), each checked in both a list PARAMETER and a list RETURN position. ----
+
+    #[test]
+    fn plan_303_local_declared_type_credits_element_parameter() {
+        // "text local from literal, appended by name" (BUGS_FOUND #18 row 3):
+        // a local's declared scalar type is authoritative for its reads, the
+        // same way a parameter's declared type already was.
+        let src = "\
+Library elemkit version \"1.0\".\n\
+To f with a list called out.\n  \
+a text called s is \"literal\".\n  \
+Append s to out.\n";
+        let (blocks, _) = compile_shared_with_libs(src);
+        assert_eq!(
+            blocks[0].funcs[0].params[0].1,
+            Type::List(Box::new(Type::String)),
+            "a local's declared text type must be credited"
+        );
+    }
+
+    #[test]
+    fn plan_303_call_declared_return_type_credits_element_parameter() {
+        // "call to a function with a declared text return" (BUGS_FOUND #18
+        // row 6): the callee's declared return type is authoritative for the
+        // call expression's type, the same way it already is for
+        // `infer_expr_type`'s Expr::FunctionCall arm in ordinary codegen.
+        let src = "\
+Library elemkit version \"1.0\".\n\
+To helper with a number called n.\n  Return a text, \"hi\".\n\
+To f with a list called out.\n  \
+Append helper of 1 to out.\n";
+        let (blocks, _) = compile_shared_with_libs(src);
+        assert_eq!(
+            blocks[0].funcs[1].params[0].1,
+            Type::List(Box::new(Type::String)),
+            "a same-library call's declared text return must be credited"
+        );
+    }
+
+    #[test]
+    fn plan_303_format_string_credits_element_parameter() {
+        // "format-string appends" (BUGS_FOUND #18 row 5): sound once phase 1
+        // (BUGS_FOUND #17) made the appended element itself a real text
+        // pointer rather than a mistagged one.
+        let src = "\
+Library elemkit version \"1.0\".\n\
+To f with a list called out.\n  \
+a number called n is 7.\n  \
+Append \"n {n}\" to out.\n";
+        let (blocks, _) = compile_shared_with_libs(src);
+        assert_eq!(
+            blocks[0].funcs[0].params[0].1,
+            Type::List(Box::new(Type::String)),
+            "a format-string append must be credited as text"
+        );
+    }
+
+    #[test]
+    fn plan_303_newly_credited_shapes_in_return_position() {
+        // The same three shapes, but for a RETURNED list built and appended
+        // to inside the function body rather than an appended-to parameter.
+        let local_literal = "\
+Library elemkit version \"1.0\".\n\
+To f.\n  a list called out is [].\n  \
+a text called s is \"literal\".\n  Append s to out.\n  \
+Return a list, out.\n";
+        let (blocks, _) = compile_shared_with_libs(local_literal);
+        assert_eq!(
+            blocks[0].funcs[0].return_type,
+            Type::List(Box::new(Type::String)),
+            "a local's declared text type must be credited in return position"
+        );
+
+        let call_return = "\
+Library elemkit version \"1.0\".\n\
+To helper with a number called n.\n  Return a text, \"hi\".\n\
+To f.\n  a list called out is [].\n  Append helper of 1 to out.\n  \
+Return a list, out.\n";
+        let (blocks, _) = compile_shared_with_libs(call_return);
+        assert_eq!(
+            blocks[0].funcs[1].return_type,
+            Type::List(Box::new(Type::String)),
+            "a same-library call's declared return must be credited in return position"
+        );
+
+        let format_string = "\
+Library elemkit version \"1.0\".\n\
+To f.\n  a list called out is [].\n  a number called n is 7.\n  \
+Append \"n {n}\" to out.\n  Return a list, out.\n";
+        let (blocks, _) = compile_shared_with_libs(format_string);
+        assert_eq!(
+            blocks[0].funcs[0].return_type,
+            Type::List(Box::new(Type::String)),
+            "a format-string append must be credited as text in return position"
+        );
+    }
+
+    #[test]
+    fn plan_303_function_call_return_type_scoped_per_library() {
+        // Two libraries in one file each define `helper` with a DIFFERING
+        // declared return type. `collect_lib_function_return_types` must scope
+        // by (library, version) so libb's `g` doesn't credit liba's `helper`
+        // (or vice versa) — a flat name-keyed map would let whichever library
+        // is collected last win for both, silently mis-annotating one.
+        let src = "\
+Library liba version \"1.0\".\n\
+To helper with a number called n.\n  Return a number, n.\n\
+To f with a list called out.\n  Append helper of 1 to out.\n\n\
+Library libb version \"1.0\".\n\
+To helper with a number called n.\n  Return a text, \"hi\".\n\
+To g with a list called out.\n  Append helper of 1 to out.\n";
+        let (blocks, _) = compile_shared_with_libs(src);
+        assert_eq!(blocks.len(), 2, "two Library blocks");
+        assert_eq!(
+            blocks[0].funcs[1].params[0].1,
+            Type::List(Box::new(Type::Integer)),
+            "liba's f must credit liba's own number-returning helper"
+        );
+        assert_eq!(
+            blocks[1].funcs[1].params[0].1,
+            Type::List(Box::new(Type::String)),
+            "libb's g must credit libb's own text-returning helper, not liba's"
+        );
+    }
+
+    #[test]
+    fn plan_303_local_declared_type_conflict_stays_unknown() {
+        // A local declared with two disagreeing scalar types (once per `if`
+        // branch, each appending its own `s` immediately - a bare
+        // post-branch read of a branch-only local is a separate analyzer
+        // error, unrelated to this scan) must not be guessed either way —
+        // this scan is non-flow-sensitive and can't tell which declaration a
+        // given append sees, so the conservative behaviour (same as plan
+        // 296's own disagreement guard) is to drop it as evidence entirely.
+        let src = "\
+Library elemkit version \"1.0\".\n\
+To f with a boolean called cond and a list called out.\n  \
+If cond, a text called s is \"a\", append s to out. \
+Otherwise, a number called s is 1, append s to out.\n";
+        let (blocks, _) = compile_shared_with_libs(src);
+        assert_eq!(
+            blocks[0].funcs[0].params[1].1,
+            Type::List(Box::new(Type::Unknown)),
+            "a local declared with conflicting types across branches must not be credited"
+        );
     }
 
     /// Track B4 regression guard: the consuming one-byte exact-fill probe

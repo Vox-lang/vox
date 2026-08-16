@@ -27,6 +27,22 @@ adheres to [Semantic Versioning](https://semver.org/).
   plus three codegen unit tests pinning the tag write and the no-spurious-
   widening behaviour.
 
+- **The `.lib` table of contents under-reported list element types for
+  provably-`text` elements** (BUGS_FOUND #18). A `--shared` build's element-
+  type scan credited only a direct literal or a parameter's declared type,
+  so a `text` local's declared type, a called function's declared `text`
+  return, and a format-string append (once #17 made the element itself
+  sound) all shipped as plain `list` instead of `list of text`, even though
+  the runtime tagger already agreed on `text` and consumers already printed
+  correctly. The scan now credits all three. A genuinely mixed or
+  evidence-free list is unaffected — still plain `list`. Regression tests:
+  `plan_303_local_declared_type_credits_element_parameter`,
+  `plan_303_call_declared_return_type_credits_element_parameter`,
+  `plan_303_format_string_credits_element_parameter`,
+  `plan_303_newly_credited_shapes_in_return_position`,
+  `plan_303_function_call_return_type_scoped_per_library`,
+  `plan_303_local_declared_type_conflict_stays_unknown`.
+
 ### Documentation
 
 - **Documented how to close more than one level of nesting.** A period closes
