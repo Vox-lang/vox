@@ -2261,6 +2261,10 @@ impl CodeGenerator {
             // A type predicate yields a boolean, so appending its result to a
             // list does not widen the list (stage 1c).
             Expr::TypeCheck { .. } => TagInfo::Known(TAG_BOOLEAN),
+            // A format string always materializes text (bug #17), so it
+            // proves TAG_STRING the same way a literal does - unlike an
+            // opaque expression, its result type isn't in doubt.
+            Expr::FormatString { .. } => TagInfo::Known(TAG_STRING),
             Expr::StringLit(s) => {
                 // A quoted name can be a variable reference in Vox; if we
                 // tracked it as a scalar, use that. Otherwise it's a string.
@@ -8703,6 +8707,9 @@ impl CodeGenerator {
             Expr::IntegerLit(_) => Some(VarType::Integer),
             Expr::FloatLit(_) => Some(VarType::Float),
             Expr::StringLit(s) => self.quoted_name_var_type(s).or(Some(VarType::String)),
+            // A format string always materializes text (bug #17): its
+            // interpolated parts affect the bytes, never the result type.
+            Expr::FormatString { .. } => Some(VarType::String),
             Expr::BoolLit(_) => Some(VarType::Integer), // Booleans are integers (0/1)
             // A list literal is a list value (stage 1e1). This feeds the
             // emit_time_expr_tag catch-all so a nested-list element's slot
@@ -9057,6 +9064,60 @@ mod tests {
         assert!(
             asm.contains("mov edx, 1  ; element type tag"),
             "a provably-text value must still be written with TAG_STRING"
+        );
+    }
+
+    #[test]
+    fn format_string_append_tags_string() {
+        // BUGS_FOUND #17: a format string can only ever produce text, so
+        // appending one directly must write TAG_STRING (1), not the old
+        // TAG_INTEGER guess that corrupted the element.
+        let asm = compile_to_asm(
+            "a list called out is [].\n\
+             a number called k is 7.\n\
+             append \"n {k}\" to out.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "a format-string append must be written with TAG_STRING"
+        );
+    }
+
+    #[test]
+    fn format_string_append_does_not_spuriously_widen_list() {
+        // Before the fix, `prescan_expr_tag` reported a format string as
+        // Unknowable, which `prescan_note_list_value` treats as proof of
+        // heterogeneity - permanently widening the list to Mixed even though
+        // every element is actually text. A later plain-string append to the
+        // same list must still get the untagged fast path.
+        let asm = compile_to_asm(
+            "a list called out is [].\n\
+             a number called k is 7.\n\
+             append \"n {k}\" to out.\n\
+             append \"literal\" to out.\n\
+             print element 1 of out.\n",
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a format-string append must not widen the list to Mixed"
+        );
+    }
+
+    #[test]
+    fn format_string_local_appended_by_name_tags_string() {
+        // BUGS_FOUND #17: a text local initialized from a format string,
+        // then appended by name, must also prove TAG_STRING - the pre-scan's
+        // `env` entry for the local must not be tainted Unknowable by the
+        // format string's (previously missing) tag.
+        let asm = compile_to_asm(
+            "a text called greeting is \"hi\".\n\
+             a text called tok is \"fmt {greeting}\".\n\
+             a list called out is [].\n\
+             append tok to out.\n",
+        );
+        assert!(
+            asm.contains("mov edx, 1  ; element type tag"),
+            "a name-forwarded format-string value must be written with TAG_STRING"
         );
     }
 

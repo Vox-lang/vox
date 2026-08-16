@@ -141,3 +141,31 @@ weakening either.
 - If any finding in this plan looks wrong once you're in the code, document
   why in the phase's commit message or a note here rather than implementing
   around it.
+
+## Phase 1 finding: the plan's own repro exercises a second, unrelated bug
+
+The Phase 1 reproduction (`a text called x is "x". append "fmt {x}" to out.`)
+does SIGSEGV as documented, but not solely from bug #17. Its variable is
+named `x` and initialized to the literal `"x"` — the same text as its own
+name. `Statement::VarDecl` registers a declared variable's type (and BSS
+mirror) before generating its initializer expression, and `Expr::StringLit`
+codegen resolves a quoted name against known variables to decide
+"literal vs. reference". So the initializer reads `x`'s own not-yet-written
+slot instead of the literal `"x"`, leaving `x` null; confirmed standalone
+with no list or format string involved (`a text called x is "x". Print x.`
+segfaults on its own). This is a separate, previously-undocumented defect,
+out of scope for this plan (not `Statement::ListAppend`/`Expr::FormatString`
+codegen, and no parser/language-surface change would fix it). Documented in
+`docs/BUGS_FOUND.md` under #17 rather than filed as its own numbered entry.
+
+Bug #17's actual, in-scope defect — confirmed by disassembly — was purely in
+the element's *type tag*, not its payload: `generate_expr` already built a
+sound, durable string pointer for every format string; `emit_time_expr_tag`
+and `prescan_expr_tag` just had no arm for `Expr::FormatString` and fell
+through to their integer default. Once the reproduction matrix is re-run
+with non-colliding names, all four interpolation shapes (literal, text,
+number, buffer) showed the *same* symptom — a raw pointer printed where text
+belonged — not the differentiated SIGSEGV/pointer split the original matrix
+recorded (that split was an artifact of the `x`/`"x"` collision hitting only
+the `x`-interpolating rows). Fixed by adding an explicit
+`Expr::FormatString => TAG_STRING`/`VarType::String` arm to both functions.

@@ -675,9 +675,50 @@ other type was found holding a null pointer through this path.
 
 ### 17. Appending a format string to a list stores a corrupt element — printing or reading it back segfaults or leaks a raw pointer
 
-**Status: open.** Found 2026-08-16 while building a text-utilities shared
-library (`textkit`) against `main` post-v0.3.6. Not library-specific — the
-minimal repro is a four-line standalone executable.
+**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while building a
+text-utilities shared library (`textkit`) against `main` post-v0.3.6. Not
+library-specific — the minimal repro is a four-line standalone executable.
+
+Root cause: `Expr::FormatString` had no arm in either `prescan_expr_tag` (the
+whole-program pre-scan that proves list homogeneity and scalar provability)
+or `infer_expr_type` (the emit-time fallback that `emit_time_expr_tag`
+consults). Both fell through to their generic default, which reports a
+format string's type as plain integer. The *payload* `generate_expr` builds
+for a format string was always a sound, durable string pointer — only the
+*tag* written alongside it was wrong, so a reader dispatching on that tag
+reinterpreted a valid pointer as an integer. Fixed by adding an explicit
+`Expr::FormatString { .. } => TAG_STRING`/`VarType::String` arm to both
+functions — a format string can only ever produce text, so this is always a
+safe proof, unlike a declared-but-unproven scalar type. Regression tests:
+`tests/bugs_found_17_format_append_text.vox`,
+`tests/bugs_found_17_format_append_number.vox`,
+`tests/bugs_found_17_format_append_buffer.vox`,
+`tests/bugs_found_17_format_append_named.vox`,
+`tests/bugs_found_17_element_access.vox`, `tests/bugs_found_17_for_each.vox`,
+plus `format_string_append_tags_string`,
+`format_string_append_does_not_spuriously_widen_list`, and
+`format_string_local_appended_by_name_tags_string` in `src/codegen/mod.rs`.
+
+**A note on the original repro below: it reproduces a *different*, still-open
+bug, not this one.** Its variable is named `x` and initialized to the
+literal `"x"` — the same text as its own name. That collision trips a
+separate, previously-undocumented defect: `Statement::VarDecl` registers a
+declared variable's type (and, for a global, its BSS mirror) *before*
+generating its initializer expression, and `Expr::StringLit`'s codegen
+resolves a quoted name against known variables to decide "literal vs.
+reference". So `a text called x is "x".` reads `x`'s own (not-yet-written,
+zero) slot instead of loading the literal, leaving `x` holding a null
+pointer; any later read of `x` (here, the format-string interpolation)
+segfaults on that null. Confirmed independently of lists or format strings —
+`a text called x is "x". Print x.` segfaults on its own. Once the variable
+and its literal value don't collide (e.g. `a text called greeting is
+"hello".`), the exact same shape now prints correctly. This name-collision
+defect is unfixed and untracked as its own numbered entry as of this
+writing; the reproduction matrix below has been re-verified with
+non-colliding names to isolate bug #17 specifically.
+
+As originally found (this exact source still segfaults — see the note above
+on why, and why that's not this bug):
 
 ```vox
 a list called out is [].
@@ -690,34 +731,43 @@ Segmentation fault (exit 139)
 ```
 
 Element access (`a text called t is element 1 of out. Print t.`) and
-`For each w from out, print "<{w}>".` segfault identically, so the stored
-element itself is bad, not merely the whole-list print path. The failure mode
-depends on what the format string interpolates:
+`For each w from out, print "<{w}>".` were reported broken identically, so
+the stored element itself was bad, not merely the whole-list print path. The
+failure mode as originally observed depended on what the format string
+interpolated:
 
-| appended expression | result of `Print the out.` |
+| appended expression | result of `Print the out.` as originally observed |
 |---|---|
 | `"literal"` (no interpolation) | correct: `["literal"]` |
-| `"fmt {x}"` — `x` a text | **SIGSEGV** |
+| `"fmt {x}"` — `x` a text | **SIGSEGV** (the `x`/`"x"` name collision above) |
 | `"n {k}"` — `k` a number | `[139846434144280]` — a raw pointer |
 | `"{w}"` — `w` a buffer | `[140144756633624]` — a raw pointer |
 
 A text variable *initialized* from a format string and then appended by name
-(`a text called tok is "fmt {x}". append tok to out.`) crashes the same way,
-so the corruption travels with the value, not the append syntax. A text
-variable initialized from a plain literal and appended by name is fine.
+(`a text called tok is "fmt {x}". append tok to out.`) crashed the same way —
+again the `x`/`"x"` collision, confirmed by rerunning with a non-colliding
+interpolant name.
 
-Both spec promises this breaks are explicit: list `append` "works with any
+**Re-verified post-fix with non-colliding names** — every row now prints
+correctly with exit 0, via whole-list print, `element N of`, and `for each`:
+
+| appended expression | result of `Print the out.` |
+|---|---|
+| `"literal"` (no interpolation) | `["literal"]` |
+| `"fmt {greeting}"` — `greeting` a text | `["fmt hello"]` |
+| `"n {k}"` — `k` a number | `["n 7"]` |
+| `"{w}"` — `w` a buffer | `["buf"]` |
+| text local from a format string, appended by name | `["fmt hi"]` |
+
+Both spec promises this broke are explicit: list `append` "works with any
 value", and format strings are first-class values (v0.1.17) usable
-"everywhere" (v0.1.21). The pointer-printing variants are also a
-memory-safety wart in their own right — the program prints an address
+"everywhere" (v0.1.21). The pointer-printing variants were also a
+memory-safety wart in their own right — the program printed an address
 instead of the bytes.
 
-Workaround: route the value through a function with a declared `text` return
-(`To 'text of' with a buffer called w. a text called r is "{w}". Return a
-text, r.` — then `append 'text of' of w to out.`). The call's declared return
-type is credited by the element tagger, and the appended element is stored
-and printed correctly. This is how `textkit`'s `'split words'` works around
-the bug.
+The workaround previously documented here — routing the value through a
+function with a declared `text` return — is no longer necessary; direct
+format-string append now works.
 
 ---
 

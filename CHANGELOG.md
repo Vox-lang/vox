@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Appending a format string to a list stored a corrupt element** (BUGS_FOUND
+  #17). `append "fmt {x}" to out.` — and a `text` local initialized from a
+  format string and appended by name — wrote the element's runtime type tag
+  as plain integer instead of text, because neither the pre-scan nor the
+  emit-time tag selector recognised `Expr::FormatString` as always producing
+  text. Reading the corrupted element (whole-list print, `element N of`, or
+  `for each`) then reinterpreted a valid string pointer as an integer:
+  sometimes a raw pointer address printed in place of the text, sometimes a
+  crash, depending on what surrounding code did with the misread value. Fixed
+  by teaching both the pre-scan (`prescan_expr_tag`) and the emit-time
+  fallback (`infer_expr_type`) that a format string is always `text`.
+  Regression tests: `tests/bugs_found_17_format_append_text.vox`,
+  `tests/bugs_found_17_format_append_number.vox`,
+  `tests/bugs_found_17_format_append_buffer.vox`,
+  `tests/bugs_found_17_format_append_named.vox`,
+  `tests/bugs_found_17_element_access.vox`, `tests/bugs_found_17_for_each.vox`,
+  plus three codegen unit tests pinning the tag write and the no-spurious-
+  widening behaviour.
+
 ### Documentation
 
 - **Documented how to close more than one level of nesting.** A period closes
