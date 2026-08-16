@@ -1,6 +1,7 @@
 # Design: splitting the compiler's monolithic phase modules
 
-**Status:** design approved, execution deferred until after the 0.3.7 release.
+**Status:** executed in 0.3.7. All four phases split; verified byte-identical
+across the corpus. See `docs/plans/306_module_split.md` for the procedure.
 **Scope:** internal source-tree reorganisation only. No language, compiler
 behaviour, or public-interface change.
 
@@ -191,8 +192,21 @@ identical check.
   honest path *if* deeper decoupling is wanted later, as a separate project on
   top of this one.
 
-## Sequencing
+## Sequencing (as executed)
 
-Execute on a clean `main` immediately after the 0.3.7 branches merge and
-release. This design doc is written now so it is ready to hand to the
-implementation-planning step at that point.
+Originally planned for a clean `main` after the 0.3.7 release, to avoid
+conflicting with the four branches then in flight. Once those merged into
+`release/0.3.7` that conflict risk was gone, so the split was executed on top
+of the release branch and shipped **in** 0.3.7 rather than after it.
+
+Executed in phase order lexer → analyzer → parser → codegen, leaf-first within
+each phase, one extraction per commit. Every extraction passed the gate, and
+each phase was additionally verified against an independent baseline built
+from the pre-split commit: 342 corpus programs, zero assembly differences, at
+every phase boundary.
+
+One procedural correction came out of the analyzer phase and is folded into
+plan 306: extraction ranges must begin at an item's first attached line (doc
+comment, comment block, or attribute), not at its `fn` line. Ranges begun at
+`fn` strand the moved method's documentation — which the assembly gate cannot
+detect, since comments do not affect codegen.

@@ -19,6 +19,20 @@ adheres to [Semantic Versioning](https://semver.org/).
   died with "Expected timer name". Strictly widening: no previously-valid
   program changes meaning.
 
+- **The compiler source is reorganised into focused modules.** Each
+  compilation phase was a single very large `mod.rs` — codegen 11,061 lines,
+  parser 7,224, analyzer 4,032, lexer 1,091 — which made the code hard to
+  navigate, review, and contribute to. Every phase is now a directory of
+  topical modules (for example `codegen/expr.rs`, `codegen/tags.rs`,
+  `parser/control_flow.rs`, `analyzer/scope.rs`), with `mod.rs` reduced to
+  the phase's type, shared constants, and module declarations: 494, 205, 200,
+  and 52 lines respectively. This is **pure code motion — no behaviour
+  change**. Every step was verified by compiling the whole example and test
+  corpus and confirming the emitted assembly stayed byte-identical to the
+  pre-refactor compiler's, alongside the full test suite. Nothing about the
+  language, the CLI, or any public interface changes; the difference is
+  purely that the source is now navigable.
+
 ### Fixed
 
 - **Appending a format string to a list stored a corrupt element** (BUGS_FOUND
@@ -121,11 +135,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   developed FOSS projects written in Vox, with an invitation to add yours by
   emailing vox-lang@tegosec.com.
 
-- **A design document for splitting the monolithic compiler phase modules**
-  (`docs/MODULE_SPLIT_DESIGN.md`). Records the approved strategy for breaking
-  the large `codegen`/`parser`/`analyzer`/`lexer` `mod.rs` files into focused
-  topical submodules as pure, behaviour-preserving code motion. Design only;
-  no code moved in this release.
+- **A design document and implementation plan for the module split**
+  (`docs/MODULE_SPLIT_DESIGN.md`, `docs/plans/306_module_split.md`), recording
+  the strategy and the procedure the refactor below followed.
 
 ## [0.3.6] - 2026-08-14
 
