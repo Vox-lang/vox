@@ -971,6 +971,18 @@ impl Parser {
     fn peek(&self, offset: usize) -> &Token {
         self.tokens.get(self.pos + offset).map(|t| &t.token).unwrap_or(&Token::EOF)
     }
+
+    /// True when the token after the current one (skipping newline noise)
+    /// can be the name operand of a timer statement: `the` or an
+    /// identifier. Decides whether a statement-initial `start`/`begin`/
+    /// `stop`/`finish` is a timer statement or an ordinary call.
+    fn timer_name_follows(&self) -> bool {
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::The | Token::Identifier(_))
+    }
     
     fn advance(&mut self) -> Token {
         let tok = self.current().clone();
@@ -1141,10 +1153,22 @@ impl Parser {
             Token::See => self.parse_see(),
             // Time and Timer statements
             Token::Wait | Token::Sleep => self.parse_wait(),
-            Token::Begin => self.parse_timer_start(),
-            Token::Stop | Token::Finish => self.parse_timer_stop(),
             Token::Get => self.parse_get(),
-            Token::Identifier(ref s) if s == "start" => self.parse_timer_start(),
+            // start/begin/stop/finish are contextual identifiers, not
+            // reserved words: they open a timer statement only when a name
+            // operand follows (`Start the t.`, `stop t.`). A bare `stop.`
+            // or `begin of x` falls through to the ordinary call path, and
+            // all four words stay usable as variable and function names.
+            Token::Identifier(ref s)
+                if (s == "start" || s == "begin") && self.timer_name_follows() =>
+            {
+                self.parse_timer_start()
+            }
+            Token::Identifier(ref s)
+                if (s == "stop" || s == "finish") && self.timer_name_follows() =>
+            {
+                self.parse_timer_stop()
+            }
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("change") => self.parse_chdir(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("mount") => self.parse_mount(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("unmount") || s.eq_ignore_ascii_case("umount") => self.parse_unmount(),
@@ -6512,7 +6536,7 @@ impl Parser {
     }
     
     fn parse_timer_start(&mut self) -> Result<Statement, Box<CompileError>> {
-        self.advance(); // consume Start/Begin
+        self.advance(); // consume the contextual start/begin identifier
         self.skip_noise();
         
         // Optional "the"
@@ -6530,7 +6554,7 @@ impl Parser {
     }
     
     fn parse_timer_stop(&mut self) -> Result<Statement, Box<CompileError>> {
-        self.advance(); // consume Stop/Finish
+        self.advance(); // consume the contextual stop/finish identifier
         self.skip_noise();
         
         // Optional "the"

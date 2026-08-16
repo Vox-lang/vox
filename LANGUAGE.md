@@ -2734,9 +2734,16 @@ Start the 'job timer'.
 Stop the 'job timer'.
 ```
 
-**Alternative keywords:**
+**Alternative spellings:**
 - `Start` / `Begin`
-- `Stop` / `End` / `Finish`
+- `Stop` / `Finish`
+
+These four words are **contextual, not reserved**. They open a timer
+statement only when a name operand follows — `Start the t.`, `stop t.` —
+and everywhere else they are ordinary identifiers, so `a number called
+stop is 0.` compiles, and a program may define and call its own
+zero-argument `start.` function. (`End` is not a Stop spelling: `end`
+belongs to the `exit` family of keywords and remains reserved.)
 
 #### Timer Properties
 
