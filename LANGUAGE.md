@@ -3678,7 +3678,7 @@ or_expr     ::= and_expr ("or" and_expr)*
 and_expr    ::= comparison ("and" comparison)*
 comparison  ::= additive (comp_op additive)?
 additive    ::= multiplicative ((add | subtract) multiplicative)*
-multiplicative ::= primary ((multiply | divide | modulo) primary)*
+multiplicative ::= primary ((multiply | times | divide | modulo) primary)*
 primary     ::= literal | identifier | func_call | "(" expr ")"
 
 type        ::= "number" | "float" | "text" | "boolean" | "list"

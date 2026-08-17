@@ -1,0 +1,11 @@
+(Phase A: `times` as a multiplication alias for `multiply`.
+ 6 times 7 -> 42; a Set/variable form; and a precedence check that
+ prints the same expression with `times` and with `multiply` so the
+ alias is proven identical.)
+
+Print 6 times 7.
+a number called n is 5.
+Set n to n times 10.
+Print n.
+Print 2 plus 3 times 4.
+Print 2 plus 3 multiply 4.

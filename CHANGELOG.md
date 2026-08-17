@@ -4,6 +4,20 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`times` is now a multiplication operator, an alias for `multiply`.**
+  `Print 6 times 7.` and `Set n to n times 10.` compile and behave exactly
+  like their `multiply` forms, including precedence — `Print 2 plus 3 times
+  4.` evaluates to 14, multiplication still binding tighter than addition,
+  identical to `2 plus 3 multiply 4.`. `times` was already a reserved
+  keyword for the `Repeat <count> times,` loop, so no lexer change was
+  needed; the `Repeat` count is read with `parse_primary`, which never
+  reaches the multiplicative layer, so the loop construct is unaffected.
+  Strictly widening: no previously-valid program changes meaning.
+
 ## [0.3.7] - 2026-08-16
 
 ### Changed
