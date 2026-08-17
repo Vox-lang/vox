@@ -33,8 +33,10 @@ A type called point has
   users are defining a type, and usage then reads identically to the
   builtins. "record" rejected for its database connotation, "struct"
   rejected as jargon, "structure" considered but passed over).
-- Data only: field declarations, each `a <type> called <name>`, with an
-  optional `is <literal>` default. No functions inside the definition.
+- Two kinds of entry: **data fields** (`a <type> called <name>`, with an
+  optional `is <literal>` default) and **function-member declarations**
+  (`a function called <name>` — the manifest, section 4). Function
+  *bodies* never appear inside the definition; only declarations do.
 - A field without a default gets its type's zero/empty value.
 - Closed by the same termination rules as other constructs.
 - The structure name then works everywhere a type keyword works:
@@ -81,49 +83,85 @@ Three call forms, one rule each:
 | Form | Example | Rule |
 |---|---|---|
 | Free call | `'some method' on p` | Unchanged, global namespace |
-| Instance possessive | `p's 'some method'`, `p's 'scaled by' on 2` | Sugar: receiver fills the **first parameter**; remaining args follow any call preposition. Works for any function whose first parameter is that structure type, tagged or not. Compile-time rewrite, zero runtime cost. |
-| Type possessive | `a point's 'from polar' with 1.0 and 0.5` | Calls a function **tagged** into point's namespace. Article + type name + `'s`. |
+| Instance possessive | `p's 'some method'`, `p's 'scaled by' on 2` | Sugar: receiver fills the **first parameter**; remaining args follow any call preposition. Works for any function whose first parameter is that type, declared in the manifest or not. Compile-time rewrite, zero runtime cost. |
+| Type possessive | `a point's 'from polar' with 1.0 and 0.5` | Calls a function member **declared in point's manifest**. Article + type name + `'s`. |
 
-**Tagging is opt-in, on the signature line — definition mirrors call:**
+**Membership is declared in the type — the definition is the manifest
+(owner's design, superseding the earlier possessive-tagged signature):**
 
 ```
-To a point's 'from polar' with a float called r and a float called theta.
+A type called point has
+  a function called 'from polar',
+  a number called x is 0,
+  a number called y is 0.
+```
+
+- `a function called <name>` declares a **function member** — the type's
+  callable API listed in one place. Function members take **no
+  storage**: layout, copy, printing, and equality see only the data
+  fields. Reading a type's definition enumerates its full surface.
+- Each declared member is then defined with **`To do the <type>'s
+  <name>`**, referencing the known identifier from the manifest:
+
+```
+To do the point's 'from polar', with a float called r and a float called theta.
   a point called out.
   ...
   Return a point, out.
 ```
 
-- A tagged function lives in the structure's namespace, is called via the
-  type possessive (or instance possessive when its first parameter is the
-  structure), and leaves the global namespace — so `point` and `vector3`
-  may each define `'from polar'`, or their own `'scaled by'`.
-- **Untagged functions never auto-join a namespace.** Membership by
-  return type was considered and rejected: it makes membership invisible
-  at the signature (readable only from the `Return` line at the bottom of
-  the body), makes global-collision behaviour depend on edits to distant
-  `Return` lines, and would spam builtin namespaces since most functions
-  return numbers. The tag is consent, stated where the eye is.
-- The compiler cross-checks a tagged function's `Return` type against its
-  declared owner; a mismatch is a compile error naming both lines.
-- Maker-style tagged functions (first parameter not the structure) are
-  reachable **only** through the type possessive — the full name of
-  `'from polar'` is `a point's 'from polar'`.
+- **Article convention (owner's rule):** "a/an" pairs with *types* and
+  values coming into being; "the" pairs with *known identifiers*. Hence
+  the definition says `the point's 'from polar'` (the member is a known
+  identifier, declared in the manifest) while a maker call says
+  `a point's 'from polar'` (a new point comes into being).
+- The manifest is checked both ways: a `To do` definition whose member
+  is not declared errors at the definition ("point does not declare
+  sparkle — add `a function called sparkle` to the type"); a declared
+  member nothing defines errors at the type ("point declares
+  'never written' but nothing defines it").
+- A maker's `Return` type is cross-checked against its owner; mismatch
+  is a compile error naming both lines.
+- Makers (first parameter not the owner) are reachable **only** through
+  the type possessive — the full name of `'from polar'` is `a point's
+  'from polar'`. Declared *instance* members (first parameter is the
+  owner) get both the type possessive and the instance possessive.
+- **Plain global functions never auto-join a namespace** and need no
+  manifest entry — `magnitude` stays an ordinary function, and the
+  instance sugar still applies to it via its first parameter.
+  (Membership by return type was considered and rejected: invisible at
+  the signature, collision behaviour dependent on distant `Return`
+  edits, and builtin-namespace spam.)
 
-**Collision rule (settled, first-come-first-serve):** each structure owns
-one namespace containing its fields, its tagged functions, and every
-global function whose first parameter is that structure. The second
-definition of any name in that namespace is a compile error at its own
+**One identifier space (settled):** type names, variable names, and
+function names share a single global identifier namespace;
+`a point called point.` is a first-come-first-serve error. This is what
+makes `the point's` unambiguous. C and Rust keep types and values in
+separate namespaces, but they can afford to — their types appear only in
+dedicated syntactic slots. Vox's possessive puts types and variables in
+the same grammatical position, so the unified space is required, not
+stylistic.
+
+**Collision rule (settled, first-come-first-serve):** each type owns one
+member space containing its fields, its declared function members, and
+every global function whose first parameter is that type. The second
+definition of any name in that space is a compile error at its own
 definition site, with a diagnostic pointing at the first. No shadowing,
 no precedence order. (Precedent: the same refuse-ambiguity posture as
 the `send`/`begin`/`stop` keyword lookaheads.)
 
-**Parser notes:** `a <name>'s` where `<name>` is a defined structure type
-is the type possessive; `a <name> called` is a declaration — one token of
-lookahead separates them. Quoted identifiers take the possessive as
+**Parser notes:** `a <name>'s` where `<name>` is a defined type is the
+type possessive; `a <name> called` is a declaration — one token of
+lookahead separates them. `To do` followed by `the <typename>'s`
+introduces a member definition; `do` stays an ordinary identifier
+everywhere else (`send` treatment). The comma before the parameter list
+(`'from polar', with ...`) follows the `Return a number, total.`
+payload-comma precedent. Quoted identifiers take the possessive as
 `'the point in question''s` — the quote-then-`s` lexing already has
-precedent (LANGUAGE.md ~line 588). `type` becomes a keyword only in
-the definition construct, an ordinary identifier elsewhere (same
-treatment as `send`).
+precedent (LANGUAGE.md ~line 588). `type` becomes a keyword only in the
+definition construct, an ordinary identifier elsewhere (same treatment
+as `send`; verified: `type` is not a lexer keyword today, and type
+predicates use the type nouns, never the bare word).
 
 ## 5. Copy semantics — **PROPOSED**
 
@@ -211,6 +249,14 @@ spelling rather than emitting a generic parse failure.
 - Declaring with an unknown type name keeps the existing unknown-type
   error, extended to suggest near-miss **user-defined** type names
   alongside the builtins.
+- `a point called point.` (or any reuse of a type/function/variable
+  name) — one identifier space, first-come-first-serve: error at the
+  second definition naming the first.
+- `To do the point's sparkle, ...` with no manifest entry — error at the
+  definition: point does not declare sparkle; add
+  `a function called sparkle` to the type.
+- A manifest entry nothing defines — error at the type: point declares
+  'sparkle' but nothing defines it.
 
 And the positive counterpart, already implied by section 1's "works
 everywhere a type keyword works" but stated here so it gets a test:
@@ -238,11 +284,13 @@ participate in every declaration form the builtin type keywords do.
 - vox-vscode: grammar additions for `structure` and the type possessive;
   keep the drift check green.
 - Tests: definition/defaults; field read/write; all three call forms;
-  tagged maker + type possessive; instance sugar with extra args via
+  manifest-declared maker + type possessive; To do definitions; both
+  manifest mismatch errors (undeclared definition, undefined
+  declaration); one-identifier-space collision; instance sugar with extra args via
   each preposition; per-structure duplicate `'from polar'` across two
-  structures; collision errors (field vs field, field vs tagged fn,
+  structures; collision errors (field vs field, field vs declared member,
   field vs global-first-param fn — each erroring at the second site);
-  tag/Return mismatch; `The x is` inference; copy-on-assign observable
+  owner/Return mismatch; `The x is` inference; copy-on-assign observable
   test (mutate the copy, original unchanged); pass-by-value test;
   printing; equality; each reserved wrong shape from section 10 erroring
   with its targeted message; `Create a point called p.` working;
