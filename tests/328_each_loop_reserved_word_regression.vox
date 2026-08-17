@@ -1,0 +1,6 @@
+(Regression for the misleading "Missing loop variable" diagnostic when
+ the loop variable name is a reserved word. `arg` is an alias of the
+ reserved keyword `argument`, so it is correctly rejected at the loop
+ variable slot; renaming to `item` must still compile and iterate.)
+a list called argv is [1, 2, 3].
+print each item from argv.
