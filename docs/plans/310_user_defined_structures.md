@@ -146,6 +146,13 @@ scalars, making layout trivially `count × 8` with compile-time offsets.
   aliasing question section 5 deliberately avoids). Flat scalar
   structures first; nesting is a natural v2 once copy semantics have
   soaked.
+- **Scope boundary of "works everywhere a type keyword works":** that
+  clause covers *declaration positions* — `a point called p.`,
+  `Create a point called p.`, declarations with initializers,
+  parameters, and return types. It does **not** extend user types into
+  the runtime tag system in v1: lists/maps *of* user types, `value`
+  payloads, and `is a point` type predicates are all deferred with the
+  collection fields above.
 
 ## 7. Printing — **PROPOSED**
 
