@@ -1,0 +1,4 @@
+before any reap: -1
+after 0-returning reap: -1
+nonblocking reap returned: 0
+status set after real reap

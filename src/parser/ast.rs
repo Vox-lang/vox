@@ -157,7 +157,11 @@ pub enum Expr {
     Fork,                       // fork() - 0 in child, child pid in parent, negative on error
     ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
         pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+        no_hang: bool,          // plan 311: true = WNOHANG (non-blocking); false = blocking
     },
+    // plan 311: the raw wait4 status word from the most recent successful reap.
+    // -1 sentinel before any reap. Decoding lives in lib/process.vox, not here.
+    ReapedStatus,
     
     // Type casting
     Cast {

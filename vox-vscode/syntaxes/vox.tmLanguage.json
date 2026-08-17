@@ -5,6 +5,8 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#on-error" },
+    { "include": "#reaped-status" },
+    { "include": "#reap-no-hang" },
     { "include": "#library-declaration" },
     { "include": "#see-import" },
     { "include": "#function-definition" },
@@ -42,6 +44,16 @@
       "comment": "Exception handler clause: 'on error ...'",
       "name": "keyword.control.exception.vox",
       "match": "(?<![\\w-])(?i:on)\\s+(?i:error)(?![\\w-])"
+    },
+    "reaped-status": {
+      "comment": "plan 311: 'the reaped status' - the raw wait4 status word from the most recent successful reap. A fixed three-word phrase with no expression inside, so it is matched as one construct. 'the reaped' followed by anything else falls through to the article + bare-identifier rules and stays an ordinary variable reference, so 'reaped' remains usable as a name.",
+      "name": "support.function.vox",
+      "match": "(?<![\\w-])(?i:the)\\s+(?i:reaped)\\s+(?i:status)(?![\\w-])"
+    },
+    "reap-no-hang": {
+      "comment": "plan 311: 'without waiting' - the WNOHANG suffix on a reap. Matched as a two-word phrase so 'waiting' is coloured only here, not claimed as a global keyword; it stays an ordinary identifier everywhere else (the spec requires this). 'without' alone is already an action keyword for 'print ... without newline'; this lifts the pair to a control modifier when they appear together.",
+      "name": "keyword.control.vox",
+      "match": "(?<![\\w-])(?i:without)\\s+(?i:waiting)(?![\\w-])"
     },
     "library-declaration": {
       "comment": "Library declaration: Library \"name\" version \"x.y\"",

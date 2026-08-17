@@ -948,6 +948,29 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
+                // plan 311: optional "without waiting" suffix on any reap form
+                // selects WNOHANG (non-blocking) reap. `without` is a distinct
+                // token (Token::Without), so it cannot be mistaken for a call
+                // argument after the pid expression, and `print ... without
+                // newline` is unaffected. `waiting` remains an ordinary
+                // identifier everywhere else.
+                let parse_no_hang = |p: &mut Self| -> Result<bool, Box<CompileError>> {
+                    if *p.current() == Token::Without {
+                        p.advance();
+                        p.skip_noise();
+                        match p.current() {
+                            Token::Identifier(ref w) if w.eq_ignore_ascii_case("waiting") => {
+                                p.advance();
+                                p.skip_noise();
+                                Ok(true)
+                            }
+                            _ => Err(p.err_expected("'waiting' after 'without' in a reap", p.current())),
+                        }
+                    } else {
+                        Ok(false)
+                    }
+                };
+
                 // "reap any child process" -> pid = None (wait for any child)
                 if let Token::Identifier(ref w) = self.current() {
                     if w.eq_ignore_ascii_case("any") {
@@ -962,7 +985,8 @@ impl Parser {
                                 break;
                             }
                         }
-                        return Ok(Expr::ReapChild { pid: None });
+                        let no_hang = parse_no_hang(self)?;
+                        return Ok(Expr::ReapChild { pid: None, no_hang });
                     }
                 }
 
@@ -974,7 +998,8 @@ impl Parser {
                     }
                 }
                 let pid = self.parse_primary()?;
-                Ok(Expr::ReapChild { pid: Some(Box::new(pid)) })
+                let no_hang = parse_no_hang(self)?;
+                Ok(Expr::ReapChild { pid: Some(Box::new(pid)), no_hang })
             }
 
             Token::Identifier(name) => {
@@ -1296,8 +1321,26 @@ impl Parser {
                         }
                     }
                     Token::Identifier(name) => {
+                        // plan 311: "the reaped status" -> raw wait4 status word.
+                        // Only this exact phrase; "the reaped <anything else>" is
+                        // an ordinary variable reference to `reaped`, so we only
+                        // commit when "status" directly follows. `reaped` stays
+                        // usable as an ordinary identifier (tests/102_fork_reap.vox
+                        // does `Set reaped to reap any child process.`).
+                        let reaped_status = name.eq_ignore_ascii_case("reaped");
                         self.advance();
                         self.skip_noise();
+                        if reaped_status {
+                            if let Token::Identifier(ref w) = self.current() {
+                                if w.eq_ignore_ascii_case("status") {
+                                    self.advance();
+                                    self.skip_noise();
+                                    return Ok(Expr::ReapedStatus);
+                                }
+                            }
+                            // "the reaped" not followed by "status": fall through
+                            // to the ordinary variable reference below.
+                        }
                         
                         // Check for property access: "the now's hour"
                         if *self.current() == Token::Apostrophe {

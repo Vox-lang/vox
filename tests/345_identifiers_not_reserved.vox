@@ -1,0 +1,20 @@
+(Regression: reaped, waiting, process, and child must remain usable as
+ ordinary identifiers - this repo shipped exactly this regression once
+ before, when `send` was claimed unconditionally and broke user functions
+ of that name. `the reaped status` is consumed only as that exact phrase;
+ `the reaped` followed by anything else is an ordinary variable
+ reference. `without` is already a distinct token, so `print ... without
+ newline` is unaffected. `waiting` is an ordinary identifier everywhere
+ it is not the reap suffix.)
+
+a number called waiting is 7.
+a number called reaped is 99.
+a number called child is 5.
+a number called process is 11.
+Print "waiting {waiting}".
+Print "reaped as variable {reaped}".
+Print "the reaped as variable {the reaped}".
+Print "child {child}".
+Print "process {process}".
+Print "no newline here" without newline.
+Print " continued".

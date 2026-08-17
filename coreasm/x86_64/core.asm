@@ -18,6 +18,12 @@ section .bss
 
 section .data
     _max_call_depth: dq 10000          ; maximum recursion depth
+    ; plan 311: raw wait4 status word from the most recent successful reap.
+    ; -1 sentinel before any reap (so "never reaped" is distinct from "exited 0").
+    ; Lives in .data, not .bss, because _start (which would zero .bss-bound
+    ; globals) is only emitted for executables - a --shared library would
+    ; otherwise read 0 and silently report "exited cleanly" with no child reaped.
+    _reaped_status: dq -1
     _stack_overflow_msg: db "Error: stack overflow (recursion depth exceeded)", 10, 0
     _stack_overflow_msg_len: equ $ - _stack_overflow_msg - 1
 
