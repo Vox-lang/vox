@@ -172,7 +172,33 @@ Function-local structures live on the stack; top-level structures in
 `.bss`/`.data` like other globals. All field offsets are compile-time
 constants. No runtime component of any kind.
 
-## 10. Out of scope, permanently or for now
+## 10. Diagnostics for reserved wrong shapes (in scope)
+
+The definition construct creates a family of sentences that are never
+valid Vox. Each gets a targeted parser error that states the intent it
+recognizes and names the canonical form — the established pattern from
+the retired `see` forms, which error and point at the one correct
+spelling rather than emitting a generic parse failure.
+
+- `Create a type called point.` — never valid, in any version. Error:
+  a type is defined, not created as a variable; write
+  `A type called point has <fields>.`
+- `A type called point is ...` — the learner reached for the
+  declaration verb. Error: `is` declares a variable; a type definition
+  uses `has`.
+- `A type called point.` with no fields — v1 requires at least one
+  field. Error says so and shows the shape.
+- Declaring with an unknown type name keeps the existing unknown-type
+  error, extended to suggest near-miss **user-defined** type names
+  alongside the builtins.
+
+And the positive counterpart, already implied by section 1's "works
+everywhere a type keyword works" but stated here so it gets a test:
+`Create a point called p.` **is valid**, equivalent to
+`a point called p.` (all defaults), because user-defined type names
+participate in every declaration form the builtin type keywords do.
+
+## 11. Out of scope, permanently or for now
 
 - Inheritance, virtual dispatch, runtime attribute lookup — permanently
   (requires a resident runtime, which Vox forbids by identity).
@@ -182,7 +208,7 @@ constants. No runtime component of any kind.
   does not have.
 - Auto-namespace membership by return type — rejected, see section 4.
 
-## 11. Documentation and tests (for the implementation plan)
+## 12. Documentation and tests (for the implementation plan)
 
 - LANGUAGE.md: new "Structures" chapter (definition, defaults, field
   access, the three call forms, tagging, collision rule, copy semantics,
@@ -198,10 +224,12 @@ constants. No runtime component of any kind.
   field vs global-first-param fn — each erroring at the second site);
   tag/Return mismatch; `The x is` inference; copy-on-assign observable
   test (mutate the copy, original unchanged); pass-by-value test;
-  printing; equality; `structure` as an ordinary identifier outside the
+  printing; equality; each reserved wrong shape from section 10 erroring
+  with its targeted message; `Create a point called p.` working;
+  `type` as an ordinary identifier outside the
   construct.
 
-## 12. Open questions for review (the PROPOSED items)
+## 13. Open questions for review (the PROPOSED items)
 
 1. Copy semantics: value types, full copy on assign/pass (§5)?
 2. v1 field set: number/float/boolean/time, text pending verification,
