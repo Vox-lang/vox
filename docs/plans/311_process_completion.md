@@ -91,23 +91,36 @@ This spec's first draft put `Return a number,` on *both* the signature
 line and in the body, which does not compile — the return clause belongs
 at the end of the body only. The verified text:
 
+**Names corrected 2026-08-17** to follow `docs/STYLE.md`: the parameter
+is `status`, not `st`, and the local is `'terminating signal'`, not
+`sig`. This file is Vox's first standard library, so its names set the
+precedent every later library follows — `'exit code of' of status` is a
+sentence; `'exit code of' of st` is not.
+
 ```
-(Decode a raw wait status, as sys/wait.h does with macros.)
+(The low seven bits of a wait status hold the signal that killed the
+ process, and are zero when it exited on its own. The exit code lives
+ in the next eight bits up. This is the kernel's encoding, not ours -
+ see wait(2).)
 
-To 'exit code of' with a number called st.
-  Return a number, st divide 256 modulo 256.
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
 
-To 'signal of' with a number called st.
-  Return a number, st bit-and 127.
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
 
-To crashed with a number called st.
-  a number called sig is st bit-and 127.
-  Return a boolean, sig is not 0.
+To crashed with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is not 0.
 
-To 'exited normally' with a number called st.
-  a number called sig is st bit-and 127.
-  Return a boolean, sig is 0.
+To 'exited normally' with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is 0.
 ```
+
+The names are chosen for the call site, per the style guide:
+`If crashed of status then,` and `Print 'exit code of' of status.` both
+read as English sentences.
 
 Semantics being encoded (from `<sys/wait.h>`): the low 7 bits hold the
 terminating signal (0 when the process exited normally); bits 8–15 hold
@@ -137,36 +150,62 @@ A complete supervisor loop in pure Vox, no `/bin/sh`, no coreutils:
 ```
 see "./lib/process.vox".
 
-Set pid to fork the process.
-If pid is 0 then,
+Set 'the child' to fork the process.
+If 'the child' is 0 then,
     Execute "./candidate",
     Exit 101.
 
 a timer called clock.
 Start the clock.
-Set done to 0.
-While done is 0,
-    Set r to reap child pid without waiting,
-    If r is pid then,
-        Set done to 1.
-    If done is 0 then,
-        a number called waited is the clock's elapsed in milliseconds,
-        If waited is greater than 5000 then,
-            Send signal 9 to process pid,
-            Set r2 to reap child pid,
-            Set done to 2.
-    If done is 0 then,
+a boolean called 'the child is still running' is true.
+a boolean called 'we killed it' is false.
+
+While 'the child is still running',
+    Set finished to reap process 'the child' without waiting,
+    If finished is 'the child' then,
+        Set 'the child is still running' to false.
+    If 'the child is still running' then,
+        a number called 'milliseconds waited' is the clock's elapsed in milliseconds,
+        If 'milliseconds waited' is greater than 5000 then,
+            Send signal 9 to process 'the child',
+            Set reaped to reap process 'the child',
+            Set 'we killed it' to true,
+            Set 'the child is still running' to false..
+    If 'the child is still running' then,
         Wait 10 milliseconds.
 
-If done is 2 then,
+If 'we killed it' then,
     Print "hang".
-If done is 1 then,
-    Set st to the reaped status.
-    If crashed of st then,
-        Print "died by signal {'signal of' of st}".
-    If 'exited normally' of st then,
-        Print "exit {'exit code of' of st}".
+If 'we killed it' is false then,
+    Set status to the reaped status.
+    If crashed of status then,
+        Print "died by signal {'signal of' of status}".
+    If 'exited normally' of status then,
+        Print "exit {'exit code of' of status}".
 ```
+
+**Punctuation, verified by running the equivalent shape** (2026-08-17,
+with blocking `reap` standing in for the non-blocking form): each `If`
+inside the loop body closes with **one** period, which per rule 1 closes
+only that `If` and leaves the `While` open; the *nested* `If` closes
+with **two** (`false..`) to close itself and its parent; and the
+**blank line** after the body closes the `While`. Get this wrong and the
+trailing statements silently execute inside the loop — the failure mode
+LANGUAGE.md warns about, and one this document's first draft contained.
+
+**Naming, verified compiling:** `'the child'` is a quoted name, so it
+does not collide with the `child` keyword in `reap child <pid>`; the
+`reap process <pid>` form is used throughout for that reason. A bare
+boolean is a valid `While` condition, so `While 'the child is still
+running',` needs no `is true`.
+
+**Names corrected 2026-08-17** per `docs/STYLE.md`. The original used
+`pid`/`r`/`r2`/`done`/`st` and encoded loop state as the numbers 0, 1
+and 2 — `If done is 2 then, Print "hang".` requires the reader to
+remember what 2 meant. Named booleans say it instead: `While 'the child
+is still running',` and `If 'we killed it' then,` read as sentences and
+need no comment. Note `While 'the child is still running',` also drops
+the redundant `is true` comparison, per the guide's boolean rule.
 
 (The implementation plan must verify this exact program compiles and
 behaves correctly — it is the acceptance test for the whole plan, and
@@ -194,6 +233,30 @@ reported separately):
   the suite will be flaky.
 - The `Wait N milliseconds.` *statement* is unaffected — only reading
   elapsed time is coarse.
+
+## 4b. Style (binding on everything this plan adds)
+
+All Vox written for this plan follows `docs/STYLE.md` (branch
+`docs/style-guide`, `6e513b8`), with `examples/cat.vox`, `pi.vox` and
+`controller.vox` as the models — where the guide and those files
+disagree, the files win. The test is: **read the line aloud; does it
+sound like something a person would say?**
+
+This binds hardest on `lib/process.vox`, which is Vox's first standard
+library file and therefore sets the naming precedent for every library
+that follows. No abbreviations or placeholders as names (`st`, `buf`,
+`sig`, `i`, `tmp`) at any length; quoted multi-word names used freely;
+booleans named so the condition reads as a claim (`If crashed of status
+then,`); function names chosen for how the *call* reads with its
+preposition; comments giving the why, not restating the line.
+
+**Approved surface syntax is exempt and unchanged.** `the reaped status`
+and `reap ... without waiting` are the project owner's approved wording.
+Style applies to names chosen inside the library, tests, and examples —
+never to the language surface.
+
+Name review is part of this plan's acceptance gate, alongside the diff
+read and the green suite.
 
 ## 5. Documentation and tests
 
