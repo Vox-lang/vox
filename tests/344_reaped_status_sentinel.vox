@@ -1,0 +1,23 @@
+(The reaped status is -1 before any reap has happened - the sentinel
+ that distinguishes "never reaped" from "exited 0", and the reason it
+ lives in .data as `dq -1` rather than .bss. A non-blocking reap that
+ returns 0 (nothing finished yet) must leave it untouched; only a real
+ reap changes it. The child sleeps so the first reap returns 0; the
+ status is checked before, after the 0-reap, and after a real reap.)
+
+a number called 'status before any reap' is the reaped status.
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Set 'reap result' to reap child pid without waiting,
+    a number called 'status after nonblocking reap' is the reaped status,
+    Print "before any reap: {'status before any reap'}",
+    Print "after 0-returning reap: {'status after nonblocking reap'}",
+    Print "nonblocking reap returned: {'reap result'}",
+    Send signal 9 to process pid,
+    Set 'reaped pid' to reap child pid,
+    a number called 'status after real reap' is the reaped status,
+    If 'reaped pid' is pid then,
+        If 'status after real reap' is not -1 then,
+            Print "status set after real reap".

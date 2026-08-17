@@ -1715,7 +1715,7 @@ impl CodeGenerator {
                 self.emit_indent("FORK");
             }
 
-            Expr::ReapChild { pid } => {
+            Expr::ReapChild { pid, no_hang } => {
                 self.uses_files = true;
                 match pid {
                     None => {
@@ -1726,8 +1726,25 @@ impl CodeGenerator {
                         self.emit_indent("mov rdi, rax  ; wait for this specific pid");
                     }
                 }
-                self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
-                self.emit_indent("REAP_CHILD");
+                // plan 311: WNOHANG (1) for non-blocking reap, 0 for blocking.
+                // REAP_CHILD stores the raw status word to _reaped_status only
+                // when a child is actually reaped (rax > 0); a WNOHANG reap that
+                // returns 0 leaves it untouched.
+                if *no_hang {
+                    self.emit_indent("; wait4() with WNOHANG - non-blocking reap");
+                    self.emit_indent("REAP_CHILD 1");
+                } else {
+                    self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
+                    self.emit_indent("REAP_CHILD 0");
+                }
+            }
+
+            // plan 311: the raw wait4 status word from the most recent
+            // successful reap. -1 sentinel before any reap. _reaped_status is
+            // in core.asm (always linked), so this needs no feature gate.
+            Expr::ReapedStatus => {
+                self.emit_indent("; the reaped status - raw wait4 status word (plan 311)");
+                self.emit_indent("mov rax, [rel _reaped_status]");
             }
             
             // Type casting

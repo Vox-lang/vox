@@ -772,7 +772,7 @@ impl Analyzer {
                 self.analyze_expr(path);
             }
 
-            Expr::ReapChild { pid } => {
+            Expr::ReapChild { pid, .. } => {
                 if let Some(p) = pid {
                     self.analyze_expr(p);
                 }

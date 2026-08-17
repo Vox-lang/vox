@@ -1,0 +1,4 @@
+before any reap: -1
+first reap child alive: 0
+status after nonblocking reap: -1
+second reap returned child pid

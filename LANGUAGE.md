@@ -2618,6 +2618,123 @@ is valid (typically the right-hand side of `Set`/`a number called ... is`).
 Both set the error flag on failure (e.g. `On error` after `reap process 999999`
 catches `ECHILD` when the PID is not actually your child).
 
+#### Non-blocking reap: `without waiting`
+
+Any reap form takes a `without waiting` suffix, which calls `wait4(2)`
+with `WNOHANG` instead of blocking:
+
+```
+Set r to reap any child process without waiting.
+Set r to reap child pid without waiting.
+Set r to reap process pid without waiting.
+```
+
+The return value is the whole point of the form, and the three cases must
+be told apart:
+
+- a child finished → its PID, error flag cleared;
+- children exist but none has finished → `0`, error flag cleared (this is
+  **not** an error — it is how you tell "still running" from "gone");
+- genuine error, e.g. no such child (`ECHILD`) → negative, error flag set,
+  catchable with `On error`.
+
+A non-blocking reap that returns `0` reaps nothing, so it does **not**
+disturb `the reaped status` (below) — only a reap that actually returns a
+child's PID changes it. `without` is already a reserved keyword (it is the
+`print ... without newline` token), so the suffix cannot be confused with a
+call argument after the pid expression, and `waiting` remains an ordinary
+identifier everywhere it is not this suffix.
+
+#### The reaped status
+
+```
+Set r to reap child pid.
+Set status to the reaped status.
+```
+
+`the reaped status` is an expression yielding the raw `wait4` status word as
+a plain number — exactly the `int status` the kernel writes, undecoded. It
+reflects the most recent *successful* reap in the current process. Before
+any successful reap it is `-1`, a sentinel no real status can take, so
+"never reaped" is distinguishable from "exited 0". The sentinel lives in
+loader-initialized `.data`, not `.bss`, because `_start` (which would zero
+a `.bss` global) is only emitted for executables — a `--shared` library
+would otherwise read `0` and silently report "exited cleanly" with no child
+ever reaped.
+
+`reaped` stays an ordinary identifier: `the reaped status` is consumed only
+as that exact phrase, and `the reaped` followed by anything else is an
+ordinary variable reference. (`tests/102_fork_reap.vox` does
+`Set reaped to reap any child process.` and keeps passing.)
+
+#### Decoding the status: `lib/process.vox`
+
+The compiler knows nothing about the wait-status encoding. Decoding lives
+in `lib/process.vox`, Vox's first standard-library file, as ordinary Vox:
+
+```
+see "./lib/process.vox".
+```
+
+It provides four functions over the raw status word, matching the
+`<sys/wait.h>` macros: `'exit code of'` (bits 8–15), `'signal of'` (the low
+7 bits), `crashed` (true if a signal killed it), and `'exited normally'`
+(true if no signal was involved). Use them at the call site, where they
+read as English:
+
+```
+If crashed of status then,
+    Print "died by signal {'signal of' of status}".
+If 'exited normally' of status then,
+    Print "exit {'exit code of' of status}".
+```
+
+#### A supervisor loop, with no shelling out
+
+These pieces compose into a complete supervisor — poll a child with
+non-blocking reap, time it out, kill it, and report how it died — using
+only Vox, no `/bin/sh` and no coreutils:
+
+```
+see "./lib/process.vox".
+
+Set pid to fork the process.
+If pid is 0 then,
+    Exit 0.
+
+a timer called clock.
+Start the clock.
+a boolean called 'child is still running' is true.
+a boolean called 'child was killed' is false.
+While 'child is still running',
+    Set 'reap result' to reap child pid without waiting,
+    If 'reap result' is pid then,
+        Set 'child is still running' to false.
+    If 'child is still running' then,
+        a number called 'milliseconds waited' is the clock's elapsed in milliseconds,
+        If 'milliseconds waited' is greater than 5000 then,
+            Send signal 9 to process pid,
+            Set 'reap result' to reap child pid,
+            Set 'child is still running' to false,
+            Set 'child was killed' to true.
+    If 'child is still running' then,
+        Wait 10 milliseconds.
+
+If 'child was killed' then,
+    Print "hang".
+If 'child was killed' is false then,
+    Set status to the reaped status,
+    If crashed of status then,
+        Print "died by signal {'signal of' of status}".
+    If 'exited normally' of status then,
+        Print "exit {'exit code of' of status}".
+```
+
+A note on timing: `the clock's elapsed in milliseconds` currently reports
+whole seconds × 1000, so the 5000-millisecond deadline above fires somewhere
+in the five-to-six-second range. The loop works because its deadline is
+multi-second; tests that exercise it must assert outcomes, not durations.
+
 #### Send a signal: `Send signal`
 
 Unlike `fork`/`reap`, this is a **statement**, not an expression:

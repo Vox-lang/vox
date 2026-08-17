@@ -27,6 +27,35 @@ adheres to [Semantic Versioning](https://semver.org/).
   reaches the multiplicative layer, so the loop construct is unaffected.
   Strictly widening: no previously-valid program changes meaning.
 
+- **`reap ... without waiting` performs a non-blocking `wait4(2)` (WNOHANG),
+  and `the reaped status` yields the raw wait-status word.** Any reap form
+  (`reap any child process`, `reap process <pid>`, `reap child <pid>`) takes
+  a `without waiting` suffix, which calls `wait4` with `WNOHANG` instead of
+  blocking. The return value is the whole value of the form: the reaped
+  child's PID if one finished; `0` if children exist but none has finished
+  yet (this is **not** an error — it is how "still running" is told from
+  "gone"); or a negative value with the error flag set on a genuine error
+  such as `ECHILD` (no such child), catchable with `On error`. A reap that
+  returns `0` reaps nothing and does not disturb `the reaped status`.
+  `the reaped status` is a new expression yielding the raw `int status` the
+  kernel wrote, undecoded, from the most recent *successful* reap; before
+  any reap it is `-1` (a sentinel kept in `.data`, not `.bss`, so a
+  `--shared` library does not read `0` and misreport "exited cleanly"). The
+  compiler contains no knowledge of the wait-status encoding. `without` is
+  already a reserved keyword (the `print ... without newline` token), so
+  the suffix cannot be confused with a call argument, and `reaped` /
+  `waiting` remain ordinary identifiers everywhere they are not these
+  forms. Strictly additive: no existing program changes meaning.
+
+- **`lib/process.vox`, the first standard-library file.** Ships in the
+  repo as ordinary Vox and decodes the raw wait-status word with four
+  functions matching the `<sys/wait.h>` macros: `'exit code of'` (bits
+  8–15), `'signal of'` (the low 7 bits), `crashed` (true if a signal
+  killed it), and `'exited normally'` (true if no signal was involved).
+  Pulled in with `see "./lib/process.vox".`. Decoding lives here rather
+  than in the compiler so that user-defined things (plan 310) can later
+  wrap a status in a `process` thing with no compiler change.
+
 ### Fixed
 
 - **A reserved word used as a loop variable reported "Missing loop

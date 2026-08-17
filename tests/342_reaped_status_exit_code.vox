@@ -1,0 +1,20 @@
+(the reaped status after a child exits with a known code. A child exits
+ 42; the parent reaps (blocking) and decodes the raw wait4 status word
+ with lib/process.vox. The exit code must be 42, the signal 0, crashed
+ false, and exited normally true. This exercises every lib/process.vox
+ function against a real child, not just literals - which also proves
+ the compiler delivers the status word correctly.)
+
+see "../lib/process.vox".
+
+Set pid to fork the process.
+If pid is 0 then,
+    Exit 42.
+If pid is greater than 0 then,
+    Set 'reaped pid' to reap child pid,
+    Set status to the reaped status,
+    Print "reaped pid matches: {'reaped pid' is pid}",
+    Print "exit code: {'exit code of' of status}",
+    Print "signal: {'signal of' of status}",
+    Print "crashed: {crashed of status}",
+    Print "exited normally: {'exited normally' of status}".
