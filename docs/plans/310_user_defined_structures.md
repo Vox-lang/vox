@@ -1,8 +1,10 @@
 # 310 — User-defined structures
 
-**Status:** design approved in outline by Josj (2026-08-17); items marked
-**PROPOSED** below still need his explicit yes/no at spec review before
-implementation. Nothing in this document is implemented yet.
+**Status:** APPROVED in full by Josj (2026-08-17) — including the four
+formerly-proposed items: value-copy semantics, the v1 field set with
+unlimited thing nesting, map-style recursive printing, and field-wise
+equality. Nothing in this document is implemented yet; implementation
+plan: `docs/superpowers/plans/2026-08-17-user-defined-things.md`.
 
 **Dependencies:** none (Track-independent). Interacts with the possessive
 property machinery (`ObjectProperty`, `src/parser/ast.rs`) and the
@@ -171,7 +173,7 @@ definition construct, an ordinary identifier elsewhere (same treatment
 as `send`; verified: `thing` is not a lexer keyword today (verified: no Token, no test identifier, prose-only in LANGUAGE.md), and type
 predicates use the type nouns, never the bare word).
 
-## 5. Copy semantics — **PROPOSED**
+## 5. Copy semantics (approved 2026-08-17)
 
 **Structures are value types: assignment and parameter passing copy the
 whole value.**
@@ -191,7 +193,7 @@ invalidated by parent reallocation). No hidden sharing anywhere fits
 Vox's explicitness. Functions receive copies; to give a caller a
 modified structure, return it (`Return a point, out.`).
 
-## 6. v1 field types — **PROPOSED**
+## 6. v1 field types (approved 2026-08-17)
 
 v1 fields may be: **number, float, boolean, time — and any previously
 defined thing** (owner's decision: things are infinitely nestable).
@@ -222,7 +224,7 @@ the diagnostic names the cycle (see section 10).
   payloads, and `is a point` type predicates are all deferred with the
   collection fields above.
 
-## 7. Printing — **PROPOSED**
+## 7. Printing (approved 2026-08-17)
 
 `Print p.` prints fields in definition order, map-style, recursing into
 nested things (`{leg: {start: {x: 3, y: 0}, end: {x: 0, y: 1}}, id: 0}`):
@@ -235,7 +237,7 @@ Cheap to emit, immediately useful for debugging, and consistent with how
 maps print. (Alternative if rejected: printing a structure is a compile
 error directing the user to print fields individually.)
 
-## 8. Equality — **PROPOSED**
+## 8. Equality (approved 2026-08-17)
 
 `a is b` between two values of the same structure type compares
 field-wise, recursing into nested things (compile-time expansion to
@@ -321,10 +323,13 @@ participate in every declaration form the builtin type keywords do.
   `type` as an ordinary identifier outside the
   construct.
 
-## 13. Open questions for review (the PROPOSED items)
+## 13. Review record
 
-1. Copy semantics: value types, full copy on assign/pass (§5)?
-2. v1 field set: number/float/boolean/time, text pending verification,
-   no nesting/collections in v1 (§6)?
-3. Printing map-style (§7)?
-4. Field-wise equality, no ordering (§8)?
+All four formerly-open items approved by Josj, 2026-08-17:
+
+1. Copy semantics: value types, full copy on assign/pass (§5). APPROVED.
+2. v1 field set: number/float/boolean/time + unlimited thing nesting;
+   text pending verification; buffer/list/map fields deferred (§6).
+   APPROVED.
+3. Map-style recursive printing (§7). APPROVED.
+4. Field-wise recursive equality, no ordering (§8). APPROVED.
