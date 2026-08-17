@@ -61,6 +61,19 @@ The example is a point's 'from polar' with 1.0 and 0.5.   (maker)
 `p's x` reads a field; `Set p's x to 3.` writes it. Same possessive the
 builtins use; offsets fixed at compile time.
 
+Fields are ordinary expressions and lvalues everywhere the grammar
+allows either: bare assignment (`origin's y is origin's y add 1.`),
+`increment`/`decrement`, format-string interpolation (`"{origin's x}"`),
+comparisons, and as call arguments. Whole-structure interpolation
+(`"{p}"`) follows the printing rule (section 7). Field access can never
+fail at runtime — offsets are compile-time constants, so unlike list
+element access there is no error-flag path.
+
+Structures defined in one file are usable from another via `see`
+(definitions are parsed into the program like functions), and top-level
+structures are globals with the same inside-function visibility as other
+top-level variables.
+
 ## 4. Functions and namespaces (settled)
 
 Three call forms, one rule each:
