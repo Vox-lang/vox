@@ -24,15 +24,23 @@ class-style dynamism are permanently out of scope.
 ## 1. Definition (settled)
 
 ```
-A type called point has
+A thing called point has
   a number called x is 0,
   a number called y is 0.
 ```
 
-- The keyword is **type** (owner's choice, 2026-08-17: the honest word —
-  users are defining a type, and usage then reads identically to the
-  builtins. "record" rejected for its database connotation, "struct"
-  rejected as jargon, "structure" considered but passed over).
+- The keyword is **thing** (owner's choice, 2026-08-17, superseding
+  `type` from earlier the same day). Rationale: things contain things —
+  which is how English composes objects, so nested definitions read
+  naturally ("a route has a segment called leg") where `type` mixed
+  meta-levels (types reference types; they don't contain them). It also
+  removes the concept/keyword double duty — the docs use "type" as a
+  concept constantly, while "thing" has no technical meaning anywhere
+  in the language. Verified collision-free: not a lexer token, zero
+  test identifiers, prose-only in LANGUAGE.md; `nothing` is an
+  unrelated whole word. History: "record" rejected (database
+  connotation), "struct" rejected (jargon), "structure" passed over,
+  "type" superseded (double duty + meta-level mixing).
 - Two kinds of entry: **data fields** (`a <type> called <name>`, with an
   optional `is <literal>` default) and **function-member declarations**
   (`a function called <name>` — the manifest, section 4). Function
@@ -90,7 +98,7 @@ Three call forms, one rule each:
 (owner's design, superseding the earlier possessive-tagged signature):**
 
 ```
-A type called point has
+A thing called point has
   a function called 'from polar',
   a number called x is 0,
   a number called y is 0.
@@ -158,9 +166,9 @@ everywhere else (`send` treatment). The comma before the parameter list
 (`'from polar', with ...`) follows the `Return a number, total.`
 payload-comma precedent. Quoted identifiers take the possessive as
 `'the point in question''s` — the quote-then-`s` lexing already has
-precedent (LANGUAGE.md ~line 588). `type` becomes a keyword only in the
+precedent (LANGUAGE.md ~line 588). `thing` becomes a keyword only in the
 definition construct, an ordinary identifier elsewhere (same treatment
-as `send`; verified: `type` is not a lexer keyword today, and type
+as `send`; verified: `thing` is not a lexer keyword today (verified: no Token, no test identifier, prose-only in LANGUAGE.md), and type
 predicates use the type nouns, never the bare word).
 
 ## 5. Copy semantics — **PROPOSED**
@@ -185,18 +193,27 @@ modified structure, return it (`Return a point, out.`).
 
 ## 6. v1 field types — **PROPOSED**
 
-v1 fields may be: **number, float, boolean, time**. Fixed 8-byte
-scalars, making layout trivially `count × 8` with compile-time offsets.
+v1 fields may be: **number, float, boolean, time — and any previously
+defined thing** (owner's decision: things are infinitely nestable).
+Scalars are fixed 8-byte slots and a nested thing contributes its own
+size inline, so every offset is still a compile-time constant —
+`route's leg's start's x` composes offsets, nothing more. Chained
+possessives read and write through any depth. Copies are deep by
+construction (a nested thing is just more bytes), printing and equality
+recurse per sections 7 and 8, and **cycles are compile errors**: a thing
+containing itself, directly or through other things, has infinite size —
+the diagnostic names the cycle (see section 10).
 
 - **text fields:** desired, but deferred pending verification of text
   handle-copy semantics (whether copying a text handle can observe
   mutation). If verification shows texts are safe to copy by handle,
   text joins v1 during implementation; otherwise v1.1.
-- **Deferred to a later plan:** structure-in-structure fields, and
-  buffer/list/map fields (these are reference-carrying and reopen the
-  aliasing question section 5 deliberately avoids). Flat scalar
-  structures first; nesting is a natural v2 once copy semantics have
-  soaked.
+- **Deferred to a later plan:** buffer/list/map fields — these are
+  reference-carrying and reopen the aliasing question section 5
+  deliberately avoids. (Thing-in-thing nesting does NOT belong in this
+  bucket: under value semantics it carries no references and no
+  aliasing. An earlier revision of this plan deferred it by
+  miscategorization; the owner promoted it into v1.)
 - **Scope boundary of "works everywhere a type keyword works":** that
   clause covers *declaration positions* — `a point called p.`,
   `Create a point called p.`, declarations with initializers,
@@ -207,7 +224,8 @@ scalars, making layout trivially `count × 8` with compile-time offsets.
 
 ## 7. Printing — **PROPOSED**
 
-`Print p.` prints fields in definition order, map-style:
+`Print p.` prints fields in definition order, map-style, recursing into
+nested things (`{leg: {start: {x: 3, y: 0}, end: {x: 0, y: 1}}, id: 0}`):
 
 ```
 {x: 5, y: 0}
@@ -220,7 +238,8 @@ error directing the user to print fields individually.)
 ## 8. Equality — **PROPOSED**
 
 `a is b` between two values of the same structure type compares
-field-wise (compile-time expansion to per-field comparisons). Comparing
+field-wise, recursing into nested things (compile-time expansion to
+per-field comparisons). Comparing
 different structure types is a compile error. Ordering comparisons
 (`greater than`) on structures are compile errors.
 
@@ -238,13 +257,16 @@ recognizes and names the canonical form — the established pattern from
 the retired `see` forms, which error and point at the one correct
 spelling rather than emitting a generic parse failure.
 
-- `Create a type called point.` — never valid, in any version. Error:
+- `Create a thing called point.` — never valid, in any version. Error:
   a type is defined, not created as a variable; write
-  `A type called point has <fields>.`
-- `A type called point is ...` — the learner reached for the
+  `A thing called point has <fields>.`
+- `A thing called point is ...` — the learner reached for the
   declaration verb. Error: `is` declares a variable; a type definition
   uses `has`.
-- `A type called point.` with no fields — v1 requires at least one
+- A cyclic definition — a thing containing itself, directly or through
+  other things — is a compile error at the definition closing the
+  cycle, naming the full chain ("ouroboros contains ouroboros").
+- `A thing called point.` with no fields — v1 requires at least one
   field. Error says so and shows the shape.
 - Declaring with an unknown type name keeps the existing unknown-type
   error, extended to suggest near-miss **user-defined** type names
@@ -290,7 +312,9 @@ participate in every declaration form the builtin type keywords do.
   each preposition; per-structure duplicate `'from polar'` across two
   structures; collision errors (field vs field, field vs declared member,
   field vs global-first-param fn — each erroring at the second site);
-  owner/Return mismatch; `The x is` inference; copy-on-assign observable
+  owner/Return mismatch; `The x is` inference; nesting (definition, chained
+  possessive read/write at depth 3, deep copy observable, nested
+  printing, cycle error); copy-on-assign observable
   test (mutate the copy, original unchanged); pass-by-value test;
   printing; equality; each reserved wrong shape from section 10 erroring
   with its targeted message; `Create a point called p.` working;
