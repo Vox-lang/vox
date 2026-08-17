@@ -41,9 +41,18 @@ Set r to reap process pid without waiting.
   error (e.g. ECHILD, no such child)" is the whole value of the form and
   must be tested explicitly.
 - The blocking forms are unchanged; this is strictly additive.
-- `without` / `waiting` must remain ordinary identifiers everywhere else
-  (the `send`/`begin` lookahead precedent — a user function called
-  `waiting` must keep working).
+- `waiting` must remain an ordinary identifier everywhere else (the
+  `send`/`begin` lookahead precedent — a user function or variable
+  called `waiting` must keep working). **Verified 2026-08-17:
+  `a number called waiting is 7.` compiles today and must continue to.**
+- **Correction to this spec's original text:** `without` is *already* a
+  reserved keyword (`Token::Without`, `src/lexer/scan.rs:464`), used by
+  `print "x" without newline.`. It cannot be an identifier today and
+  the requirement never applied to it. This is convenient rather than
+  awkward: because `without` lexes to a distinct token, the suffix
+  cannot be confused with a call argument after the pid expression, so
+  no lookahead gymnastics are needed. `print ... without newline` must
+  keep working.
 
 ## 2. Reaped status (approved surface)
 
@@ -77,28 +86,39 @@ The compiler adds one expression and no knowledge of the encoding.
 
 Ships in the repo as ordinary Vox, no compiler support:
 
+**Corrected 2026-08-17 and verified compiling against the 0.3.7 binary.**
+This spec's first draft put `Return a number,` on *both* the signature
+line and in the body, which does not compile — the return clause belongs
+at the end of the body only. The verified text:
+
 ```
 (Decode a raw wait status, as sys/wait.h does with macros.)
 
-To 'exit code of' with a number called st. Return a number,
-    Return a number, st divide 256 modulo 256.
+To 'exit code of' with a number called st.
+  Return a number, st divide 256 modulo 256.
 
-To 'signal of' with a number called st. Return a number,
-    Return a number, st bit-and 127.
+To 'signal of' with a number called st.
+  Return a number, st bit-and 127.
 
-To crashed with a number called st. Return a boolean,
-    a number called sig is st bit-and 127.
-    Return a boolean, sig is not 0.
+To crashed with a number called st.
+  a number called sig is st bit-and 127.
+  Return a boolean, sig is not 0.
 
-To 'exited normally' with a number called st. Return a boolean,
-    a number called sig is st bit-and 127.
-    Return a boolean, sig is 0.
+To 'exited normally' with a number called st.
+  a number called sig is st bit-and 127.
+  Return a boolean, sig is 0.
 ```
 
 Semantics being encoded (from `<sys/wait.h>`): the low 7 bits hold the
 terminating signal (0 when the process exited normally); bits 8–15 hold
-the exit code. Verify each function against real children in tests
-rather than trusting these expressions.
+the exit code.
+
+**Arithmetic verified** on the current binary against known status
+words: `'exit code of' of 1792` → 7, `'signal of' of 139` → 11,
+`crashed of 139` → true, `crashed of 1792` → false, `'exited normally'
+of 1792` → true, `'exit code of' of 0` → 0. Tests must still exercise
+these against *real* children, since that also proves the compiler
+delivers the status word correctly.
 
 Placement: `lib/process.vox`, used as `see "./lib/process.vox".` — or
 the bare-name system path if the install lays one down; the
@@ -130,8 +150,8 @@ While done is 0,
     If r is pid then,
         Set done to 1.
     If done is 0 then,
-        a number called ms is the clock's elapsed in milliseconds,
-        If ms is greater than 5000 then,
+        a number called waited is the clock's elapsed in milliseconds,
+        If waited is greater than 5000 then,
             Send signal 9 to process pid,
             Set r2 to reap child pid,
             Set done to 2.
@@ -151,6 +171,29 @@ If done is 1 then,
 (The implementation plan must verify this exact program compiles and
 behaves correctly — it is the acceptance test for the whole plan, and
 mirrors what vox-fuzz's harness will do.)
+
+**Correction 2026-08-17:** the loop's local was originally named `ms`,
+which does not compile — `ms` is a reserved alternate spelling of the
+keyword `milliseconds`. Renamed to `waited` above.
+
+**Timer granularity — a real constraint on this loop, and a dogfood
+finding.** `the clock's elapsed in milliseconds` currently reports whole
+seconds × 1000: `TIMER_DURATION_SECONDS` (`coreasm/x86_64/time.asm:503`)
+computes `current_sec − start_sec` and never reads the
+`TIMER_START_MONO_NSEC` field that `TIMER_START` captures via
+`clock_gettime`. Measured: a 1500 ms wait reports 1000; a 30 ms wait
+reports 0. The nanosecond precision is captured and discarded.
+
+Consequences for this plan, which does **not** fix that (out of scope,
+reported separately):
+- The supervisor loop works, because its timeout is multi-second, but
+  its timing resolution is one second — a 5000 ms deadline fires
+  somewhere in the 5–6 s range.
+- **Tests must not assert sub-second timing.** Use deadlines of several
+  seconds and assert ordering/outcome, never precise elapsed values, or
+  the suite will be flaky.
+- The `Wait N milliseconds.` *statement* is unaffected — only reading
+  elapsed time is coarse.
 
 ## 5. Documentation and tests
 
