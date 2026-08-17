@@ -12,10 +12,11 @@
  land with the declarations task; those two lines live in
  tests/331_thing_declare_access.vox.
 
- Note for the manifest task: `circle` declares 'from radius' and nothing
- defines it. Once "a declared member nothing defines is an error" lands
- (plan 310 §4), this file needs a matching
- `To do the circle's 'from radius'` definition.
+ `circle` declares 'from radius', so the manifest check of plan 310 §4
+ requires the `To do the circle's 'from radius'` below: a declared member
+ nothing defines is an error at the type. The definition is here rather
+ than in tests/337_manifest_members.vox because the declaration is, and
+ the two halves of the manifest belong to the same file.
 
  Acceptance: two lines - defined, 42.)
 
@@ -31,6 +32,11 @@ A thing called circle has
   a function called 'from radius',
   a point called centre,
   a float called radius is 1.5.
+
+To do the circle's 'from radius', with a float called radius.
+  a circle called drawn.
+  Set drawn's radius to radius.
+  Return a circle, drawn.
 
 Print "defined".
 

@@ -1,0 +1,17 @@
+(Compile-fail: plan 310 §4 - the manifest declares a member once and one
+ `To do` defines it once. A second definition compiles under the same
+ internal name as the first, so nothing could ever call it; it is refused at
+ its own line, with the first definition named.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+To do the point's 'placed at', with a number called x.
+  a point called 'plotted again'.
+  Return a point, 'plotted again'.

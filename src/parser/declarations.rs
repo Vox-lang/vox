@@ -474,6 +474,18 @@ impl Parser {
     }
 
     pub(crate) fn parse_typed_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `a point's 'settled'.` - the type possessive stands where an
+        // ordinary call statement stands, for a member called to do
+        // something rather than to produce a value (plan 310 §4). One token
+        // of lookahead separates it from the declaration `a point called
+        // origin`: the `'s` against the `called`.
+        if self.type_possessive_follows() {
+            let Expr::FunctionCall { name, args } = self.parse_type_possessive_call()? else {
+                unreachable!("a type possessive parses into a call or errors")
+            };
+            return Ok(Statement::FunctionCall { name, args });
+        }
+
         self.advance(); // consume 'a' or 'an'
         self.skip_noise();
 

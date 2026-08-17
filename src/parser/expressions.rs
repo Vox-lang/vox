@@ -1458,6 +1458,13 @@ impl Parser {
                 }
             }
             Token::A | Token::An => {
+                // `a point's 'placed at' with 3 and 4` - the type possessive
+                // calls a member the thing declares (plan 310 §4). Asked
+                // before the article is consumed, because the whole shape is
+                // the expression.
+                if self.type_possessive_follows() {
+                    return self.parse_type_possessive_call();
+                }
                 // Check if this is an article before a type, or just the letter "a"/"an" as identifier
                 let is_article = self.current().clone();
                 self.advance();

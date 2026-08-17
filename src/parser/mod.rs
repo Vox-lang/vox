@@ -89,6 +89,22 @@ pub struct Parser {
     // use the sugar on itself - which is the same "defined before used" rule
     // that governs thing definitions.
     function_first_parameters: std::collections::HashMap<String, Type>,
+    // Every declared member whose `To do the <thing>'s <name>` definition has
+    // been read, keyed by (thing, member) (plan 310 §4). Two things may
+    // declare the same member name, so the owner is half the key - which is
+    // also what the internal name it records keeps apart.
+    member_functions: std::collections::HashMap<(String, String), things::MemberFunction>,
+    // The token index of each thing's name, so "declares X but nothing
+    // defines it" - a check that can only run once the whole file has been
+    // read - can still put its caret on the type it is about.
+    thing_name_positions: std::collections::HashMap<String, usize>,
+    // Every `Return` in the definition being parsed that declared a type,
+    // as (token index, declared type). The member rule is about the Return
+    // LINES (plan 310 §4), not about the one type the function ends up
+    // carrying: a body whose only Return sits inside an `If` declares its
+    // type there, and that line is what a member handing back the wrong thing
+    // must be reported against. Cleared at the start of each definition.
+    typed_returns: Vec<(usize, Type)>,
 }
 
 #[cfg(test)]
@@ -128,6 +144,9 @@ impl Parser {
             thing_vars: std::collections::HashMap::new(),
             thing_returning_functions: std::collections::HashMap::new(),
             function_first_parameters: std::collections::HashMap::new(),
+            member_functions: std::collections::HashMap::new(),
+            thing_name_positions: std::collections::HashMap::new(),
+            typed_returns: Vec::new(),
         }
     }
 
@@ -150,6 +169,9 @@ impl Parser {
         self.thing_vars = outer.thing_vars.clone();
         self.thing_returning_functions = outer.thing_returning_functions.clone();
         self.function_first_parameters = outer.function_first_parameters.clone();
+        // A declared member stands wherever a function does, so
+        // `"{origin's 'shifted north'}"` has to resolve here too (§4).
+        self.member_functions = outer.member_functions.clone();
         self
     }
 

@@ -53,6 +53,11 @@ impl Parser {
             self.skip_all_whitespace();
         }
 
+        // The manifest is checked both ways (plan 310 §4, §10). "Nothing
+        // defines it" is the half that can only be known here, once every
+        // definition in the file has been read.
+        self.reject_undefined_members()?;
+
         // `Program::new` derives the thing registry from the statement list
         // in definition (layout) order, so there is nothing to attach here -
         // and no construction path that can forget to.
@@ -298,6 +303,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
+        // Where the `Return` itself sits, so a member definition handing back
+        // the wrong thing can underline this line (plan 310 §4).
+        let return_pos = self.pos;
         self.advance();
         self.skip_noise();
 
@@ -317,6 +325,8 @@ impl Parser {
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
+                        self.typed_returns
+                            .push((return_pos, declared_type.clone()));
                         // Now parse the actual return expression. Use
                         // `parse_condition` (not `parse_expression`) so a typed
                         // return whose body is a comparison or boolean

@@ -58,18 +58,23 @@
     }
 
     /// A manifest entry declares callable API, not storage: it must never
-    /// reach `fields`, or every offset after it would be wrong.
+    /// reach `fields`, or every offset after it would be wrong. The
+    /// definition is here because the manifest is checked both ways (plan
+    /// 310 §4): a declared member nothing defines is an error at the type.
     #[test]
     fn function_members_are_declared_without_taking_storage() {
         let program = parse_input(
             "A thing called point has\n  \
-             a function called 'from polar',\n  \
-             a number called x is 0.\n",
+             a function called 'placed at',\n  \
+             a number called x is 0.\n\n\
+             To do the point's 'placed at', with a number called x.\n  \
+             a point called plotted.\n  \
+             Return a point, plotted.\n",
         )
         .expect("a manifest entry should parse");
 
         let def = only_thing(&program);
-        assert_eq!(def.members, vec!["from polar".to_string()]);
+        assert_eq!(def.members, vec!["placed at".to_string()]);
         assert_eq!(def.fields.len(), 1);
         assert_eq!(def.fields[0].name, "x");
     }
@@ -689,5 +694,190 @@
         assert!(matches!(
             &program.statements[1],
             Statement::VarDecl { name, var_type: Some(Type::Integer), .. } if name == "point"
+        ));
+    }
+
+    // ---------------------------------------------------------------------
+    // Manifest members (plan 310 §4)
+    // ---------------------------------------------------------------------
+
+    /// Two things declaring the same member, each with its definition. The
+    /// behaviour they stand for is `tests/337_manifest_members.vox`; what is
+    /// pinned here is the shape a member parses into.
+    const TWO_MAKERS: &str = "A thing called point has\n  \
+         a function called 'placed at',\n  \
+         a number called x is 0.\n\n\
+         A thing called 'grid square' has\n  \
+         a function called 'placed at',\n  \
+         a number called column is 0.\n\n\
+         To do the point's 'placed at', with a number called x.\n  \
+         a point called plotted.\n  \
+         Set plotted's x to x.\n  \
+         Return a point, plotted.\n\n\
+         To do the 'grid square''s 'placed at', with a number called column.\n  \
+         a 'grid square' called square.\n  \
+         Return a 'grid square', square.\n\n";
+
+    /// A member name belongs to its owner, not to the program: two things
+    /// declaring `'placed at'` compile under two internal names, which
+    /// `mangle_symbol` then turns into two distinct labels. Without this the
+    /// second definition would silently overwrite the first's symbol.
+    #[test]
+    fn two_things_may_declare_the_same_member() {
+        let program = parse_input(TWO_MAKERS).expect("two makers should parse");
+
+        let defined: Vec<&str> = program
+            .statements
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Statement::FunctionDef { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            defined,
+            vec!["point's placed at", "grid square's placed at"],
+            "each member compiles under a name carrying its owner"
+        );
+
+        let labels: Vec<String> = defined
+            .iter()
+            .map(|name| crate::codegen::mangle_symbol(name))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "point_s_placed_at".to_string(),
+                "grid_square_s_placed_at".to_string()
+            ],
+            "the existing mangling keeps the two apart in the symbol table"
+        );
+    }
+
+    /// The type possessive is a call, resolved from the manifest - so what
+    /// reaches the analyzer is the ordinary call an author could have written
+    /// by hand, exactly as the instance possessive is.
+    #[test]
+    fn the_type_possessive_parses_to_an_ordinary_call() {
+        let program = parse_input(&format!(
+            "{}The corner is a point's 'placed at' with 3.\nPrint corner's x.\n",
+            TWO_MAKERS
+        ))
+        .expect("a type possessive should parse");
+
+        let declared = program
+            .statements
+            .iter()
+            .find_map(|stmt| match stmt {
+                Statement::VarDecl { name, var_type, value } if name == "corner" => {
+                    Some((var_type, value))
+                }
+                _ => None,
+            })
+            .expect("the call declares 'corner' from what the member returns");
+        assert_eq!(*declared.0, Some(Type::Thing("point".to_string())));
+        assert!(matches!(
+            declared.1,
+            Some(Expr::FunctionCall { name, args })
+                if name == "point's placed at" && args.len() == 1
+        ));
+    }
+
+    /// A maker's first parameter is not the thing, so a receiver has nothing
+    /// to fill: it is reachable only by naming the type. The message says so
+    /// rather than reporting the member as missing.
+    #[test]
+    fn a_maker_is_reached_only_through_the_type() {
+        let err = parse_err(&format!(
+            "{}a point called origin.\nPrint origin's 'placed at'.\n",
+            TWO_MAKERS
+        ));
+        assert!(
+            err.contains("point declares 'placed at', but a receiver cannot reach it here")
+                && err.contains("`a point's 'placed at' with <arguments>`"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// Membership is declared in the type, so a call resolves against the
+    /// manifest rather than against the definitions read so far: a member may
+    /// be called above the `To do` that defines it, and the declared return
+    /// type is enough to declare the variable it lands in.
+    #[test]
+    fn a_member_may_be_called_above_its_definition() {
+        let program = parse_input(
+            "A thing called point has\n  \
+             a function called 'placed at',\n  \
+             a number called x is 0.\n\n\
+             The corner is a point's 'placed at' with 3.\n\
+             Print corner's x.\n\n\
+             To do the point's 'placed at', with a number called x.\n  \
+             a point called plotted.\n  \
+             Set plotted's x to x.\n  \
+             Return a point, plotted.\n",
+        )
+        .expect("the manifest is the promise a call resolves against");
+        assert!(matches!(
+            &program.statements[1],
+            Statement::VarDecl { name, var_type: Some(Type::Thing(thing)), .. }
+                if name == "corner" && thing == "point"
+        ));
+    }
+
+    /// `do` is not a keyword and does not become one: only the whole shape
+    /// `do the <thing>'s` opens a member definition, so a function called do
+    /// keeps being defined and called like any other.
+    #[test]
+    fn do_stays_an_ordinary_identifier() {
+        let program = parse_input(&format!(
+            "{}To do with a number called tally.\n  Print tally.\n\ndo of 7.\n",
+            TWO_MAKERS
+        ))
+        .expect("a function called do should parse");
+        assert!(
+            program
+                .statements
+                .iter()
+                .any(|stmt| matches!(stmt, Statement::FunctionDef { name, .. } if name == "do")),
+            "a function called do is an ordinary definition"
+        );
+        assert!(matches!(
+            program.statements.last(),
+            Some(Statement::FunctionCall { name, args }) if name == "do" && args.len() == 1
+        ));
+    }
+
+    /// The rule is about the Return LINES, not about the one type the
+    /// function ends up carrying: a body whose only Return sits inside an
+    /// `If` leaves that type off the signature, and rejecting it would be a
+    /// report about a line the author did not write.
+    #[test]
+    fn a_members_return_line_is_what_the_rule_checks() {
+        parse_input(
+            "A thing called point has\n  \
+             a function called 'placed at',\n  \
+             a number called x is 0.\n\n\
+             To do the point's 'placed at', with a number called x.\n  \
+             a point called plotted.\n  \
+             If x is greater than 0 then,\n    \
+             Return a point, plotted.\n",
+        )
+        .expect("a Return inside a block still names the owner");
+    }
+
+    /// The type possessive stands where an ordinary call statement stands, so
+    /// a member called to do something rather than to produce a value has a
+    /// spelling. Unadvertised in example-grade Vox - a member returns its own
+    /// thing, so there is nearly always something worth keeping - but it must
+    /// not fall through to a generic parse failure.
+    #[test]
+    fn the_type_possessive_stands_in_statement_position() {
+        let program = parse_input(&format!("{}a point's 'placed at' with 3.\n", TWO_MAKERS))
+            .expect("a type possessive should parse as a call statement");
+        assert!(matches!(
+            program.statements.last(),
+            Some(Statement::FunctionCall { name, args })
+                if name == "point's placed at" && args.len() == 1
         ));
     }

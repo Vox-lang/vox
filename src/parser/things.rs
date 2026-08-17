@@ -55,6 +55,48 @@ pub(crate) enum Possessive {
     Call(Expr),
 }
 
+/// A declared member whose `To do the <thing>'s <name>` definition has been
+/// read (plan 310 §4). Recorded as the definition's signature is parsed, so
+/// the two call forms can ask about it while the rest of the file is read.
+#[derive(Clone)]
+pub(crate) struct MemberFunction {
+    /// The internal name the definition is compiled under - see
+    /// `member_function_name`.
+    pub(crate) internal: String,
+    /// True when the definition's first parameter is the owner, which is what
+    /// decides whether the instance possessive reaches it as well as the type
+    /// possessive. A maker (first parameter not the owner) is reachable only
+    /// as `a point's <name>`.
+    pub(crate) takes_owner_first: bool,
+    /// The line of its `To do` sentence, for the second-definition error.
+    pub(crate) line: usize,
+}
+
+/// What a member definition's head named: `To do the point's 'placed at'`.
+pub(crate) struct MemberDefinition {
+    /// The thing that declares the member.
+    pub(crate) thing: String,
+    /// The member's name as the manifest spells it.
+    pub(crate) member: String,
+    /// The name the definition compiles under.
+    pub(crate) internal: String,
+    /// The line the `To do` sentence sits on.
+    pub(crate) line: usize,
+}
+
+/// The internal name a member definition is compiled under: the owner and the
+/// member, spelled the way Vox writes the possessive. `point`'s `'placed at'`
+/// and `'grid square'`'s `'placed at'` are therefore two different functions
+/// all the way down to the symbol table, where `mangle_symbol` turns each into
+/// its own label (`point_s_placed_at`, `grid_square_s_placed_at`). Nothing
+/// downstream of the parser needs to know a member from an ordinary function -
+/// what the analyzer and codegen get is the call the author could have written
+/// by hand, which is what keeps mangling a naming rule rather than a second
+/// dispatch mechanism.
+pub(crate) fn member_function_name(thing: &str, member: &str) -> String {
+    format!("{}'s {}", thing, member)
+}
+
 /// Whether a possessive in this position may resolve to the instance sugar.
 /// A write target names storage and a call is not storage, so `Set origin's
 /// magnitude to 3.` has no second reading to fall back on.
@@ -186,6 +228,17 @@ impl Parser {
         }
 
         let def = ThingDef { name: name.clone(), fields, members, line };
+        // Every declared member returns its owner (plan 310 §4), so the
+        // manifest alone says what a call to one yields - which is what lets
+        // `The pin is a point's 'placed at' with 1 and 0.` declare `pin`
+        // from a definition further down the file. The promise is collected
+        // on twice: `reject_member_returning_another_type` at each
+        // definition, and `reject_undefined_members` for a member with none.
+        for member in &def.members {
+            self.thing_returning_functions
+                .insert(member_function_name(&name, member), name.clone());
+        }
+        self.thing_name_positions.insert(name.clone(), name_pos);
         self.things.insert(name, def.clone());
         Ok(Statement::ThingDecl(def))
     }
@@ -591,7 +644,13 @@ impl Parser {
 
     /// True when the tokens at the cursor open a possessive (`'s`).
     pub(crate) fn possessive_follows(&self) -> bool {
-        let mut off = 0;
+        self.possessive_follows_from(0)
+    }
+
+    /// The same question asked `off` tokens ahead, for the lookaheads that
+    /// have to see past a name they have not consumed yet: `a point's` and
+    /// `To do the point's` both read the possessive without moving.
+    fn possessive_follows_from(&self, mut off: usize) -> bool {
         while matches!(self.peek(off), Token::Newline) {
             off += 1;
         }
@@ -603,6 +662,16 @@ impl Parser {
             off += 1;
         }
         matches!(self.peek(off), Token::Identifier(s) if s.eq_ignore_ascii_case("s"))
+    }
+
+    /// Consume a possessive (`'s`) the caller has already confirmed with
+    /// `possessive_follows`.
+    fn consume_possessive(&mut self) {
+        self.skip_noise();
+        self.advance(); // the apostrophe
+        self.skip_noise();
+        self.advance(); // the `s`
+        self.skip_noise();
     }
 
     /// Plan 310 §4: each type owns ONE member space - its fields, its declared
@@ -727,11 +796,7 @@ impl Parser {
         let mut path: Vec<String> = Vec::new();
 
         loop {
-            self.skip_noise();
-            self.advance(); // the apostrophe
-            self.skip_noise();
-            self.advance(); // the `s`
-            self.skip_noise();
+            self.consume_possessive();
 
             let member_pos = self.pos;
             let member = match self.current().clone() {
@@ -764,11 +829,23 @@ impl Parser {
                 // A field always wins, so reaching here means there is none.
                 // The second reading is the sugar; a write target has no
                 // second reading, because a call is not storage.
-                if position == PossessivePosition::Value
-                    && self.first_parameter_is(&member, &current)
-                {
-                    let receiver = Self::receiver_of(base, &path);
-                    return Ok(Possessive::Call(self.parse_instance_call(member, receiver)?));
+                //
+                // A declared member is asked about before the global
+                // functions, because the two cannot collide - a function
+                // taking a point first cannot be called what point's manifest
+                // already lists (`reject_member_space_collision`), so this
+                // order decides nothing that is ever contested.
+                if position == PossessivePosition::Value {
+                    if let Some(function) = self.instance_member_of(&current, &member) {
+                        let receiver = Self::receiver_of(base, &path);
+                        return Ok(Possessive::Call(
+                            self.parse_instance_call(function, receiver)?,
+                        ));
+                    }
+                    if self.first_parameter_is(&member, &current) {
+                        let receiver = Self::receiver_of(base, &path);
+                        return Ok(Possessive::Call(self.parse_instance_call(member, receiver)?));
+                    }
                 }
                 self.pos = member_pos;
                 return Err(self.err_unknown_member(&current, &member, position));
@@ -856,6 +933,14 @@ impl Parser {
     ) -> Box<CompileError> {
         let fields = self.field_names_of(thing);
         let functions = self.functions_taking(thing);
+        let declared = self.declared_members_of(thing);
+
+        // A name the manifest lists is not "no such member" - it is a member
+        // this possessive cannot reach, and saying which is the difference
+        // between a correction and a wild goose chase.
+        if declared.iter().any(|name| name == member) {
+            return self.err_member_out_of_reach(thing, member, position);
+        }
 
         let message = match position {
             PossessivePosition::WriteTarget if self.first_parameter_is(member, thing) => format!(
@@ -878,13 +963,18 @@ impl Parser {
                 "Thing '{}' has no member '{}'\n  \
                  A possessive reads one of the thing's fields, or calls a \
                  function whose first parameter is a {} (plan 310 §4).\n  \
-                 {}'s fields are: {}\n  \
+                 {}'s fields are: {}{}\n  \
                  {}",
                 thing,
                 member,
                 thing,
                 thing,
                 fields.join(", "),
+                if declared.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n  {} declares: {}", thing, declared.join(", "))
+                },
                 // "above this line" is the whole truth: a function is
                 // reachable through a receiver from its definition onwards,
                 // the same rule that governs a thing and a thing variable.
@@ -906,11 +996,13 @@ impl Parser {
         };
 
         let mut err = *self.err(&message);
-        // Offer both halves of the member space as near misses, so a
-        // misspelled function name is corrected as readily as a field.
+        // Offer every part of the member space as near misses, so a
+        // misspelled function or declared member is corrected as readily as
+        // a field.
         let mut candidates: Vec<&str> = fields.iter().map(|f| f.as_str()).collect();
         if position == PossessivePosition::Value {
             candidates.extend(functions.iter().map(|f| f.as_str()));
+            candidates.extend(declared.iter().map(|m| m.as_str()));
         }
         if let Some(near) = find_similar_keyword(member, &candidates) {
             err = err.with_suggestion(&near);
@@ -1036,6 +1128,458 @@ impl Parser {
                 right: Box::new(one),
             },
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Manifest members (plan 310 §4)
+    // ---------------------------------------------------------------------
+
+    /// True when a `To` opens a member definition: `To do the point's 'placed
+    /// at', with ...`. Call with `To` already consumed.
+    ///
+    /// `do` does not become a keyword: only the whole shape `do the <name>'s`
+    /// opens the construct, so a function called `do` keeps working - the
+    /// contextual treatment `send`, `thing`, and the timer words all get. The
+    /// `<name>` is not required to be a defined thing here, so a definition
+    /// naming a type that does not exist reaches the message about the
+    /// missing type rather than falling out of this guard into a generic
+    /// complaint about `the`.
+    pub(crate) fn member_definition_follows(&self) -> bool {
+        if !matches!(self.current(), Token::Identifier(w) if w.eq_ignore_ascii_case("do")) {
+            return false;
+        }
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::The) {
+            return false;
+        }
+        off += 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Identifier(_)) {
+            return false;
+        }
+        self.possessive_follows_from(off + 1)
+    }
+
+    /// Read `do the <thing>'s <member>` and check it against the manifest,
+    /// leaving the cursor on whatever follows the member's name (the payload
+    /// comma before the parameter list, or the end of the signature). Call
+    /// with `member_definition_follows` true.
+    pub(crate) fn parse_member_definition_head(
+        &mut self,
+    ) -> Result<MemberDefinition, Box<CompileError>> {
+        let line = self.current_info().map(|t| t.line).unwrap_or(0);
+        self.advance(); // `do`
+        self.skip_noise();
+        self.advance(); // `the`
+        self.skip_noise();
+
+        let thing_pos = self.pos;
+        let thing = self.parse_name()?;
+        if !self.things.contains_key(&thing) {
+            self.pos = thing_pos;
+            return Err(self.err_no_such_thing(
+                &thing,
+                "`To do the <thing>'s <name>` defines one of the members a thing \
+                 declares, so the thing's own definition comes first.",
+            ));
+        }
+        self.consume_possessive();
+
+        let member_pos = self.pos;
+        let member = self.parse_member_name(
+            &thing,
+            &format!("To do the {}'s <name>, with <parameters>.", thing),
+        )?;
+
+        // Both halves of the manifest check (plan 310 §10). This is the half
+        // that reports at the definition; the other - a declared member
+        // nothing defines - can only be known once the whole file is read,
+        // and reports at the type.
+        if !self.declared_members_of(&thing).iter().any(|m| *m == member) {
+            self.pos = member_pos;
+            return Err(self.err_member_not_declared(&thing, &member));
+        }
+
+        if let Some(previous) = self.member_functions.get(&(thing.clone(), member.clone())) {
+            let previous_line = previous.line;
+            self.pos = member_pos;
+            return Err(self.err(&format!(
+                "{}'s '{}' is already defined on line {}\n  \
+                 The manifest declares a member once and one `To do` defines it \
+                 once; a second definition has no way to be called.",
+                thing, member, previous_line
+            )));
+        }
+
+        Ok(MemberDefinition {
+            internal: member_function_name(&thing, &member),
+            thing,
+            member,
+            line,
+        })
+    }
+
+    /// Record a member definition once its signature is read - before its
+    /// body, so a member may use its own thing's possessives inside itself,
+    /// the same order `record_first_parameter` is written in.
+    pub(crate) fn record_member_function(
+        &mut self,
+        member: &MemberDefinition,
+        first: Option<&(String, Type)>,
+    ) {
+        let takes_owner_first =
+            matches!(first, Some((_, Type::Thing(first))) if *first == member.thing);
+        self.member_functions.insert(
+            (member.thing.clone(), member.member.clone()),
+            MemberFunction {
+                internal: member.internal.clone(),
+                takes_owner_first,
+                line: member.line,
+            },
+        );
+    }
+
+    /// Plan 310 §4: every declared member returns its owner, which is what
+    /// gives the manifest a crisp meaning - it lists the functions that
+    /// produce or transform the thing. A function computing something else
+    /// from a thing belongs in the global namespace, where the instance
+    /// possessive still reaches it.
+    ///
+    /// The caret lands on the `Return` that hands back the wrong type, and
+    /// the message names the `To do` line, so both lines of the disagreement
+    /// are in the report.
+    ///
+    /// Every Return LINE is checked, rather than the one type the function
+    /// ends up carrying: a body whose only Return sits inside an `If` leaves
+    /// that type off the signature, and rejecting it for handing back nothing
+    /// would be a report about a line the author did not write.
+    pub(crate) fn reject_member_returning_another_type(
+        &mut self,
+        member: &MemberDefinition,
+        definition_pos: usize,
+    ) -> Result<(), Box<CompileError>> {
+        let wrong = self
+            .typed_returns
+            .iter()
+            .find(|(_, returned)| !matches!(returned, Type::Thing(name) if *name == member.thing))
+            .map(|(pos, returned)| (*pos, returned.clone()));
+
+        let (caret, handed_back) = match wrong {
+            Some((pos, returned)) => (
+                pos,
+                format!(
+                    "the Return on line {} hands back a {}",
+                    self.tokens.get(pos).map(|t| t.line).unwrap_or(0),
+                    type_noun_of(&returned)
+                ),
+            ),
+            // Every Return that declares a type declares the right one.
+            None if !self.typed_returns.is_empty() => return Ok(()),
+            // None at all: there is no second line to point at, so the caret
+            // stays on the definition that promised one.
+            None => (
+                definition_pos,
+                format!(
+                    "nothing in it declares a `Return a {}, <value>.`",
+                    member.thing
+                ),
+            ),
+        };
+        self.pos = caret;
+        Err(self.err(&format!(
+            "A declared member returns its own thing: {}'s '{}' must return a {}\n  \
+             The definition on line {} makes '{}' a member of {}, and {}.\n  \
+             A function that computes something else from a {} is an ordinary \
+             function - it needs no manifest entry, and the instance possessive \
+             still reaches it (plan 310 §4).",
+            member.thing,
+            member.member,
+            member.thing,
+            member.line,
+            member.member,
+            member.thing,
+            handed_back,
+            member.thing
+        )))
+    }
+
+    /// The other half of the manifest check (plan 310 §10), run once the
+    /// whole file is read because that is the earliest a definition can be
+    /// known to be absent. Reports at the type, whose line is where the
+    /// promise was made, and stops at the first unmet one - every later
+    /// report would be about the same missing half of the same construct.
+    pub(crate) fn reject_undefined_members(&mut self) -> Result<(), Box<CompileError>> {
+        // The registry is a hash map, so it is sorted into definition order
+        // first: a program with two unmet declarations must report the same
+        // one on every run.
+        let mut defs: Vec<&ThingDef> = self.things.values().collect();
+        defs.sort_by_key(|def| def.line);
+        let unmet = defs.iter().find_map(|def| {
+            def.members
+                .iter()
+                .find(|member| {
+                    !self
+                        .member_functions
+                        .contains_key(&(def.name.clone(), (*member).clone()))
+                })
+                .map(|member| (def.name.clone(), member.clone(), def.line))
+        });
+
+        let Some((thing, member, line)) = unmet else {
+            return Ok(());
+        };
+        if let Some(pos) = self.thing_name_positions.get(&thing) {
+            self.pos = *pos;
+        }
+        Err(self.err(&format!(
+            "{} declares '{}' but nothing defines it\n  \
+             The definition on line {} lists '{}' as part of {}'s callable API, \
+             so somewhere the program has to write it:\n    \
+             To do the {}'s {}, with <parameters>.\n      \
+             ...\n      \
+             Return a {}, <value>.\n  \
+             A name that is not this type's own API is an ordinary function and \
+             needs no manifest entry (plan 310 §4).",
+            thing,
+            member,
+            line,
+            member,
+            thing,
+            thing,
+            crate::codegen::format_lib_name(&member),
+            thing
+        )))
+    }
+
+    /// True when the cursor opens a type possessive: `a point's 'placed at'`.
+    /// One token of lookahead separates it from a declaration - the `'s`
+    /// against the `called` of `a point called origin` (plan 310 §4).
+    ///
+    /// The name is not required to be a defined thing, for the same reason
+    /// `member_definition_follows` does not require it: nothing else in Vox
+    /// spells `a <name>'s`, so capturing the whole shape is what lets the
+    /// unknown type be reported as one.
+    pub(crate) fn type_possessive_follows(&self) -> bool {
+        if !matches!(self.current(), Token::A | Token::An) {
+            return false;
+        }
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Identifier(_)) {
+            return false;
+        }
+        self.possessive_follows_from(off + 1)
+    }
+
+    /// `a point's 'placed at' with 3 and 4` - the call form that names the
+    /// type rather than a receiver (plan 310 §4). It reaches every member the
+    /// manifest declares, and it is the ONLY way to reach a maker, whose
+    /// first parameter is not the thing and so cannot be filled by one.
+    ///
+    /// Resolution is from the manifest, not from the definitions read so far,
+    /// so a call may stand above the `To do` that defines it: the declaration
+    /// is the promise, and `reject_undefined_members` is what collects on it.
+    pub(crate) fn parse_type_possessive_call(&mut self) -> Result<Expr, Box<CompileError>> {
+        self.advance(); // the article
+        self.skip_noise();
+
+        let thing_pos = self.pos;
+        let thing = self.parse_name()?;
+        if !self.things.contains_key(&thing) {
+            self.pos = thing_pos;
+            return Err(self.err_no_such_thing(
+                &thing,
+                "`a <thing>'s <name>` calls a member a thing declares. To read a \
+                 field or call through a receiver, name the variable: `origin's x`.",
+            ));
+        }
+        self.consume_possessive();
+
+        let member_pos = self.pos;
+        let member = self.parse_member_name(
+            &thing,
+            &format!("a {}'s <name> with <arguments>", thing),
+        )?;
+        if !self.declared_members_of(&thing).iter().any(|m| *m == member) {
+            self.pos = member_pos;
+            return Err(self.err_member_not_declared(&thing, &member));
+        }
+
+        // The arguments follow the ordinary call preposition, read by the
+        // ordinary call-tail parser, so this form shares its argument grammar
+        // with every other call rather than keeping a second one in step.
+        let name = member_function_name(&thing, &member);
+        let mut args = Vec::new();
+        if let Some(Expr::FunctionCall { args: rest, .. }) =
+            self.parse_call_tail(name.clone(), true)?
+        {
+            args = rest;
+        }
+        Ok(Expr::FunctionCall { name, args })
+    }
+
+    /// The member name after a `<thing>'s`, with the canonical form named
+    /// when what follows is not a name at all. `To do the point's.` is an
+    /// unfinished sentence, and "expected a name" alone would not say which
+    /// sentence it is. A quoted or string-literal name keeps `parse_name`'s
+    /// own teaching diagnostic.
+    fn parse_member_name(
+        &mut self,
+        thing: &str,
+        canonical: &str,
+    ) -> Result<String, Box<CompileError>> {
+        if matches!(
+            self.current(),
+            Token::Identifier(_) | Token::StringLiteral(_)
+        ) {
+            return self.parse_name();
+        }
+        Err(self.err(&format!(
+            "Expected the name of one of {}'s members, got {:?}\n  \
+             Canonical form: {}",
+            thing,
+            self.current(),
+            canonical
+        )))
+    }
+
+    /// The internal name of a declared member the instance possessive can
+    /// reach: one whose definition has been read and takes its own thing
+    /// first. A maker is absent, because a receiver cannot fill a parameter
+    /// that is not the thing.
+    fn instance_member_of(&self, thing: &str, member: &str) -> Option<String> {
+        let defined = self
+            .member_functions
+            .get(&(thing.to_string(), member.to_string()))?;
+        defined
+            .takes_owner_first
+            .then(|| defined.internal.clone())
+    }
+
+    /// A thing's declared function members, in manifest order.
+    fn declared_members_of(&self, thing: &str) -> Vec<String> {
+        self.things
+            .get(thing)
+            .map(|def| def.members.clone())
+            .unwrap_or_default()
+    }
+
+    /// A possessive naming a member the manifest DOES declare, in a position
+    /// that cannot reach it. Which position it is decides the reason, and
+    /// each reason has a different thing to write instead.
+    fn err_member_out_of_reach(
+        &self,
+        thing: &str,
+        member: &str,
+        position: PossessivePosition,
+    ) -> Box<CompileError> {
+        if position == PossessivePosition::WriteTarget {
+            return self.err(&format!(
+                "'{}' is a function member {} declares, not a field of it\n  \
+                 A call is not storage, so nothing can be written to it.\n  \
+                 {}'s fields are: {}",
+                member,
+                thing,
+                thing,
+                self.field_names_of(thing).join(", ")
+            ));
+        }
+        let reason = if self.member_functions.contains_key(&(thing.to_string(), member.to_string()))
+        {
+            format!(
+                "'{}' is a maker: its first parameter is not a {}, so a receiver \
+                 has nothing to fill",
+                member, thing
+            )
+        } else {
+            // The definition may well be further down the file. A receiver
+            // resolves against what has been read, so this is a limit of
+            // where the call sits, not a claim that the member is missing.
+            format!(
+                "'{}' has no definition above this line, so what its first \
+                 parameter takes is not known here",
+                member
+            )
+        };
+        self.err(&format!(
+            "{} declares '{}', but a receiver cannot reach it here\n  \
+             {}.\n  \
+             Name the type instead: `a {}'s {} with <arguments>` (plan 310 §4).",
+            thing,
+            member,
+            reason,
+            thing,
+            crate::codegen::format_lib_name(member)
+        ))
+    }
+
+    /// A possessive or a definition naming a type nothing defines. `context`
+    /// is the one sentence that differs between the two forms.
+    fn err_no_such_thing(&self, name: &str, context: &str) -> Box<CompileError> {
+        let mut known: Vec<&str> = self.things.keys().map(|k| k.as_str()).collect();
+        known.sort();
+        let mut err = *self.err(&format!(
+            "No thing called '{}' is defined above this line\n  \
+             {}\n  \
+             {}",
+            name,
+            context,
+            if known.is_empty() {
+                "This program defines no things.".to_string()
+            } else {
+                format!("Things defined above this line: {}", known.join(", "))
+            }
+        ));
+        if let Some(near) = find_similar_keyword(name, &known) {
+            err = err.with_suggestion(&near);
+        }
+        Box::new(err)
+    }
+
+    /// The manifest check reported at a definition or a call (plan 310 §10):
+    /// a member the type does not declare. Membership is declared in the
+    /// type, so the fix is to add the entry - which the message spells.
+    fn err_member_not_declared(&self, thing: &str, member: &str) -> Box<CompileError> {
+        // A field is the one name that must not be answered with "add `a
+        // function called <name>`": the type owns one member space, so
+        // following that advice would collide with the field it already has.
+        if self.field_names_of(thing).iter().any(|f| f == member) {
+            return self.err(&format!(
+                "'{}' is a field of {}, not one of its declared function members\n  \
+                 A type owns one member space, so a field and a function member \
+                 cannot share a name (plan 310 §4).\n  \
+                 A field is read from a variable holding a {}: `origin's {}`.",
+                member, thing, thing, member
+            ));
+        }
+
+        let declared = self.declared_members_of(thing);
+        let mut err = *self.err(&format!(
+            "{} does not declare {} - add `a function called {}` to the type\n  \
+             Membership is declared in the thing's definition, which lists its \
+             whole callable API in one place (plan 310 §4).\n  \
+             {}",
+            thing,
+            crate::codegen::format_lib_name(member),
+            crate::codegen::format_lib_name(member),
+            if declared.is_empty() {
+                format!("{} declares no function members.", thing)
+            } else {
+                format!("{} declares: {}", thing, declared.join(", "))
+            }
+        ));
+        let candidates: Vec<&str> = declared.iter().map(|m| m.as_str()).collect();
+        if let Some(near) = find_similar_keyword(member, &candidates) {
+            err = err.with_suggestion(&near);
+        }
+        Box::new(err)
     }
 
     fn err_field_default_not_literal(

@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §4/§10 - the manifest is checked both ways. A
+ declared member nothing defines errors at the type, which is where the
+ promise was made; the check runs once the whole file is read, because that
+ is the earliest a definition can be known to be absent.)
+
+A thing called point has
+  a function called 'never written',
+  a number called x is 0.
+
+a point called origin.
+Print origin's x.

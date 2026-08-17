@@ -246,30 +246,54 @@ impl Parser {
         // Location of the `To` keyword, used by the "function still open at
         // end of file" warning (BUGS_FOUND #5) to point at the definition.
         let def_loc = self.current_location();
+        let def_pos = self.pos;
         self.advance(); // consume 'To'
         self.skip_noise();
-        
+
+        // `To do the point's 'placed at', with ...` defines one of the members
+        // point's manifest declares (plan 310 §4). The head is read here and
+        // everything after it is an ordinary function definition, so a member
+        // gets the whole parameter, body, and return grammar without a second
+        // copy of any of it.
+        let member = if self.member_definition_follows() {
+            Some(self.parse_member_definition_head()?)
+        } else {
+            None
+        };
+
         // Get function name: a bare or quoted identifier (plan 270). A string
         // literal here is rejected with the §S1.5 diagnostic.
         let name_pos = self.pos;
-        let name = self.parse_name().or_else(|e| {
-            // Distinguish "missing name entirely" from "used a string literal":
-            // parse_name already gives the teaching diagnostic for a string;
-            // for anything else (e.g. a keyword or `with`) produce the
-            // syntax-hint message.
-            if matches!(self.current(), Token::StringLiteral(_)) {
-                Err(e)
-            } else {
-                Err(self.err(
-                    "Missing function name after 'To'\n  \
-                     Syntax: To 'function name' with parameters. Return a type, expression.\n  \
-                     Example: To 'add' with a number called x and a number called y. Return a number, x add y."
-                ))
-            }
-        })?;
-        
+        let name = match &member {
+            // Already read, and compiled under the name that keeps two
+            // things' same-named members apart.
+            Some(member) => member.internal.clone(),
+            None => self.parse_name().or_else(|e| {
+                // Distinguish "missing name entirely" from "used a string literal":
+                // parse_name already gives the teaching diagnostic for a string;
+                // for anything else (e.g. a keyword or `with`) produce the
+                // syntax-hint message.
+                if matches!(self.current(), Token::StringLiteral(_)) {
+                    Err(e)
+                } else {
+                    Err(self.err(
+                        "Missing function name after 'To'\n  \
+                         Syntax: To 'function name' with parameters. Return a type, expression.\n  \
+                         Example: To 'add' with a number called x and a number called y. Return a number, x add y."
+                    ))
+                }
+            })?,
+        };
+
         self.skip_noise();
-        
+
+        // The comma before a member's parameter list, on the `Return a
+        // number, total.` payload-comma precedent (plan 310 §4).
+        if member.is_some() && *self.current() == Token::Comma {
+            self.advance();
+            self.skip_noise();
+        }
+
         // Parse parameters: "with <name>" or "with a <type> called <name> and ..."
         let mut params = Vec::new();
         if *self.current() == Token::With || *self.current() == Token::Of {
@@ -343,6 +367,15 @@ impl Parser {
         // therefore use the sugar on its own name.
         self.record_first_parameter(&name, params.first());
 
+        // A member is recorded in the same place and for the same reason: its
+        // first parameter is what decides whether a receiver can reach it.
+        if let Some(member) = &member {
+            self.record_member_function(member, params.first());
+        }
+        // The member rule reports against this body's own Return lines, so
+        // the previous definition's must not be left in place.
+        self.typed_returns.clear();
+
         self.skip_noise();
         // Period or comma after function signature are optional.
         if matches!(self.current(), Token::Period | Token::Comma) {
@@ -355,19 +388,21 @@ impl Parser {
         let mut body = Vec::new();
         
         if *self.current() == Token::Return {
+            let return_pos = self.pos;
             self.advance();
             self.skip_noise();
-            
+
             // Check for return type declaration: "Return a number," or "Return number,"
             // Skip optional article
             if matches!(self.current(), Token::A | Token::An) {
                 self.advance();
                 self.skip_noise();
             }
-            
+
             let mut declared_type = None;
             if let Some(t) = self.declaration_type_token() {
                 self.advance();
+                self.typed_returns.push((return_pos, t.clone()));
                 return_type = t;
                 declared_type = Some(return_type.clone());
                 self.skip_noise();
@@ -514,6 +549,12 @@ impl Parser {
         // Consume paragraph break
         if *self.current() == Token::ParagraphBreak {
             self.advance();
+        }
+
+        // Checked once the whole body is read, because a `Return` anywhere in
+        // it is one of the lines the member rule is about (plan 310 §4).
+        if let Some(member) = &member {
+            self.reject_member_returning_another_type(member, def_pos)?;
         }
 
         self.record_thing_returning_function(&name, &return_type);
