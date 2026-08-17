@@ -2730,10 +2730,9 @@ If 'child was killed' is false then,
         Print "exit {'exit code of' of status}".
 ```
 
-A note on timing: `the clock's elapsed in milliseconds` currently reports
-whole seconds × 1000, so the 5000-millisecond deadline above fires somewhere
-in the five-to-six-second range. The loop works because its deadline is
-multi-second; tests that exercise it must assert outcomes, not durations.
+A note on timing: `the clock's elapsed in milliseconds` reports true
+milliseconds, so the 5000-millisecond deadline above fires accurately at
+the five-second mark.
 
 #### Send a signal: `Send signal`
 

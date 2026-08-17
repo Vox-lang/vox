@@ -1,0 +1,17 @@
+(A sub-second wait must report a real duration, not zero. The timer
+ captured nanosecond halves all along but threw them away, so anything
+ under a second read 0 in milliseconds. The lower bound sits just under the
+ requested thirty milliseconds — nanosleep never undershoots, so the
+ measured value is at least thirty — and the ceiling is loose, because a
+ loaded machine can overshoot. The printed word stays stable so the
+ expected file never depends on the measured number.)
+
+a timer called clock.
+Start the clock.
+Wait 30 milliseconds.
+Stop the clock.
+a number called 'milliseconds measured' is the clock's duration in milliseconds.
+If 'milliseconds measured' is greater than 20 and 'milliseconds measured' is less than 500 then,
+    Print "ok".
+Otherwise,
+    Print "bad".

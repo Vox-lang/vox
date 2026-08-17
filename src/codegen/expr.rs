@@ -1956,16 +1956,46 @@ impl CodeGenerator {
             // Duration cast (timer's duration in seconds/milliseconds)
             Expr::DurationCast { value, unit } => {
                 self.uses_time = true;
-                self.generate_expr(value);
                 match unit {
                     TimeUnit::Seconds => {
-                        // Value is already in seconds
+                        // Whole seconds, unchanged: bare `the timer's
+                        // duration` and `... in seconds` must keep reading
+                        // whole seconds exactly as before.
+                        self.generate_expr(value);
                         self.emit_indent("; Duration in seconds");
                     }
                     TimeUnit::Milliseconds => {
-                        // Multiply by 1000
+                        // True milliseconds. The old code re-used the
+                        // whole-seconds macro and multiplied by 1000, so a
+                        // 30 ms wait read 0 and a 1500 ms wait read 1000.
+                        // Instead, resolve the same timer pointer the
+                        // seconds path loads and call the millisecond macro,
+                        // which subtracts the full timespec and divides
+                        // down from nanoseconds.
                         self.emit_indent("; Duration in milliseconds");
-                        self.emit_indent("imul rax, 1000");
+                        if let Expr::PropertyAccess { object, property } = value.as_ref() {
+                            let offset = self.get_var(object);
+                            self.emit_indent(&format!(
+                                "lea rax, [rbp - {}]",
+                                offset.unwrap_or(0) + 48
+                            ));
+                            match property {
+                                ObjectProperty::Duration => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                                ObjectProperty::Elapsed => {
+                                    self.emit_indent("TIMER_ELAPSED_MILLISECONDS rax");
+                                }
+                                _ => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                            }
+                        } else {
+                            // Defensive: a duration cast's inner expression
+                            // is always a timer property access.
+                            self.generate_expr(value);
+                            self.emit_indent("imul rax, 1000");
+                        }
                     }
                 }
             }

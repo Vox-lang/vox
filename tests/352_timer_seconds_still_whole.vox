@@ -1,0 +1,29 @@
+(The whole-seconds form must report whole truncated seconds of the real
+ elapsed time, not the calendar second fields it used to subtract. A 1500
+ millisecond wait is one and a half seconds, which truncates to one; a 100
+ millisecond wait is a tenth of a second, which truncates to zero. Both
+ are now exact, because the macro divides the full nanosecond total by
+ NANOSECONDS_PER_SECOND instead of subtracting second fields, so neither
+ depends on where the interval fell within its starting second. The old
+ form read one for a 100 millisecond wait that straddled a boundary - a
+ tenfold error - and that case was uncovered. Asserting equality, not a
+ range, also guards the unit split: if `in seconds` ever returned
+ milliseconds it would read roughly 1500, not 1.)
+
+a timer called clock.
+Start the clock.
+Wait 1500 milliseconds.
+Stop the clock.
+a number called 'seconds measured' is the clock's duration in seconds.
+If 'seconds measured' is equal to 1 then,
+    Print "fifteen hundred ok".
+Otherwise,
+    Print "fifteen hundred bad".
+Start the clock.
+Wait 100 milliseconds.
+Stop the clock.
+a number called 'subsecond seconds' is the clock's duration in seconds.
+If 'subsecond seconds' is equal to 0 then,
+    Print "hundred ok".
+Otherwise,
+    Print "hundred bad".

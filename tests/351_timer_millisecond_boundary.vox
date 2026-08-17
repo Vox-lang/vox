@@ -1,0 +1,15 @@
+(The one-and-a-half-second case: a 1500 millisecond wait used to read
+ 1000, because the timer kept only whole seconds and multiplied by 1000.
+ It must now read roughly 1500. The lower bound dips just under the
+ requested time — nanosleep does not undershoot — and the ceiling is
+ generous, since a loaded machine overshoots.)
+
+a timer called clock.
+Start the clock.
+Wait 1500 milliseconds.
+Stop the clock.
+a number called 'milliseconds measured' is the clock's duration in milliseconds.
+If 'milliseconds measured' is greater than 1400 and 'milliseconds measured' is less than 3000 then,
+    Print "ok".
+Otherwise,
+    Print "bad".

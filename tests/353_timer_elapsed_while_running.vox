@@ -1,0 +1,22 @@
+(Reading elapsed while the timer is still running, before Stop. The
+ still-running path samples the clock into a stack timespec; before the
+ fix it read only the seconds half and threw the nanoseconds away, so a
+ 200 millisecond wait read 0 — or 1000 when it crossed a second boundary.
+ It must now read roughly 200. The lower bound sits under the requested
+ wait and the ceiling is loose. Stopping afterwards must give the same
+ order of magnitude, proving the stored-end and running paths agree.)
+
+a timer called clock.
+Start the clock.
+Wait 200 milliseconds.
+a number called 'milliseconds while running' is the clock's elapsed in milliseconds.
+If 'milliseconds while running' is greater than 100 and 'milliseconds while running' is less than 800 then,
+    Print "running ok".
+Otherwise,
+    Print "running bad".
+Stop the clock.
+a number called 'milliseconds after stop' is the clock's elapsed in milliseconds.
+If 'milliseconds after stop' is greater than 100 and 'milliseconds after stop' is less than 800 then,
+    Print "stopped ok".
+Otherwise,
+    Print "stopped bad".

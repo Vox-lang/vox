@@ -1,0 +1,19 @@
+(Bare `the clock's duration`, with no unit, must keep returning whole
+ seconds - this is the constraint that keeps the fix a bug fix rather than
+ a language change: the bare form reaches codegen by a different route
+ than the `in milliseconds` cast, and must keep its meaning. It now
+ reports whole truncated seconds of the real elapsed time, so a 1500
+ millisecond wait reads one, deterministically, not one-or-two depending
+ on where within its starting second the timer began. Asserting equality
+ guards the unit split: if the bare form ever returned milliseconds it
+ would read roughly 1500, not 1.)
+
+a timer called clock.
+Start the clock.
+Wait 1500 milliseconds.
+Stop the clock.
+a number called 'whole seconds' is the clock's duration.
+If 'whole seconds' is equal to 1 then,
+    Print "ok".
+Otherwise,
+    Print "bad".

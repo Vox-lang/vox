@@ -1,8 +1,7 @@
 (The spec's supervisor loop, end to end, on the clean-exit path. The
  child exits at once; the parent polls with non-blocking reap until it
  sees the child's pid, then decodes the status with lib/process.vox. The
- deadline is multi-second so the timer's whole-second granularity cannot
- trip it - the fast child is reaped long before the deadline fires. This
+ fast child is reaped long before the five-second deadline fires. This
  is the acceptance test for the whole plan: both new forms plus the
  library, working together with no shelling out.)
 
