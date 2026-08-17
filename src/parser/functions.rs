@@ -251,6 +251,7 @@ impl Parser {
         
         // Get function name: a bare or quoted identifier (plan 270). A string
         // literal here is rejected with the §S1.5 diagnostic.
+        let name_pos = self.pos;
         let name = self.parse_name().or_else(|e| {
             // Distinguish "missing name entirely" from "used a string literal":
             // parse_name already gives the teaching diagnostic for a string;
@@ -331,6 +332,16 @@ impl Parser {
                 self.thing_vars.insert(param_name.clone(), thing.clone());
             }
         }
+
+        // A function taking a thing first joins that thing's member space, so
+        // it is checked against what the type already owns before anything can
+        // call it (plan 310 §4).
+        self.reject_member_space_collision(&name, name_pos, params.first())?;
+
+        // The first parameter is what the instance possessive fills (plan 310
+        // §4), so it is recorded here - before the body - and a function may
+        // therefore use the sugar on its own name.
+        self.record_first_parameter(&name, params.first());
 
         self.skip_noise();
         // Period or comma after function signature are optional.

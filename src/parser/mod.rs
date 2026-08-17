@@ -79,6 +79,16 @@ pub struct Parser {
     // the same "defined before used" rule that governs thing definitions
     // governs inference from a call.
     thing_returning_functions: std::collections::HashMap<String, String>,
+    // The declared type of each function's FIRST parameter, for the functions
+    // that take one (plan 310 §4). This is what the instance possessive
+    // resolves against: `origin's magnitude` is a call only if `magnitude`
+    // takes a point first, and the parser is where that has to be known,
+    // because the answer decides whether the possessive is a field chain or a
+    // call tail with arguments still to read. Populated as each `To`
+    // definition's signature is parsed - before its body, so a function may
+    // use the sugar on itself - which is the same "defined before used" rule
+    // that governs thing definitions.
+    function_first_parameters: std::collections::HashMap<String, Type>,
 }
 
 #[cfg(test)]
@@ -117,6 +127,7 @@ impl Parser {
             things: std::collections::HashMap::new(),
             thing_vars: std::collections::HashMap::new(),
             thing_returning_functions: std::collections::HashMap::new(),
+            function_first_parameters: std::collections::HashMap::new(),
         }
     }
 
@@ -130,11 +141,15 @@ impl Parser {
     /// parsed by a fresh sub-parser (`try_parse_expression`), which without
     /// this knows no things at all - so `"{origin's x}"` would fail to parse
     /// as an expression and fall back to a literal `{origin's x}` placeholder.
-    /// §3 lists interpolation as one of the places a field must work.
+    /// §3 lists interpolation as one of the places a field must work, and the
+    /// instance possessive stands wherever a field does (§4) - which is why
+    /// the first-parameter table travels too: without it `"{origin's
+    /// magnitude}"` would read as an unknown member of point.
     pub(crate) fn with_things_of(mut self, outer: &Parser) -> Self {
         self.things = outer.things.clone();
         self.thing_vars = outer.thing_vars.clone();
         self.thing_returning_functions = outer.thing_returning_functions.clone();
+        self.function_first_parameters = outer.function_first_parameters.clone();
         self
     }
 

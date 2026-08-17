@@ -432,9 +432,12 @@ impl Analyzer {
                 self.push_error(
                     format!(
                         "Thing '{}' has no field '{}'\n  \
-                         A thing's fields are its whole member space: its fields are: {}",
+                         A possessive reads one of the thing's fields, or calls a \
+                         function whose first parameter is a {} (plan 310 §4); its \
+                         fields are: {}",
                         thing,
                         field,
+                        thing,
                         known.join(", ")
                     ),
                     Some(base),

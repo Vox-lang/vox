@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §4 - the instance possessive is no second reading
+ for a write. `origin's 'magnitude squared'` names a call, and a call is not
+ storage, so there is nothing for `Set ... to` to write into.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To 'magnitude squared' with a point called corner.
+  Return a number, corner's x multiply corner's x.
+
+a point called origin.
+Set origin's 'magnitude squared' to 3.

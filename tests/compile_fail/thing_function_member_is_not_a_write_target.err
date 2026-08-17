@@ -1,0 +1,2 @@
+'magnitude squared' is a function taking a point, not a field of it
+A call is not storage, so nothing can be written to it.

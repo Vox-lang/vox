@@ -419,12 +419,262 @@
         }
     }
 
-    /// An unknown field names the thing and lists what it does have.
+    /// An unknown member names the thing and lists what it does have. In
+    /// value position that is both halves of the member space (plan 310 §4):
+    /// the fields, and the functions that take the thing first - here, none.
     #[test]
-    fn an_unknown_field_lists_the_things_fields() {
+    fn an_unknown_member_lists_what_the_thing_does_have() {
         let err = parse_err(&format!("{}a point called origin.\nPrint origin's z.\n", POINT));
         assert!(
-            err.contains("Thing 'point' has no field 'z'") && err.contains("x, y"),
+            err.contains("Thing 'point' has no member 'z'")
+                && err.contains("point's fields are: x, y")
+                && err.contains("no function above this line takes a point as its first parameter"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // The instance possessive (plan 310 §4)
+    // ---------------------------------------------------------------------
+
+    /// Two functions taking a point first, so the sugar has something to
+    /// resolve to. Their bodies are only what a parse needs; the behaviour
+    /// they stand for is `tests/336_instance_sugar.vox`.
+    const POINT_FUNCTIONS: &str =
+        "To 'magnitude squared' with a point called corner.\n  \
+         Return a number, corner's x.\n\n\
+         To 'scaled by' with a point called corner and a number called factor.\n  \
+         Return a point, corner.\n\n";
+
+    /// The whole task in one assertion: the sugar is a *rewrite*, so what it
+    /// parses to is indistinguishable from the ordinary call an author could
+    /// have written by hand - which is why no codegen changed for it.
+    #[test]
+    fn the_sugar_parses_to_the_same_call_as_the_free_form() {
+        let program = parse_input(&format!(
+            "{}{}a point called origin.\nPrint origin's 'magnitude squared'.\n\
+             Print 'magnitude squared' of origin.\n",
+            POINT, POINT_FUNCTIONS
+        ))
+        .expect("the instance possessive should parse");
+
+        let printed: Vec<&Expr> = program
+            .statements
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Statement::Print { value, .. } => Some(value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(printed.len(), 2, "expected two prints, got {:?}", printed);
+        match printed[0] {
+            Expr::FunctionCall { name, args } => {
+                assert_eq!(name, "magnitude squared");
+                assert!(
+                    matches!(args.as_slice(), [Expr::Identifier(receiver)] if receiver == "origin"),
+                    "expected origin as the only argument, got {:?}",
+                    args
+                );
+            }
+            other => panic!("expected the sugar to become a call, got {:?}", other),
+        }
+        assert_eq!(
+            format!("{:?}", printed[0]),
+            format!("{:?}", printed[1]),
+            "the sugared and free forms must build the same call"
+        );
+    }
+
+    /// The receiver fills the FIRST parameter and everything after the call
+    /// preposition follows it, in order.
+    #[test]
+    fn the_receiver_fills_the_first_parameter_and_the_rest_follow() {
+        let program = parse_input(&format!(
+            "{}{}a point called origin.\nThe 'tripled corner' is origin's 'scaled by' on 3.\n",
+            POINT, POINT_FUNCTIONS
+        ))
+        .expect("a sugared call carrying an argument should parse");
+
+        match program.statements.last() {
+            // The call returns a point, so `The <name> is <call>.` declares
+            // the target from it (plan 310 §2) - task 3's inference, reached
+            // through the sugar without knowing it is sugar.
+            Some(Statement::VarDecl {
+                name,
+                var_type: Some(Type::Thing(thing)),
+                value: Some(Expr::FunctionCall { name: called, args }),
+            }) => {
+                assert_eq!(name, "tripled corner");
+                assert_eq!(thing, "point");
+                assert_eq!(called, "scaled by");
+                assert!(
+                    matches!(
+                        args.as_slice(),
+                        [Expr::Identifier(receiver), Expr::IntegerLit(3)] if receiver == "origin"
+                    ),
+                    "expected origin then 3, got {:?}",
+                    args
+                );
+            }
+            other => panic!("expected a point declared from a sugared call, got {:?}", other),
+        }
+    }
+
+    /// A field always wins the possessive, even with functions in the same
+    /// member space. It can never be a contest: a function taking a point
+    /// first cannot be named after one of point's fields (see
+    /// `tests/compile_fail/thing_member_space_function_collides_with_field.vox`),
+    /// so at most one reading of a name exists.
+    #[test]
+    fn a_field_wins_the_possessive() {
+        let program = parse_input(&format!(
+            "{}{}a point called origin.\nPrint origin's x.\n",
+            POINT, POINT_FUNCTIONS
+        ))
+        .expect("a field should still parse as a field");
+
+        match program.statements.last() {
+            Some(Statement::Print {
+                value: Expr::ThingField { base, path },
+                ..
+            }) => {
+                assert_eq!(base, "origin");
+                assert_eq!(path.as_slice(), &["x".to_string()]);
+            }
+            other => panic!("expected a field read, got {:?}", other),
+        }
+    }
+
+    /// A receiver is anything naming a whole thing, so a chain that lands on
+    /// a field holding one carries on into the call.
+    #[test]
+    fn a_field_holding_a_thing_can_be_the_receiver() {
+        let program = parse_input(&format!(
+            "{}{}{}a route called commute.\nPrint commute's leg's start's 'magnitude squared'.\n",
+            POINT, ROUTE, POINT_FUNCTIONS
+        ))
+        .expect("a chained receiver should parse");
+
+        match program.statements.last() {
+            Some(Statement::Print {
+                value: Expr::FunctionCall { name, args },
+                ..
+            }) => {
+                assert_eq!(name, "magnitude squared");
+                assert!(
+                    matches!(
+                        args.as_slice(),
+                        [Expr::ThingField { base, path }]
+                            if base == "commute" && path.as_slice() == ["leg", "start"]
+                    ),
+                    "expected commute's leg's start as the receiver, got {:?}",
+                    args
+                );
+            }
+            other => panic!("expected a call on a nested receiver, got {:?}", other),
+        }
+    }
+
+    /// The sugar stands where an ordinary call statement stands, for a
+    /// function called to do something rather than to produce a value.
+    #[test]
+    fn the_sugar_stands_as_a_whole_statement() {
+        let program = parse_input(&format!(
+            "{}{}a point called origin.\norigin's 'scaled by' on 3.\n",
+            POINT, POINT_FUNCTIONS
+        ))
+        .expect("a sugared call statement should parse");
+
+        match program.statements.last() {
+            Some(Statement::FunctionCall { name, args }) => {
+                assert_eq!(name, "scaled by");
+                assert!(
+                    matches!(
+                        args.as_slice(),
+                        [Expr::Identifier(receiver), Expr::IntegerLit(3)] if receiver == "origin"
+                    ),
+                    "expected origin then 3, got {:?}",
+                    args
+                );
+            }
+            other => panic!("expected a call statement, got {:?}", other),
+        }
+    }
+
+    /// A write target has no second reading: a call is not storage. The
+    /// message says so rather than reporting a missing field.
+    #[test]
+    fn a_write_target_cannot_be_a_function() {
+        let err = parse_err(&format!(
+            "{}{}a point called origin.\nSet origin's 'magnitude squared' to 3.\n",
+            POINT, POINT_FUNCTIONS
+        ));
+        assert!(
+            err.contains("'magnitude squared' is a function taking a point, not a field of it")
+                && err.contains("A call is not storage"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// The unknown-member message offers the functions as well as the fields,
+    /// so a misspelled member is named whichever half it belongs to.
+    #[test]
+    fn an_unknown_member_offers_the_functions_too() {
+        let err = parse_err(&format!(
+            "{}{}a point called origin.\nPrint origin's sparkle.\n",
+            POINT, POINT_FUNCTIONS
+        ));
+        assert!(
+            err.contains("Thing 'point' has no member 'sparkle'")
+                && err.contains(
+                    "functions above this line taking a point first: magnitude squared, scaled by"
+                ),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// Plan 310 §4: one member space per type. A function taking a point
+    /// first cannot be named after a field, and the error lands on the
+    /// function - always the second definition, because point has to be
+    /// defined before its name can be a parameter type.
+    #[test]
+    fn a_function_cannot_take_a_name_the_type_already_owns() {
+        let field_clash = parse_err(&format!("{}To x with a point called corner.\n", POINT));
+        assert!(
+            field_clash.contains("point already has a field called 'x'")
+                && field_clash.contains("point is defined on line 1"),
+            "unexpected error: {}",
+            field_clash
+        );
+
+        let member_clash = parse_err(
+            "A thing called point has\n  a function called 'from polar',\n  \
+             a number called x is 0.\n\nTo 'from polar' with a point called corner.\n  \
+             Return a point, corner.\n",
+        );
+        assert!(
+            member_clash
+                .contains("point already has a declared function member called 'from polar'"),
+            "unexpected error: {}",
+            member_clash
+        );
+    }
+
+    /// A function taking something else first is not in point's member space,
+    /// so it is not reachable from a point receiver.
+    #[test]
+    fn only_a_matching_first_parameter_joins_the_member_space() {
+        let err = parse_err(&format!(
+            "{}{}To 'the length squared' with a segment called span.\n  \
+             Return a number, span's start's x.\n\na point called origin.\n\
+             Print origin's 'the length squared'.\n",
+            POINT, ROUTE
+        ));
+        assert!(
+            err.contains("Thing 'point' has no member 'the length squared'"),
             "unexpected error: {}",
             err
         );

@@ -42,6 +42,30 @@ fn type_noun_of(field_type: &Type) -> String {
     }
 }
 
+/// What a possessive on a thing-typed base turned out to name (plan 310 §3,
+/// §4). The two readings are decided as the possessive is consumed, because
+/// which one it is decides what follows it: a field may be gone through with
+/// another `'s`, while a call reads an argument list instead.
+pub(crate) enum Possessive {
+    /// A field, reached by walking `path` from the base: `origin's x`,
+    /// `route's leg's start's x`. `field_type` is what sits at the end.
+    Field { path: Vec<String>, field_type: Type },
+    /// The instance sugar, already rewritten into the call it means, with the
+    /// receiver as its first argument.
+    Call(Expr),
+}
+
+/// Whether a possessive in this position may resolve to the instance sugar.
+/// A write target names storage and a call is not storage, so `Set origin's
+/// magnitude to 3.` has no second reading to fall back on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PossessivePosition {
+    /// An expression: a field first, then the sugar (plan 310 §4).
+    Value,
+    /// The left of a write: a field, and nothing else.
+    WriteTarget,
+}
+
 impl Parser {
     /// True when the current token opens a thing-definition construct:
     /// the contextual keyword `thing` followed by `called`. Call with the
@@ -581,21 +605,124 @@ impl Parser {
         matches!(self.peek(off), Token::Identifier(s) if s.eq_ignore_ascii_case("s"))
     }
 
-    /// Parse `'s <field>` repeatedly, from a base variable holding `thing`,
-    /// and return the field names in order together with the type stored at
-    /// the end of the chain. Call with the base name consumed and
-    /// `possessive_follows` true.
+    /// Plan 310 §4: each type owns ONE member space - its fields, its declared
+    /// function members, and every function whose first parameter is that
+    /// type. The second definition of a name in that space is refused at its
+    /// own site rather than shadowed, the same refuse-the-ambiguity posture
+    /// the `send`/`begin`/`stop` lookaheads take.
+    ///
+    /// The function is always the second definition: a thing's name is a type
+    /// noun only after its definition, so a parameter naming a thing puts that
+    /// definition above this one. That is why this check lives here and needs
+    /// no second pass - and why the diagnostic can point *back* at a line it
+    /// has already read.
+    ///
+    /// The caret is rewound onto the function's own name, so the error is
+    /// reported where the ambiguity was introduced; the parse is aborting
+    /// anyway.
+    pub(crate) fn reject_member_space_collision(
+        &mut self,
+        name: &str,
+        name_pos: usize,
+        first: Option<&(String, Type)>,
+    ) -> Result<(), Box<CompileError>> {
+        let Some((_, Type::Thing(thing))) = first else {
+            return Ok(());
+        };
+        let Some(def) = self.things.get(thing) else {
+            return Ok(());
+        };
+        let claimed = if def.fields.iter().any(|f| f.name == name) {
+            "field"
+        } else if def.members.iter().any(|member| member == name) {
+            "declared function member"
+        } else {
+            return Ok(());
+        };
+        let defined_on = def.line;
+
+        self.pos = name_pos;
+        Err(self.err(&format!(
+            "{} already has a {} called '{}', so a function taking a {} cannot \
+             be called '{}' too\n  \
+             {} is defined on line {}. A type owns one member space: its \
+             fields, its declared function members, and every function whose \
+             first parameter is that type (plan 310 §4).\n  \
+             Rename one of the two - Vox refuses the ambiguity rather than \
+             choosing between them.",
+            thing, claimed, name, thing, name, thing, defined_on
+        )))
+    }
+
+    /// Record what a function takes first, so the instance possessive can ask
+    /// (plan 310 §4). A function with no parameters at all can never be
+    /// reached through a receiver, so it is simply absent from the table.
+    pub(crate) fn record_first_parameter(
+        &mut self,
+        name: &str,
+        first: Option<&(String, Type)>,
+    ) {
+        if let Some((_, first_type)) = first {
+            self.function_first_parameters
+                .insert(name.to_string(), first_type.clone());
+        }
+    }
+
+    /// True when `function` takes `thing` as its first parameter - the one
+    /// condition the instance possessive resolves against (plan 310 §4).
+    /// Membership needs no declaration: any function with the right first
+    /// parameter is reachable this way, manifest-declared or not.
+    fn first_parameter_is(&self, function: &str, thing: &str) -> bool {
+        matches!(
+            self.function_first_parameters.get(function),
+            Some(Type::Thing(first)) if first == thing
+        )
+    }
+
+    /// Every function a possessive on `thing` can reach, for the diagnostic
+    /// that says what the thing does have. Sorted by name, because the table
+    /// behind it is a hash map and an unsorted list would print in a
+    /// different order on every run.
+    fn functions_taking(&self, thing: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .function_first_parameters
+            .iter()
+            .filter(|(_, first)| matches!(first, Type::Thing(first) if first == thing))
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A thing's field names in layout order, for a diagnostic.
+    fn field_names_of(&self, thing: &str) -> Vec<String> {
+        self.things
+            .get(thing)
+            .map(|def| def.fields.iter().map(|f| f.name.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Parse `'s <member>` repeatedly, from a base variable holding `thing`.
+    /// Call with the base name consumed and `possessive_follows` true.
     ///
     /// Each step is checked against the registry as it is consumed, so an
-    /// unknown field is reported at its own token and the chain only
+    /// unknown member is reported at its own token and the chain only
     /// continues while the field it just read is itself a thing - which is
     /// what makes `route's leg's start's x` a single compile-time walk of
     /// definitions rather than a guess about depth.
-    fn parse_thing_field_chain(
+    ///
+    /// A step that is not a field is the instance possessive (plan 310 §4):
+    /// if a function takes this thing first, the whole possessive is that
+    /// call, with everything read so far as its first argument. The rewrite
+    /// happens here, so nothing downstream ever sees the sugar - what the
+    /// analyzer and codegen get is the ordinary call the author could have
+    /// written by hand.
+    fn parse_thing_possessive(
         &mut self,
         base: &str,
         thing: &str,
-    ) -> Result<(Vec<String>, Type), Box<CompileError>> {
+        position: PossessivePosition,
+    ) -> Result<Possessive, Box<CompileError>> {
         let mut current = thing.to_string();
         let mut path: Vec<String> = Vec::new();
 
@@ -606,34 +733,47 @@ impl Parser {
             self.advance(); // the `s`
             self.skip_noise();
 
-            let field_pos = self.pos;
-            let field = match self.current().clone() {
-                Token::Identifier(field) => {
+            let member_pos = self.pos;
+            let member = match self.current().clone() {
+                Token::Identifier(member) => {
                     self.advance();
-                    field
+                    member
                 }
-                // A reserved word can never be a field name: a definition's
-                // field names go through `parse_name`, which rejects them.
+                // A reserved word can never be a field or a function name:
+                // both go through `parse_name`, which rejects them.
                 other => {
                     return Err(self.err_expected(
-                        &format!("a field of thing '{}'", current),
+                        &format!("a member of thing '{}'", current),
                         &other,
                     ))
                 }
             };
 
-            let Some(def) = self.things.get(&current) else {
+            let field_type = match self.things.get(&current) {
+                Some(def) => def
+                    .fields
+                    .iter()
+                    .find(|f| f.name == member)
+                    .map(|f| f.field_type.clone()),
                 // Unreachable: a `Type::Thing` payload is only ever written
                 // for a name already in the registry.
-                return Err(self.err(&format!("Unknown thing '{}'", current)));
+                None => return Err(self.err(&format!("Unknown thing '{}'", current))),
             };
-            let Some(found) = def.fields.iter().find(|f| f.name == field) else {
-                let known: Vec<String> = def.fields.iter().map(|f| f.name.clone()).collect();
-                self.pos = field_pos;
-                return Err(self.err_unknown_field(&current, &field, &known));
+
+            let Some(field_type) = field_type else {
+                // A field always wins, so reaching here means there is none.
+                // The second reading is the sugar; a write target has no
+                // second reading, because a call is not storage.
+                if position == PossessivePosition::Value
+                    && self.first_parameter_is(&member, &current)
+                {
+                    let receiver = Self::receiver_of(base, &path);
+                    return Ok(Possessive::Call(self.parse_instance_call(member, receiver)?));
+                }
+                self.pos = member_pos;
+                return Err(self.err_unknown_member(&current, &member, position));
             };
-            let field_type = found.field_type.clone();
-            path.push(field);
+            path.push(member);
 
             match &field_type {
                 Type::Thing(inner) => {
@@ -646,11 +786,11 @@ impl Parser {
                     // (plan 310 §5). Whether *this* position accepts a whole
                     // thing is the analyzer's call, so the chain is handed
                     // back as written rather than judged here.
-                    return Ok((path, field_type.clone()));
+                    return Ok(Possessive::Field { path, field_type });
                 }
                 scalar => {
                     if self.possessive_follows() {
-                        self.pos = field_pos;
+                        self.pos = member_pos;
                         return Err(self.err(&format!(
                             "'{}' holds a {}, so nothing can be read out of it\n  \
                              Only a field that holds a thing can be gone through \
@@ -659,10 +799,123 @@ impl Parser {
                             type_noun_of(scalar)
                         )));
                     }
-                    return Ok((path, scalar.clone()));
+                    let scalar = scalar.clone();
+                    return Ok(Possessive::Field {
+                        path,
+                        field_type: scalar,
+                    });
                 }
             }
         }
+    }
+
+    /// What the receiver of an instance call is: the base variable itself, or
+    /// the field chain read so far when the possessive went through a field
+    /// that holds a thing (`the line's end's 'magnitude squared'`).
+    fn receiver_of(base: &str, path: &[String]) -> Expr {
+        if path.is_empty() {
+            Expr::Identifier(base.to_string())
+        } else {
+            Expr::ThingField {
+                base: base.to_string(),
+                path: path.to_vec(),
+            }
+        }
+    }
+
+    /// Finish an instance call: the receiver fills the first parameter, and
+    /// any remaining arguments follow the ordinary call preposition, read by
+    /// the ordinary call-tail parser (plan 310 §4). `origin's 'scaled by' on
+    /// 3` and `'scaled by' of origin and 3` therefore build the same call -
+    /// there is no second argument grammar to keep in step.
+    fn parse_instance_call(
+        &mut self,
+        function: String,
+        receiver: Expr,
+    ) -> Result<Expr, Box<CompileError>> {
+        let mut args = vec![receiver];
+        if let Some(Expr::FunctionCall { args: rest, .. }) =
+            self.parse_call_tail(function.clone(), true)?
+        {
+            args.extend(rest);
+        }
+        Ok(Expr::FunctionCall {
+            name: function,
+            args,
+        })
+    }
+
+    /// A possessive naming nothing the thing has. Says what it does have:
+    /// its fields, and - where the sugar could have fired - the functions
+    /// that take it first.
+    fn err_unknown_member(
+        &self,
+        thing: &str,
+        member: &str,
+        position: PossessivePosition,
+    ) -> Box<CompileError> {
+        let fields = self.field_names_of(thing);
+        let functions = self.functions_taking(thing);
+
+        let message = match position {
+            PossessivePosition::WriteTarget if self.first_parameter_is(member, thing) => format!(
+                "'{}' is a function taking a {}, not a field of it\n  \
+                 A call is not storage, so nothing can be written to it.\n  \
+                 {}'s fields are: {}",
+                member,
+                thing,
+                thing,
+                fields.join(", ")
+            ),
+            PossessivePosition::WriteTarget => format!(
+                "Thing '{}' has no field '{}'\n  \
+                 Only a field can be written; its fields are: {}",
+                thing,
+                member,
+                fields.join(", ")
+            ),
+            PossessivePosition::Value => format!(
+                "Thing '{}' has no member '{}'\n  \
+                 A possessive reads one of the thing's fields, or calls a \
+                 function whose first parameter is a {} (plan 310 §4).\n  \
+                 {}'s fields are: {}\n  \
+                 {}",
+                thing,
+                member,
+                thing,
+                thing,
+                fields.join(", "),
+                // "above this line" is the whole truth: a function is
+                // reachable through a receiver from its definition onwards,
+                // the same rule that governs a thing and a thing variable.
+                // Saying only "no function takes a point first" would be a
+                // lie about a program that defines one further down.
+                if functions.is_empty() {
+                    format!(
+                        "no function above this line takes a {} as its first parameter",
+                        thing
+                    )
+                } else {
+                    format!(
+                        "functions above this line taking a {} first: {}",
+                        thing,
+                        functions.join(", ")
+                    )
+                }
+            ),
+        };
+
+        let mut err = *self.err(&message);
+        // Offer both halves of the member space as near misses, so a
+        // misspelled function name is corrected as readily as a field.
+        let mut candidates: Vec<&str> = fields.iter().map(|f| f.as_str()).collect();
+        if position == PossessivePosition::Value {
+            candidates.extend(functions.iter().map(|f| f.as_str()));
+        }
+        if let Some(near) = find_similar_keyword(member, &candidates) {
+            err = err.with_suggestion(&near);
+        }
+        Box::new(err)
     }
 
     /// `origin's leg's start` - the chain as written, for a diagnostic.
@@ -675,34 +928,17 @@ impl Parser {
         out
     }
 
-    pub(crate) fn err_unknown_field(
-        &self,
-        thing: &str,
-        field: &str,
-        known: &[String],
-    ) -> Box<CompileError> {
-        let mut err = *self.err(&format!(
-            "Thing '{}' has no field '{}'\n  \
-             A thing's fields are its whole member space: its fields are: {}",
-            thing,
-            field,
-            known.join(", ")
-        ));
-        let candidates: Vec<&str> = known.iter().map(|k| k.as_str()).collect();
-        if let Some(near) = find_similar_keyword(field, &candidates) {
-            err = err.with_suggestion(&near);
-        }
-        Box::new(err)
-    }
-
-    /// A field read in expression position: `origin's x`.
-    pub(crate) fn parse_thing_field_expr(
+    /// A possessive in expression position: `origin's x` reads a field,
+    /// `origin's magnitude` calls a function taking a point (plan 310 §4).
+    pub(crate) fn parse_thing_possessive_expr(
         &mut self,
         base: String,
         thing: &str,
     ) -> Result<Expr, Box<CompileError>> {
-        let (path, _) = self.parse_thing_field_chain(&base, thing)?;
-        Ok(Expr::ThingField { base, path })
+        match self.parse_thing_possessive(&base, thing, PossessivePosition::Value)? {
+            Possessive::Field { path, .. } => Ok(Expr::ThingField { base, path }),
+            Possessive::Call(call) => Ok(call),
+        }
     }
 
     /// If the cursor sits on `<thing variable>'s <field>...`, consume the
@@ -724,8 +960,56 @@ impl Parser {
             self.pos = saved;
             return Ok(None);
         }
-        let (path, field_type) = self.parse_thing_field_chain(&name, &thing)?;
-        Ok(Some((name, path, field_type)))
+        match self.parse_thing_possessive(&name, &thing, PossessivePosition::WriteTarget)? {
+            Possessive::Field { path, field_type } => Ok(Some((name, path, field_type))),
+            // `WriteTarget` never resolves the sugar, so a call cannot come
+            // back from it.
+            Possessive::Call(_) => unreachable!("a write target resolves to a field or errors"),
+        }
+    }
+
+    /// `origin's 'shift east' on 2.` as a whole statement - the same sugar in
+    /// the position an ordinary call already occupies, for a function called
+    /// to do something rather than to produce a value.
+    ///
+    /// A bare statement is the one place BOTH readings of a possessive are
+    /// grammatical - a write (`origin's y is 4.`) and a call - so this reads
+    /// it in value position, where both are allowed, and hands back anything
+    /// that turns out to be a write. What follows decides: a field, or an `is`
+    /// after the possessive, means a write, and the caller's write-target path
+    /// re-reads it and reports it in those terms, with its caret on the member
+    /// and its message about storage. An error is NOT handed back, because in
+    /// value position it already names both halves of the member space, which
+    /// is exactly what a statement position needs to offer.
+    pub(crate) fn try_parse_instance_call_statement(
+        &mut self,
+    ) -> Result<Option<Statement>, Box<CompileError>> {
+        let Token::Identifier(name) = self.current().clone() else {
+            return Ok(None);
+        };
+        let Some(thing) = self.thing_of_variable(&name) else {
+            return Ok(None);
+        };
+        let saved = self.pos;
+        self.advance();
+        if !self.possessive_follows() {
+            self.pos = saved;
+            return Ok(None);
+        }
+        let possessive = self.parse_thing_possessive(&name, &thing, PossessivePosition::Value)?;
+        let Possessive::Call(Expr::FunctionCall { name, args }) = possessive else {
+            // A field, or - `parse_instance_call` builds nothing else - a
+            // shape that cannot occur. Either way this is not a call.
+            self.pos = saved;
+            return Ok(None);
+        };
+
+        self.skip_noise();
+        if matches!(self.current(), Token::Is | Token::Equals) {
+            self.pos = saved;
+            return Ok(None);
+        }
+        Ok(Some(Statement::FunctionCall { name, args }))
     }
 
     /// `increment origin's x.` / `decrement ...`. The target is an offset, not

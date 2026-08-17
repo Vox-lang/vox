@@ -991,14 +991,15 @@ impl Parser {
                     return Ok(call);
                 }
 
-                // A thing variable's possessive reads a field, never an object
-                // property (plan 310 §3): a thing has no builtin properties,
-                // and its fields are its whole member space (§4). Checked
-                // before the property table below so a field can be named
-                // anything the definition allows.
+                // A thing variable's possessive reads one of its own members,
+                // never an object property (plan 310 §3, §4): a thing has no
+                // builtin properties, and its member space is its fields plus
+                // the functions taking it first. Checked before the property
+                // table below so a member can be named anything the
+                // definition allows.
                 if let Some(thing) = self.thing_of_variable(&name) {
                     if self.possessive_follows() {
-                        return self.parse_thing_field_expr(name, &thing);
+                        return self.parse_thing_possessive_expr(name, &thing);
                     }
                 }
 
@@ -1313,12 +1314,12 @@ impl Parser {
                         self.advance();
                         self.skip_noise();
 
-                        // `Print the origin's x.` - the same field chain as the
+                        // `Print the origin's x.` - the same possessive as the
                         // bare `origin's x`, since `the` is only an article
                         // here (plan 310 §3).
                         if let Some(thing) = self.thing_of_variable(&name) {
                             if self.possessive_follows() {
-                                return self.parse_thing_field_expr(name, &thing);
+                                return self.parse_thing_possessive_expr(name, &thing);
                             }
                         }
 

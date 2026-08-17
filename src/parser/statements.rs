@@ -443,6 +443,15 @@ impl Parser {
     }
 
     pub(crate) fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `origin's 'shift east' on 2.` - the instance possessive stands where
+        // an ordinary call statement stands (plan 310 §4). Tried first because
+        // the write-target path below would otherwise report a call as a field
+        // that does not exist; it rewinds and yields to that path for anything
+        // that is not a call.
+        if let Some(call) = self.try_parse_instance_call_statement()? {
+            return Ok(call);
+        }
+
         // `origin's y is origin's y add 1.` - a field is an lvalue in a bare
         // assignment too (plan 310 §3), so this is checked before the name is
         // read as a variable or a callee.
