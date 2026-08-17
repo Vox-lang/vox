@@ -23,6 +23,16 @@ The showcase file mirrors it with runnable-shaped examples.
 
 ## Global Constraints
 
+- **All new Vox must read aloud as English** — see `docs/STYLE.md`
+  (branch `docs/style-guide`, commit `6e513b8`), models
+  `examples/cat.vox`, `pi.vox`, `controller.vox`. Names must be the
+  thing's true name: `pi` and `x`-as-a-coordinate are correct because
+  they ARE the names; `i`, `tmp`, `tns`, `buf`, `st`, `p`, `r66`,
+  `SafetyGate2` are placeholders, abbreviations, and mangles, banned at
+  any length. Use quoted multi-word names freely. This applies to every
+  test fixture, example, and library file in this plan, and name review
+  is part of each task's acceptance gate.
+
 - **Branch:** work on `feature/user-defined-things`, branched from
   `docs/structures-design` (so the spec travels with the code). Never
   commit to main. Signed commits (config set; if pinentry blocks, retry
@@ -59,7 +69,7 @@ The showcase file mirrors it with runnable-shaped examples.
 - `src/parser/things.rs` (new) — definition parsing, manifest entries,
   wrong-shape diagnostics. Keeps `declarations.rs` focused.
 - `src/parser/declarations.rs` — extend `try_parse_type_noun` with
-  registry lookup so `a point called p` parses.
+  registry lookup so `a point called origin` parses.
 - `src/parser/expressions.rs` — field-chain possessive resolution, type
   possessive (`a point's F`), member-call parsing.
 - `src/parser/statements.rs` — `To do` dispatch lookahead; `Set` on
@@ -282,11 +292,11 @@ A thing called route has
   a segment called leg,
   a number called id.
 
-a route called r66.
-Set r66's leg's start's x to 3.
-Print r66's leg's start's x.
-increment r66's leg's end's y.
-Print r66's leg's end's y.
+a route called 'route 66'.
+Set 'route 66''s leg's start's x to 3.
+Print 'route 66''s leg's start's x.
+increment 'route 66''s leg's end's y.
+Print 'route 66''s leg's end's y.
 ```
 
 `.expected`:
@@ -367,12 +377,12 @@ A thing called point has
   a number called x is 0,
   a number called y is 0.
 
-a point called a.
-Set a's x to 5.
-a point called b is a.
-Set b's x to 9.
-Print a's x.
-Print b's x.
+a point called origin.
+Set origin's x to 5.
+a point called moved is origin.
+Set moved's x to 9.
+Print origin's x.
+Print moved's x.
 ```
 
 `.expected`: `5` then `9`.
@@ -384,9 +394,9 @@ A thing called point has
   a number called x is 0,
   a number called y is 0.
 
-To nudged with a point called p.
-  Set p's x to p's x add 1.
-  Return a point, p.
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
 
 a point called before.
 The after is nudged of before.
@@ -406,7 +416,7 @@ separate wiring, split it into its own commit within this task.)
 
 Follow how buffers/values pass today to find the parameter-frame
 conventions; a thing parameter reserves `thing_size` in the callee frame
-and copies on entry. Same-type check on assignment: `a point called b is
+and copies on entry. Same-type check on assignment: `a point called moved is
 q.` where `q` is a vector3 errors naming both types.
 
 - [ ] **Step 4: Compile-fail case** — cross-type assignment.
@@ -447,15 +457,15 @@ A thing called point has
   a number called x is 0,
   a number called y is 0.
 
-To magnitude with a point called p.
-  a number called xx is p's x multiply p's x.
-  a number called yy is p's y multiply p's y.
-  Return a number, xx add yy.
+To magnitude with a point called corner.
+  a number called 'x squared' is corner's x multiply corner's x.
+  a number called 'y squared' is corner's y multiply corner's y.
+  Return a number, 'x squared' add 'y squared'.
 
-To 'scaled by' with a point called p and a number called factor.
+To 'scaled by' with a point called corner and a number called factor.
   a point called out.
-  Set out's x to p's x multiply factor.
-  Set out's y to p's y multiply factor.
+  Set out's x to corner's x multiply factor.
+  Set out's y to corner's y multiply factor.
   Return a point, out.
 
 a point called origin.
@@ -478,7 +488,7 @@ Print 'the point in question''s magnitude.
 - [ ] **Step 3: Implement** the resolution order above as a compile-time
 rewrite (no new codegen — the rewritten AST is an ordinary call).
 
-- [ ] **Step 4: Compile-fail case** — `To x with a point called p.` when
+- [ ] **Step 4: Compile-fail case** — `To x with a point called corner.` when
 point has a field `x` (collision at the function's line, pointing at the
 field).
 
@@ -525,10 +535,10 @@ To do the point's 'from polar', with a float called r and a float called theta.
   Set out's x to 1.
   Return a point, out.
 
-To do the point's reflected, with a point called p.
+To do the point's reflected, with a point called corner.
   a point called out.
-  Set out's x to 0 minus p's x.
-  Set out's y to 0 minus p's y.
+  Set out's x to 0 minus corner's x.
+  Set out's y to 0 minus corner's y.
   Return a point, out.
 
 A thing called vector3 has
@@ -612,8 +622,8 @@ A thing called segment has
   a point called start,
   a point called end.
 
-a point called a.
-Set a's x to 5.
+a point called origin.
+Set origin's x to 5.
 Print a.
 
 a segment called s.
@@ -680,9 +690,9 @@ A thing called point has
 ```
 see "./fixtures/geometry.vox".
 
-a point called p.
-Set p's x to 11.
-Print p's x.
+a point called origin.
+Set origin's x to 11.
+Print origin's x.
 ```
 
 `.expected`: `11`. (Confirm `test.sh`'s working directory lets the
