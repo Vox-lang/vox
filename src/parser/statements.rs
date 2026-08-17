@@ -13,6 +13,20 @@ impl Parser {
         matches!(self.peek(off), Token::The | Token::Identifier(_))
     }
 
+    /// True when the token after the current one (skipping newline noise) is
+    /// the identifier `signal` (case-insensitive). Decides whether a
+    /// statement-initial `send` opens a `Send signal ...` statement or is an
+    /// ordinary call, mirroring `timer_name_follows` for the timer words so a
+    /// user-defined `send` function keeps working (the 0.3.7 precedent for
+    /// `begin`/`stop`/`finish`).
+    pub(crate) fn signal_keyword_follows(&self) -> bool {
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::Identifier(ref s) if s.eq_ignore_ascii_case("signal"))
+    }
+
     pub fn parse(&mut self) -> Result<Program, Box<CompileError>> {
         let mut statements = Vec::new();
         
@@ -165,6 +179,11 @@ impl Parser {
             }
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
+            Token::Identifier(ref s)
+                if s.eq_ignore_ascii_case("send") && self.signal_keyword_follows() =>
+            {
+                self.parse_send_signal()
+            }
             Token::Identifier(_) => self.parse_identifier_statement(),
             // A statement cannot start with a string literal: the old
             // `"get five".` / `"calc" of 3.` forms are gone (plan 270). A

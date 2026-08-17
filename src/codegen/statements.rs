@@ -2432,6 +2432,16 @@ impl CodeGenerator {
                 self.emit_indent("EXECVE");
             }
 
+            Statement::SendSignal { signal, pid } => {
+                self.uses_files = true;
+                // kill(2): rdi = pid, rsi = signal. Evaluate both operands
+                // through the stack-parking helper so a later expression
+                // (function call, format string) cannot clobber an earlier
+                // result while the syscall registers are being loaded.
+                self.emit_syscall_args(&[(pid, "rdi"), (signal, "rsi")]);
+                self.emit_indent("SEND_SIGNAL");
+            }
+
             Statement::Symlink { target, linkpath } => {
                 self.uses_files = true;
                 self.emit_syscall_args(&[(target, "rdi"), (linkpath, "rsi")]);

@@ -1,0 +1,7 @@
+(Send signal 0 to process 999999. - a pid that does not exist - sets the
+ error flag (ESRCH). signal 0 delivers nothing, so this is safe. On
+ error then prints, proving the failure path mirrors the other syscall
+ statements and that _last_error is set on a failed kill(2).)
+
+Send signal 0 to process 999999.
+On error print "no such process".

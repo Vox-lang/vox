@@ -8,6 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
+  that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
+  62). `child` is accepted as an alias for `process`, mirroring
+  `reap process/child`: `Send signal 9 to child pid.`. On success it clears
+  the error flag; on failure (`ESRCH`, `EINVAL`, `EPERM`) it sets it, so
+  `On error` catches the failure exactly like the other syscall statements.
+  Signal 0 is the standard no-deliver existence check, useful for probing the
+  error path safely. Strictly additive: no existing program changes meaning.
+
 - **`times` is now a multiplication operator, an alias for `multiply`.**
   `Print 6 times 7.` and `Set n to n times 10.` compile and behave exactly
   like their `multiply` forms, including precedence — `Print 2 plus 3 times
