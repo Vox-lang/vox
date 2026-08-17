@@ -881,3 +881,86 @@
                 if name == "point's placed at" && args.len() == 1
         ));
     }
+
+    /// A definition is a top-level statement, like a function definition.
+    /// Inside a block it is refused at its own site: `Program.things` is
+    /// derived from the top-level statements, so a nested definition would
+    /// register a type that layout and code generation never see - and a
+    /// thing they cannot see is laid out as 0 bytes, whose parameter slot is
+    /// frame offset 0, the saved base pointer. Every block that holds
+    /// statements is checked, because they all reach the definition parser
+    /// through the same door.
+    #[test]
+    fn a_definition_inside_a_block_is_rejected() {
+        let inside_an_if = "If 1 is 1 then,\n  \
+             A thing called point has\n    a number called x is 0.\n";
+        let inside_a_while = "a number called steps is 0.\n\n\
+             While steps is less than 3,\n  \
+             A thing called point has\n    a number called x is 0,\n  \
+             steps is steps plus 1.\n";
+        let inside_a_function = "To 'plot a course'.\n  \
+             A thing called point has\n    a number called x is 0.\n  \
+             Print \"plotted\".\n";
+
+        for source in [inside_an_if, inside_a_while, inside_a_function] {
+            let message = parse_err(source);
+            assert!(
+                message.contains("A thing is defined at the top level, like a function"),
+                "expected the top-level rule, got: {}",
+                message
+            );
+            assert!(
+                message.contains("A thing called point has <fields>."),
+                "the diagnostic should name the canonical form, got: {}",
+                message
+            );
+        }
+    }
+
+    /// The registry the parse type-checks against and the one layout reads
+    /// must name the same set of things. They are filled by different walks,
+    /// so nothing but a check makes them provably equal - and when they
+    /// silently disagreed, a program that parsed cleanly was laid out against
+    /// a registry missing the thing. Divergence is constructed here because
+    /// no source can express it any more.
+    #[test]
+    fn a_thing_the_program_registry_lost_is_a_reported_compiler_bug() {
+        let mut parser = Parser::new(Vec::new());
+        parser.things.insert(
+            "point".to_string(),
+            ThingDef {
+                name: "point".to_string(),
+                fields: Vec::new(),
+                members: Vec::new(),
+                line: 1,
+            },
+        );
+
+        let program = Program::new(Vec::new());
+        let message = parser
+            .check_thing_registry(&program)
+            .expect_err("a thing missing from the program's registry must be reported")
+            .to_string();
+
+        assert!(
+            message.contains("Compiler bug"),
+            "the report should say what it is, got: {}",
+            message
+        );
+        assert!(
+            message.contains("'point'"),
+            "the report should name the thing that went missing, got: {}",
+            message
+        );
+    }
+
+    /// The same check passes silently for a parse where the two agree, so it
+    /// is the divergence being reported and not merely the presence of a
+    /// thing.
+    #[test]
+    fn the_two_registries_agree_after_an_ordinary_parse() {
+        let program = parse_input("A thing called point has\n  a number called x is 0.\n")
+            .expect("a top-level definition should parse");
+        assert_eq!(program.things.len(), 1);
+        assert_eq!(program.things[0].name, "point");
+    }

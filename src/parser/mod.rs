@@ -98,6 +98,15 @@ pub struct Parser {
     // defines it" - a check that can only run once the whole file has been
     // read - can still put its caret on the type it is about.
     thing_name_positions: std::collections::HashMap<String, usize>,
+    // How deep the statement being parsed sits: 1 while the top-level loop
+    // is reading a statement, 2 or more anywhere inside a block - an `If`
+    // branch, a loop body, a function body. A thing is defined at the top
+    // level like a function is (plan 310 §3, §9: layout is compile-time and
+    // global, and a definition must precede every use of its name), so
+    // `parse_thing_definition` needs to know where it stands. Every block
+    // body reaches its statements through `parse_statement`, which is the
+    // one door this is counted at.
+    statement_depth: usize,
     // Every `Return` in the definition being parsed that declared a type,
     // as (token index, declared type). The member rule is about the Return
     // LINES (plan 310 §4), not about the one type the function ends up
@@ -146,6 +155,7 @@ impl Parser {
             function_first_parameters: std::collections::HashMap::new(),
             member_functions: std::collections::HashMap::new(),
             thing_name_positions: std::collections::HashMap::new(),
+            statement_depth: 0,
             typed_returns: Vec::new(),
         }
     }

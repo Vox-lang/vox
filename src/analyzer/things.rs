@@ -74,9 +74,31 @@ fn size_with(defs: &ThingRegistry, name: &str, stack: &mut Vec<String>) -> u64 {
     if stack.iter().any(|n| n == name) {
         return 0;
     }
+    // A name that reaches layout but is not in the registry is the exact
+    // divergence that finding 01 rode: the size came back 0, a parameter of
+    // the thing took frame offset 0, and the callee's store landed on the
+    // saved base pointer. Every `Type::Thing` the parser writes names a thing
+    // it registered, and `check_thing_registry` proves the program's registry
+    // holds that same set, so there is no program that arrives here - which is
+    // why this says "compiler bug" instead of laying out a 0-byte thing.
     let Some(def) = defs.get(name) else {
-        return 0;
+        panic!(
+            "compiler bug: thing '{}' reached layout but is not in the \
+             registry; a size of 0 would put its storage at frame offset 0, \
+             which is the saved base pointer, not storage",
+            name
+        );
     };
+    // Every thing has at least one data field (plan 310 §10, enforced at the
+    // definition), so a definition with none is a registry that lost its
+    // fields rather than a thing that legitimately occupies nothing - and a
+    // zero-byte thing is exactly what puts storage at frame offset 0.
+    assert!(
+        !def.fields.is_empty(),
+        "compiler bug: thing '{}' reached layout with no data fields; \
+         a definition with nothing in it is rejected at the definition",
+        name
+    );
     stack.push(name.to_string());
     let total = def
         .fields
@@ -941,6 +963,18 @@ mod tests {
         assert_eq!(thing_size(&defs, "point"), 16);
         assert_eq!(thing_size(&defs, "segment"), 32);
         assert_eq!(thing_size(&defs, "route"), 40);
+    }
+
+    /// A size of 0 for a thing that reached layout means the registry lost
+    /// it, not that the thing is empty: layout would then put its storage at
+    /// frame offset 0, which is the saved base pointer. The parser refuses
+    /// every source that could ask for one, so this says "compiler bug"
+    /// rather than answering.
+    #[test]
+    #[should_panic(expected = "compiler bug")]
+    fn a_thing_missing_from_the_registry_is_not_laid_out_as_nothing() {
+        let defs = nested_registry();
+        thing_size(&defs, "ghost");
     }
 
     #[test]

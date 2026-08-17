@@ -60,11 +60,36 @@ impl Parser {
 
         // `Program::new` derives the thing registry from the statement list
         // in definition (layout) order, so there is nothing to attach here -
-        // and no construction path that can forget to.
-        Ok(Program::new(statements))
+        // and no construction path that can forget to. What it does derive is
+        // checked against what the parse actually registered before the
+        // program leaves the parser: two registries that can disagree in
+        // silence are what let a thing be type-checked and then laid out as
+        // nothing.
+        let program = Program::new(statements);
+        self.check_thing_registry(&program)?;
+        Ok(program)
     }
 
+    /// Parse one statement, counting how deep it sits. Every block body - an
+    /// `If` branch, a `While`/`For` body, a function body - reads its
+    /// statements through here, so depth 1 is the top level and anything
+    /// deeper is inside a block. `parse_thing_definition` is the one parser
+    /// that asks (plan 310 §9); the count is kept here rather than at each
+    /// block parser so a construct added later cannot forget to maintain it.
     pub(crate) fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        self.statement_depth += 1;
+        let parsed = self.dispatch_statement();
+        self.statement_depth -= 1;
+        parsed
+    }
+
+    /// True when the statement being parsed is a top-level one, written
+    /// against the left margin rather than inside some block's body.
+    pub(crate) fn at_top_level(&self) -> bool {
+        self.statement_depth <= 1
+    }
+
+    fn dispatch_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
 
         let stmt = match self.current().clone() {

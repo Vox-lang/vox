@@ -136,10 +136,19 @@ impl Parser {
     /// Call with the article already consumed and `thing_definition_follows`
     /// true.
     pub(crate) fn err_thing_created_as_variable(&mut self) -> Box<CompileError> {
-        // Peek the name so the message can echo it, without disturbing the
-        // parser position - the caller is about to abort anyway, but a
-        // diagnostic that silently consumed tokens would be a trap for the
-        // next person to reuse this helper.
+        let name = self.peek_defined_thing_name();
+        self.err(&format!(
+            "A thing is defined, not created as a variable\n  \
+             Canonical form: A thing called {} has <fields>.",
+            name
+        ))
+    }
+
+    /// The name a definition construct is about, read without disturbing the
+    /// parser position - every caller is about to abort, but a diagnostic
+    /// that silently consumed tokens would be a trap for the next person to
+    /// reuse one. Call at the contextual `thing` keyword.
+    fn peek_defined_thing_name(&mut self) -> String {
         let saved = self.pos;
         self.advance(); // `thing`
         self.skip_noise();
@@ -153,9 +162,26 @@ impl Parser {
             _ => "<name>".to_string(),
         };
         self.pos = saved;
+        name
+    }
+
+    /// The definition-inside-a-block diagnostic (plan 310 §3, §9). A thing is
+    /// defined at the top level, like a function: its layout is fixed when the
+    /// program is compiled and every use of its name reads that one layout, so
+    /// a definition written inside a block has no scope of its own to mean
+    /// anything in. Rejecting it also keeps the parser's own table of things
+    /// and `Program.things` describing the same set - a definition nested in a
+    /// block used to register the type while never reaching the registry
+    /// codegen reads, which laid the thing out as 0 bytes and put a parameter
+    /// of it at frame offset 0, the saved base pointer.
+    fn err_thing_defined_inside_a_block(&mut self) -> Box<CompileError> {
+        let name = self.peek_defined_thing_name();
         self.err(&format!(
-            "A thing is defined, not created as a variable\n  \
-             Canonical form: A thing called {} has <fields>.",
+            "A thing is defined at the top level, like a function\n  \
+             Canonical form: A thing called {} has <fields>.\n  \
+             Move the definition above the block it is written in: a thing's \
+             layout is fixed for the whole program, so a definition inside an \
+             'If', a loop, or a function body has no scope to belong to.",
             name
         ))
     }
@@ -165,6 +191,14 @@ impl Parser {
     /// `ThingDef` so later definitions can nest it, and returns the
     /// statement that carries it into the program.
     pub(crate) fn parse_thing_definition(&mut self) -> Result<Statement, Box<CompileError>> {
+        // A definition is a top-level statement, like a function definition.
+        // Anywhere else it is refused at its own site rather than parsed into
+        // a block's body, where `Program::new`'s flat scan of the top level
+        // would never find it.
+        if !self.at_top_level() {
+            return Err(self.err_thing_defined_inside_a_block());
+        }
+
         let line = self.current_info().map(|t| t.line).unwrap_or(0);
 
         self.advance(); // `thing`
@@ -241,6 +275,56 @@ impl Parser {
         self.thing_name_positions.insert(name.clone(), name_pos);
         self.things.insert(name, def.clone());
         Ok(Statement::ThingDecl(def))
+    }
+
+    /// Prove that the parser's table of things and the program's registry
+    /// name the same set, and refuse to hand back a program where they do
+    /// not. The two are filled by different walks - the parser records a
+    /// definition as it reads it, `Program::new` derives the registry from a
+    /// flat scan of the top-level statements - and everything downstream
+    /// trusts them to agree: the parse type-checks a declaration against
+    /// `self.things`, while layout, offsets and the cycle check all read
+    /// `Program.things`. When a definition nested in a block registered the
+    /// type without reaching the registry, a program that parsed cleanly was
+    /// laid out against a registry missing the thing, so its size came back
+    /// as 0 and a parameter of it took frame offset 0 - the saved base
+    /// pointer. Rejecting the nested definition is the fix; this is what
+    /// keeps it fixed if a construct that can hold a statement is added
+    /// later.
+    pub(crate) fn check_thing_registry(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), Box<CompileError>> {
+        let mut missing: Vec<&String> = self
+            .things
+            .keys()
+            .filter(|name| !program.things.iter().any(|def| &&def.name == name))
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // A HashMap hands its keys back in whatever order it likes; sorting
+        // makes the report the same on every run.
+        missing.sort();
+        let names = missing
+            .iter()
+            .map(|name| format!("'{}'", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Point at the first definition that went missing, so the caret lands
+        // on a thing rather than at end of file.
+        if let Some(name_pos) = self.thing_name_positions.get(missing[0]) {
+            self.pos = *name_pos;
+        }
+        Err(self.err(&format!(
+            "Compiler bug: {} parsed as a thing but is missing from the \
+             program's registry\n  \
+             The parse type-checked against a set of things that layout and \
+             code generation cannot see, so this program will not be \
+             compiled.\n  \
+             Please report this file to the Vox maintainers.",
+            names
+        )))
     }
 
     /// The no-data-field diagnostic, shared by `A thing called X.` (no `has`
