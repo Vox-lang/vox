@@ -2618,6 +2618,46 @@ is valid (typically the right-hand side of `Set`/`a number called ... is`).
 Both set the error flag on failure (e.g. `On error` after `reap process 999999`
 catches `ECHILD` when the PID is not actually your child).
 
+#### Send a signal: `Send signal`
+
+Unlike `fork`/`reap`, this is a **statement**, not an expression:
+
+```
+Send signal <N-expr> to process <pid-expr>.
+```
+
+It performs `kill(2)` (syscall 62): `<pid-expr>` is the target PID (loaded
+into `rdi`), `<N-expr>` is the signal number (loaded into `rsi`). `child` is
+accepted as an alias for `process`, mirroring `reap process/child`:
+
+```
+Send signal 9 to child pid.
+```
+
+On success it clears the error flag; on failure (`ESRCH` no such process,
+`EINVAL` invalid signal, `EPERM` not permitted) it sets it, exactly like the
+other syscall statements, so `On error` catches the failure:
+
+```
+Send signal 0 to process 999999.
+On error print "no such process".
+```
+
+Signal 0 is the standard existence check: it delivers nothing but returns an
+error if no process has that PID, which makes it a safe way to probe the error
+path. A common pattern is to send a real signal to a forked child and reap it:
+
+```
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Send signal 9 to process pid.
+    Set reaped to reap any child process.
+    If reaped is pid then,
+        Print "sigkilled child reaped with matching pid".
+```
+
 ### System Control: Shutdown, Reboot, Halt
 
 ```
@@ -3150,6 +3190,7 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Execute` | `execve` - replace the process image |
 | `Shutdown`/`Poweroff`, `Reboot`/`Restart`, `Halt` | `reboot(2)` - power off/restart/halt the machine |
 | `fork`, `reap` | Process control expressions - `fork(2)`/`wait4(2)` |
+| `Send signal` | `kill(2)` - send a signal to a process (`child` aliases `process`) |
 
 ### Flag Schema
 
@@ -3678,7 +3719,7 @@ or_expr     ::= and_expr ("or" and_expr)*
 and_expr    ::= comparison ("and" comparison)*
 comparison  ::= additive (comp_op additive)?
 additive    ::= multiplicative ((add | subtract) multiplicative)*
-multiplicative ::= primary ((multiply | divide | modulo) primary)*
+multiplicative ::= primary ((multiply | times | divide | modulo) primary)*
 primary     ::= literal | identifier | func_call | "(" expr ")"
 
 type        ::= "number" | "float" | "text" | "boolean" | "list"

@@ -1,0 +1,15 @@
+(Send signal <N> to process <pid>. performs kill(2). A parent forks a
+ child that waits; the parent sends SIGKILL (9) to the child pid, then
+ reaps. The reaped pid must match the forked child pid - proving a
+ SIGKILLed child is delivered and reapable. The kill arrives
+ immediately, so the child's long Wait is interrupted and the test
+ completes fast; it never actually sleeps 30 seconds.)
+
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Send signal 9 to process pid.
+    Set reaped to reap any child process.
+    If reaped is pid then,
+        Print "sigkilled child reaped with matching pid".

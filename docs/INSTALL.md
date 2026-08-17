@@ -71,6 +71,26 @@ The compiler searches for `coreasm` using the following resolution order:
 4. Executable-relative search (portable installs)
 5. Current working directory fallback (`./coreasm`)
 
+### Working on the compiler with a system install present
+
+Note step 3 if you develop on this repo *and* have `vox` installed
+system-wide: with `VOX_CORE_PATH` unset, an installed
+`/usr/share/vox/coreasm` wins over the repo's own `coreasm`, even when you
+run `./target/release/vox` from inside the tree. Edits to
+`coreasm/*/*.asm` then appear to do nothing — a new macro is assembled as
+an orphan label (`warning: label 'X' alone on a line without a colon`) and
+the feature silently no-ops, because the compiler is using the packaged
+runtime rather than the one you are editing.
+
+Set the variable whenever you test a coreasm change by hand:
+
+```bash
+export VOX_CORE_PATH="$PWD/coreasm"
+```
+
+`./test.sh` already exports it, so the suite is unaffected — only manual
+`vox` invocations hit this.
+
 ## Option A: Configure via environment variable (per-shell / CI)
 
 If you keep `coreasm` somewhere non-standard:

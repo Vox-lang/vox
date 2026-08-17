@@ -4,6 +4,55 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
+  that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
+  62). `child` is accepted as an alias for `process`, mirroring
+  `reap process/child`: `Send signal 9 to child pid.`. On success it clears
+  the error flag; on failure (`ESRCH`, `EINVAL`, `EPERM`) it sets it, so
+  `On error` catches the failure exactly like the other syscall statements.
+  Signal 0 is the standard no-deliver existence check, useful for probing the
+  error path safely. Strictly additive: no existing program changes meaning.
+
+- **`times` is now a multiplication operator, an alias for `multiply`.**
+  `Print 6 times 7.` and `Set n to n times 10.` compile and behave exactly
+  like their `multiply` forms, including precedence — `Print 2 plus 3 times
+  4.` evaluates to 14, multiplication still binding tighter than addition,
+  identical to `2 plus 3 multiply 4.`. `times` was already a reserved
+  keyword for the `Repeat <count> times,` loop, so no lexer change was
+  needed; the `Repeat` count is read with `parse_primary`, which never
+  reaches the multiplicative layer, so the loop construct is unaffected.
+  Strictly widening: no previously-valid program changes meaning.
+
+### Fixed
+
+- **A reserved word used as a loop variable reported "Missing loop
+  variable" instead of naming the reserved word.** `print each arg from
+  argv.` failed with "Missing loop variable after 'each'" even though
+  the variable was not missing — it was `arg`, which the lexer folds
+  onto `Token::Argument` (an alias of the reserved keyword `argument`).
+  Because the parser saw a keyword token where it expected an
+  identifier, it reported the variable as absent and sent the reader
+  hunting for a syntax error that did not exist. Both each-loop variable
+  sites (`each <var> from ...` and `for each <var> from ...`) now
+  delegate to the existing `check_not_keyword` diagnostic when the token
+  in the variable slot is a keyword, so the message names the spelling
+  the user actually typed and notes that `arg` is an alternate spelling
+  of `argument`. A genuinely omitted variable is still reported as
+  "Missing loop variable": the loop's own `from`/`between` delimiters
+  are excluded from the keyword check, so `print each from argv.` keeps
+  its existing message. Diagnostics only — the program is still
+  rejected, just with an accurate reason. No words were un-reserved and
+  no loop semantics changed. Regression tests:
+  `tests/compile_fail/087_reserved_word_each_loop_variable.vox`,
+  `tests/compile_fail/088_reserved_word_for_each_loop_variable.vox`,
+  `tests/compile_fail/089_missing_loop_variable_keyword_delim.vox`, and
+  `tests/322_each_loop_reserved_word_regression.vox` (the renamed form
+  still compiles and iterates).
+
 ## [0.3.7] - 2026-08-16
 
 ### Changed

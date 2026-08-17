@@ -1,0 +1,17 @@
+(Send signal 0 to a LIVE child pid sets no error flag. The parent forks,
+ sends signal 0 to the child (which is alive and waiting), asserts via
+ On error that no error was raised, then SIGKILLs and reaps so the test
+ completes fast. The "unexpected error" line must NOT appear in the
+ output - its absence is the proof that a successful kill(2) cleared
+ _last_error.)
+
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Send signal 0 to process pid.
+    On error print "unexpected error on live child".
+    Send signal 9 to process pid.
+    Set reaped to reap any child process.
+    If reaped is pid then,
+        Print "signal 0 ok then reaped".

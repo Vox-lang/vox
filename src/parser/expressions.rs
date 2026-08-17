@@ -423,6 +423,7 @@ impl Parser {
             self.skip_noise();
             let op = match self.current() {
                 Token::Multiply => Some(BinaryOperator::Multiply),
+                Token::Times => Some(BinaryOperator::Multiply),
                 Token::Divide => Some(BinaryOperator::Divide),
                 Token::Modulo => Some(BinaryOperator::Modulo),
                 _ => None,

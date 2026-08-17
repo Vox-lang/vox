@@ -648,6 +648,13 @@ pub enum Statement {
         path: Expr,
         args: Expr, // expected to be an Expr::ListLit
     },
+
+    // kill(2): "Send signal <N> to process <pid>." / "... to child <pid>."
+    // rdi = pid, rsi = signal. Sets _last_error on failure, clears on success.
+    SendSignal {
+        signal: Expr,
+        pid: Expr,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

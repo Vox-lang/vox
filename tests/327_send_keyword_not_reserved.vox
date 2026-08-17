@@ -1,0 +1,16 @@
+(Regression: `send` is a keyword only inside the `Send signal ...`
+ construct; everywhere else it is an ordinary identifier, so a
+ user-defined `send` function still compiles and runs. Both meanings
+ coexist in one program: a zero-argument `send` function is defined and
+ called, and a `Send signal 0 to process 999999.` statement exercises
+ the error path. Mirrors the 0.3.7 fix that made `begin`/`stop`/
+ `finish` contextual rather than reserved. Expected: "sent" then
+ "no such process".)
+
+To send.
+  Print "sent".
+
+send.
+
+Send signal 0 to process 999999.
+On error print "no such process".
