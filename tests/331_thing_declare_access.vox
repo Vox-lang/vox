@@ -1,0 +1,20 @@
+(Plan 310 - declaration position and field access. PENDING: this file has
+ no .expected yet, so the runner skips it. It exists now because the two
+ lines below were carved out of tests/330_thing_definition.vox: definition
+ parsing landed on its own, but `a <thing> called <name>.` and
+ `<name>'s <field>` need the registry lookup in the declaration path plus
+ field-address codegen, which land with the declarations task.
+
+ The declarations task should fold its own cases in here - see the plan's
+ Task 2 for the full list - and add the .expected that turns this file on.
+ Keep the quoted multi-word name: it is the only place a thing name with a
+ space is exercised in declaration position.
+
+ Acceptance once enabled: the first line below prints 1.)
+
+A thing called 'bounding box' has
+  a number called width is 1,
+  a number called height is 1.
+
+a 'bounding box' called viewport.
+Print viewport's width.

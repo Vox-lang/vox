@@ -38,8 +38,20 @@ impl Parser {
             
             self.skip_all_whitespace();
         }
-        
-        Ok(Program::new(statements))
+
+        let mut program = Program::new(statements);
+        // Carry the thing registry onto the program in definition order, so
+        // consumers get a stable layout order without re-deriving it from a
+        // HashMap's iteration order.
+        program.things = program
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::ThingDecl(def) => Some(def.clone()),
+                _ => None,
+            })
+            .collect();
+        Ok(program)
     }
 
     pub(crate) fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {

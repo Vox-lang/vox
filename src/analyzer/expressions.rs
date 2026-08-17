@@ -266,6 +266,10 @@ impl Analyzer {
             Buffer => matches!(actual, Buffer),
             List(_) => matches!(actual, List(_)),
             Map(_) => matches!(actual, Map(_)),
+            // A thing parameter takes only that same thing: user-defined
+            // types are value types with a fixed layout, so no other
+            // category can fill the slot (plan 310 §5, §6).
+            Thing(name) => matches!(actual, Thing(other) if other == name),
             // A `value` parameter takes any category (its tag rides alongside).
             Value | Void | Unknown | Time | Timer => true,
         }

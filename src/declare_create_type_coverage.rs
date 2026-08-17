@@ -146,6 +146,17 @@ mod tests {
                     "time",
                     "A time variable must be initialized",
                 ),
+                // A user-defined thing IS meant to be spellable here:
+                // `Create a point called p.` is valid by plan 310 §10,
+                // equivalent to `a point called p.`. It is excluded only
+                // because declaration position is not wired up yet - a
+                // thing name is not yet a type noun, so there is nothing to
+                // probe. The task that teaches declarations about the
+                // registry must replace this arm with a real assertion
+                // (which needs a fixture that defines the thing first, so
+                // it will not be a one-line `assert_default_create_wires_up`
+                // call).
+                Type::Thing(_) => {}
                 // Not spellable in Vox source - there is no keyword that
                 // lexes to these, so there is no `Create` syntax to probe.
                 // Deliberately excluded, mirroring the same judgment call

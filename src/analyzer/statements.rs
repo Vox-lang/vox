@@ -369,6 +369,13 @@ impl Analyzer {
 
     pub(crate) fn analyze_statement(&mut self, stmt: &Statement) {
         match stmt {
+            // A thing definition declares a type: it introduces no variable,
+            // touches no runtime dependency, and emits no code. Registry
+            // validation (sizes, offsets, cycles, the manifest checks) lands
+            // with the declarations that need it; there is nothing to check
+            // while a definition cannot yet be used.
+            Statement::ThingDecl(_) => {}
+
             Statement::Print { value, .. } => {
                 self.deps.uses_io = true;
                 self.analyze_expr(value);

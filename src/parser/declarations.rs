@@ -233,7 +233,16 @@ impl Parser {
             self.advance();
             self.skip_noise();
         }
-        
+
+        // `Create a thing called point.` is never valid Vox, in any version
+        // (plan 310 §10): a thing is defined, not created as a variable.
+        // This reaches `Set`/`store`/`assign` too, since `define a thing
+        // called point has ...` lexes as `Create` and both verbs express
+        // the same wrong intent.
+        if self.thing_definition_follows() {
+            return Err(self.err_thing_created_as_variable());
+        }
+
         // Check for typed declaration: "<type> called <name>"
         let var_type = self.try_parse_type_noun();
 
@@ -434,7 +443,15 @@ impl Parser {
         if *self.current() == Token::Flag {
             return self.parse_flag_schema_decl();
         }
-        
+
+        // `A thing called <name> has ...` defines a type, not a variable
+        // (plan 310 §1). `thing` is not a lexer keyword, so the construct is
+        // recognised by sentence shape and `thing` stays an ordinary
+        // identifier everywhere else.
+        if self.thing_definition_follows() {
+            return self.parse_thing_definition();
+        }
+
         // Parse type noun: number, int, float, text, boolean, list, map,
         // buffer, file, time, timer, value.
         let var_type = self.try_parse_type_noun();

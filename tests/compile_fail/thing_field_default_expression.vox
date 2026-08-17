@@ -1,0 +1,5 @@
+(Compile-fail: plan 310 §1 - a computed default is still not a literal;
+ the leading literal must not be mistaken for a valid default.)
+
+A thing called point has
+  a number called x is 1 add 2.

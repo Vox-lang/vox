@@ -214,6 +214,11 @@ impl CodeGenerator {
 
     fn generate_statement(&mut self, stmt: &Statement) {
         match stmt {
+            // A thing definition is compile-time only: it names a layout,
+            // allocates nothing, and emits no instructions. Storage is
+            // emitted where a thing is *declared*, not where it is defined.
+            Statement::ThingDecl(_) => {}
+
             Statement::Print { value, without_newline } => {
                 self.generate_print(value, *without_newline);
             }

@@ -1,0 +1,6 @@
+(Compile-fail: plan 310 §4 - each thing owns one member space, so two
+ fields cannot share a name.)
+
+A thing called point has
+  a number called x is 0,
+  a number called x is 1.

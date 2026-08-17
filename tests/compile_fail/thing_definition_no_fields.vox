@@ -1,0 +1,4 @@
+(Compile-fail: plan 310 §10 - v1 requires at least one field, and a
+ `has` with nothing after it declares none.)
+
+A thing called point has.

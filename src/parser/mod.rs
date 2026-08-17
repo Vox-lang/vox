@@ -55,6 +55,11 @@ pub struct Parser {
     // "function still open at end of file" warning). The driver prints
     // these after a successful parse; they never abort compilation.
     pub warnings: Vec<CompileError>,
+    // Every thing defined so far, by name (plan 310). Populated as the
+    // parse walks the file, which is enough for a single pass because a
+    // thing must be defined before any use of its name - a field type
+    // naming a later thing is an unknown type, not a forward reference.
+    things: std::collections::HashMap<String, ast::ThingDef>,
 }
 
 #[cfg(test)]
@@ -67,6 +72,8 @@ mod buffer_declaration_tests;
 mod to_connector_tests;
 #[cfg(test)]
 mod possessive_property_unit_tests;
+#[cfg(test)]
+mod thing_definition_tests;
 mod declarations;
 mod io;
 mod collections;
@@ -74,6 +81,7 @@ mod functions;
 mod control_flow;
 mod expressions;
 mod statements;
+mod things;
 
 impl Parser {
     pub fn new(tokens: Vec<TokenInfo>) -> Self {
@@ -87,6 +95,7 @@ impl Parser {
             shared_mode: false,
             saw_library_decl: false,
             warnings: Vec::new(),
+            things: std::collections::HashMap::new(),
         }
     }
 
