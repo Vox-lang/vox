@@ -1,0 +1,14 @@
+(Compile-fail: plan 310 §8 - two things are compared for equality only.
+ Nothing puts one whole point after another: which field would decide it, and
+ in which direction? Ordering the two by their first eight bytes would pick
+ an answer the author never chose, so the spelling is rejected and the field
+ to compare is named instead.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+a point called marker.
+If origin is greater than marker then,
+    Print "further along".

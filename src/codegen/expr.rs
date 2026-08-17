@@ -415,12 +415,21 @@ impl CodeGenerator {
                 // Use has_float_operands for instruction selection (includes comparisons)
                 let has_floats = self.has_float_operands(left) || self.has_float_operands(right);
 
+                // `origin is marker` between two of the same thing: one
+                // comparison per field, recursing through nesting (plan 310
+                // §8). Expression-position twin of the guard in
+                // `generate_condition`, and first for the same reason.
+                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && self.thing_compared(left, right).is_some()
+                {
+                    self.emit_thing_equality(left, right, matches!(op, BinaryOperator::NotEqual));
+                }
                 // `x is nothing` / `x is not nothing` in expression position
                 // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
                 // the float/stringy/integer paths or `0 is nothing` would
                 // compare payloads and be true. Mirrors the condition-position
                 // guard in `generate_condition`.
-                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (self.is_nothing_expr(left) || self.is_nothing_expr(right))
                 {
                     let equal = matches!(op, BinaryOperator::Equal);

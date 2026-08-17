@@ -1,0 +1,16 @@
+(Compile-fail: plan 310 §8 - `is` between two things compares them field by
+ field, which two different shapes have no way to do: a point has an x where
+ a segment has a whole point, so there is no pairing to walk. Comparing the
+ bytes instead would answer a question about storage, not about the two
+ things.)
+
+A thing called point has
+  a number called x is 0.
+
+A thing called segment has
+  a point called start.
+
+a point called origin.
+a segment called span.
+If origin is span then,
+    Print "they match".

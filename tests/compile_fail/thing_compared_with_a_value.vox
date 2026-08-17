@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §8 - `is` between two things compares them field by
+ field, and a single value has no fields to pair with. The point's x is what
+ the author means here, so the diagnostic names it rather than comparing a
+ number against the first eight bytes of the point.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+a number called 'the tally' is 1.
+If origin is 'the tally' then,
+    Print "they match".

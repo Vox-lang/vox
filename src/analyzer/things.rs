@@ -576,6 +576,195 @@ impl Analyzer {
         }
     }
 
+    /// Which thing an expression names as a whole one, asked without
+    /// analyzing or reporting anything.
+    ///
+    /// A print position and a comparison both have to know this *before* they
+    /// choose which check to run, and asking must not itself be the error the
+    /// answer decides against. A call is deliberately not one of these: what a
+    /// call returns is a copy source, not a place, so it is still copied into
+    /// a variable first (§5).
+    pub(crate) fn whole_thing_named(&self, value: &Expr) -> Option<String> {
+        match value {
+            Expr::Identifier(name) if self.is_variable_available(name) => {
+                self.thing_of_variable(name)
+            }
+            Expr::ThingField { base, path } => {
+                let thing = self.thing_of_variable(base)?;
+                match resolve_field_path(&self.things, &thing, path) {
+                    Ok(FieldRef {
+                        field_type: Type::Thing(inner),
+                        ..
+                    }) => Some(inner),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Analyze an expression in a position that accepts a whole thing: a
+    /// print, or an interpolation inside one (plan 310 §7). A whole thing is
+    /// validated as a thing, so the "not a value" rule that governs every
+    /// other position does not apply here; anything else is an ordinary value.
+    pub(crate) fn analyze_printed_expr(&mut self, value: &Expr) {
+        if self.whole_thing_named(value).is_some() {
+            self.analyze_thing_source(value);
+        } else {
+            self.analyze_expr(value);
+        }
+    }
+
+    /// Check a comparison that has a whole thing on either side (plan 310 §8),
+    /// and say whether it was handled here. Returning true means both operands
+    /// have been analyzed and any error reported, so the caller skips the
+    /// ordinary walk - which would report a whole thing as "not a value" and
+    /// bury the real message under it.
+    pub(crate) fn check_thing_comparison(
+        &mut self,
+        left: &Expr,
+        op: &BinaryOperator,
+        right: &Expr,
+    ) -> bool {
+        let equality = matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual);
+        let ordering = matches!(
+            op,
+            BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+        );
+        if !equality && !ordering {
+            return false;
+        }
+        let left_thing = self.whole_thing_named(left);
+        let right_thing = self.whole_thing_named(right);
+        if left_thing.is_none() && right_thing.is_none() {
+            return false;
+        }
+
+        let reported_before = self.errors.len();
+        self.analyze_printed_expr(left);
+        self.analyze_printed_expr(right);
+        if self.errors.len() > reported_before {
+            // An operand named its own problem - a misspelled variable, a
+            // field that does not exist. Whatever it turned out not to be is
+            // that message's business; a second, vaguer one about the
+            // comparison would only bury it.
+            return true;
+        }
+
+        // Whichever side is the thing carries the diagnostic: it is the
+        // operand that made this comparison different from an ordinary one.
+        let (thing_side, thing) = match (&left_thing, &right_thing) {
+            (Some(thing), _) => (left, thing.clone()),
+            (None, Some(thing)) => (right, thing.clone()),
+            (None, None) => unreachable!("one side is a thing"),
+        };
+
+        if ordering {
+            self.push_thing_has_no_order(thing_side, &thing);
+            return true;
+        }
+        match (&left_thing, &right_thing) {
+            // The feature: the same thing on both sides, compared field by
+            // field and recursing through whatever those fields nest.
+            (Some(left_thing), Some(right_thing)) if left_thing == right_thing => {}
+            (Some(left_thing), Some(right_thing)) => {
+                self.push_error(
+                    format!(
+                        "'{}' holds a {} and '{}' holds a {}, so they cannot be compared\n  \
+                         `is` between two things compares them field by field (plan 310 §8), \
+                         and only two of the same thing have the same fields.",
+                        render_thing_operand(left),
+                        left_thing,
+                        render_thing_operand(right),
+                        right_thing
+                    ),
+                    Some(thing_operand_symbol(left)),
+                );
+            }
+            // A whole thing has no single value to hold up against one,
+            // whatever the other side turned out to be - unless that side is
+            // a name nothing resolved, which has already been reported as the
+            // unknown variable it is (and reported only once, so the operand
+            // walk above stayed silent about it).
+            _ if self.is_unresolved_name(left) || self.is_unresolved_name(right) => {}
+            _ => {
+                self.push_error(
+                    format!(
+                        "'{}' holds a whole {}, so it cannot be compared with a single value\n  \
+                         `is` between two things compares them field by field (plan 310 §8); \
+                         a whole {} and one value have no fields in common.\n  \
+                         Compare a field instead - {}'s fields are: {}",
+                        render_thing_operand(thing_side),
+                        thing,
+                        thing,
+                        thing,
+                        self.fields_of(&thing)
+                    ),
+                    Some(thing_operand_symbol(thing_side)),
+                );
+            }
+        }
+        true
+    }
+
+    /// Whether an operand is a name the walk could not resolve to anything.
+    /// A comparison against one is not really a comparison against a value;
+    /// the unknown-variable message is the true one, and a mismatch stacked
+    /// on top would describe the consequence rather than the cause.
+    fn is_unresolved_name(&self, value: &Expr) -> bool {
+        match value {
+            Expr::Identifier(name) => {
+                !self.is_variable_available(name) && self.function_return_type(name).is_none()
+            }
+            Expr::ThingField { base, .. } => !self.is_variable_available(base),
+            _ => false,
+        }
+    }
+
+    /// `origin is greater than marker.` - things are compared for equality
+    /// only (plan 310 §8). Nothing orders one shape against another, and
+    /// comparing their first eight bytes would answer a question nobody asked.
+    fn push_thing_has_no_order(&mut self, operand: &Expr, thing: &str) {
+        self.push_error(
+            format!(
+                "'{}' holds a whole {}, which nothing puts in order\n  \
+                 Two things are compared for equality only (plan 310 §8): `is` compares \
+                 them field by field, and no rule makes one whole {} greater than another.\n  \
+                 Compare a field instead - {}'s fields are: {}",
+                render_thing_operand(operand),
+                thing,
+                thing,
+                thing,
+                self.fields_of(thing)
+            ),
+            Some(thing_operand_symbol(operand)),
+        );
+    }
+
+    /// `a text called note is "at {origin}".` - a whole thing renders as its
+    /// fields (plan 310 §7), which `Print` writes straight out; building text
+    /// from one would have to append those fields into a buffer, which is not
+    /// written. Rejected rather than interpolated as the first eight bytes of
+    /// the thing's storage.
+    pub(crate) fn push_whole_thing_not_interpolable(&mut self, name: &str, thing: &str) {
+        self.push_error(
+            format!(
+                "'{}' holds a whole {}, which only `Print` can interpolate\n  \
+                 A whole thing renders as its fields (plan 310 §7) and `Print` writes \
+                 that straight out; building text from one is not written yet.\n  \
+                 Interpolate a field instead - {}'s fields are: {}",
+                name,
+                thing,
+                thing,
+                self.fields_of(thing)
+            ),
+            Some(name),
+        );
+    }
+
     /// Reject a statement that treats a whole thing as a single value: an
     /// increment or decrement step. Stepping a thing would `inc qword` its
     /// first field; `increment origin's x.` is what it means. Returns true
@@ -591,10 +780,12 @@ impl Analyzer {
         true
     }
 
-    /// The error for using a whole thing where a value is wanted. A thing has
-    /// no single value: it is copied, passed, and returned whole (§5), and
-    /// printing or comparing one lands with §7 and §8, so it is rejected
-    /// rather than read as the first eight bytes of its storage.
+    /// The error for using a whole thing where a value is wanted - a step, an
+    /// arithmetic operand, a list element, a type predicate, a `Set` with
+    /// nothing to store. A thing has no single value: it is copied, passed,
+    /// and returned whole (§5), printed as its fields (§7), and compared field
+    /// by field (§8), and every one of those reads all of it. Rejected rather
+    /// than read as the first eight bytes of its storage.
     pub(crate) fn push_whole_thing_not_a_value(
         &mut self,
         name: &str,
@@ -604,8 +795,9 @@ impl Analyzer {
         self.push_error(
             format!(
                 "'{}' holds a whole {}, not a value\n  \
-                 A whole thing is copied, passed, and returned whole (plan 310 §5); \
-                 printing one lands with §7 and comparing with §8.\n  \
+                 A whole thing is copied, passed, and returned whole (plan 310 §5), \
+                 printed as its fields (§7), and compared field by field (§8); \
+                 no other position reads it as one value.\n  \
                  its fields are: {}",
                 name,
                 thing,
@@ -665,6 +857,27 @@ fn literal_type_name(default: &Expr) -> &'static str {
         Expr::NothingLit => "nothing",
         // `parse_field_default` accepts only the literals above.
         _ => "value",
+    }
+}
+
+/// A whole-thing operand as the author wrote it - a bare name or a chain -
+/// so a comparison's diagnostic names `span's start` rather than `span`.
+fn render_thing_operand(value: &Expr) -> String {
+    match value {
+        Expr::ThingField { base, path } => render_chain(base, path),
+        Expr::Identifier(name) => name.clone(),
+        // Only the two forms `whole_thing_named` recognises reach here.
+        _ => String::new(),
+    }
+}
+
+/// The word in the source a whole-thing operand's caret lands on: the base
+/// name, which is the one token a chain and a bare name share.
+fn thing_operand_symbol(value: &Expr) -> &str {
+    match value {
+        Expr::ThingField { base, .. } => base,
+        Expr::Identifier(name) => name,
+        _ => "",
     }
 }
 

@@ -243,6 +243,146 @@ impl CodeGenerator {
         self.emit_indent("rep movsq");
     }
 
+    /// Where a whole-thing expression's bytes are, and which thing they hold.
+    /// Both printing and equality address the same fields the same way, so
+    /// they resolve the expression once, here, and then ask the place for an
+    /// operand per field.
+    ///
+    /// A call is deliberately not one of these: it hands back an address, not
+    /// a place, and the analyzer keeps one out of these positions (plan 310
+    /// §5 - what a call returns is copied into a variable first).
+    pub(crate) fn thing_place(&self, value: &Expr) -> Option<(String, ThingPlace)> {
+        let (thing, base, offset) = match value {
+            Expr::Identifier(name) => (self.thing_of_variable(name)?, name, 0u64),
+            Expr::ThingField { path, base } => {
+                let Some(Type::Thing(inner)) = self.thing_field_type(base, path) else {
+                    return None;
+                };
+                let thing = self.thing_of_variable(base)?;
+                (inner, base, field_offset(&self.things, &thing, path))
+            }
+            _ => return None,
+        };
+        // Local first, then the global mirror - the same resolution order as
+        // every other read.
+        if let Some(slot) = self.get_var(base) {
+            // A local thing's storage runs upward from `[rbp-slot]`, so a
+            // field deeper into it is that much less deep in the frame.
+            return Some((thing, ThingPlace::Frame(slot - offset as i64)));
+        }
+        let label = self.global_var_label(base)?.clone();
+        Some((thing, ThingPlace::Reserved { label, base: offset }))
+    }
+
+    /// `Print origin.` - `{x: 5, y: 0}`: the thing's fields in definition
+    /// order, recursing into the things they hold (plan 310 §7).
+    ///
+    /// Every field name is a literal in the emitted program and every field's
+    /// address is a compile-time constant, so the recursion happens here, in
+    /// the compiler. Nothing is read from a descriptor at runtime and nothing
+    /// is allocated. Function members never appear: they are the type's
+    /// manifest, held apart from `fields` precisely because they take no
+    /// storage and are not state (§4).
+    pub(crate) fn emit_thing_print(&mut self, thing: &str, place: &ThingPlace, base: u64) {
+        let Some(def) = self.things.get(thing).cloned() else {
+            return;
+        };
+        self.emit_print_literal("{");
+        let mut at = base;
+        for (index, field) in def.fields.iter().enumerate() {
+            if index > 0 {
+                self.emit_print_literal(", ");
+            }
+            self.emit_print_literal(&format!("{}: ", render_field_name(&field.name)));
+            match &field.field_type {
+                Type::Thing(inner) => {
+                    self.emit_thing_print(inner, place, at);
+                    at += thing_size(&self.things, inner);
+                }
+                field_type => {
+                    let operand = place.operand(at);
+                    self.emit_indent(&format!(
+                        "mov rdi, qword {}  ; {}'s {}",
+                        operand, thing, field.name
+                    ));
+                    if matches!(field_type, Type::Float) {
+                        self.emit_indent("movq xmm0, rdi");
+                        self.emit_indent("PRINT_FLOAT");
+                        self.uses_floats = true;
+                    } else {
+                        self.emit_indent("PRINT_INT rdi");
+                    }
+                    at += SLOT_BYTES;
+                }
+            }
+        }
+        self.emit_print_literal("}");
+    }
+
+    /// `origin is marker` - 1 or 0 in rax, from comparing the two things one
+    /// field at a time (plan 310 §8).
+    ///
+    /// `scalar_slots` already flattens a thing's nesting into its slots in
+    /// layout order, so the recursion §8 asks for is the same walk a copy and
+    /// a set of defaults make - depth costs nothing extra here. A float slot
+    /// is compared as a float rather than as its bits, so `is` between two
+    /// things says exactly what `is` between the two fields says: -0.0 equals
+    /// 0.0, and a NaN equals nothing, including itself.
+    pub(crate) fn emit_thing_equality(&mut self, left: &Expr, right: &Expr, negated: bool) {
+        let (Some((thing, left_place)), Some((_, right_place))) =
+            (self.thing_place(left), self.thing_place(right))
+        else {
+            // Both sides name a place, or the analyzer rejected this program,
+            // and a rejected program never reaches codegen.
+            return;
+        };
+        let differs = self.new_label("things_differ");
+        let done = self.new_label("things_compared");
+
+        for (offset, field) in scalar_slots(&self.things, &thing) {
+            let left_operand = left_place.operand(offset);
+            let right_operand = right_place.operand(offset);
+            self.emit_indent(&format!("mov rax, qword {}  ; {}", left_operand, field.name));
+            if matches!(field.field_type, Type::Float) {
+                self.uses_floats = true;
+                self.emit_indent("movq xmm0, rax");
+                self.emit_indent(&format!("mov rax, qword {}", right_operand));
+                self.emit_indent("movq xmm1, rax");
+                self.emit_indent("FLOAT_EQ");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", differs));
+            } else {
+                self.emit_indent(&format!("cmp rax, qword {}", right_operand));
+                self.emit_indent(&format!("jne {}", differs));
+            }
+        }
+
+        self.emit_indent("mov rax, 1  ; every field matched");
+        self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", differs));
+        self.emit_indent("xor rax, rax  ; a field differed");
+        self.emit(&format!("{}:", done));
+        if negated {
+            self.emit_indent("xor rax, 1  ; 1=equal -> 0=not equal");
+        }
+    }
+
+    /// Which thing both sides of a comparison hold, when both hold the same
+    /// one. The analyzer has already rejected every other pairing (plan 310
+    /// §8), so this is codegen asking which emission to make, not a check.
+    pub(crate) fn thing_compared(&self, left: &Expr, right: &Expr) -> Option<String> {
+        let (left_thing, _) = self.thing_place(left)?;
+        let (right_thing, _) = self.thing_place(right)?;
+        (left_thing == right_thing).then_some(left_thing)
+    }
+
+    /// One run of fixed bytes on its way to stdout - a brace, a separator, or
+    /// a field's name. Each is a string constant in the emitted program.
+    fn emit_print_literal(&mut self, text: &str) {
+        let label = self.add_string(text);
+        self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+    }
+
     /// The memory operand for a byte offset into a thing variable, used by the
     /// declaration's default stores (which walk offsets, not paths).
     fn thing_field_operand_at(&self, base: &str, offset: u64) -> Option<String> {
@@ -299,6 +439,47 @@ impl CodeGenerator {
                 render_chain(base, path)
             ));
         }
+    }
+}
+
+/// Where a whole thing's bytes are, as something that can name any byte
+/// offset inside them. Both forms are `base + constant`, which is the whole
+/// of what addressing a field costs (plan 310 §6).
+pub(crate) enum ThingPlace {
+    /// This frame's storage: the thing's first byte is at `[rbp-slot]`, and
+    /// its bytes run upward from there.
+    Frame(i64),
+    /// A `.bss` reservation: the thing's first byte is `base` into `label`.
+    Reserved { label: String, base: u64 },
+}
+
+impl ThingPlace {
+    /// The assembly memory operand for one byte offset into the thing.
+    fn operand(&self, offset: u64) -> String {
+        match self {
+            ThingPlace::Frame(slot) => format!("[rbp-{}]", slot - offset as i64),
+            ThingPlace::Reserved { label, base } => match base + offset {
+                0 => format!("[rel {}]", label),
+                at => format!("[rel {}+{}]", label, at),
+            },
+        }
+    }
+}
+
+/// A field's name as a printed thing spells it: bare when it is one plain
+/// word, and in the single quotes the author writes it with when it is not.
+///
+/// `{'day sent': 25}` is then exactly the name a reader would type to read
+/// that field back, which `{day sent: 25}` is not - a bare multi-word name
+/// reads as two names with a space between them.
+fn render_field_name(name: &str) -> String {
+    let bare = !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    if bare {
+        name.to_string()
+    } else {
+        format!("'{}'", name)
     }
 }
 

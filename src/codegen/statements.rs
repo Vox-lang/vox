@@ -300,6 +300,14 @@ impl CodeGenerator {
 
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
+                    // Declared as something else: this name no longer holds a
+                    // thing here, so it must not keep the label a top-level
+                    // `a point called origin.` left in the table and be
+                    // printed or compared as a point (plan 310 §7/§8). The
+                    // analyzer drops the same label at the same point.
+                    if !matches!(t, Type::Thing(_)) {
+                        self.thing_vars.remove(name);
+                    }
                     self.declared_types.insert(name.clone(), t.clone());
                     let vt = match t {
                         Type::String => VarType::String,
@@ -2841,6 +2849,23 @@ impl CodeGenerator {
                         self.emit_indent(&format!("jnz {}", true_label));
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
+                    }
+                    // `origin is marker` between two of the same thing: one
+                    // comparison per field, recursing through nesting (plan
+                    // 310 §8). This precedes every other equality arm because
+                    // a thing's slot holds bytes, not a value any of them
+                    // could read - and the analyzer has already rejected the
+                    // cross-type and ordering spellings.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.thing_compared(left, right).is_some() =>
+                    {
+                        self.emit_thing_equality(
+                            left,
+                            right,
+                            matches!(op, BinaryOperator::NotEqual),
+                        );
+                        self.emit_indent("test rax, rax");
+                        self.emit_indent(&format!("jz {}  ; 1=holds", false_label));
                     }
                     // `x is nothing` / `x is not nothing` (stage 1e3): tag-6
                     // equality. Two values are equal-as-nothing iff BOTH have

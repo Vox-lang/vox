@@ -1,7 +1,9 @@
-(Compile-fail: plan 310 §5/§7 - a call that returns a whole thing hands the
- caller a shape, not a value. Printing it is the printing task (§7), and
- arithmetic on it has nothing to work with, so both are named rather than
- done to the first eight bytes of the result.)
+(Compile-fail: plan 310 §5 - a call that returns a whole thing hands the
+ caller a shape, not a value, and not a place either. Printing a thing walks
+ the fields where they sit (§7), so what a call returns is copied into a
+ point first and that point is printed; arithmetic on the result has nothing
+ to work with at all. Both are named rather than done to the first eight
+ bytes of the result.)
 
 A thing called point has
   a number called x is 0,

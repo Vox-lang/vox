@@ -412,8 +412,18 @@ impl Analyzer {
 
             Statement::Print { value, .. } => {
                 self.deps.uses_io = true;
-                self.analyze_expr(value);
-                
+                // The one position that renders a whole thing (plan 310 §7).
+                // Print writes the fields straight out, so a thing is welcome
+                // here and in the interpolations of the string it prints;
+                // every other position still wants a single value.
+                match value {
+                    Expr::FormatString { parts } => {
+                        self.deps.uses_strings = true;
+                        self.analyze_format_parts(parts, true);
+                    }
+                    _ => self.analyze_printed_expr(value),
+                }
+
                 if matches!(value, Expr::StringLit(_)) {
                     self.deps.uses_strings = true;
                 }

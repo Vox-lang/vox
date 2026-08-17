@@ -347,9 +347,79 @@ impl Analyzer {
         }
     }
 
+    /// Every interpolation of one format string. `whole_things_render` says
+    /// whether this string's sink can render a whole thing: `Print` writes
+    /// the fields straight out (plan 310 §7), while every other sink builds
+    /// text and has nothing to build a thing's rendering into.
+    pub(crate) fn analyze_format_parts(&mut self, parts: &[FormatPart], whole_things_render: bool) {
+        self.deps.uses_strings = true;
+        for part in parts {
+            match part {
+                FormatPart::Expression { expr, .. } => {
+                    // `"{span's start}"` - a chain ending on a nested thing
+                    // parses as an expression part, and renders exactly as
+                    // the thing it names does.
+                    if whole_things_render {
+                        self.analyze_printed_expr(expr);
+                    } else {
+                        self.analyze_expr(expr);
+                    }
+                }
+                FormatPart::Variable { name, .. } => {
+                    if name.is_empty() {
+                        // BUGS_FOUND #10: a bare or unmatched `{` in a
+                        // string literal. The format parser found a `{`
+                        // with no variable/expression before the closing
+                        // `}` (or no closing `}` at all), producing an
+                        // empty-named placeholder. Report the real cause
+                        // and the `{{` escape instead of the old
+                        // empty-named "Unknown variable: ". The caret
+                        // still lands on the offending `{`:
+                        // find_symbol_location("") matches the first
+                        // `{` in the source.
+                        self.push_error_with_hint(
+                            "Unmatched `{` in a string literal. A single \
+                             `{` begins a format interpolation, but no \
+                             variable or expression followed it. To write \
+                             a literal brace, double it: `{{` for `{` and \
+                             `}}` for `}`."
+                                .to_string(),
+                            Some(""),
+                            None,
+                        );
+                        continue;
+                    }
+                    self.track_identifier(name);
+                    if !self.is_variable_available(name) && name != "_iter" {
+                        if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                            self.push_unknown_variable(name);
+                        } else {
+                            self.track_typo_candidate(name);
+                        }
+                    } else if let Some(thing) = self.thing_of_variable(name) {
+                        // `"{origin}"` interpolates a whole thing, which
+                        // renders as its fields (plan 310 §7). A field of it
+                        // (`"{origin's x}"`) parses as an Expression part
+                        // instead and is an ordinary value either way.
+                        if !whole_things_render {
+                            self.push_whole_thing_not_interpolable(name, &thing);
+                        }
+                    }
+                }
+                FormatPart::Literal(_) => {}
+            }
+        }
+    }
+
     pub(crate) fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::BinaryOp { left, op, right } => {
+                // A comparison with a whole thing on either side follows the
+                // equality rule (plan 310 §8) rather than the ordinary value
+                // rules, and analyzes its own operands.
+                if self.check_thing_comparison(left, op, right) {
+                    return;
+                }
                 self.analyze_expr(left);
                 self.analyze_expr(right);
                 // Arithmetic operators require numeric operands. Text,
@@ -671,57 +741,13 @@ impl Analyzer {
             }
 
             Expr::FormatString { parts } => {
-                self.deps.uses_strings = true;
-                for part in parts {
-                    match part {
-                        FormatPart::Expression { expr, .. } => {
-                            self.analyze_expr(expr);
-                        }
-                        FormatPart::Variable { name, .. } => {
-                            if name.is_empty() {
-                                // BUGS_FOUND #10: a bare or unmatched `{` in a
-                                // string literal. The format parser found a `{`
-                                // with no variable/expression before the closing
-                                // `}` (or no closing `}` at all), producing an
-                                // empty-named placeholder. Report the real cause
-                                // and the `{{` escape instead of the old
-                                // empty-named "Unknown variable: ". The caret
-                                // still lands on the offending `{`:
-                                // find_symbol_location("") matches the first
-                                // `{` in the source.
-                                self.push_error_with_hint(
-                                    "Unmatched `{` in a string literal. A single \
-                                     `{` begins a format interpolation, but no \
-                                     variable or expression followed it. To write \
-                                     a literal brace, double it: `{{` for `{` and \
-                                     `}}` for `}`."
-                                        .to_string(),
-                                    Some(""),
-                                    None,
-                                );
-                                continue;
-                            }
-                            self.track_identifier(name);
-                            if !self.is_variable_available(name) && name != "_iter" {
-                                if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
-                                    self.push_unknown_variable(name);
-                                } else {
-                                    self.track_typo_candidate(name);
-                                }
-                            } else if let Some(thing) = self.thing_of_variable(name) {
-                                // `"{origin}"` interpolates a whole thing,
-                                // which follows the printing rule (plan 310
-                                // §7) - a later task. A field of it (`"{origin's
-                                // x}"`) parses as an Expression part instead
-                                // and is fine.
-                                self.push_whole_thing_not_a_value(name, name, &thing);
-                            }
-                        }
-                        FormatPart::Literal(_) => {}
-                    }
-                }
+                // A format string reached as an ordinary expression builds
+                // text, which is the sink a whole thing cannot render into
+                // yet - the print statement's own arm is the one that allows
+                // it (plan 310 §7).
+                self.analyze_format_parts(parts, false);
             }
-            
+
             Expr::Identifier(name) => {
                 self.track_identifier(name);
                 // A thing variable's bare name is not a value (plan 310 §5/§7).
