@@ -130,8 +130,13 @@ To do the point's 'from polar', with a float called r and a float called theta.
   sparkle — add `a function called sparkle` to the type"); a declared
   member nothing defines errors at the type ("point declares
   'never written' but nothing defines it").
-- A maker's `Return` type is cross-checked against its owner; mismatch
-  is a compile error naming both lines.
+- **Every declared member must `Return` its owner type** (owner's rule,
+  2026-08-17): a `To do the point's X` definition whose `Return` line is
+  not `Return a point,` is a compile error naming both lines. This gives
+  the manifest a crisp meaning — it lists the functions that *produce or
+  transform* the thing. A function computing some other type from a
+  thing (like `magnitude`) belongs in the global namespace with instance
+  sugar, not in the manifest.
 - Makers (first parameter not the owner) are reachable **only** through
   the type possessive — the full name of `'from polar'` is `a point's
   'from polar'`. Declared *instance* members (first parameter is the
@@ -305,8 +310,13 @@ participate in every declaration form the builtin type keywords do.
   printing, equality); update the Types table; note `structure` and the
   type-possessive in the keyword/grammar sections. Restate the
   sentence-consumption interaction for multi-line definitions.
-- vox-vscode: grammar additions for `structure` and the type possessive;
-  keep the drift check green.
+- vox-vscode: grammar additions for `thing`, `To do`, and — the key
+  piece — **positional type highlighting**: in `a/an <word> called`,
+  `a <word>'s`, and `To do the <word>'s`, the `<word>` is always a type
+  name (builtin or user-defined), so the TextMate grammar scopes those
+  positions as types without needing semantic analysis. User-defined
+  things then highlight exactly like builtins everywhere they are used.
+  Keep the drift check green.
 - Tests: definition/defaults; field read/write; all three call forms;
   manifest-declared maker + type possessive; To do definitions; both
   manifest mismatch errors (undeclared definition, undefined
