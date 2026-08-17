@@ -24,13 +24,15 @@ class-style dynamism are permanently out of scope.
 ## 1. Definition (settled)
 
 ```
-A structure called point has
+A type called point has
   a number called x is 0,
   a number called y is 0.
 ```
 
-- The keyword is **structure** (the plain-English word; "record" rejected
-  for its database connotation, "struct" rejected as jargon).
+- The keyword is **type** (owner's choice, 2026-08-17: the honest word —
+  users are defining a type, and usage then reads identically to the
+  builtins. "record" rejected for its database connotation, "struct"
+  rejected as jargon, "structure" considered but passed over).
 - Data only: field declarations, each `a <type> called <name>`, with an
   optional `is <literal>` default. No functions inside the definition.
 - A field without a default gets its type's zero/empty value.
@@ -106,7 +108,7 @@ the `send`/`begin`/`stop` keyword lookaheads.)
 is the type possessive; `a <name> called` is a declaration — one token of
 lookahead separates them. Quoted identifiers take the possessive as
 `'the point in question''s` — the quote-then-`s` lexing already has
-precedent (LANGUAGE.md ~line 588). `structure` becomes a keyword only in
+precedent (LANGUAGE.md ~line 588). `type` becomes a keyword only in
 the definition construct, an ordinary identifier elsewhere (same
 treatment as `send`).
 
