@@ -1,10 +1,10 @@
 (The spec's supervisor loop, end to end, on the hang path. The child
  sleeps for thirty seconds, so it never exits on its own; the parent
- polls with non-blocking reap until the multi-second deadline elapses,
- then SIGKILLs the child and reaps it. The timer reports whole seconds,
- so the 5000-millisecond deadline fires somewhere in the five-to-six
- second range - the outcome is asserted, not the duration, to stay
- deterministic at this granularity.)
+ polls with non-blocking reap until the five-second deadline elapses,
+ then SIGKILLs the child and reaps it. The timer now reports true
+ milliseconds, so the deadline fires at the five-second mark. The
+ outcome is asserted, not the duration, because the exact moment of
+ death depends on scheduling.)
 
 see "../lib/process.vox".
 

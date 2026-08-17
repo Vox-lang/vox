@@ -58,6 +58,35 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Timer `duration`/`elapsed` reported the wrong time in every unit.**
+  `... in milliseconds` read whole seconds × 1000, so a 30 ms wait read 0
+  and a 1.5-second wait read 1000. The bare `the timer's duration` /
+  `... elapsed` forms and `... in seconds` subtracted the monotonic
+  clock's *calendar second fields* (`end_sec − start_sec`) instead of the
+  real elapsed time, so a 100 ms wait that straddled a second boundary
+  read 1 — a tenfold error — and a 1500 ms wait read 1 or 2 depending on
+  where it began. `Start` and `Stop` already captured the nanosecond
+  halves into `TIMER_START_MONO_NSEC` / `TIMER_END_MONO_NSEC`; nothing
+  ever read them. A new internal `TIMER_ELAPSED_NANOSECONDS` helper now
+  subtracts the full timespec with borrow handling (the shape
+  `TIME_ELAPSED_PRECISE` already used), handles both the stored-end path
+  (timer stopped) and the still-running path (sampling `clock_gettime`
+  into a stack timespec and reading `[rsp + 8]` for nanoseconds), and
+  leaves a 128-bit nanosecond total in `rdx:rax`. `TIMER_DURATION_SECONDS`
+  and `TIMER_DURATION_MILLISECONDS` share that helper and differ only in
+  the divisor (`NANOSECONDS_PER_SECOND` vs `NANOSECONDS_PER_MILLISECOND`),
+  so seconds is now true truncation of the real elapsed time and
+  milliseconds is true milliseconds. The meaning of the seconds/bare
+  forms is unchanged — still whole truncated seconds, never milliseconds
+  — but their values are now correct and no longer depend on where the
+  interval fell within a second. This unblocks the planned Vox
+  benchmarking tool, which is useless when a sub-second run reads zero.
+  Regression tests: `tests/350_timer_subsecond_milliseconds.vox`,
+  `tests/351_timer_millisecond_boundary.vox`,
+  `tests/352_timer_seconds_still_whole.vox`,
+  `tests/353_timer_elapsed_while_running.vox`,
+  `tests/354_timer_bare_duration_whole_seconds.vox`.
+
 - **A reserved word used as a loop variable reported "Missing loop
   variable" instead of naming the reserved word.** `print each arg from
   argv.` failed with "Missing loop variable after 'each'" even though
