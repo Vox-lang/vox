@@ -116,6 +116,64 @@ impl Analyzer {
         self.functions.contains(&self.func_key(name))
     }
 
+    /// Record a function's declared parameter and return types, so a call
+    /// site can check the shapes a thing argument or a thing result has to
+    /// have (plan 310 §5).
+    pub(crate) fn record_function_signature(
+        &mut self,
+        name: &str,
+        params: &[(String, Type)],
+        return_type: &Type,
+    ) {
+        let key = self.func_key(name);
+        self.function_signatures
+            .insert(key, (params.to_vec(), return_type.clone()));
+    }
+
+    /// The declared type of a call's result: a local definition first (which
+    /// shadows a same-named import, as call resolution does), then a single
+    /// unambiguous import.
+    pub(crate) fn function_return_type(&self, name: &str) -> Option<Type> {
+        if let Some((_, return_type)) = self.function_signatures.get(&self.func_key(name)) {
+            return Some(return_type.clone());
+        }
+        let providers = self.imported_providers(name);
+        match providers.as_slice() {
+            [only] => Some(only.return_type.clone()),
+            _ => None,
+        }
+    }
+
+    /// A call's declared parameters, resolved the same way.
+    fn function_params(&self, name: &str) -> Option<Vec<(String, Type)>> {
+        if let Some((params, _)) = self.function_signatures.get(&self.func_key(name)) {
+            return Some(params.clone());
+        }
+        let providers = self.imported_providers(name);
+        match providers.as_slice() {
+            [only] => Some(only.params.clone()),
+            _ => None,
+        }
+    }
+
+    /// Analyze a call's arguments. An argument landing on a `thing`
+    /// parameter is a copy source rather than a value (plan 310 §5), so it
+    /// is checked against the parameter's own thing; every other argument is
+    /// an ordinary expression.
+    pub(crate) fn analyze_call_arguments(&mut self, name: &str, args: &[Expr]) {
+        let params = self.function_params(name).unwrap_or_default();
+        for (index, arg) in args.iter().enumerate() {
+            match params.get(index) {
+                Some((param_name, Type::Thing(thing))) => {
+                    let (param_name, thing) = (param_name.clone(), thing.clone());
+                    let target = format!("{}'s {}", name, param_name);
+                    self.check_thing_copy(&target, name, &thing, arg);
+                }
+                _ => self.analyze_expr(arg),
+            }
+        }
+    }
+
     /// Plan 270 G4: a bare or quoted identifier in *expression* position
     /// that names a zero-argument function is a call, not a variable lookup.
     /// True iff `name` resolves to a callable declaring zero parameters — a
@@ -487,8 +545,22 @@ impl Analyzer {
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
                 self.check_function_call(name, args);
-                for arg in args {
-                    self.analyze_expr(arg);
+                self.analyze_call_arguments(name, args);
+                // A call returning a whole thing is a copy source, not a
+                // value: this is a position that wants one value, and a thing
+                // has none (plan 310 §5). `analyze_thing_source` is the path
+                // that accepts it.
+                if let Some(thing) = self.thing_returned_by(name) {
+                    self.push_error(
+                        format!(
+                            "A call to '{}' returns a whole {}, which is not a value\n  \
+                             What a call returns is copied into a {}: write `a {} \
+                             called <name> is {} of ...` or `The <name> is {} of ...` \
+                             (plan 310 §5).",
+                            name, thing, thing, thing, name, name
+                        ),
+                        Some(name),
+                    );
                 }
             }
             
@@ -642,7 +714,7 @@ impl Analyzer {
                                 // §7) - a later task. A field of it (`"{origin's
                                 // x}"`) parses as an Expression part instead
                                 // and is fine.
-                                self.push_whole_thing_not_a_value(name, &thing);
+                                self.push_whole_thing_not_a_value(name, name, &thing);
                             }
                         }
                         FormatPart::Literal(_) => {}
@@ -655,7 +727,7 @@ impl Analyzer {
                 // A thing variable's bare name is not a value (plan 310 §5/§7).
                 if let Some(thing) = self.thing_of_variable(name) {
                     if self.is_variable_available(name) {
-                        self.push_whole_thing_not_a_value(name, &thing);
+                        self.push_whole_thing_not_a_value(name, name, &thing);
                         return;
                     }
                 }

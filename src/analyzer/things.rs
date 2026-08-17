@@ -398,7 +398,9 @@ impl Analyzer {
         self.thing_vars.insert(name.to_string(), thing.to_string());
     }
 
-    /// Validate a field chain and return the type it lands on.
+    /// Validate a field chain and return the type it lands on, which may be
+    /// a nested thing: whether a whole thing is allowed here is the caller's
+    /// question, not the chain's.
     ///
     /// The parser rejects an unresolvable chain as it consumes it (it has to:
     /// whether to keep consuming `'s` depends on the field it just read), so
@@ -406,7 +408,7 @@ impl Analyzer {
     /// analyzer's own guarantee about a shape it will hand to codegen, not a
     /// second opinion on the parse - codegen turns a path straight into an
     /// address, so nothing may reach it unvalidated.
-    pub(crate) fn analyze_thing_field(&mut self, base: &str, path: &[String]) -> Option<Type> {
+    pub(crate) fn resolve_thing_field(&mut self, base: &str, path: &[String]) -> Option<Type> {
         self.track_identifier(base);
         if !self.is_variable_available(base) {
             self.push_unknown_variable(base);
@@ -425,36 +427,7 @@ impl Analyzer {
         };
 
         match resolve_field_path(&self.things, &thing, path) {
-            Ok(field) => match &field.field_type {
-                Type::Thing(inner) => {
-                    let known = self
-                        .things
-                        .get(inner)
-                        .map(|def| {
-                            def.fields
-                                .iter()
-                                .map(|f| f.name.clone())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    self.push_error(
-                        format!(
-                            "'{}' holds a whole {}, not a value\n  \
-                             Reading a whole thing lands with copy semantics (plan 310 \
-                             §5) and printing (§7).\n  \
-                             {}'s fields are: {}",
-                            render_chain(base, path),
-                            inner,
-                            inner,
-                            known
-                        ),
-                        Some(base),
-                    );
-                    None
-                }
-                scalar => Some(scalar.clone()),
-            },
+            Ok(field) => Some(field.field_type),
             Err(FieldPathError::UnknownField { thing, field, known }) => {
                 self.push_error(
                     format!(
@@ -495,11 +468,115 @@ impl Analyzer {
         }
     }
 
-    /// Reject a statement that treats a whole thing as a single value: a bare
-    /// assignment, an untyped `Set`, or an increment/decrement step. Each of
-    /// those writes one quadword, which would land on the thing's first field
-    /// and silently corrupt it - `Set origin's x to 5.` is what they mean.
-    /// Returns true when the statement was rejected.
+    /// A field chain in value position: it must land on a field that holds a
+    /// value, because a whole thing has no single value to read. Copying one
+    /// goes through `analyze_thing_source` instead (plan 310 §5).
+    pub(crate) fn analyze_thing_field(&mut self, base: &str, path: &[String]) -> Option<Type> {
+        match self.resolve_thing_field(base, path)? {
+            Type::Thing(inner) => {
+                let chain = render_chain(base, path);
+                self.push_whole_thing_not_a_value(&chain, base, &inner);
+                None
+            }
+            scalar => Some(scalar),
+        }
+    }
+
+    /// Analyze an expression written where a whole thing is wanted, and say
+    /// which thing it names. Every branch analyzes what it looked at, so a
+    /// copy site never analyzes the same expression twice (which would
+    /// double-report an error inside it).
+    pub(crate) fn analyze_thing_source(&mut self, value: &Expr) -> ThingSource {
+        match value {
+            Expr::Identifier(name) => {
+                self.track_identifier(name);
+                match self.thing_of_variable(name) {
+                    Some(thing) if self.is_variable_available(name) => ThingSource::Whole(thing),
+                    _ => {
+                        self.analyze_expr(value);
+                        ThingSource::NotAThing
+                    }
+                }
+            }
+            Expr::ThingField { base, path } => match self.resolve_thing_field(base, path) {
+                Some(Type::Thing(inner)) => ThingSource::Whole(inner),
+                Some(_) => ThingSource::NotAThing,
+                None => ThingSource::Reported,
+            },
+            Expr::FunctionCall { name, args } => {
+                self.deps.uses_funcs = true;
+                self.check_function_call(name, args);
+                self.analyze_call_arguments(name, args);
+                match self.thing_returned_by(name) {
+                    Some(thing) => ThingSource::Whole(thing),
+                    None => ThingSource::NotAThing,
+                }
+            }
+            other => {
+                self.analyze_expr(other);
+                ThingSource::NotAThing
+            }
+        }
+    }
+
+    /// Check a whole-thing copy into `target`, which holds `thing`, and
+    /// report a source that is a different thing or no thing at all (plan
+    /// 310 §5). `target` is the destination as the author wrote it, so the
+    /// message names `moved` or `span's start` rather than a slot; `symbol`
+    /// is the word in the source the caret lands on.
+    pub(crate) fn check_thing_copy(
+        &mut self,
+        target: &str,
+        symbol: &str,
+        thing: &str,
+        value: &Expr,
+    ) {
+        match self.analyze_thing_source(value) {
+            ThingSource::Whole(source) if source == thing => {}
+            ThingSource::Whole(source) => {
+                self.push_error(
+                    format!(
+                        "'{}' holds a {}, but this copies a {}\n  \
+                         Both sides of a copy are the same thing (plan 310 §5); \
+                         a {} and a {} are different shapes.",
+                        target, thing, source, thing, source
+                    ),
+                    Some(symbol),
+                );
+            }
+            ThingSource::NotAThing => {
+                self.push_error(
+                    format!(
+                        "'{}' holds a whole {}, so only a whole {} can be copied into it\n  \
+                         A copy source is a variable holding a {}, a field that holds \
+                         one, or a call that returns one (plan 310 §5).\n  \
+                         To write one field instead, name it - {}'s fields are: {}",
+                        target,
+                        thing,
+                        thing,
+                        thing,
+                        thing,
+                        self.fields_of(thing)
+                    ),
+                    Some(symbol),
+                );
+            }
+            ThingSource::Reported => {}
+        }
+    }
+
+    /// Which thing a call to `name` returns, if it returns one.
+    pub(crate) fn thing_returned_by(&self, name: &str) -> Option<String> {
+        match self.function_return_type(name) {
+            Some(Type::Thing(thing)) => Some(thing),
+            _ => None,
+        }
+    }
+
+    /// Reject a statement that treats a whole thing as a single value: an
+    /// increment or decrement step. Stepping a thing would `inc qword` its
+    /// first field; `increment origin's x.` is what it means. Returns true
+    /// when the statement was rejected.
     pub(crate) fn reject_whole_thing_as_a_value(&mut self, name: &str) -> bool {
         if !self.is_variable_available(name) {
             return false;
@@ -507,17 +584,38 @@ impl Analyzer {
         let Some(thing) = self.thing_of_variable(name) else {
             return false;
         };
-        self.push_whole_thing_not_a_value(name, &thing);
+        self.push_whole_thing_not_a_value(name, name, &thing);
         true
     }
 
-    /// The error for using a thing variable's bare name as a value. A thing
-    /// has no single value: what that would mean is copying (§5) or printing
-    /// (§7), both later tasks, so it is rejected rather than read as the first
-    /// eight bytes of the thing's storage.
-    pub(crate) fn push_whole_thing_not_a_value(&mut self, name: &str, thing: &str) {
-        let known = self
-            .things
+    /// The error for using a whole thing where a value is wanted. A thing has
+    /// no single value: it is copied, passed, and returned whole (§5), and
+    /// printing or comparing one lands with §7 and §8, so it is rejected
+    /// rather than read as the first eight bytes of its storage.
+    pub(crate) fn push_whole_thing_not_a_value(
+        &mut self,
+        name: &str,
+        symbol: &str,
+        thing: &str,
+    ) {
+        self.push_error(
+            format!(
+                "'{}' holds a whole {}, not a value\n  \
+                 A whole thing is copied, passed, and returned whole (plan 310 §5); \
+                 printing one lands with §7 and comparing with §8.\n  \
+                 its fields are: {}",
+                name,
+                thing,
+                self.fields_of(thing)
+            ),
+            Some(symbol),
+        );
+    }
+
+    /// A thing's fields in layout order, for the diagnostics that offer them
+    /// as what to name instead of the whole shape.
+    fn fields_of(&self, thing: &str) -> String {
+        self.things
             .get(thing)
             .map(|def| {
                 def.fields
@@ -526,18 +624,20 @@ impl Analyzer {
                     .collect::<Vec<_>>()
                     .join(", ")
             })
-            .unwrap_or_default();
-        self.push_error(
-            format!(
-                "'{}' holds a whole {}, not a value\n  \
-                 Copying a whole thing lands with plan 310 §5 and printing with §7; \
-                 name one of its fields for now.\n  \
-                 its fields are: {}",
-                name, thing, known
-            ),
-            Some(name),
-        );
+            .unwrap_or_default()
     }
+}
+
+/// What an expression written where a whole thing is wanted turned out to
+/// be. `Reported` keeps a copy site from stacking a second, vaguer message
+/// on top of a precise one (an unknown variable, a misspelled field).
+pub(crate) enum ThingSource {
+    /// A whole thing of this type.
+    Whole(String),
+    /// Analyzed, and not a whole thing: the copy site names the mismatch.
+    NotAThing,
+    /// Analyzed, and already reported.
+    Reported,
 }
 
 /// Whether a field's literal default can be stored as the field's declared
@@ -566,7 +666,7 @@ fn literal_type_name(default: &Expr) -> &'static str {
 }
 
 /// `origin's leg's start` - a chain as written, for a diagnostic.
-fn render_chain(base: &str, path: &[String]) -> String {
+pub(crate) fn render_chain(base: &str, path: &[String]) -> String {
     let mut out = base.to_string();
     for step in path {
         out.push_str("'s ");

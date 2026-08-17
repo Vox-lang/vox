@@ -404,6 +404,16 @@ impl Parser {
             Some(self.parse_expression()?)
         };
 
+        // `Set after to nudged of before.` declares `after` from what the
+        // call returns, exactly as `The after is ...` does (plan 310 §2):
+        // both spellings are an untyped assignment to a previously unseen
+        // name, and a whole thing is what decides the type.
+        if let Some(value) = value.as_ref() {
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, value) {
+                return Ok(declaration);
+            }
+        }
+
         Ok(Statement::VarDecl {
             name,
             var_type,
@@ -689,6 +699,9 @@ impl Parser {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
             let value = self.parse_expression()?;
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
+                return Ok(declaration);
+            }
             return Ok(Statement::Assignment { name, value });
         }
 
@@ -723,8 +736,32 @@ impl Parser {
             // identifier everywhere else); in a type position it denotes
             // the dynamic `value` type.
             Token::Identifier(n) if n == "value" => Some(Type::Value),
+            // A defined thing's name is a type noun wherever a builtin one
+            // is (plan 310 §6): `with a point called start` and `Return a
+            // point, start.`. Last in the table so a builtin noun always
+            // wins, and only in the two positions a type noun can occupy
+            // here - otherwise `Return point.` (a bare identifier that
+            // happens to spell a thing) would read as a return type with no
+            // expression after it.
+            Token::Identifier(n)
+                if self.things.contains_key(n) && self.thing_reads_as_a_type_noun() =>
+            {
+                Some(Type::Thing(n.clone()))
+            }
             _ => None,
         }
+    }
+
+    /// Whether the thing name at the cursor sits where a type noun goes: a
+    /// parameter or declaration writes `a point called <name>`, and a
+    /// declared return type writes `Return a point, <expression>`. Anywhere
+    /// else the name is an ordinary identifier.
+    fn thing_reads_as_a_type_noun(&self) -> bool {
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::Called | Token::Comma)
     }
 
     /// After an `is`/`equals` in a statement, check whether the next tokens

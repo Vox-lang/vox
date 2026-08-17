@@ -1,0 +1,15 @@
+(Compile-fail: plan 310 §5/§7 - a call that returns a whole thing hands the
+ caller a shape, not a value. Printing it is the printing task (§7), and
+ arithmetic on it has nothing to work with, so both are named rather than
+ done to the first eight bytes of the result.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a point called before.
+Print nudged of before.

@@ -199,19 +199,93 @@
         );
     }
 
-    /// Copying a whole thing is §5's task, so a declaration with an
-    /// initialiser is rejected rather than silently dropping it.
+    /// A declaration's initialiser is carried on the VarDecl, so the copy
+    /// (plan 310 §5) has a source to read - dropping it would silently
+    /// declare the defaults instead.
     #[test]
-    fn a_declaration_with_an_initialiser_is_rejected_for_now() {
-        let err = parse_err(&format!(
+    fn a_declaration_carries_its_initialiser() {
+        let program = parse_input(&format!(
             "{}a point called origin.\na point called mirror is origin.\n",
             POINT
-        ));
-        assert!(
-            err.contains("Copying a whole thing is not supported yet"),
-            "unexpected error: {}",
-            err
+        ))
+        .expect("a declaration with an initialiser should parse");
+        match program.statements.last() {
+            Some(Statement::VarDecl {
+                name,
+                var_type: Some(Type::Thing(thing)),
+                value: Some(Expr::Identifier(source)),
+            }) => {
+                assert_eq!(name, "mirror");
+                assert_eq!(thing, "point");
+                assert_eq!(source, "origin");
+            }
+            other => panic!("expected a point declaration copying origin, got {:?}", other),
+        }
+    }
+
+    /// `The <name> is <call>.` declares its target from what the call
+    /// returns (plan 310 §2), so the parse already knows the name holds a
+    /// point - which is what lets `after's x` read as a field chain.
+    #[test]
+    fn a_call_returning_a_thing_declares_the_name_it_is_assigned_to() {
+        let program = parse_input(&format!(
+            "{}To nudged with a point called start.\n  Return a point, start.\n\n\
+             a point called before.\nThe after is nudged of before.\nPrint after's x.\n",
+            POINT
+        ))
+        .expect("declaration by inference should parse");
+        let declared = program.statements.iter().find_map(|stmt| match stmt {
+            Statement::VarDecl {
+                name,
+                var_type: Some(Type::Thing(thing)),
+                value: Some(Expr::FunctionCall { name: callee, .. }),
+            } if name == "after" => Some((thing.clone(), callee.clone())),
+            _ => None,
+        });
+        assert_eq!(
+            declared,
+            Some(("point".to_string(), "nudged".to_string())),
+            "`The after is nudged of before.` should declare a point"
         );
+        assert!(
+            program.statements.iter().any(|stmt| matches!(
+                stmt,
+                Statement::Print {
+                    value: Expr::ThingField { base, .. },
+                    ..
+                } if base == "after"
+            )),
+            "after's x should read as a field chain"
+        );
+    }
+
+    /// A thing parameter is a thing inside the body, so its fields read
+    /// through a possessive exactly like a local declaration's.
+    #[test]
+    fn a_thing_parameter_takes_the_things_type() {
+        let program = parse_input(&format!(
+            "{}To nudged with a point called start.\n  Return a point, start.\n\n",
+            POINT
+        ))
+        .expect("a thing parameter should parse");
+        let definition = program
+            .statements
+            .iter()
+            .find(|stmt| matches!(stmt, Statement::FunctionDef { .. }));
+        match definition {
+            Some(Statement::FunctionDef {
+                params,
+                return_type,
+                ..
+            }) => {
+                assert_eq!(
+                    params.as_slice(),
+                    &[("start".to_string(), Type::Thing("point".to_string()))]
+                );
+                assert_eq!(return_type, &Type::Thing("point".to_string()));
+            }
+            other => panic!("expected a function definition, got {:?}", other),
+        }
     }
 
     /// A possessive on a thing variable reads a field, at any depth, and the
@@ -319,19 +393,30 @@
         }
     }
 
-    /// A chain must end on a field that holds a value; ending on a nested
-    /// thing means reading the whole thing (§5/§7, later tasks).
+    /// A chain may end on a nested thing: that names the whole thing, which
+    /// is a copy source (plan 310 §5). Whether the position it sits in
+    /// accepts one is the analyzer's call, so the parse keeps the chain -
+    /// see `tests/compile_fail/thing_chain_ends_on_a_nested_thing.vox` for
+    /// the rejection a print of one still gets (§7).
     #[test]
-    fn a_chain_may_not_end_on_a_nested_thing() {
-        let err = parse_err(&format!(
-            "{}{}a route called commute.\nPrint commute's leg.\n",
+    fn a_chain_may_end_on_a_nested_thing() {
+        let program = parse_input(&format!(
+            "{}{}a route called commute.\na segment called span is commute's leg.\n",
             POINT, ROUTE
-        ));
-        assert!(
-            err.contains("holds a whole segment"),
-            "unexpected error: {}",
-            err
-        );
+        ))
+        .expect("a chain ending on a nested thing should parse");
+        match program.statements.last() {
+            Some(Statement::VarDecl {
+                var_type: Some(Type::Thing(thing)),
+                value: Some(Expr::ThingField { base, path }),
+                ..
+            }) => {
+                assert_eq!(thing, "segment");
+                assert_eq!(base, "commute");
+                assert_eq!(path.as_slice(), &["leg".to_string()]);
+            }
+            other => panic!("expected a segment copied out of commute, got {:?}", other),
+        }
     }
 
     /// An unknown field names the thing and lists what it does have.

@@ -1,7 +1,14 @@
 use super::*;
 use crate::analyzer::things::{
     collect_thing_vars, field_offset, registry, resolve_field_path, scalar_slots, thing_size,
+    SLOT_BYTES,
 };
+
+/// How many 8-byte slots a copy unrolls before it is worth the string move
+/// instead. Eight covers every shape written by hand so far (a point is two,
+/// a route is five); past that the two-instruction `rep movsq` is shorter
+/// than the moves it replaces.
+const UNROLLED_COPY_SLOTS: u64 = 8;
 
 impl CodeGenerator {
     /// Load the thing registry and every main-line thing declaration, before
@@ -29,6 +36,11 @@ impl CodeGenerator {
     pub(crate) fn thing_global_size(&self, name: &str) -> Option<u64> {
         let thing = self.thing_of_variable(name)?;
         Some(thing_size(&self.things, &thing))
+    }
+
+    /// Size in bytes of a thing, for the storage a frame reserves.
+    pub(crate) fn thing_storage_size(&self, thing: &str) -> u64 {
+        thing_size(&self.things, thing)
     }
 
     /// The assembly memory operand for one field of a thing variable: this
@@ -63,9 +75,10 @@ impl CodeGenerator {
             .map(|field| field.field_type)
     }
 
-    /// `a point called origin.` - reserve the thing's storage and write every
-    /// field's default into it, nested things included (plan 310 §1, §9).
-    pub(crate) fn generate_thing_decl(&mut self, name: &str, thing: &str) {
+    /// `a point called origin.` - reserve the thing's storage and fill it: an
+    /// initialiser copies a whole thing into it (plan 310 §5), and without one
+    /// every field takes its declared default, nested things included (§1, §9).
+    pub(crate) fn generate_thing_decl(&mut self, name: &str, thing: &str, value: Option<&Expr>) {
         let size = thing_size(&self.things, thing);
         self.thing_vars.insert(name.to_string(), thing.to_string());
         self.declared_types
@@ -89,6 +102,14 @@ impl CodeGenerator {
             size,
             if global { " in .bss" } else { " on the stack" }
         ));
+
+        // An initialiser overwrites every byte the defaults would have
+        // written, so writing them first would be dead work.
+        if let Some(source) = value {
+            self.generate_thing_assignment(name, thing, source);
+            return;
+        }
+
         // Defaults are written slot by slot rather than by clearing the region
         // first: every scalar slot is accounted for here, so a field with no
         // default gets its type's zero from the same store as one that has a
@@ -108,6 +129,118 @@ impl CodeGenerator {
                 self.uses_floats = true;
             }
         }
+    }
+
+    /// `moved is origin.` - copy a whole thing into a thing variable's own
+    /// storage (plan 310 §5).
+    pub(crate) fn generate_thing_assignment(&mut self, name: &str, thing: &str, source: &Expr) {
+        let Some(destination) = self.thing_field_operand_at(name, 0) else {
+            return;
+        };
+        self.emit_thing_copy_into(&destination, thing, source, name);
+    }
+
+    /// Which thing a variable holds when the statement being generated is a
+    /// bare assignment to it, rather than a declaration.
+    pub(crate) fn thing_assigned_to(&self, name: &str) -> Option<String> {
+        self.thing_of_variable(name)
+    }
+
+    /// Which thing a call to `name` returns, if it returns one. Read from the
+    /// same signature table the call itself resolves through, so the caller's
+    /// hidden destination word and the callee's slot always agree.
+    pub(crate) fn thing_returned_by_call(&self, name: &str) -> Option<String> {
+        match self
+            .function_return_full_types
+            .get(&self.resolved_call_label(name))
+        {
+            Some(Type::Thing(thing)) => Some(thing.clone()),
+            _ => None,
+        }
+    }
+
+    /// Leave the address of a whole thing in rax, and say which thing it is.
+    /// This is the one rule behind every copy: a thing-valued expression
+    /// yields where its bytes are, never the bytes themselves. Returns None
+    /// for an expression that names no thing, which a rejected program never
+    /// reaches codegen with.
+    pub(crate) fn emit_thing_address(&mut self, value: &Expr) -> Option<String> {
+        match value {
+            Expr::Identifier(name) => {
+                let thing = self.thing_of_variable(name)?;
+                let operand = self.thing_field_operand_at(name, 0)?;
+                self.emit_indent(&format!("lea rax, {}  ; {}", operand, name));
+                Some(thing)
+            }
+            Expr::ThingField { base, path } => {
+                let Some(Type::Thing(inner)) = self.thing_field_type(base, path) else {
+                    return None;
+                };
+                let operand = self.thing_field_operand(base, path)?;
+                self.emit_indent(&format!(
+                    "lea rax, {}  ; {}",
+                    operand,
+                    render_chain(base, path)
+                ));
+                Some(inner)
+            }
+            // A call writes its result into a slot this call site owns and
+            // hands the address back, so the result is already a thing
+            // address like any other.
+            Expr::FunctionCall { name, args } => {
+                let thing = self.thing_returned_by_call(name)?;
+                self.uses_funcs = true;
+                self.emit_function_call(name, args);
+                Some(thing)
+            }
+            _ => None,
+        }
+    }
+
+    /// Copy a whole thing into `destination`, an assembly memory operand.
+    /// The source's address is computed first because computing it may be a
+    /// whole call; the destination is always `rbp`- or RIP-relative, so
+    /// nothing the source does can disturb it.
+    pub(crate) fn emit_thing_copy_into(
+        &mut self,
+        destination: &str,
+        thing: &str,
+        source: &Expr,
+        what: &str,
+    ) {
+        // A source naming no thing means the analyzer rejected this program,
+        // and a rejected program never reaches codegen.
+        if self.emit_thing_address(source).is_none() {
+            return;
+        }
+        self.emit_indent("mov rsi, rax  ; the thing being copied");
+        self.emit_indent(&format!("lea rdi, {}", destination));
+        self.emit_thing_copy(thing_size(&self.things, thing), what);
+    }
+
+    /// Copy `size` bytes from the address in rsi to the address in rdi.
+    ///
+    /// Every field is a whole 8-byte slot and a nested thing is a sum of
+    /// them, so a thing's size is always a whole number of quadwords and the
+    /// copy never has a tail. There is no runtime call and no allocation:
+    /// the size is a compile-time constant, which is exactly what makes
+    /// value semantics cheap (plan 310 §5).
+    pub(crate) fn emit_thing_copy(&mut self, size: u64, what: &str) {
+        let slots = size / SLOT_BYTES;
+        self.emit_indent(&format!("; copy {} ({} bytes)", what, size));
+        if slots <= UNROLLED_COPY_SLOTS {
+            for slot in 0..slots {
+                let at = slot * SLOT_BYTES;
+                self.emit_indent(&format!("mov rax, [rsi+{}]", at));
+                self.emit_indent(&format!("mov [rdi+{}], rax", at));
+            }
+            return;
+        }
+        // `rep movsq` needs the direction flag clear, which the System V ABI
+        // guarantees on entry and at every call - the same assumption the
+        // runtime's own `rep movsb` copies make.
+        self.emit_indent(&format!("mov rcx, {}", slots));
+        self.emit_indent("rep movsq");
     }
 
     /// The memory operand for a byte offset into a thing variable, used by the
@@ -145,6 +278,16 @@ impl CodeGenerator {
     /// compile-time address. There is no reallocation and no error path: the
     /// address cannot change and cannot fail (plan 310 §3).
     pub(crate) fn generate_set_thing_field(&mut self, base: &str, path: &[String], value: &Expr) {
+        // A chain ending on a nested thing names the whole thing, so the
+        // write is a copy of every one of its bytes (plan 310 §5).
+        if let Some(Type::Thing(inner)) = self.thing_field_type(base, path) {
+            let Some(destination) = self.thing_field_operand(base, path) else {
+                return;
+            };
+            let what = render_chain(base, path);
+            self.emit_thing_copy_into(&destination, &inner, value, &what);
+            return;
+        }
         self.generate_expr(value);
         if let Some(operand) = self.thing_field_operand(base, path) {
             if matches!(self.thing_field_type(base, path), Some(Type::Float)) {

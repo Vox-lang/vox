@@ -478,6 +478,9 @@ impl Parser {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
             let value = self.parse_expression()?;
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
+                return Ok(declaration);
+            }
             return Ok(Statement::Assignment { name, value });
         }
 

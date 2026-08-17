@@ -468,22 +468,27 @@ impl Parser {
             )));
         }
 
+        // An initialiser copies the whole thing into the storage this
+        // declaration reserves (plan 310 §5). The separator set is the one
+        // every other typed declaration takes, so `a point called moved is
+        // origin.` and `Create a point called moved to origin.` read alike.
         self.skip_noise();
-        if matches!(self.current(), Token::Is | Token::Equals | Token::To) {
-            return Err(self.err(&format!(
-                "Copying a whole thing is not supported yet (plan 310 §5)\n  \
-                 A declaration with an initialiser copies the whole value, \
-                 which lands with copy semantics.\n  \
-                 For now write `a {} called {}.` and set its fields.",
-                thing, name
-            )));
-        }
+        let value = if matches!(self.current(), Token::Is | Token::Equals | Token::To) {
+            self.advance();
+            self.skip_noise();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
 
+        // Registered after the initialiser is parsed: the variable does not
+        // exist while its own initialiser is being read, so `a point called
+        // origin is origin.` is an unknown variable rather than a chain.
         self.thing_vars.insert(name.clone(), thing.clone());
         Ok(Statement::VarDecl {
             name,
             var_type: Some(Type::Thing(thing)),
-            value: None,
+            value,
         })
     }
 
@@ -494,6 +499,70 @@ impl Parser {
     /// Which thing a declared variable holds, if it holds one.
     pub(crate) fn thing_of_variable(&self, name: &str) -> Option<String> {
         self.thing_vars.get(name).cloned()
+    }
+
+    /// Record the thing a function returns, so a later `The <name> is
+    /// <call>.` can declare its target from the call (plan 310 §2).
+    pub(crate) fn record_thing_returning_function(&mut self, name: &str, return_type: &Type) {
+        if let Type::Thing(thing) = return_type {
+            self.thing_returning_functions
+                .insert(name.to_string(), thing.clone());
+        }
+    }
+
+    /// The thing an expression yields whole, if it yields one: a thing
+    /// variable's own name, a chain ending on a nested thing, or a call to a
+    /// function that returns a thing.
+    fn thing_yielded_by(&self, value: &Expr) -> Option<String> {
+        match value {
+            Expr::Identifier(name) => self.thing_of_variable(name),
+            Expr::ThingField { base, path } => {
+                let mut current = self.thing_of_variable(base)?;
+                for step in path {
+                    let field = self.things.get(&current)?.fields.iter().find(|f| f.name == *step)?;
+                    match &field.field_type {
+                        Type::Thing(inner) => current = inner.clone(),
+                        // A chain through a scalar cannot be built by
+                        // `parse_thing_field_chain`, which stops at one.
+                        _ => return None,
+                    }
+                }
+                Some(current)
+            }
+            Expr::FunctionCall { name, .. } => self.thing_returning_functions.get(name).cloned(),
+            _ => None,
+        }
+    }
+
+    /// `The after is nudged of before.` - a name not yet holding a thing,
+    /// assigned a whole thing, is declared by that assignment with its type
+    /// inferred from the expression (plan 310 §2). Returns the declaration
+    /// that spelling means, or None when the statement is an ordinary
+    /// assignment: a name that already holds a thing has storage, so the
+    /// same words are a copy into it (§5).
+    ///
+    /// "Not yet holding a thing" is this parser's own left-to-right reading,
+    /// which is what §2's "previously unseen" means for a single pass. It is
+    /// the same rule that governs a thing definition and a thing variable:
+    /// a name is a thing from its declaration onwards. A function written
+    /// ABOVE a main-line thing declaration therefore does not see it - it
+    /// cannot name that thing's fields either, which is the louder half of
+    /// the same limitation.
+    pub(crate) fn thing_declaration_by_inference(
+        &mut self,
+        name: &str,
+        value: &Expr,
+    ) -> Option<Statement> {
+        if self.thing_vars.contains_key(name) {
+            return None;
+        }
+        let thing = self.thing_yielded_by(value)?;
+        self.thing_vars.insert(name.to_string(), thing.clone());
+        Some(Statement::VarDecl {
+            name: name.to_string(),
+            var_type: Some(Type::Thing(thing)),
+            value: Some(value.clone()),
+        })
     }
 
     /// True when the tokens at the cursor open a possessive (`'s`).
@@ -572,26 +641,12 @@ impl Parser {
                     if self.possessive_follows() {
                         continue;
                     }
-                    // Ending on a nested thing means reading the whole thing:
-                    // copying (§5) or printing (§7), both later tasks. Reading
-                    // its first eight bytes instead would be silently wrong.
-                    self.pos = field_pos;
-                    let known: Vec<String> = self
-                        .things
-                        .get(&current)
-                        .map(|def| def.fields.iter().map(|f| f.name.clone()).collect())
-                        .unwrap_or_default();
-                    return Err(self.err(&format!(
-                        "'{}' holds a whole {}, not a value\n  \
-                         A field chain must end on a field that holds a value; \
-                         reading a whole thing lands with copy semantics (plan \
-                         310 §5) and printing (§7).\n  \
-                         {}'s fields are: {}",
-                        Self::render_chain(base, &path),
-                        current,
-                        current,
-                        known.join(", ")
-                    )));
+                    // The chain ends on a nested thing, which names the whole
+                    // thing: a copy source, a copy target, or an argument
+                    // (plan 310 §5). Whether *this* position accepts a whole
+                    // thing is the analyzer's call, so the chain is handed
+                    // back as written rather than judged here.
+                    return Ok((path, field_type.clone()));
                 }
                 scalar => {
                     if self.possessive_follows() {

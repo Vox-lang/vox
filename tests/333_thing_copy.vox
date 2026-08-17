@@ -1,0 +1,53 @@
+(Plan 310 task 3 - a thing is a value, so assignment copies the whole thing
+ and the copy shares nothing with the original (§5). A thing's size is a
+ compile-time constant, so a copy is a run of inline moves: no allocation,
+ no pointer, and nothing left aliased afterwards.
+
+ The point pair proves the plainest copy is independent. The letter proves a
+ copy is deep by construction - a nested thing is just more bytes, so
+ copying the letter carries its point along and neither half is shared.
+ Reading a whole nested thing is what makes 'the far corner' a copy of the
+ reply's point rather than a second name for it.
+
+ The last three spellings are the same statement in different words: a
+ declaration with an initialiser, a bare `is`, and `Set ... to`. All three
+ are assignment, so all three copy.
+
+ Acceptance: the ten lines in the .expected, in that order.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called letter has
+  a point called postbox,
+  a number called 'weight in grams' is 2.
+
+a point called origin.
+Set origin's x to 5.
+a point called moved is origin.
+Set moved's x to 9.
+Print origin's x.
+Print moved's x.
+
+a letter called invitation.
+Set invitation's postbox's x to 3.
+a letter called reply is invitation.
+Set reply's postbox's x to 7.
+Print invitation's postbox's x.
+Print reply's postbox's x.
+
+a point called 'the far corner' is reply's postbox.
+Set 'the far corner''s y to 1.
+Print 'the far corner''s x.
+Print reply's postbox's y.
+
+Set reply's postbox to origin.
+Print reply's postbox's x.
+Print origin's x.
+
+a point called elsewhere.
+elsewhere is moved.
+Print elsewhere's x.
+Set elsewhere to origin.
+Print elsewhere's x.

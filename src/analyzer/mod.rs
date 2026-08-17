@@ -64,6 +64,12 @@ pub struct Analyzer {
     /// numeric one, which the buffer/list/flag sets alone cannot do.
     scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
+    /// Declared parameter types and return type of each local function,
+    /// keyed exactly like `function_param_counts`. A thing crosses a call
+    /// boundary by value (plan 310 §5), so the call site is the only place
+    /// an argument's shape and the result's shape can be checked against
+    /// what the definition declared.
+    function_signatures: HashMap<String, (Vec<(String, Type)>, Type)>,
     /// Names declared as the dynamic `value` type (value parameters and `a
     /// value called x` locals). A bare `value` is not usable in arithmetic
     /// without an explicit type check (stage 1c predicate); the arithmetic
@@ -138,6 +144,11 @@ pub struct Analyzer {
     /// global declared later in the file, like any other global) and extended
     /// as each declaration is analyzed.
     thing_vars: HashMap<String, String>,
+    /// The declared return type of the function whose body is being walked,
+    /// `None` at the top level. `Return` needs it: returning a thing copies
+    /// the whole shape into the caller's storage (plan 310 §5), and only the
+    /// signature says whether that is what this `Return` means.
+    current_function_return_type: Option<Type>,
 }
 
 #[derive(Clone, Default)]
@@ -174,6 +185,7 @@ impl Analyzer {
             allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
+            function_signatures: HashMap::new(),
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),
@@ -185,6 +197,7 @@ impl Analyzer {
             warnings: Vec::new(),
             things: HashMap::new(),
             thing_vars: HashMap::new(),
+            current_function_return_type: None,
         }
     }
 

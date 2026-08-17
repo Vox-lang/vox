@@ -230,9 +230,22 @@ impl CodeGenerator {
             Statement::VarDecl {
                 name,
                 var_type: Some(Type::Thing(thing)),
-                ..
+                value,
             } => {
-                self.generate_thing_decl(name, thing);
+                self.generate_thing_decl(name, thing, value.as_ref());
+            }
+
+            // `Set moved to origin.` on a name that already holds a thing:
+            // storage exists, so this copies into it (plan 310 §5). It sits
+            // before the generic VarDecl arm for the same reason the
+            // declaration above does - that arm stores one quadword.
+            Statement::VarDecl {
+                name,
+                var_type: None,
+                value: Some(value),
+            } if self.thing_assigned_to(name).is_some() => {
+                let thing = self.thing_assigned_to(name).unwrap_or_default();
+                self.generate_thing_assignment(name, &thing, value);
             }
 
             // `Set origin's x to 3.` and everything that desugars to it.
@@ -672,6 +685,13 @@ impl CodeGenerator {
                 // planned to be emitted around this marker in a subsequent iteration.
             }
             
+            // `elsewhere is origin.` copies a whole thing into storage that
+            // already exists (plan 310 §5).
+            Statement::Assignment { name, value } if self.thing_assigned_to(name).is_some() => {
+                let thing = self.thing_assigned_to(name).unwrap_or_default();
+                self.generate_thing_assignment(name, &thing, value);
+            }
+
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
                     // A `value` local (declared `a value called r`) keeps its
@@ -972,6 +992,34 @@ impl CodeGenerator {
                 }
             }
             
+            // `Return a point, start.` - the caller handed this function the
+            // address it wants the thing written to, so the return copies
+            // into it and answers with that same address (plan 310 §5).
+            Statement::Return { value, .. } if self.current_thing_return_slot.is_some() => {
+                let slot = self.current_thing_return_slot.unwrap_or_default();
+                if let Some(v) = value {
+                    if let Some(thing) = self.emit_thing_address(v) {
+                        self.emit_indent("mov rsi, rax  ; the thing being returned");
+                        self.emit_indent(&format!(
+                            "mov rdi, [rbp-{}]  ; the caller's destination",
+                            slot
+                        ));
+                        let size = self.thing_storage_size(&thing);
+                        self.emit_thing_copy(size, &format!("the returned {}", thing));
+                    }
+                }
+                self.emit_indent(&format!(
+                    "mov rax, [rbp-{}]  ; the result's address",
+                    slot
+                ));
+                if self.in_function_codegen {
+                    self.emit_indent("push rax  ; save return value");
+                    self.emit_indent("call _dec_call_depth");
+                    self.emit_indent("pop rax  ; restore return value");
+                }
+                self.emit_indent("FUNC_EPILOGUE");
+            }
+
             Statement::Return { value, .. } => {
                 if let Some(v) = value {
                     self.generate_expr(v); // leaves return payload in RAX
@@ -1089,7 +1137,19 @@ impl CodeGenerator {
                 // over a mixed list, so the 1c predicates/print/append/forward
                 // machinery all work on it unchanged.
                 let word_count = |t: &Type| if matches!(t, Type::Value) { 2 } else { 1 };
-                let total_words: usize = params.iter().map(|(_, t)| word_count(t)).sum();
+
+                // A function returning a whole thing is handed the caller's
+                // destination in a hidden first argument word (plan 310 §5).
+                // Its slot is allocated before the parameters', so word 0 and
+                // slot 0 line up on both sides of the call.
+                let saved_thing_return_slot = self.current_thing_return_slot.take();
+                if matches!(return_type, Type::Thing(_)) {
+                    self.stack_offset += 8;
+                    self.current_thing_return_slot = Some(self.stack_offset);
+                }
+                let hidden_words = if self.current_thing_return_slot.is_some() { 1 } else { 0 };
+                let total_words: usize =
+                    hidden_words + params.iter().map(|(_, t)| word_count(t)).sum::<usize>();
 
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
@@ -1107,7 +1167,16 @@ impl CodeGenerator {
                         Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
-                    self.alloc_var(param_name);
+                    // A thing parameter's slot is the whole thing: the frame
+                    // holds this function's own copy, so its fields address
+                    // off rbp exactly like a thing declared in the body.
+                    if let Type::Thing(thing) = param_type {
+                        self.stack_offset += self.thing_storage_size(thing) as i64;
+                        self.variables.insert(param_name.clone(), self.stack_offset);
+                        self.thing_vars.insert(param_name.clone(), thing.clone());
+                    } else {
+                        self.alloc_var(param_name);
+                    }
                     self.variable_types.insert(param_name.clone(), var_type);
                     if matches!(param_type, Type::Value) {
                         let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
@@ -1130,6 +1199,15 @@ impl CodeGenerator {
 
                 // If no explicit return, add a default epilogue
                 if !has_return {
+                    // A thing-returning function that falls off its end still
+                    // owes the caller the address it was given, or the caller
+                    // would copy out of whatever rax happened to hold.
+                    if let Some(slot) = self.current_thing_return_slot {
+                        self.emit_indent(&format!(
+                            "mov rax, [rbp-{}]  ; the caller's destination",
+                            slot
+                        ));
+                    }
                     self.emit_indent("call _dec_call_depth");
                     self.emit_indent("FUNC_EPILOGUE");
                 }
@@ -1171,31 +1249,45 @@ impl CodeGenerator {
                 // pad from the same word count, so they agree.
                 let stack_words = total_words.saturating_sub(param_regs.len());
                 let pad_offset: usize = if stack_words % 2 == 0 { 0 } else { 8 };
+                let read_argument_word = |w: usize| {
+                    if w < param_regs.len() {
+                        format!("mov rax, {}", param_regs[w])
+                    } else {
+                        let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
+                        format!("mov rax, [rbp+{}]", stack_arg_off)
+                    }
+                };
                 let mut word_index = 0usize;
+                if let Some(slot) = self.current_thing_return_slot {
+                    self.emit_indent(&read_argument_word(word_index));
+                    self.emit_indent(&format!(
+                        "mov [rbp-{}], rax  ; where the caller wants the result",
+                        slot
+                    ));
+                    word_index += 1;
+                }
+                // A thing parameter's word is the address of the caller's
+                // thing, parked in the first quadword of this frame's own
+                // region until every argument word has been read out of its
+                // register. Copying on the spot would clobber rsi/rdi/rcx
+                // while later parameters are still living in them.
+                let mut things_to_copy: Vec<(String, i64)> = Vec::new();
                 for (param_name, param_type) in params.iter() {
                     let payload_off = self.get_var(param_name);
                     let tag_off = self.mixed_tag_slots.get(param_name).copied();
                     let is_value = matches!(param_type, Type::Value);
 
-                    // Read argument word `w` into rax: from a register if w < 6,
-                    // else from the stack at [rbp + 16 + pad_offset + (w-6)*8].
-                    let read_word = |w: usize| {
-                        if w < param_regs.len() {
-                            format!("mov rax, {}", param_regs[w])
-                        } else {
-                            let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
-                            format!("mov rax, [rbp+{}]", stack_arg_off)
-                        }
-                    };
-
                     if let Some(offset) = payload_off {
                         // Payload word.
-                        self.emit_indent(&read_word(word_index));
+                        self.emit_indent(&read_argument_word(word_index));
                         self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
+                        if let Type::Thing(thing) = param_type {
+                            things_to_copy.push((thing.clone(), offset));
+                        }
                         if is_value {
                             // Tag word (stored as a byte into the shadow slot).
                             if let Some(tag_slot) = tag_off {
-                                self.emit_indent(&read_word(word_index + 1));
+                                self.emit_indent(&read_argument_word(word_index + 1));
                                 self.emit_indent(&format!(
                                     "mov [rbp-{}], al  ; param value tag",
                                     tag_slot
@@ -1210,6 +1302,15 @@ impl CodeGenerator {
                     } else {
                         word_index += 1;
                     }
+                }
+                // The parameter IS the copy: reading the parked address first
+                // and writing over it is safe, because the source is the
+                // caller's storage and this region is a fresh frame's.
+                for (thing, offset) in things_to_copy {
+                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; the caller's {}", offset, thing));
+                    self.emit_indent(&format!("lea rdi, [rbp-{}]", offset));
+                    let size = self.thing_storage_size(&thing);
+                    self.emit_thing_copy(size, &format!("a {} parameter", thing));
                 }
 
                 // Append the already-generated body
@@ -1226,6 +1327,7 @@ impl CodeGenerator {
                 self.loop_stack = saved_loop_stack;
                 self.in_function_codegen = saved_in_function_codegen;
                 self.current_function_return_type = saved_return_type;
+                self.current_thing_return_slot = saved_thing_return_slot;
                 self.variable_types = saved_variable_types;
                 self.declared_types = saved_declared_types;
                 self.thing_vars = saved_thing_vars;

@@ -322,6 +322,16 @@ impl Parser {
             }
         }
         
+        // A thing parameter holds a thing inside this body, so `start's x`
+        // has to read as a field chain from here on (plan 310 §3). Recorded
+        // before the body is parsed, for the same reason a thing definition
+        // is recorded before any use of its name.
+        for (param_name, param_type) in &params {
+            if let Type::Thing(thing) = param_type {
+                self.thing_vars.insert(param_name.clone(), thing.clone());
+            }
+        }
+
         self.skip_noise();
         // Period or comma after function signature are optional.
         if matches!(self.current(), Token::Period | Token::Comma) {
@@ -494,7 +504,9 @@ impl Parser {
         if *self.current() == Token::ParagraphBreak {
             self.advance();
         }
-        
+
+        self.record_thing_returning_function(&name, &return_type);
+
         Ok(Statement::FunctionDef {
             name,
             params,

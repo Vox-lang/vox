@@ -1,7 +1,7 @@
-(Compile-fail: plan 310 - a chain must end on a field that holds a value.
- Ending on a nested thing means reading the whole thing, which is copying
- (§5) or printing (§7) - both later tasks, so this errors for now rather
- than reading the first eight bytes of the nested shape.)
+(Compile-fail: plan 310 - a chain ending on a nested thing names the whole
+ thing. Copying one is ordinary (§5), but printing one recurses through its
+ fields, which is the printing task (§7) - so this errors for now rather
+ than printing the first eight bytes of the nested shape.)
 
 A thing called point has
   a number called x is 0.

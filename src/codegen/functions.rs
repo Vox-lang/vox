@@ -38,20 +38,51 @@ impl CodeGenerator {
         let is_value_param = |i: usize| -> bool {
             param_types.get(i) == Some(&Type::Value)
         };
+        // A `thing` parameter takes one word too, but the word is the ADDRESS
+        // of the caller's thing: the callee copies the bytes into its own
+        // frame on entry, which is what makes a parameter a copy (plan 310 §5)
+        // without giving a thing an argument-word count that depends on its
+        // size.
+        let is_thing_param = |i: usize| -> bool {
+            matches!(param_types.get(i), Some(Type::Thing(_)))
+        };
         // Number of argument words a given arg contributes.
         let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
-        let total_words: usize = (0..args.len()).map(word_count).sum();
+
+        // A call returning a whole thing writes it into storage the CALLER
+        // owns: its address travels as a hidden first argument word and comes
+        // back in rax (plan 310 §5). The slot belongs to this call site, so
+        // two calls in one argument list cannot land on each other's result,
+        // and a recursive call's slot lives in its own frame.
+        let destination = self.thing_returned_by_call(name).map(|thing| {
+            self.stack_offset += self.thing_storage_size(&thing) as i64;
+            self.stack_offset
+        });
+        let hidden_words = if destination.is_some() { 1 } else { 0 };
+        let total_words: usize = hidden_words + (0..args.len()).map(word_count).sum::<usize>();
 
         // Evaluate/push all arg words right-to-left. For a `value` param the
         // tag word is pushed BEFORE the payload word, so the payload lands on
         // top (lower word index) — matching how the callee reads them.
         for i in (0..args.len()).rev() {
-            self.generate_expr(&args[i]); // rax = payload
-            if is_value_param(i) {
-                self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
-                self.emit_indent("push r11  ; value param tag word");
+            if is_thing_param(i) {
+                self.emit_thing_address(&args[i]); // rax = where the thing is
+            } else {
+                self.generate_expr(&args[i]); // rax = payload
+                if is_value_param(i) {
+                    self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
+                    self.emit_indent("push r11  ; value param tag word");
+                }
             }
             self.emit_indent("push rax");
+        }
+        // Pushed last so it lands on top: the hidden destination is word 0.
+        if let Some(slot) = destination {
+            self.emit_indent(&format!(
+                "lea rax, [rbp-{}]  ; where '{}' writes its result",
+                slot, name
+            ));
+            self.emit_indent("push rax  ; hidden destination word");
         }
 
         // Pop the first 6 argument WORDS into registers (word 0 -> rdi, ...).

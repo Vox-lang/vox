@@ -1,0 +1,15 @@
+(Compile-fail: plan 310 §6 - a `.lib` interface file names types by noun,
+ and no noun spells a user-defined shape, so an exported signature that
+ takes or returns a thing would write a Table of Contents entry nothing can
+ read back. A thing is a layout private to one compilation until the
+ cross-boundary type system learns about user types.)
+
+Library shapes version "1.0".
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To 'nudged east' with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.

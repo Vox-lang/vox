@@ -71,6 +71,14 @@ pub struct Parser {
     // "Unknown variable"). The same "declared before used" rule that makes
     // one pass enough for definitions applies to declarations too.
     thing_vars: std::collections::HashMap<String, String>,
+    // Which thing each function returns, for the functions that return one
+    // (plan 310 §2). `The after is nudged of before.` declares `after` from
+    // the call's return type, and the parser is where that has to be known:
+    // `after's x` only reads as a field chain if the parse already knows
+    // what `after` holds. Populated as each `To` definition is parsed, so
+    // the same "defined before used" rule that governs thing definitions
+    // governs inference from a call.
+    thing_returning_functions: std::collections::HashMap<String, String>,
 }
 
 #[cfg(test)]
@@ -108,6 +116,7 @@ impl Parser {
             warnings: Vec::new(),
             things: std::collections::HashMap::new(),
             thing_vars: std::collections::HashMap::new(),
+            thing_returning_functions: std::collections::HashMap::new(),
         }
     }
 
@@ -125,6 +134,7 @@ impl Parser {
     pub(crate) fn with_things_of(mut self, outer: &Parser) -> Self {
         self.things = outer.things.clone();
         self.thing_vars = outer.thing_vars.clone();
+        self.thing_returning_functions = outer.thing_returning_functions.clone();
         self
     }
 

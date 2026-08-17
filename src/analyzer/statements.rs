@@ -159,14 +159,19 @@ impl Analyzer {
                 Statement::LibraryDecl { name, version } => {
                     current_lib = Some((name.clone(), version.clone()));
                 }
-                Statement::FunctionDef { name, params, .. } => {
+                Statement::FunctionDef { name, params, return_type, .. } => {
                     let key = crate::codegen::make_function_label(
                         self.shared_mode,
                         current_lib.as_ref(),
                         name,
                     );
                     self.functions.insert(key.clone());
-                    self.function_param_counts.insert(key, params.len());
+                    self.function_param_counts.insert(key.clone(), params.len());
+                    // Signatures are collected here, before the walk, so a
+                    // call to a function defined further down the file still
+                    // knows whether an argument is a thing to copy.
+                    self.function_signatures
+                        .insert(key, (params.clone(), return_type.clone()));
                 }
                 Statement::FlagSchemaDecl { name, .. } => {
                     self.flag_variables.insert(name.clone());
@@ -393,10 +398,16 @@ impl Analyzer {
             Statement::ThingDecl(_) => {}
 
             // A field write (plan 310 §3). The chain is validated exactly like
-            // a read; the value is an ordinary expression, checked as one.
+            // a read. A chain ending on a nested thing writes the whole thing,
+            // which is a copy (§5); every other chain takes an ordinary value.
             Statement::SetThingField { base, path, value } => {
-                self.analyze_expr(value);
-                self.analyze_thing_field(base, path);
+                match self.resolve_thing_field(base, path) {
+                    Some(Type::Thing(inner)) => {
+                        let target = things::render_chain(base, path);
+                        self.check_thing_copy(&target, base, &inner, value);
+                    }
+                    _ => self.analyze_expr(value),
+                }
             }
 
             Statement::Print { value, .. } => {
@@ -409,15 +420,25 @@ impl Analyzer {
             }
             
             Statement::VarDecl { name, var_type, value } => {
-                // An untyped `Set origin to 5.` on a name that holds a thing
-                // is a write of one quadword over the thing's first field, not
-                // a copy (plan 310 §5). A typed declaration is unaffected -
-                // that is how a thing variable is declared in the first place.
-                if var_type.is_none() && self.reject_whole_thing_as_a_value(name) {
-                    if let Some(v) = value {
-                        self.analyze_expr(v);
+                // A thing variable is assigned by copying a whole thing into
+                // the storage it already has (plan 310 §5). `Set origin to
+                // <expr>.` names an existing thing variable; the typed
+                // declaration form is handled with the declaration below,
+                // which reserves the storage first.
+                if var_type.is_none() {
+                    if let Some(thing) = self.thing_of_variable(name) {
+                        if self.is_variable_available(name) {
+                            match value {
+                                Some(v) => self.check_thing_copy(name, name, &thing, v),
+                                // `Set origin.` with nothing to store: there
+                                // is no value to write, and writing one would
+                                // land a single quadword on the thing's first
+                                // field.
+                                None => self.push_whole_thing_not_a_value(name, name, &thing),
+                            }
+                            return;
+                        }
                     }
-                    return;
                 }
                 // `Set x to <value>.` / `Create x to <value>.` parse into
                 // this same statement with `var_type: None` regardless of
@@ -505,20 +526,38 @@ impl Analyzer {
                     // author checks its type with a predicate.
                     self.value_typed_names.insert(name.clone());
                 }
-                if let Some(Type::Thing(thing)) = var_type {
-                    // A function's own thing local is not in the main-line
-                    // pre-pass, so record it as the walk reaches it (plan 310
-                    // §3).
-                    self.declare_thing_variable(name, thing);
-                } else if var_type.is_some() {
-                    // Declared as something else: this name is not a thing
-                    // variable, so it must not keep a stale thing label and
-                    // report "holds a whole point" for an ordinary number.
-                    self.thing_vars.remove(name);
-                }
+                // An initialiser on a thing declaration copies a whole thing
+                // of the same type into the storage the declaration reserves
+                // (plan 310 §5). It is never an ordinary value, so it is
+                // checked as a copy here instead of analyzed as one below.
+                let declared_thing = match var_type {
+                    Some(Type::Thing(thing)) => {
+                        // A function's own thing local is not in the
+                        // main-line pre-pass, so record it as the walk
+                        // reaches it (plan 310 §3).
+                        let thing = thing.clone();
+                        self.declare_thing_variable(name, &thing);
+                        Some(thing)
+                    }
+                    Some(_) => {
+                        // Declared as something else: this name is not a
+                        // thing variable, so it must not keep a stale thing
+                        // label and report "holds a whole point" for an
+                        // ordinary number.
+                        self.thing_vars.remove(name);
+                        None
+                    }
+                    None => None,
+                };
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
-                    self.analyze_expr(v);
+                    match &declared_thing {
+                        Some(thing) => {
+                            let (name, thing) = (name.clone(), thing.clone());
+                            self.check_thing_copy(&name, &name, &thing, v);
+                        }
+                        None => self.analyze_expr(v),
+                    }
                 }
                 // Track the scalar category (number/float/text/boolean) for
                 // the arithmetic type check. Numeric/boolean declarations are
@@ -621,11 +660,15 @@ impl Analyzer {
                 // type-checked at all, so capture it before the auto-declare
                 // below can change the answer.
                 let was_already_declared = self.is_variable_available(name);
-                // `origin is 5.` on a name that holds a thing writes one
-                // quadword over its first field; a whole-thing copy is §5.
-                if self.reject_whole_thing_as_a_value(name) {
-                    self.analyze_expr(value);
-                    return;
+                // `elsewhere is origin.` on a name that holds a thing copies
+                // the whole thing into the storage it already has (plan 310
+                // §5); anything that is not a whole thing of that type is a
+                // write of one quadword over its first field.
+                if was_already_declared {
+                    if let Some(thing) = self.thing_of_variable(name) {
+                        self.check_thing_copy(name, name, &thing, value);
+                        return;
+                    }
                 }
                 if !was_already_declared {
                     if self.in_function_scope {
@@ -886,11 +929,19 @@ impl Analyzer {
                         hint.as_deref(),
                     );
                 }
-                if let Some(v) = value {
-                    self.analyze_expr(v);
+                // A function declaring a thing return hands the caller a copy
+                // of a whole thing (plan 310 §5), so what is returned is
+                // checked against the declared shape exactly like any other
+                // copy - "the function's result" being the destination.
+                match (self.current_function_return_type.clone(), value) {
+                    (Some(Type::Thing(thing)), Some(v)) => {
+                        self.check_thing_copy("this function's result", "Return", &thing, v);
+                    }
+                    (_, Some(v)) => self.analyze_expr(v),
+                    (_, None) => {}
                 }
             }
-            
+
             Statement::Allocate { name, size } => {
                 self.deps.uses_heap = true;
                 self.variables.insert(name.clone());
@@ -928,12 +979,13 @@ impl Analyzer {
             Statement::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
                 self.check_function_call(name, args);
-                for arg in args {
-                    self.analyze_expr(arg);
-                }
+                // A call as a whole statement discards its result, so a thing
+                // return needs no destination here; only the arguments are
+                // checked, and a thing argument is a copy (plan 310 §5).
+                self.analyze_call_arguments(name, args);
             }
             
-            Statement::FunctionDef { name, params, body, body_ended_early, .. } => {
+            Statement::FunctionDef { name, params, return_type, body, body_ended_early } => {
                 self.pending_blank_line_truncation = None;
                 // A leading underscore is the runtime's namespace (see
                 // docs/SYMBOL_MANGLING.md). A function name emits a label
@@ -978,7 +1030,44 @@ impl Analyzer {
                 self.functions.insert(self.func_key(name));
                 self.function_param_counts
                     .insert(self.func_key(name), params.len());
+                self.record_function_signature(name, params, return_type);
                 self.deps.uses_funcs = true; // Track that functions are used
+
+                // A thing crosses a library boundary as bytes with a layout
+                // the `.lib` interface file has no vocabulary for: its Table
+                // of Contents names types by noun, and no noun spells a
+                // user-defined shape. Rejecting an exported signature that
+                // uses one keeps a `--shared` build from writing a `.lib`
+                // that cannot be read back (plan 310 §6 defers user types out
+                // of the cross-boundary type system).
+                if self.shared_mode {
+                    for (param_name, param_type) in params {
+                        if let Type::Thing(thing) = param_type {
+                            self.push_error(
+                                format!(
+                                    "Exported function '{}' takes a {} ('{}'), which a \
+                                     library interface cannot describe yet\n  \
+                                     A thing is a layout private to one compilation; \
+                                     pass its fields across the boundary instead.",
+                                    name, thing, param_name
+                                ),
+                                Some(name),
+                            );
+                        }
+                    }
+                    if let Type::Thing(thing) = return_type {
+                        self.push_error(
+                            format!(
+                                "Exported function '{}' returns a {}, which a library \
+                                 interface cannot describe yet\n  \
+                                 A thing is a layout private to one compilation; \
+                                 return one of its fields instead.",
+                                name, thing
+                            ),
+                            Some(name),
+                        );
+                    }
+                }
 
                 // Functions can access top-level globals, but locals declared inside
                 // the function must not leak back into top-level scope.
@@ -1000,6 +1089,8 @@ impl Analyzer {
                 let saved_allocated_variables = self.allocated_variables.clone();
                 let saved_value_typed_names = self.value_typed_names.clone();
                 let saved_thing_vars = self.thing_vars.clone();
+                let saved_return_type = self.current_function_return_type.take();
+                self.current_function_return_type = Some(return_type.clone());
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -1017,7 +1108,18 @@ impl Analyzer {
                 // type happened to already exist elsewhere in the program.
                 for (param_name, param_type) in params {
                     self.variables.insert(param_name.clone());
+                    // A parameter of any other type must not inherit a
+                    // same-named global thing variable's label, or `p's x`
+                    // would resolve against a shape this parameter does not
+                    // have. The thing arm below puts back the ones that do.
+                    self.thing_vars.remove(param_name);
                     match param_type {
+                        Type::Thing(thing) => {
+                            // A thing parameter holds a copy of the caller's
+                            // thing in this frame (plan 310 §5), so its
+                            // fields read exactly like a local declaration's.
+                            self.thing_vars.insert(param_name.clone(), thing.clone());
+                        }
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::Map(_) => { self.map_variables.insert(param_name.clone()); }
@@ -1051,6 +1153,7 @@ impl Analyzer {
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
                 self.thing_vars = saved_thing_vars;
+                self.current_function_return_type = saved_return_type;
                 self.apply_env(&saved_env);
 
                 self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {

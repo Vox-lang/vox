@@ -1,2 +1,3 @@
 'origin' holds a whole point, not a value
+A whole thing is copied, passed, and returned whole (plan 310 §5)
 its fields are: x, y

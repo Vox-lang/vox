@@ -1,0 +1,96 @@
+(Plan 310 task 3 - the corners of value semantics that a two-line example
+ never reaches, each of which fails silently rather than loudly if the
+ copies are wrong.
+
+ A call writes its result into storage the CALLER owns, so two calls to the
+ same function in one argument list must not land on each other's bytes; a
+ recursive call's parameter and result must live in its own frame; a thing
+ argument past the six argument registers must be read off the stack like
+ any other; a thing longer than the unrolled moves is copied by the same
+ rule; and a global thing must be copyable into a function's frame and back
+ out again.
+
+ Acceptance: the eleven lines in the .expected, in that order.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+A thing called journey has
+  a point called home,
+  a point called 'the station',
+  a point called 'the office',
+  a point called 'the shop',
+  a point called 'the park'.
+
+To 'stepped east' with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+To 'the segment between' with a point called 'one end' and a point called 'the other end'.
+  a segment called 'the line'.
+  Set 'the line''s start to 'one end'.
+  Set 'the line''s end to 'the other end'.
+  Return a segment, 'the line'.
+
+To 'walked east' with a number called steps and a point called here.
+  If steps is less than 1 then,
+    Return a point, here.
+  a point called onward is 'stepped east' of here.
+  a number called remaining is steps subtract 1.
+  Return a point, 'walked east' of remaining and onward.
+
+(Seven daily distances and the depot they start from: nine argument words in
+ all, so the point lands past the six argument registers and is read off the
+ stack.)
+To 'the last stop after' with a number called monday and a number called tuesday and a number called wednesday and a number called thursday and a number called friday and a number called saturday and a number called sunday and a point called depot.
+  Set depot's x to depot's x add monday add tuesday add wednesday add thursday add friday add saturday add sunday.
+  Return a point, depot.
+
+To 'the office moved' with a journey called commute.
+  Set commute's 'the office''s x to 88.
+  Return a journey, commute.
+
+a point called origin.
+a point called 'the far corner'.
+Set 'the far corner''s x to 100.
+
+(Braces keep each call a separate argument: without them the `and` would be
+ read as part of the first call's own argument list.)
+a segment called span is 'the segment between' of {'stepped east' of origin} and {'stepped east' of 'the far corner'}.
+Print span's start's x.
+Print span's end's x.
+Print origin's x.
+
+a point called walked is 'walked east' of 5 and origin.
+Print walked's x.
+Print origin's x.
+
+a point called 'the depot'.
+Set 'the depot''s x to 1000.
+a point called 'the last stop' is 'the last stop after' of 1 and 2 and 3 and 4 and 5 and 6 and 7 and 'the depot'.
+Print 'the last stop''s x.
+Print 'the depot''s x.
+
+a journey called commute.
+Set commute's home's x to 3.
+a journey called 'the new commute' is 'the office moved' of commute.
+Print 'the new commute''s 'the office''s x.
+Print 'the new commute''s home's x.
+Print commute's 'the office''s x.
+
+(A global thing goes into a frame and comes back out. The definition sits
+ here, below the declaration it reads: a thing variable is known to the
+ parse from where it is declared onwards, so a function above it could not
+ name its fields at all.)
+To 'shift the origin'.
+  a point called shifted is origin.
+  Set shifted's x to 7.
+  Set origin to shifted.
+
+'shift the origin'.
+Print origin's x.
