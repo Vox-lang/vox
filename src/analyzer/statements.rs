@@ -1391,6 +1391,12 @@ impl Analyzer {
                 self.deps.uses_args = true;
             }
 
+            Statement::SendSignal { signal, pid } => {
+                self.analyze_expr(signal);
+                self.analyze_expr(pid);
+                self.deps.uses_io = true;
+            }
+
             Statement::Symlink { target, linkpath } => {
                 self.analyze_expr(target);
                 self.analyze_expr(linkpath);

@@ -4,6 +4,29 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
+  that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
+  62). `child` is accepted as an alias for `process`, mirroring
+  `reap process/child`: `Send signal 9 to child pid.`. On success it clears
+  the error flag; on failure (`ESRCH`, `EINVAL`, `EPERM`) it sets it, so
+  `On error` catches the failure exactly like the other syscall statements.
+  Signal 0 is the standard no-deliver existence check, useful for probing the
+  error path safely. Strictly additive: no existing program changes meaning.
+
+- **`times` is now a multiplication operator, an alias for `multiply`.**
+  `Print 6 times 7.` and `Set n to n times 10.` compile and behave exactly
+  like their `multiply` forms, including precedence — `Print 2 plus 3 times
+  4.` evaluates to 14, multiplication still binding tighter than addition,
+  identical to `2 plus 3 multiply 4.`. `times` was already a reserved
+  keyword for the `Repeat <count> times,` loop, so no lexer change was
+  needed; the `Repeat` count is read with `parse_primary`, which never
+  reaches the multiplicative layer, so the loop construct is unaffected.
+  Strictly widening: no previously-valid program changes meaning.
+
 ## [0.3.7] - 2026-08-16
 
 ### Changed

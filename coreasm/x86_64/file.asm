@@ -22,6 +22,7 @@
 %define SYS_REBOOT  169
 %define SYS_FORK    57
 %define SYS_WAIT4   61
+%define SYS_KILL    62
 
 ; reboot(2) magic values (see linux/reboot.h)
 %define LINUX_REBOOT_MAGIC1 0xFEE1DEAD
@@ -655,6 +656,35 @@
     mov [rel _last_error], rax
     pop rax
 %%reap_done:
+%endmacro
+
+; Send a signal to a process (kill(2)).
+; Args (pre-loaded by codegen): rdi = pid, rsi = signal.
+; Returns: 0 in rax on success, negative on error. Sets _last_error on
+; failure (ESRCH, EINVAL, EPERM) and clears it on success, exactly like
+; the other syscall statements. This is a statement, not an expression,
+; so rax is not consumed afterwards - but the registers the surrounding
+; code may hold values in are preserved across the syscall.
+%macro SEND_SIGNAL 0
+    push rbx
+    push rcx
+    push rdx
+
+    mov rax, SYS_KILL
+    syscall
+
+    test rax, rax
+    jns %%kill_ok
+    neg rax
+    mov [rel _last_error], rax
+    jmp %%kill_done
+%%kill_ok:
+    mov qword [rel _last_error], 0
+%%kill_done:
+
+    pop rdx
+    pop rcx
+    pop rbx
 %endmacro
 
 ; Check file/path availability (boolean semantics for Vox's "is available")
