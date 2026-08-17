@@ -20,6 +20,7 @@ mod guard_env_tests;
 mod scope;
 mod expressions;
 mod statements;
+pub(crate) mod things;
 mod types;
 
 pub struct Analyzer {
@@ -128,6 +129,15 @@ pub struct Analyzer {
     /// Printed by the driver with a `warning:` prefix; they never stop a
     /// build, but shadowing is never silent either.
     pub warnings: Vec<String>,
+    /// Every thing defined in the program (plan 310), keyed by name. Layout,
+    /// sizes, and field offsets are all read from here - see
+    /// `analyzer::things`.
+    things: things::ThingRegistry,
+    /// Which thing each thing variable holds, by variable name. Seeded from
+    /// the whole main line before the walk (so a function body may reach a
+    /// global declared later in the file, like any other global) and extended
+    /// as each declaration is analyzed.
+    thing_vars: HashMap<String, String>,
 }
 
 #[derive(Clone, Default)]
@@ -173,6 +183,8 @@ impl Analyzer {
             pending_blank_line_truncation: None,
             imports: Vec::new(),
             warnings: Vec::new(),
+            things: HashMap::new(),
+            thing_vars: HashMap::new(),
         }
     }
 

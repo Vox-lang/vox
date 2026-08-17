@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §5 - every one of the three writes below stores a
+ single quadword, which would land on the thing's first field and silently
+ corrupt it. A write that means the whole thing is a copy, which is the
+ copy-semantics task; a write that means one field has to name that field.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin to 5.
+origin is 5.
+increment origin.

@@ -21,6 +21,27 @@
 use super::*;
 use std::collections::hash_map::Entry;
 
+/// A type's name as Vox spells it, for a diagnostic about a field's type.
+/// The analyzer has its own richer `type_name`; this is the parser-side
+/// vocabulary, which only ever needs to name a field's declared type.
+fn type_noun_of(field_type: &Type) -> String {
+    match field_type {
+        Type::Integer => "number".to_string(),
+        Type::Float => "float".to_string(),
+        Type::String => "text".to_string(),
+        Type::Boolean => "boolean".to_string(),
+        Type::Buffer => "buffer".to_string(),
+        Type::List(_) => "list".to_string(),
+        Type::Map(_) => "map".to_string(),
+        Type::File => "file".to_string(),
+        Type::Time => "time".to_string(),
+        Type::Timer => "timer".to_string(),
+        Type::Value => "value".to_string(),
+        Type::Thing(name) => name.clone(),
+        Type::Void | Type::Unknown => "value".to_string(),
+    }
+}
+
 impl Parser {
     /// True when the current token opens a thing-definition construct:
     /// the contextual keyword `thing` followed by `called`. Call with the
@@ -318,6 +339,22 @@ impl Parser {
                 self.advance();
                 return Ok(Type::Thing(word));
             }
+            // A field naming the thing being defined closes a cycle (plan 310
+            // §6, §10): a thing's fields are stored inline, so its size would
+            // include its own, and it has none. This is the only cycle Vox
+            // source can express - a longer chain needs a field naming a thing
+            // defined later, which is an unknown type here, and the registry
+            // does not yet hold this definition (it is registered once its
+            // entries parse), so the name would otherwise report as unknown.
+            if word == thing_name {
+                return Err(self.err(&format!(
+                    "A thing cannot contain itself: {} contains {}\n  \
+                     A thing's fields are stored inline, so this definition has \
+                     no finite size.\n  \
+                     A field may name any thing defined before this one.",
+                    thing_name, word
+                )));
+            }
             let mut err = *self.err(&format!(
                 "Unknown field type '{}' in thing '{}'\n  \
                  A field's type is a builtin type noun or a thing defined \
@@ -379,6 +416,287 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    // ---------------------------------------------------------------------
+    // Declaration position (plan 310 §1, §6, §10)
+    // ---------------------------------------------------------------------
+
+    /// A defined thing's name used as a type noun: `a point called origin.`.
+    /// Consumes the name and returns `Type::Thing` only when `called` follows,
+    /// the same guard `try_parse_type_noun` puts on `value` - so a thing name
+    /// stays an ordinary identifier in every other position (a call, a
+    /// variable read), and nothing is consumed when this returns None.
+    pub(crate) fn try_parse_thing_type_noun(&mut self) -> Option<Type> {
+        let Token::Identifier(word) = self.current().clone() else {
+            return None;
+        };
+        if !self.things.contains_key(&word) {
+            return None;
+        }
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Called) {
+            return None;
+        }
+        self.advance();
+        Some(Type::Thing(word))
+    }
+
+    /// Close a `a <thing> called <name>` declaration, with the name already
+    /// parsed. `name_pos` is the token index of that name, so a rejected
+    /// declaration underlines the name rather than what follows it.
+    pub(crate) fn finish_thing_declaration(
+        &mut self,
+        thing: String,
+        name: String,
+        name_pos: usize,
+    ) -> Result<Statement, Box<CompileError>> {
+        // One identifier space, first-come-first-serve (plan 310 §10): the
+        // definition claimed this name already, so `a point called point.`
+        // cannot also mean a variable.
+        if let Some(previous) = self.things.get(&name) {
+            let previous_line = previous.line;
+            self.pos = name_pos;
+            return Err(self.err(&format!(
+                "'{}' is already defined as a thing on line {}\n  \
+                 Type names, variable names, and function names share one \
+                 identifier space; the first definition wins.",
+                name, previous_line
+            )));
+        }
+
+        self.skip_noise();
+        if matches!(self.current(), Token::Is | Token::Equals | Token::To) {
+            return Err(self.err(&format!(
+                "Copying a whole thing is not supported yet (plan 310 §5)\n  \
+                 A declaration with an initialiser copies the whole value, \
+                 which lands with copy semantics.\n  \
+                 For now write `a {} called {}.` and set its fields.",
+                thing, name
+            )));
+        }
+
+        self.thing_vars.insert(name.clone(), thing.clone());
+        Ok(Statement::VarDecl {
+            name,
+            var_type: Some(Type::Thing(thing)),
+            value: None,
+        })
+    }
+
+    // ---------------------------------------------------------------------
+    // Field access (plan 310 §3)
+    // ---------------------------------------------------------------------
+
+    /// Which thing a declared variable holds, if it holds one.
+    pub(crate) fn thing_of_variable(&self, name: &str) -> Option<String> {
+        self.thing_vars.get(name).cloned()
+    }
+
+    /// True when the tokens at the cursor open a possessive (`'s`).
+    pub(crate) fn possessive_follows(&self) -> bool {
+        let mut off = 0;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Apostrophe) {
+            return false;
+        }
+        off += 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::Identifier(s) if s.eq_ignore_ascii_case("s"))
+    }
+
+    /// Parse `'s <field>` repeatedly, from a base variable holding `thing`,
+    /// and return the field names in order together with the type stored at
+    /// the end of the chain. Call with the base name consumed and
+    /// `possessive_follows` true.
+    ///
+    /// Each step is checked against the registry as it is consumed, so an
+    /// unknown field is reported at its own token and the chain only
+    /// continues while the field it just read is itself a thing - which is
+    /// what makes `route's leg's start's x` a single compile-time walk of
+    /// definitions rather than a guess about depth.
+    fn parse_thing_field_chain(
+        &mut self,
+        base: &str,
+        thing: &str,
+    ) -> Result<(Vec<String>, Type), Box<CompileError>> {
+        let mut current = thing.to_string();
+        let mut path: Vec<String> = Vec::new();
+
+        loop {
+            self.skip_noise();
+            self.advance(); // the apostrophe
+            self.skip_noise();
+            self.advance(); // the `s`
+            self.skip_noise();
+
+            let field_pos = self.pos;
+            let field = match self.current().clone() {
+                Token::Identifier(field) => {
+                    self.advance();
+                    field
+                }
+                // A reserved word can never be a field name: a definition's
+                // field names go through `parse_name`, which rejects them.
+                other => {
+                    return Err(self.err_expected(
+                        &format!("a field of thing '{}'", current),
+                        &other,
+                    ))
+                }
+            };
+
+            let Some(def) = self.things.get(&current) else {
+                // Unreachable: a `Type::Thing` payload is only ever written
+                // for a name already in the registry.
+                return Err(self.err(&format!("Unknown thing '{}'", current)));
+            };
+            let Some(found) = def.fields.iter().find(|f| f.name == field) else {
+                let known: Vec<String> = def.fields.iter().map(|f| f.name.clone()).collect();
+                self.pos = field_pos;
+                return Err(self.err_unknown_field(&current, &field, &known));
+            };
+            let field_type = found.field_type.clone();
+            path.push(field);
+
+            match &field_type {
+                Type::Thing(inner) => {
+                    current = inner.clone();
+                    if self.possessive_follows() {
+                        continue;
+                    }
+                    // Ending on a nested thing means reading the whole thing:
+                    // copying (§5) or printing (§7), both later tasks. Reading
+                    // its first eight bytes instead would be silently wrong.
+                    self.pos = field_pos;
+                    let known: Vec<String> = self
+                        .things
+                        .get(&current)
+                        .map(|def| def.fields.iter().map(|f| f.name.clone()).collect())
+                        .unwrap_or_default();
+                    return Err(self.err(&format!(
+                        "'{}' holds a whole {}, not a value\n  \
+                         A field chain must end on a field that holds a value; \
+                         reading a whole thing lands with copy semantics (plan \
+                         310 §5) and printing (§7).\n  \
+                         {}'s fields are: {}",
+                        Self::render_chain(base, &path),
+                        current,
+                        current,
+                        known.join(", ")
+                    )));
+                }
+                scalar => {
+                    if self.possessive_follows() {
+                        self.pos = field_pos;
+                        return Err(self.err(&format!(
+                            "'{}' holds a {}, so nothing can be read out of it\n  \
+                             Only a field that holds a thing can be gone through \
+                             with another possessive.",
+                            Self::render_chain(base, &path),
+                            type_noun_of(scalar)
+                        )));
+                    }
+                    return Ok((path, scalar.clone()));
+                }
+            }
+        }
+    }
+
+    /// `origin's leg's start` - the chain as written, for a diagnostic.
+    fn render_chain(base: &str, path: &[String]) -> String {
+        let mut out = base.to_string();
+        for step in path {
+            out.push_str("'s ");
+            out.push_str(step);
+        }
+        out
+    }
+
+    pub(crate) fn err_unknown_field(
+        &self,
+        thing: &str,
+        field: &str,
+        known: &[String],
+    ) -> Box<CompileError> {
+        let mut err = *self.err(&format!(
+            "Thing '{}' has no field '{}'\n  \
+             A thing's fields are its whole member space: its fields are: {}",
+            thing,
+            field,
+            known.join(", ")
+        ));
+        let candidates: Vec<&str> = known.iter().map(|k| k.as_str()).collect();
+        if let Some(near) = find_similar_keyword(field, &candidates) {
+            err = err.with_suggestion(&near);
+        }
+        Box::new(err)
+    }
+
+    /// A field read in expression position: `origin's x`.
+    pub(crate) fn parse_thing_field_expr(
+        &mut self,
+        base: String,
+        thing: &str,
+    ) -> Result<Expr, Box<CompileError>> {
+        let (path, _) = self.parse_thing_field_chain(&base, thing)?;
+        Ok(Expr::ThingField { base, path })
+    }
+
+    /// If the cursor sits on `<thing variable>'s <field>...`, consume the
+    /// whole chain and return the write target plus the type it holds.
+    /// Returns None with the position unchanged when it does not, so every
+    /// caller can try this before its own grammar.
+    pub(crate) fn try_parse_thing_field_target(
+        &mut self,
+    ) -> Result<Option<(String, Vec<String>, Type)>, Box<CompileError>> {
+        let Token::Identifier(name) = self.current().clone() else {
+            return Ok(None);
+        };
+        let Some(thing) = self.thing_of_variable(&name) else {
+            return Ok(None);
+        };
+        let saved = self.pos;
+        self.advance();
+        if !self.possessive_follows() {
+            self.pos = saved;
+            return Ok(None);
+        }
+        let (path, field_type) = self.parse_thing_field_chain(&name, &thing)?;
+        Ok(Some((name, path, field_type)))
+    }
+
+    /// `increment origin's x.` / `decrement ...`. The target is an offset, not
+    /// a name, so `Statement::Increment` (which carries a name) cannot hold
+    /// it; the step is desugared into the field write it means. The step
+    /// literal follows the field's own type so a float field stays a float.
+    pub(crate) fn thing_field_step(
+        base: String,
+        path: Vec<String>,
+        field_type: &Type,
+        op: BinaryOperator,
+    ) -> Statement {
+        let one = if matches!(field_type, Type::Float) {
+            Expr::FloatLit(1.0)
+        } else {
+            Expr::IntegerLit(1)
+        };
+        Statement::SetThingField {
+            base: base.clone(),
+            path: path.clone(),
+            value: Expr::BinaryOp {
+                left: Box::new(Expr::ThingField { base, path }),
+                op,
+                right: Box::new(one),
+            },
+        }
     }
 
     fn err_field_default_not_literal(

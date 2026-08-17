@@ -8,6 +8,9 @@ impl CodeGenerator {
         // from declared-return functions. Signature collection only reads
         // FunctionDef.return_type from the AST, so this reorder is safe.
         self.collect_function_signatures(program);
+        // The thing registry and the main line's thing variables, before the
+        // label pass below sizes their `.bss` reservations from them.
+        self.collect_things(program);
         // Resolve the library identity before any function is generated so the
         // `<lib>_<ver>_<func>` label is correct regardless of where the
         // `Library` declaration sits in the source. No-op outside shared mode.
@@ -219,10 +222,28 @@ impl CodeGenerator {
             // emitted where a thing is *declared*, not where it is defined.
             Statement::ThingDecl(_) => {}
 
+            // A thing declaration reserves sized storage and writes its
+            // defaults (plan 310 §9). It must precede the generic VarDecl arm
+            // below, which treats a global's label as a one-quadword slot to
+            // store a value into - for a thing the label is the storage
+            // itself.
+            Statement::VarDecl {
+                name,
+                var_type: Some(Type::Thing(thing)),
+                ..
+            } => {
+                self.generate_thing_decl(name, thing);
+            }
+
+            // `Set origin's x to 3.` and everything that desugars to it.
+            Statement::SetThingField { base, path, value } => {
+                self.generate_set_thing_field(base, path, value);
+            }
+
             Statement::Print { value, without_newline } => {
                 self.generate_print(value, *without_newline);
             }
-            
+
             Statement::VarDecl { name, var_type, value } => {
                 // Decide whether this statement updates a local stack slot or
                 // the global BSS mirror.  A typed declaration (`a number called
@@ -1013,6 +1034,7 @@ impl CodeGenerator {
                 // trusts `variable_types` by name with no scope check.
                 let saved_variable_types = self.variable_types.clone();
                 let saved_declared_types = self.declared_types.clone();
+                let saved_thing_vars = self.thing_vars.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
                 // just like `variable_types`, so they need the same
@@ -1206,6 +1228,7 @@ impl CodeGenerator {
                 self.current_function_return_type = saved_return_type;
                 self.variable_types = saved_variable_types;
                 self.declared_types = saved_declared_types;
+                self.thing_vars = saved_thing_vars;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;

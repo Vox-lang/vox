@@ -1,0 +1,44 @@
+(Plan 310 task 2 - things nest to any depth (§6), so a chained possessive
+ reads and writes through the nesting: `commute's leg's start's x` is one sum
+ of compile-time offsets, never a pointer chase - a nested thing contributes
+ its own bytes inline. The route's own 'route number' sits after the whole
+ nested segment, so it is the field that proves the offsets add up.
+
+ The letter proves defaults apply recursively: nothing initialises the stamp
+ it carries, so the stamp's own defaults must be written into the nested bytes
+ at the letter's declaration.
+
+ Acceptance: 3, 1, 66, then 25, 12, 2.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+A thing called route has
+  a segment called leg,
+  a number called 'route number'.
+
+a route called commute.
+Set commute's leg's start's x to 3.
+Print commute's leg's start's x.
+increment commute's leg's end's y.
+Print commute's leg's end's y.
+Set commute's 'route number' to 66.
+Print commute's 'route number'.
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a number called 'cost in pence' is 12.
+
+A thing called letter has
+  a stamp called posted,
+  a number called 'weight in grams' is 2.
+
+a letter called invitation.
+Print invitation's posted's 'day sent'.
+Print invitation's posted's 'cost in pence'.
+Print invitation's 'weight in grams'.

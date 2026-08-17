@@ -145,6 +145,17 @@ pub enum Expr {
         property: ObjectProperty,
     },
 
+    // A field of a user-defined thing (plan 310 §3): `origin's x`, and
+    // through nesting to any depth, `route's leg's start's x`. `base` is the
+    // thing variable's name; `path` is the field names in order, outermost
+    // first. Every step is a compile-time offset, so the whole chain folds
+    // into one `base_address + constant` - there is no pointer chase and no
+    // runtime failure path (unlike list element access).
+    ThingField {
+        base: String,
+        path: Vec<String>,
+    },
+
     // Map key access: person's "name". `map` is the variable name (like
     // PropertyAccess.object); `key` is an expression that evaluates to a
     // text value (usually a StringLit). Tag of the found value travels in
@@ -348,6 +359,17 @@ pub enum Statement {
     // statement stream so a definition keeps its source position relative to
     // the uses that must follow it.
     ThingDecl(ThingDef),
+
+    // Write to a field of a user-defined thing (plan 310 §3): `Set origin's x
+    // to 3.`, the bare `origin's x is 3.`, and `increment origin's x.` (which
+    // the parser desugars into this statement with a `+ 1` value, since the
+    // target is an offset, not a name). The read counterpart is
+    // `Expr::ThingField`, and `base`/`path` mean exactly the same there.
+    SetThingField {
+        base: String,
+        path: Vec<String>,
+        value: Expr,
+    },
 
     FlagSchemaDecl {
         name: String,
@@ -679,13 +701,27 @@ pub struct Program {
 
 impl Program {
     pub fn new(statements: Vec<Statement>) -> Self {
+        // `things` is DERIVED here, not filled in by the caller, so every
+        // construction path populates it. The `--shared` driver builds a
+        // Program directly from the combined statements of several inputs
+        // (src/main.rs), bypassing the parser's own post-parse derivation -
+        // which left `things` empty for a multi-input build, so every
+        // consumer of the registry (layout, offsets, cycle checks) silently
+        // saw no things at all.
+        let things = statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::ThingDecl(def) => Some(def.clone()),
+                _ => None,
+            })
+            .collect();
         Program {
             statements,
             uses_heap: false,
             uses_strings: false,
             uses_io: false,
             uses_args: false,
-            things: Vec::new(),
+            things,
         }
     }
 }

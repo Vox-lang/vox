@@ -1,9 +1,10 @@
-    //! Unit coverage for the thing registry (plan 310 §1).
+    //! Unit coverage for the thing registry and the shapes a declaration and
+    //! a field chain parse into (plan 310 §1, §3).
     //!
-    //! The integration test can only observe that a definition *parses* -
-    //! nothing consumes the registry until declarations land - so the shape
-    //! later tasks depend on (field order, field types, defaults, the
-    //! manifest split, `Program.things`) is pinned here instead.
+    //! An integration test can only observe a program's output, so the AST
+    //! later tasks depend on - field order, field types, defaults, the
+    //! manifest split, `Program.things`, and how a possessive chain and each
+    //! write spelling land - is pinned here instead.
 
     use super::*;
     use crate::lexer::Lexer;
@@ -163,4 +164,195 @@
             .contains("'is' declares a variable; a thing definition uses 'has'"));
         assert!(parse_err("A thing called point has.\n").contains("at least one field"));
         assert!(parse_err("A thing called point.\n").contains("at least one field"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Declaration position and field access (plan 310 §3, §6, §10)
+    // ---------------------------------------------------------------------
+
+    const POINT: &str = "A thing called point has\n  a number called x is 0,\n  a number called y is 0.\n\n";
+    const ROUTE: &str = "A thing called segment has\n  a point called start,\n  a point called end.\n\n\
+                         A thing called route has\n  a segment called leg,\n  a number called id.\n\n";
+
+    /// A thing name is a type noun in declaration position, and the
+    /// declaration carries no value: every field takes its own default.
+    #[test]
+    fn a_declaration_names_the_thing_as_its_type() {
+        let program = parse_input(&format!("{}a point called origin.\n", POINT))
+            .expect("a thing declaration should parse");
+        assert!(matches!(
+            &program.statements[1],
+            Statement::VarDecl { name, var_type: Some(Type::Thing(thing)), value: None }
+                if name == "origin" && thing == "point"
+        ));
+    }
+
+    /// One identifier space, first-come-first-serve (plan 310 §10): the
+    /// definition claimed the name, so a variable cannot reuse it.
+    #[test]
+    fn a_declaration_may_not_reuse_the_things_own_name() {
+        let err = parse_err(&format!("{}a point called point.\n", POINT));
+        assert!(
+            err.contains("'point' is already defined as a thing"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// Copying a whole thing is §5's task, so a declaration with an
+    /// initialiser is rejected rather than silently dropping it.
+    #[test]
+    fn a_declaration_with_an_initialiser_is_rejected_for_now() {
+        let err = parse_err(&format!(
+            "{}a point called origin.\na point called mirror is origin.\n",
+            POINT
+        ));
+        assert!(
+            err.contains("Copying a whole thing is not supported yet"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// A possessive on a thing variable reads a field, at any depth, and the
+    /// path is the field names in order.
+    #[test]
+    fn a_possessive_chain_reads_fields_in_order() {
+        let program = parse_input(&format!(
+            "{}{}a route called commute.\nPrint commute's leg's start's x.\n",
+            POINT, ROUTE
+        ))
+        .expect("a chained possessive should parse");
+        let last = program.statements.last().expect("a Print statement");
+        match last {
+            Statement::Print { value: Expr::ThingField { base, path }, .. } => {
+                assert_eq!(base, "commute");
+                assert_eq!(path, &["leg", "start", "x"]);
+            }
+            other => panic!("expected a Print of a ThingField, got {:?}", other),
+        }
+    }
+
+    /// Every write spelling lands on one statement, because the target is an
+    /// offset rather than a name: `Set ... to`, the bare `is`, and the
+    /// increment/decrement steps.
+    #[test]
+    fn every_write_spelling_becomes_one_field_write() {
+        let program = parse_input(&format!(
+            "{}a point called origin.\n\
+             Set origin's x to 3.\n\
+             origin's y is 4.\n\
+             increment origin's x.\n\
+             decrement origin's y.\n",
+            POINT
+        ))
+        .expect("every write spelling should parse");
+
+        assert!(matches!(
+            &program.statements[2],
+            Statement::SetThingField { base, path, value: Expr::IntegerLit(3) }
+                if base == "origin" && path == &["x"]
+        ));
+        assert!(matches!(
+            &program.statements[3],
+            Statement::SetThingField { base, path, value: Expr::IntegerLit(4) }
+                if base == "origin" && path == &["y"]
+        ));
+        // A step reads the field, adds one, and writes it back.
+        match &program.statements[4] {
+            Statement::SetThingField { base, path, value: Expr::BinaryOp { left, op, right } } => {
+                assert_eq!(base, "origin");
+                assert_eq!(path, &["x"]);
+                assert!(matches!(op, BinaryOperator::Add));
+                assert!(matches!(left.as_ref(), Expr::ThingField { path, .. } if path == &["x"]));
+                assert!(matches!(right.as_ref(), Expr::IntegerLit(1)));
+            }
+            other => panic!("expected increment to become a field write, got {:?}", other),
+        }
+        assert!(matches!(
+            &program.statements[5],
+            Statement::SetThingField { value: Expr::BinaryOp { op: BinaryOperator::Subtract, .. }, .. }
+        ));
+    }
+
+    /// The step literal follows the field's own type, so a float field stays
+    /// a float instead of taking an integer 1 through the float path.
+    #[test]
+    fn a_step_on_a_float_field_steps_by_a_float() {
+        let program = parse_input(
+            "A thing called 'water tank' has\n  a float called 'depth in metres' is 1.5.\n\n\
+             a 'water tank' called cistern.\n\
+             increment cistern's 'depth in metres'.\n",
+        )
+        .expect("a step on a float field should parse");
+        assert!(matches!(
+            &program.statements[2],
+            Statement::SetThingField { value: Expr::BinaryOp { right, .. }, .. }
+                if matches!(right.as_ref(), Expr::FloatLit(_))
+        ));
+    }
+
+    /// §3 lists interpolation among the places a field must work. A `{...}`
+    /// placeholder is parsed by its own sub-parser, so this is the test that
+    /// the sub-parser knows the program's things.
+    #[test]
+    fn a_field_interpolates_into_a_format_string() {
+        let program = parse_input(&format!(
+            "{}a point called origin.\nPrint \"origin sits at {{origin's x}}\".\n",
+            POINT
+        ))
+        .expect("a field in a format string should parse");
+        let last = program.statements.last().expect("a Print statement");
+        match last {
+            Statement::Print { value: Expr::FormatString { parts }, .. } => {
+                assert!(
+                    parts.iter().any(|part| matches!(
+                        part,
+                        FormatPart::Expression { expr, .. }
+                            if matches!(expr.as_ref(), Expr::ThingField { path, .. } if path == &["x"])
+                    )),
+                    "expected an interpolated ThingField, got {:?}",
+                    parts
+                );
+            }
+            other => panic!("expected a Print of a FormatString, got {:?}", other),
+        }
+    }
+
+    /// A chain must end on a field that holds a value; ending on a nested
+    /// thing means reading the whole thing (§5/§7, later tasks).
+    #[test]
+    fn a_chain_may_not_end_on_a_nested_thing() {
+        let err = parse_err(&format!(
+            "{}{}a route called commute.\nPrint commute's leg.\n",
+            POINT, ROUTE
+        ));
+        assert!(
+            err.contains("holds a whole segment"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// An unknown field names the thing and lists what it does have.
+    #[test]
+    fn an_unknown_field_lists_the_things_fields() {
+        let err = parse_err(&format!("{}a point called origin.\nPrint origin's z.\n", POINT));
+        assert!(
+            err.contains("Thing 'point' has no field 'z'") && err.contains("x, y"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// A thing name is only a type noun before `called`, so it stays an
+    /// ordinary identifier everywhere else - the same guard `value` has.
+    #[test]
+    fn a_thing_name_is_only_a_type_noun_before_called() {
+        let program = parse_input(&format!("{}a number called point is 42.\nPrint point.\n", POINT))
+            .expect("a thing's name should still be usable as a variable name");
+        assert!(matches!(
+            &program.statements[1],
+            Statement::VarDecl { name, var_type: Some(Type::Integer), .. } if name == "point"
+        ));
     }

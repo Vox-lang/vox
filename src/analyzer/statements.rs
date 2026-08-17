@@ -7,7 +7,7 @@ fn shared_top_level_label(stmt: &Statement) -> &'static str {
     match stmt {
         Statement::Print { .. } => "print statement",
         Statement::VarDecl { .. } => "variable declaration",
-        Statement::Assignment { .. } => "assignment",
+        Statement::Assignment { .. } | Statement::SetThingField { .. } => "assignment",
         Statement::If { .. } => "if statement",
         Statement::While { .. } => "while loop",
         Statement::ForRange { .. } | Statement::ForEach { .. } | Statement::Repeat { .. } => "loop",
@@ -28,9 +28,20 @@ impl Analyzer {
         // `Library`, and `see` may appear at the top level of a library.
         if self.shared_mode {
             for stmt in &program.statements {
+                // A thing definition belongs here with the other three: it
+                // declares a type, allocates nothing, and emits no code, so
+                // there is no executable statement to be dropped into the
+                // discarded main body. Plan 310 §3 requires definitions to
+                // cross files like functions do, which means a library's own
+                // exports can take and return its things. A thing *variable*
+                // is still rejected - that is a VarDecl, and its storage and
+                // defaults would need main-line code that never runs.
                 if !matches!(
                     stmt,
-                    Statement::FunctionDef { .. } | Statement::LibraryDecl { .. } | Statement::See { .. }
+                    Statement::FunctionDef { .. }
+                        | Statement::LibraryDecl { .. }
+                        | Statement::See { .. }
+                        | Statement::ThingDecl(_)
                 ) {
                     self.push_error(
                         format!(
@@ -111,6 +122,10 @@ impl Analyzer {
                 return;
             }
         }
+
+        // Load and validate the thing registry before anything can consult it
+        // for a size, an offset, or a field path (plan 310 §6, §10).
+        self.load_things(program);
 
         // First pass: collect function definitions, global declarations, and flag schemas.
         let mut explicit_parse_seen = false;
@@ -273,6 +288,7 @@ impl Analyzer {
             Statement::ByteSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
             Statement::ElementSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
             Statement::MapSet { key, value, .. } => self.expr_uses_flag(key).or_else(|| self.expr_uses_flag(value)),
+            Statement::SetThingField { value, .. } => self.expr_uses_flag(value),
             Statement::ListAppend { value, .. } => self.expr_uses_flag(value),
             Statement::FileOpen { path, .. } => self.expr_uses_flag(path),
             Statement::FileWrite { value, .. } => self.expr_uses_flag(value),
@@ -376,6 +392,13 @@ impl Analyzer {
             // while a definition cannot yet be used.
             Statement::ThingDecl(_) => {}
 
+            // A field write (plan 310 §3). The chain is validated exactly like
+            // a read; the value is an ordinary expression, checked as one.
+            Statement::SetThingField { base, path, value } => {
+                self.analyze_expr(value);
+                self.analyze_thing_field(base, path);
+            }
+
             Statement::Print { value, .. } => {
                 self.deps.uses_io = true;
                 self.analyze_expr(value);
@@ -386,6 +409,16 @@ impl Analyzer {
             }
             
             Statement::VarDecl { name, var_type, value } => {
+                // An untyped `Set origin to 5.` on a name that holds a thing
+                // is a write of one quadword over the thing's first field, not
+                // a copy (plan 310 §5). A typed declaration is unaffected -
+                // that is how a thing variable is declared in the first place.
+                if var_type.is_none() && self.reject_whole_thing_as_a_value(name) {
+                    if let Some(v) = value {
+                        self.analyze_expr(v);
+                    }
+                    return;
+                }
                 // `Set x to <value>.` / `Create x to <value>.` parse into
                 // this same statement with `var_type: None` regardless of
                 // whether `x` is brand-new or already exists (no explicit
@@ -471,6 +504,17 @@ impl Analyzer {
                     // parameter: bare arithmetic on it is rejected until the
                     // author checks its type with a predicate.
                     self.value_typed_names.insert(name.clone());
+                }
+                if let Some(Type::Thing(thing)) = var_type {
+                    // A function's own thing local is not in the main-line
+                    // pre-pass, so record it as the walk reaches it (plan 310
+                    // §3).
+                    self.declare_thing_variable(name, thing);
+                } else if var_type.is_some() {
+                    // Declared as something else: this name is not a thing
+                    // variable, so it must not keep a stale thing label and
+                    // report "holds a whole point" for an ordinary number.
+                    self.thing_vars.remove(name);
                 }
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
@@ -577,6 +621,12 @@ impl Analyzer {
                 // type-checked at all, so capture it before the auto-declare
                 // below can change the answer.
                 let was_already_declared = self.is_variable_available(name);
+                // `origin is 5.` on a name that holds a thing writes one
+                // quadword over its first field; a whole-thing copy is §5.
+                if self.reject_whole_thing_as_a_value(name) {
+                    self.analyze_expr(value);
+                    return;
+                }
                 if !was_already_declared {
                     if self.in_function_scope {
                         self.push_unknown_variable(name);
@@ -949,6 +999,7 @@ impl Analyzer {
                 let saved_timer_variables = self.timer_variables.clone();
                 let saved_allocated_variables = self.allocated_variables.clone();
                 let saved_value_typed_names = self.value_typed_names.clone();
+                let saved_thing_vars = self.thing_vars.clone();
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -999,6 +1050,7 @@ impl Analyzer {
                 self.timer_variables = saved_timer_variables;
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
+                self.thing_vars = saved_thing_vars;
                 self.apply_env(&saved_env);
 
                 self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {
@@ -1009,6 +1061,10 @@ impl Analyzer {
             Statement::Increment { name } | Statement::Decrement { name } => {
                 if !self.is_variable_available(name) {
                     self.push_unknown_variable(name);
+                } else if self.reject_whole_thing_as_a_value(name) {
+                    // A step on a whole thing would `inc qword` its first
+                    // field. `increment origin's x.` is what it means, and
+                    // that parses into a field write instead (plan 310 §3).
                 } else if self.is_buffer_variable(name)
                     || self.is_list_variable(name)
                     || self.is_map_variable(name)

@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §5 - assignment copies a whole thing, which is the
+ copy-semantics task. Until it lands, a declaration with an initialiser is
+ rejected rather than silently declaring the defaults and dropping the
+ initialiser on the floor.)
+
+A thing called point has
+  a number called x is 0.
+
+a point called origin.
+Set origin's x to 5.
+a point called mirror is origin.

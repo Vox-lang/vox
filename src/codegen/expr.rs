@@ -28,6 +28,11 @@ impl CodeGenerator {
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
+            // A float field reads as its bit pattern, exactly like a float
+            // variable's slot, so it must take the same float paths.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
+            }
             Expr::Cast { target_type, .. } => {
                 // Cast to float produces a float
                 matches!(target_type, Type::Float)
@@ -166,6 +171,11 @@ impl CodeGenerator {
             Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
+            }
+            // Same reason as in `is_float_expr`: a float field is a float
+            // operand, so arithmetic on it takes the float instructions.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
             }
             Expr::Cast { target_type, .. } => {
                 // A cast to float yields a float operand - must route through
@@ -381,6 +391,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("lea rax, [rel {}]", label));
             }
             
+            // A field of a thing: one load from `base + constant` (plan 310 §3).
+            Expr::ThingField { base, path } => {
+                self.generate_thing_field(base, path);
+            }
+
             Expr::Identifier(name) => {
                 if self.emit_load_named_var_into_rax(name) {
                     // loaded as a variable
@@ -2136,6 +2151,14 @@ impl CodeGenerator {
                 .get(name)
                 .cloned()
                 .or_else(|| self.zero_arg_func_return_type(name)),
+            // A field yields its declared type (plan 310 §6): a float prints
+            // as a float, a boolean and a time as the numbers they are.
+            Expr::ThingField { base, path } => match self.thing_field_type(base, path) {
+                Some(Type::Float) => Some(VarType::Float),
+                Some(Type::Boolean) => Some(VarType::Boolean),
+                Some(_) => Some(VarType::Integer),
+                None => None,
+            },
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name)).cloned()
             }

@@ -597,10 +597,13 @@ impl Parser {
             return None;
         }
         
-        // Try to parse as an English expression (including comparisons)
+        // Try to parse as an English expression (including comparisons).
+        // The sub-parser inherits the thing definitions and thing variables
+        // seen so far, so `"{origin's x}"` parses as the field chain it is
+        // rather than falling back to a literal placeholder (plan 310 §3).
         let mut lexer = Lexer::new(content);
         let tokens = lexer.tokenize();
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::new(tokens).with_things_of(self);
         // Use parse_and_expr to handle comparisons like "0 is equal to 0"
         match parser.parse_and_expr() {
             Ok(expr) => {
@@ -988,6 +991,17 @@ impl Parser {
                     return Ok(call);
                 }
 
+                // A thing variable's possessive reads a field, never an object
+                // property (plan 310 §3): a thing has no builtin properties,
+                // and its fields are its whole member space (§4). Checked
+                // before the property table below so a field can be named
+                // anything the definition allows.
+                if let Some(thing) = self.thing_of_variable(&name) {
+                    if self.possessive_follows() {
+                        return self.parse_thing_field_expr(name, &thing);
+                    }
+                }
+
                 // Check for property access: identifier's property
                 if *self.current() == Token::Apostrophe {
                     self.advance();
@@ -996,7 +1010,7 @@ impl Parser {
                         if s.to_lowercase() == "s" {
                             self.advance();
                             self.skip_noise();
-                            
+
                             // Special handling for arguments's and environment's
                             let name_lower = name.to_lowercase();
                             if name_lower == "arguments" || name_lower == "args" {
@@ -1298,7 +1312,16 @@ impl Parser {
                     Token::Identifier(name) => {
                         self.advance();
                         self.skip_noise();
-                        
+
+                        // `Print the origin's x.` - the same field chain as the
+                        // bare `origin's x`, since `the` is only an article
+                        // here (plan 310 §3).
+                        if let Some(thing) = self.thing_of_variable(&name) {
+                            if self.possessive_follows() {
+                                return self.parse_thing_field_expr(name, &thing);
+                            }
+                        }
+
                         // Check for property access: "the now's hour"
                         if *self.current() == Token::Apostrophe {
                             self.advance();

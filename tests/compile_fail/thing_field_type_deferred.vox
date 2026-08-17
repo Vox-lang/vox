@@ -1,0 +1,7 @@
+(Compile-fail: plan 310 §6 - the v1 field types are number, float, boolean,
+ time, and any previously defined thing. Text is deferred pending the
+ handle-copy verification §6 asks for, so a text field is rejected at the
+ definition rather than declared as eight bytes nobody can copy or print.)
+
+A thing called label has
+  a text called caption.

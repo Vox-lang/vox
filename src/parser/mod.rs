@@ -60,6 +60,17 @@ pub struct Parser {
     // thing must be defined before any use of its name - a field type
     // naming a later thing is an unknown type, not a forward reference.
     things: std::collections::HashMap<String, ast::ThingDef>,
+    // Which thing each declared variable holds, by variable name (plan 310
+    // §3). This is what lets `origin's x` parse as a field chain rather than
+    // an object property: the possessive's meaning depends on what the base
+    // is, and only a declaration says so.
+    //
+    // Deliberately flat and never popped, like the parser's other tables: it
+    // answers "is this name a thing variable" for the shape of the parse, and
+    // scope is the analyzer's job (a use outside the declaring scope is its
+    // "Unknown variable"). The same "declared before used" rule that makes
+    // one pass enough for definitions applies to declarations too.
+    thing_vars: std::collections::HashMap<String, String>,
 }
 
 #[cfg(test)]
@@ -96,11 +107,24 @@ impl Parser {
             saw_library_decl: false,
             warnings: Vec::new(),
             things: std::collections::HashMap::new(),
+            thing_vars: std::collections::HashMap::new(),
         }
     }
 
     pub fn with_source(mut self, filename: &str, content: &str) -> Self {
         self.source_file = Some(SourceFile::new(filename, content));
+        self
+    }
+
+    /// Hand this parser the thing definitions and thing variables another
+    /// parser has already seen. A format string's `{...}` placeholder is
+    /// parsed by a fresh sub-parser (`try_parse_expression`), which without
+    /// this knows no things at all - so `"{origin's x}"` would fail to parse
+    /// as an expression and fall back to a literal `{origin's x}` placeholder.
+    /// §3 lists interpolation as one of the places a field must work.
+    pub(crate) fn with_things_of(mut self, outer: &Parser) -> Self {
+        self.things = outer.things.clone();
+        self.thing_vars = outer.thing_vars.clone();
         self
     }
 

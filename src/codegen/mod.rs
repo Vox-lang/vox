@@ -147,6 +147,16 @@ pub struct CodeGenerator {
     initialized_globals: std::collections::HashSet<String>,
     in_function_codegen: bool,
     target_arch: String,
+    /// Every thing defined in the program (plan 310), keyed by name. Sizes and
+    /// field offsets are read from `analyzer::things`, so validation and
+    /// emission compute one layout from one place.
+    things: crate::analyzer::things::ThingRegistry,
+    /// Which thing each thing variable holds, by variable name. Seeded from
+    /// the whole main line before any label or statement is emitted, then
+    /// extended by each declaration as it is generated. Clone-and-restored
+    /// around a function body like `declared_types`, so a function's own
+    /// locals do not leak into what is generated after it.
+    thing_vars: HashMap<String, String>,
 }
 
 
@@ -209,6 +219,7 @@ mod collections;
 mod print;
 mod expr;
 mod statements;
+mod things;
 
 // ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
 //
@@ -391,6 +402,8 @@ impl CodeGenerator {
             initialized_globals: std::collections::HashSet::new(),
             in_function_codegen: false,
             target_arch: "x86_64".to_string(),
+            things: HashMap::new(),
+            thing_vars: HashMap::new(),
         }
     }
 

@@ -207,6 +207,21 @@ impl Parser {
             return Ok(Statement::ElementSet { list, index, value });
         }
 
+        // `Set origin's x to 3.` writes a field of a thing (plan 310 §3). This
+        // sits before the map-access attempt below because that one swallows a
+        // failed parse to fall through to the generic path: a mistyped field
+        // name must reach its own diagnostic, not be re-read as something else.
+        if let Some((base, path, _)) = self.try_parse_thing_field_target()? {
+            self.skip_noise();
+            if !matches!(self.current(), Token::To | Token::Is | Token::Equals) {
+                return Err(self.err_expected("'to' after a field of a thing", self.current()));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = self.parse_expression()?;
+            return Ok(Statement::SetThingField { base, path, value });
+        }
+
         // Handle "Set <map>'s \"<key>\" to <value>" (map insert/replace).
         // The target `<map>'s \"<key>\"` parses as an Expr::MapAccess, so we
         // tentatively parse a primary and commit only if it is a MapAccess
@@ -243,8 +258,13 @@ impl Parser {
             return Err(self.err_thing_created_as_variable());
         }
 
-        // Check for typed declaration: "<type> called <name>"
-        let var_type = self.try_parse_type_noun();
+        // Check for typed declaration: "<type> called <name>". A defined
+        // thing's name is a type noun here exactly like a builtin one, which
+        // is what makes `Create a point called p.` valid and equivalent to
+        // `a point called p.` (plan 310 §10).
+        let var_type = self
+            .try_parse_type_noun()
+            .or_else(|| self.try_parse_thing_type_noun());
 
         if let Some(var_type) = var_type {
             // Types that must be followed by `called` in declaration position
@@ -272,9 +292,16 @@ impl Parser {
             // Check for keyword used as variable name
             self.check_not_keyword(self.current())?;
 
+            let name_pos = self.pos;
             let name = self.parse_name()?;
 
             self.skip_noise();
+
+            // A thing declaration takes no initializer in this task, and its
+            // name may not reuse the thing's own (plan 310 §5, §10).
+            if let Type::Thing(thing) = var_type {
+                return self.finish_thing_declaration(thing, name, name_pos);
+            }
 
             // Timer has its own statement type.
             if var_type == Type::Timer {
@@ -453,8 +480,11 @@ impl Parser {
         }
 
         // Parse type noun: number, int, float, text, boolean, list, map,
-        // buffer, file, time, timer, value.
-        let var_type = self.try_parse_type_noun();
+        // buffer, file, time, timer, value - or a defined thing's name, which
+        // works everywhere a type keyword works (plan 310 §1).
+        let var_type = self
+            .try_parse_type_noun()
+            .or_else(|| self.try_parse_thing_type_noun());
 
         // Types that must be followed by `called` in declaration position
         // get their existing specific diagnostic before the generic expect.
@@ -485,9 +515,16 @@ impl Parser {
 
         // Get variable name (plan 270: bare or quoted identifier, never a
         // string literal).
+        let name_pos = self.pos;
         let name = self.parse_name()?;
 
         self.skip_noise();
+
+        // A thing declaration takes no initializer in this task, and its name
+        // may not reuse the thing's own (plan 310 §5, §10).
+        if let Some(Type::Thing(thing)) = var_type {
+            return self.finish_thing_declaration(thing, name, name_pos);
+        }
 
         // Timer has its own statement type.
         if var_type == Some(Type::Timer) {

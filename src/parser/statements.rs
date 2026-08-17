@@ -53,19 +53,10 @@ impl Parser {
             self.skip_all_whitespace();
         }
 
-        let mut program = Program::new(statements);
-        // Carry the thing registry onto the program in definition order, so
-        // consumers get a stable layout order without re-deriving it from a
-        // HashMap's iteration order.
-        program.things = program
-            .statements
-            .iter()
-            .filter_map(|s| match s {
-                Statement::ThingDecl(def) => Some(def.clone()),
-                _ => None,
-            })
-            .collect();
-        Ok(program)
+        // `Program::new` derives the thing registry from the statement list
+        // in definition (layout) order, so there is nothing to attach here -
+        // and no construction path that can forget to.
+        Ok(Program::new(statements))
     }
 
     pub(crate) fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
@@ -411,6 +402,16 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `increment origin's x.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Add,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Increment { name })
@@ -426,12 +427,38 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `decrement cistern's 'litres drained'.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Subtract,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Decrement { name })
     }
 
     pub(crate) fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `origin's y is origin's y add 1.` - a field is an lvalue in a bare
+        // assignment too (plan 310 §3), so this is checked before the name is
+        // read as a variable or a callee.
+        if let Some((base, path, _)) = self.try_parse_thing_field_target()? {
+            self.skip_noise();
+            // `is`/`=` only, exactly like the bare assignment to a plain name
+            // below - `to` is the `Set ... to ...` spelling's separator.
+            if !matches!(self.current(), Token::Is | Token::Equals) {
+                return Err(self.err_expected("'is' after a field of a thing", self.current()));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = self.parse_expression()?;
+            return Ok(Statement::SetThingField { base, path, value });
+        }
+
         let name = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             _ => return Err(self.err("Expected identifier")),

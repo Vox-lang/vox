@@ -590,7 +590,14 @@ impl Analyzer {
             Expr::StringLit(_) => {
                 self.deps.uses_strings = true;
             }
-            
+
+            // A field read (plan 310 §3). Never fails at runtime - the offset
+            // is a compile-time constant - so unlike element access there is
+            // no error-flag path to declare here.
+            Expr::ThingField { base, path } => {
+                self.analyze_thing_field(base, path);
+            }
+
             Expr::FormatString { parts } => {
                 self.deps.uses_strings = true;
                 for part in parts {
@@ -629,6 +636,13 @@ impl Analyzer {
                                 } else {
                                     self.track_typo_candidate(name);
                                 }
+                            } else if let Some(thing) = self.thing_of_variable(name) {
+                                // `"{origin}"` interpolates a whole thing,
+                                // which follows the printing rule (plan 310
+                                // §7) - a later task. A field of it (`"{origin's
+                                // x}"`) parses as an Expression part instead
+                                // and is fine.
+                                self.push_whole_thing_not_a_value(name, &thing);
                             }
                         }
                         FormatPart::Literal(_) => {}
@@ -638,6 +652,13 @@ impl Analyzer {
             
             Expr::Identifier(name) => {
                 self.track_identifier(name);
+                // A thing variable's bare name is not a value (plan 310 §5/§7).
+                if let Some(thing) = self.thing_of_variable(name) {
+                    if self.is_variable_available(name) {
+                        self.push_whole_thing_not_a_value(name, &thing);
+                        return;
+                    }
+                }
                 if !self.is_variable_available(name) && name != "_iter" {
                     // Plan 270 G4: a bare/quoted identifier naming a
                     // zero-argument function is a call in expression position,
