@@ -45,8 +45,11 @@ thrown at them.
 Also in this release: Vox grows real process control — `Send signal`
 performs `kill(2)`, `reap ... without waiting` polls without blocking,
 and `the reaped status` finally tells you *how* a child died. Decoding it
-lives in `lib/process.vox`, **the first file of the Vox standard
-library** — written in Vox, naturally. A pure-Vox process supervisor
+lives in `lib/process.vox`, **a library written in Vox, naturally** —
+not a standard library, and not something the compiler needs: `the
+reaped status` hands you the raw word and any program may decode it
+itself. Vox has no standard library on purpose, and the compiler runs
+perfectly with none installed. A pure-Vox process supervisor
 (fork, poll, timeout, kill, classify) now needs no shell and no
 coreutils. Timers were caught reporting a 100 ms wait as a full second
 and now measure honestly, which matters rather a lot for the benchmarking
@@ -147,14 +150,27 @@ The full ledger:
   `waiting` remain ordinary identifiers everywhere they are not these
   forms. Strictly additive: no existing program changes meaning.
 
-- **`lib/process.vox`, the first standard-library file.** Ships in the
-  repo as ordinary Vox and decodes the raw wait-status word with four
+- **`lib/process.vox`, a library for decoding a wait status.** Ships in
+  the repo as ordinary Vox and decodes the raw wait-status word with four
   functions matching the `<sys/wait.h>` macros: `'exit code of'` (bits
   8–15), `'signal of'` (the low 7 bits), `crashed` (true if a signal
   killed it), and `'exited normally'` (true if no signal was involved).
   Pulled in with `see "./lib/process.vox".`. Decoding lives here rather
   than in the compiler so that user-defined things (plan 310) can later
   wrap a status in a `process` thing with no compiler change.
+
+  **This is a convenience library, not a standard library, and the
+  compiler does not depend on it.** `the reaped status` is complete on
+  its own — it returns the raw word, and any program may decode it with
+  `divide`, `modulo`, and `bit-and` without `see`ing anything. Vox
+  deliberately has no standard library: the compiler must build and run
+  with an empty `/usr/share/vox/lib/`, and a language that assumed a
+  package were installed would have a circular dependency it could never
+  pay off. That directory is a *convention for users* — a place to drop
+  your own libraries and reach them by bare name — not a compiler
+  requirement. (An earlier draft of these notes called this file "the
+  first standard-library file". That was wrong on both counts and is
+  corrected here.)
 
 ### Fixed
 
