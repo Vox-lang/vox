@@ -975,6 +975,116 @@ broader reach than the red team's own search had found). Regression tests:
 `_str_eq`/`_mem_eq` call is emitted for a mismatch, while a genuine
 stringy-vs-stringy comparison still is.
 
+### 21. A string literal in an `If`/`While` condition inside a function body resolves as a variable name
+
+**Status:** open as of v0.4.2. Fix staged in plan 316. Found by the
+vox-fuzz plan red team (2026-08-18); independently reproduced before
+filing.
+
+```vox
+To g with a text called w.
+  If w is not "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+Print g of "hang".
+```
+
+```
+error: Unknown variable: banana
+  --> repro.vox:2:15
+```
+
+LANGUAGE.md's identifier rules say a `"..."` is a string literal
+**everywhere** and never an identifier. The same comparison works at top
+level, works as `Return a boolean, w is "banana".` inside a function, and
+works when the literal is first bound to a local. Only `If`/`While`
+**conditions inside a function body**, string literals only, all four
+comparison spellings (`is`, `is equal to`, `is not`, `is not equal to`);
+number literals in the same position are fine.
+
+`grep -rn '^\s\+\(If\|While\) .*is\( not\)\?\( equal to\)\? "' examples/ tests/`
+returns zero hits — no test or example in the repo exercises the shape,
+which is how it survived. Workaround until fixed: bind the literal to a
+named local and compare against that.
+
+### 22. An integer literal too large for 64 bits compiles silently and evaluates to 0
+
+**Status:** open as of v0.4.2. Found by the vox-fuzz plan red team
+(2026-08-18); independently reproduced before filing.
+
+```vox
+Print 99999999999999999999999999.
+```
+
+Compiles clean, prints `0`. No error, no warning. LANGUAGE.md documents
+`number` as "Whole numbers" with no stated range, so there is no
+documented licence for the wrap-to-zero — it is a silent wrong answer,
+and the worst kind: arithmetic built on such a literal is quietly wrong
+everywhere downstream. A literal that cannot be represented should be a
+compile-time error, the way an out-of-range file-descriptor literal
+already is (LANGUAGE.md documents that check explicitly).
+
+Also worth noting for the fuzzer: this is exactly the class of defect a
+differential oracle would catch and the crash-only invariant cannot —
+recorded in vox-fuzz's DECISIONS.md as evidence for the deferred oracle.
+
+---
+
+### 23. Printing a list of `arguments's all` elements leaks raw pointers; element access is fine
+
+**Status:** open as of v0.4.2. Sibling of #17 and #18 (element-tag
+mis-attribution), distinct site. Found by the vox-fuzz plan red team
+(2026-08-18); independently reproduced before filing.
+
+```vox
+a list called everything is arguments's all.
+Print everything.                (wrong: [140728673871980, 140728673871986])
+Print element 1 of everything.   (correct: alpha)
+```
+
+Run with `./program alpha beta`. The elements' payloads are sound string
+pointers — `element 1 of` reads one back as text correctly — but
+whole-list printing dispatches on the elements' type tags and treats
+them as integers, printing the pointers. Same shape as #17's root cause
+(payload right, tag wrong), but #17's fix covered `Expr::FormatString`;
+whatever expression produces `arguments's all`'s elements needs the same
+tag arm.
+
+### 24. Reading an unset environment variable by name segfaults — `On error` cannot catch it
+
+**Status:** open as of v0.4.2. Found 2026-08-18 during review of vox-fuzz's
+foundation work; minimal repro is one line.
+
+```vox
+Print environment's "DEFINITELY_NOT_SET_ANYWHERE".
+```
+
+Dies with SIGSEGV (exit 139). An `On error` handler on the reading
+statement does not fire — the crash happens before any error flag is set.
+The same read with the variable present works, and the documented
+guard-then-read pattern works in both directions:
+
+```vox
+a text called 'the compiler' is "../vox/target/release/vox".
+If the environment variable "VOX" exists then,
+    Set 'the compiler' to environment's "VOX".
+```
+
+LANGUAGE.md's own examples only ever read after an exists-check (or read
+variables like USER that always exist), so the unguarded read is arguably
+misuse — but Vox's core promise is that failure surfaces through
+compile-time rejection or runtime error flags, never memory corruption. A
+missing variable should set the error flag and yield empty text, the same
+contract as every other fallible read. Same family as #16 (uninitialised
+text read segfaults): a text-typed slot consumed before anything backs it.
+
+Noted with some satisfaction: this is the first compiler bug surfaced by
+the vox-fuzz project's own build-out — a one-line program that dies by
+signal is precisely the invariant the fuzzer exists to enforce.
+
+---
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
