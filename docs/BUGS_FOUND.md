@@ -1008,6 +1008,49 @@ returns zero hits — no test or example in the repo exercises the shape,
 which is how it survived. Workaround until fixed: bind the literal to a
 named local and compare against that.
 
+### 22. An integer literal too large for 64 bits compiles silently and evaluates to 0
+
+**Status:** open as of v0.4.2. Found by the vox-fuzz plan red team
+(2026-08-18); independently reproduced before filing.
+
+```vox
+Print 99999999999999999999999999.
+```
+
+Compiles clean, prints `0`. No error, no warning. LANGUAGE.md documents
+`number` as "Whole numbers" with no stated range, so there is no
+documented licence for the wrap-to-zero — it is a silent wrong answer,
+and the worst kind: arithmetic built on such a literal is quietly wrong
+everywhere downstream. A literal that cannot be represented should be a
+compile-time error, the way an out-of-range file-descriptor literal
+already is (LANGUAGE.md documents that check explicitly).
+
+Also worth noting for the fuzzer: this is exactly the class of defect a
+differential oracle would catch and the crash-only invariant cannot —
+recorded in vox-fuzz's DECISIONS.md as evidence for the deferred oracle.
+
+---
+
+### 23. Printing a list of `arguments's all` elements leaks raw pointers; element access is fine
+
+**Status:** open as of v0.4.2. Sibling of #17 and #18 (element-tag
+mis-attribution), distinct site. Found by the vox-fuzz plan red team
+(2026-08-18); independently reproduced before filing.
+
+```vox
+a list called everything is arguments's all.
+Print everything.                (wrong: [140728673871980, 140728673871986])
+Print element 1 of everything.   (correct: alpha)
+```
+
+Run with `./program alpha beta`. The elements' payloads are sound string
+pointers — `element 1 of` reads one back as text correctly — but
+whole-list printing dispatches on the elements' type tags and treats
+them as integers, printing the pointers. Same shape as #17's root cause
+(payload right, tag wrong), but #17's fix covered `Expr::FormatString`;
+whatever expression produces `arguments's all`'s elements needs the same
+tag arm.
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
