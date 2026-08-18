@@ -7,8 +7,9 @@
  makes a sentence: `fork the process`, `reap ... without waiting`,
  `Send signal`, and `the reaped status`.)
 
-(The kernel packs how a child ended into one status word. Decoding it is
- ordinary Vox, and it lives in the standard library.)
+(The kernel packs how a child ended into one status word. The compiler
+ knows nothing about that encoding and does not need to: decoding it is
+ ordinary Vox, kept in a small library in this repo.)
 see "../lib/process.vox".
 
 (A job that has not finished within this long is a job that never will.)

@@ -3680,7 +3680,11 @@ ordinary variable reference. (`tests/102_fork_reap.vox` does
 #### Decoding the status: `lib/process.vox`
 
 The compiler knows nothing about the wait-status encoding. Decoding lives
-in `lib/process.vox`, Vox's first standard-library file, as ordinary Vox:
+in `lib/process.vox`, a convenience library shipped in this repo as
+ordinary Vox — not a standard library, and not something the compiler
+depends on: `the reaped status` hands back the raw word, and a program may
+decode it with `divide`, `modulo`, and `bit-and` without `see`ing
+anything. Vox has no standard library on purpose.
 
 ```
 see "./lib/process.vox".
