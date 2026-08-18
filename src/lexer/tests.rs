@@ -21,16 +21,17 @@
     #[test]
     fn possessive_single_apostrophe_form_lexes_identifier_then_s() {
         // Plan 270 §5: `'name's` reads as the quoted identifier plus the
-        // possessive marker, not `Unknown function: s`. `length` is the
-        // reserved size/length property keyword (`Token::Size`), matching
-        // the plan's own canonical example (`'total items's length`).
+        // possessive marker, not `Unknown function: s`. `length` is a
+        // contextual word (a synonym of `size` in the possessive dispatch
+        // only), so it lexes as an ordinary identifier, matching the
+        // plan's own canonical example (`'total items's length`).
         assert_eq!(
             tokens_of("'my nums's length"),
             vec![
                 Token::Identifier("my nums".to_string()),
                 Token::Apostrophe,
                 Token::Identifier("s".to_string()),
-                Token::Size,
+                Token::Identifier("length".to_string()),
             ]
         );
     }

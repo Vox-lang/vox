@@ -68,9 +68,9 @@ impl Parser {
     ///
     /// The diagnostic names the identifier the user *actually typed*, not
     /// the compiler's internal canonical keyword: the lexer folds aliases
-    /// like `length` onto `Token::Size` before this runs, so without
-    /// recovering the source spelling the message would blame `size` for a
-    /// `length` the user wrote (BUGS_FOUND #6). When the typed spelling is
+    /// like `message` onto `Token::Text` before this runs, so without
+    /// recovering the source spelling the message would blame `text` for a
+    /// `message` the user wrote (BUGS_FOUND #6). When the typed spelling is
     /// an alias of the canonical keyword, the message says so.
     pub(crate) fn check_not_keyword(&self, token: &Token) -> Result<(), Box<CompileError>> {
         if let Some(keyword) = token.as_keyword() {
@@ -396,7 +396,20 @@ impl Parser {
                 if *self.current() == Token::With || *self.current() == Token::Of {
                     self.advance();
                     self.skip_noise();
-                    self.expect(&Token::Size);
+                    // `size` and `capacity` are contextual: claim the lexeme,
+                    // not a token. `with capacity N` is the same phrase as
+                    // `with size N` (capacity is a synonym the user endorsed);
+                    // `expect_lexeme` advances on match, so a single guard
+                    // accepts either lexeme rather than two calls back-to-back.
+                    if matches!(
+                        self.current(),
+                        Token::Identifier(ref id)
+                            if id.to_lowercase() == "size" || id.to_lowercase() == "capacity"
+                    ) {
+                        self.advance();
+                    } else {
+                        return Err(self.error_expected_token("size or capacity", self.current()));
+                    }
                     self.skip_noise();
                     let size = self.parse_primary()?;
                     return Ok(Statement::BufferDecl { name, size });
@@ -667,7 +680,8 @@ impl Parser {
                     if *self.current() == Token::In {
                         self.advance();
                         self.skip_noise();
-                        if !self.expect(&Token::Size) {
+                        // `size` is contextual: claim the lexeme, not a token.
+                        if !self.expect_lexeme("size") {
                             return Err(self.error_expected_token("size", self.current()));
                         }
                     }

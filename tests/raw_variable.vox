@@ -1,0 +1,9 @@
+A number called raw is 0.
+Set raw to raw add 1.
+Print raw.
+While raw is less than 3,
+  Set raw to raw add 1,
+  Print raw.
+To 'bump' with a number called raw. Return a number, raw add 10.
+Print 'bump' of raw.
+Print each item from arguments's raw.

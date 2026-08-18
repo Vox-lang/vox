@@ -4384,11 +4384,10 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `ms` | `milliseconds` | Time duration units (`Wait 500 ms.`) |
 | `message` | `text` | Type name (`a message called ...` is treated as `text`) |
 | `string` | `text` | Type name (already listed in the type synonyms) |
-| `length` | `size` | Collection/buffer property (`x's length` is the same as `x's size`) |
 
-These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called length is ...` reports `'length'` as an alternate spelling of `'size'`, not the internal canonical name.
+These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name. (`length` used to appear here as an alias of `size`; it is now a contextual keyword — see below — so `a number called length is 1.` compiles, and `x's length` still means the same as `x's size`.)
 
-Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'`, `'length'` — if you genuinely need it.)
+Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'` — if you genuinely need it.)
 
 ### Two classes of special word
 
@@ -4405,7 +4404,17 @@ Not every word with a special meaning is reserved. Vox distinguishes:
   claimed after a possessive marker and in the `the argument count` /
   `the environment variable count` phrases, so
   `a number called count is 0.` compiles while `arguments's count` keeps
-  its meaning.
+  its meaning. Since 0.4.3 the same treatment extends to the whole
+  possessive/phrase family: `capacity` (also the `with capacity N` /
+  `of capacity N` buffer phrase), `raw`, `all` (also the
+  `all the numbers from/between …` range), `first`, `last`, `second`
+  (also the `Wait 1 second.` unit — `Set second to 1. Wait second seconds.`
+  compiles and waits one second), `size` and its synonym `length` (also
+  `with size N` and `N bytes in size`), and `version` (the
+  `Library <name> version "…"` and `see <lib> version "…"` headers). Each
+  is a bare variable name everywhere except its one fixed grammatical
+  position; `arguments's first` and `a number called first is 0.` both
+  work in the same program.
 
 The test for which class a word belongs in: if every position where the
 word means something is grammatically identifiable, it is contextual; only

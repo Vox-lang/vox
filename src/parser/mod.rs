@@ -300,8 +300,8 @@ impl Parser {
     }
 
     /// Recover the identifier spelling the user actually wrote at the
-    /// current token. The lexer canonicalises aliases (`length` →
-    /// `Token::Size`, `ms` → `Token::Milliseconds`, …) so by the time
+    /// current token. The lexer canonicalises aliases (`ms` →
+    /// `Token::Milliseconds`, `message` → `Token::Text`, …) so by the time
     /// `check_not_keyword` runs the original text is gone from the token;
     /// this reads it back from the source line so the diagnostic can name
     /// the word the user typed rather than the internal canonical keyword
@@ -374,6 +374,19 @@ impl Parser {
 
     fn expect(&mut self, expected: &Token) -> bool {
         if self.current() == expected {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Like `expect`, but matches an ordinary identifier by its lexeme
+    /// (case-insensitive). Used for contextual words that are no longer
+    /// reserved tokens (`size`, …): the parser claims them in a fixed
+    /// grammatical position by the word itself, not a token kind.
+    fn expect_lexeme(&mut self, lexeme: &str) -> bool {
+        if matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == lexeme) {
             self.advance();
             true
         } else {

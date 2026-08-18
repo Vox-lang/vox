@@ -611,9 +611,17 @@ impl Parser {
         let duration = self.parse_primary()?;
         self.skip_noise();
         
-        // Parse unit: second(s), millisecond(s)
+        // Parse unit: second(s), millisecond(s). `second` (singular) is a
+        // contextual word — an ordinary identifier claimed here by lexeme
+        // as the unit, so a variable named `second` coexists with the unit
+        // (`Wait second seconds.` waits one second; `Set second to 1.` is
+        // the variable). `seconds` (plural) stays a reserved token.
         let unit = match self.current() {
-            Token::Second | Token::Seconds => {
+            Token::Seconds => {
+                self.advance();
+                ast::TimeUnit::Seconds
+            }
+            Token::Identifier(ref id) if id.to_lowercase() == "second" => {
                 self.advance();
                 ast::TimeUnit::Seconds
             }
