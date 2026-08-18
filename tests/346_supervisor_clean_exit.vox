@@ -1,11 +1,28 @@
 (The spec's supervisor loop, end to end, on the clean-exit path. The
  child exits at once; the parent polls with non-blocking reap until it
- sees the child's pid, then decodes the status with lib/process.vox. The
+ sees the child's pid, then decodes the status inline. The
  fast child is reaped long before the five-second deadline fires. This
  is the acceptance test for the whole plan: both new forms plus the
  library, working together with no shelling out.)
 
-see "../lib/process.vox".
+(Decode the status inline with the kernel's own encoding - the low
+ seven bits are the terminating signal, the next eight the exit code.
+ Deliberately no `see`: `the reaped status` is a complete compiler
+ feature, and this test must pass with nothing installed at all.)
+
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
+
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
+
+To crashed with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is not 0.
+
+To 'exited normally' with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is 0.
 
 Set pid to fork the process.
 If pid is 0 then,

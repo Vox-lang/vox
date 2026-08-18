@@ -6,7 +6,24 @@
  outcome is asserted, not the duration, because the exact moment of
  death depends on scheduling.)
 
-see "../lib/process.vox".
+(Decode the status inline with the kernel's own encoding - the low
+ seven bits are the terminating signal, the next eight the exit code.
+ Deliberately no `see`: `the reaped status` is a complete compiler
+ feature, and this test must pass with nothing installed at all.)
+
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
+
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
+
+To crashed with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is not 0.
+
+To 'exited normally' with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is 0.
 
 Set pid to fork the process.
 If pid is 0 then,
