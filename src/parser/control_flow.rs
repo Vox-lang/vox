@@ -630,6 +630,7 @@ impl Parser {
             Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::IntegerLiteralOverflow(raw) => return Err(self.integer_literal_overflow_error(&raw)),
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
             Token::True => { self.advance(); Expr::BoolLit(true) }
             Token::False => { self.advance(); Expr::BoolLit(false) }
@@ -672,6 +673,7 @@ impl Parser {
             Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::IntegerLiteralOverflow(raw) => return Err(self.integer_literal_overflow_error(&raw)),
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
             Token::True => { self.advance(); Expr::BoolLit(true) }
             Token::False => { self.advance(); Expr::BoolLit(false) }

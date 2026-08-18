@@ -322,32 +322,6 @@ impl Analyzer {
         }
     }
 
-    fn validate_function_condition_variable_refs(&mut self, expr: &Expr) {
-        if !self.in_function_scope {
-            return;
-        }
-
-        match expr {
-            Expr::StringLit(name) => {
-                self.track_identifier(name);
-                if !self.is_variable_available(name) {
-                    self.push_unknown_variable(name);
-                }
-            }
-            Expr::UnaryOp {
-                op: UnaryOperator::Not,
-                operand,
-            } => {
-                self.validate_function_condition_variable_refs(operand);
-            }
-            Expr::BinaryOp { left, right, .. } => {
-                self.validate_function_condition_variable_refs(left);
-                self.validate_function_condition_variable_refs(right);
-            }
-            _ => {}
-        }
-    }
-
     fn validate_file_open_path(&mut self, path: &Expr) {
         const OPEN_PATH_GUIDANCE: &str = "Open path must be either a text path like \"/path/to/file\" or a file descriptor number (0 = stdin, 1 = stdout, 2 = stderr).";
 
@@ -792,7 +766,6 @@ impl Analyzer {
             }
 
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
-                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
 
                 // Branches are analyzed with the same incoming scope.
@@ -815,7 +788,6 @@ impl Analyzer {
                 for (cond, block) in else_if_blocks {
                     let saved_env = self.current_env();
                     self.apply_env(&branch_env);
-                    self.validate_function_condition_variable_refs(cond);
                     self.analyze_expr(cond);
                     self.apply_env(&saved_env);
                     let (elif_env, elif_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
@@ -839,7 +811,6 @@ impl Analyzer {
             }
             
             Statement::While { condition, body } => {
-                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
                 self.loop_depth += 1;
                 for s in body {

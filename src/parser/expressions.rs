@@ -341,6 +341,9 @@ impl Parser {
                             self.advance();
                             self.skip_noise();
                         }
+                        Token::IntegerLiteralOverflow(ref raw) => {
+                            return Err(self.integer_literal_overflow_error(raw));
+                        }
                         Token::Identifier(ref fused) => {
                             // e.g. "base16", "base8", "base2" as one token
                             if let Ok(n) = fused.parse::<u32>() {
@@ -634,6 +637,19 @@ impl Parser {
             Token::Minus => {
                 self.advance();
                 self.skip_noise();
+                // BUGS_FOUND #22: `i64::MIN`'s magnitude (9223372036854775808)
+                // has no positive i64 representation, so the lexer always
+                // reports it via `IntegerLiteralOverflow` - the *only* place
+                // that magnitude is a valid literal is right here, negated.
+                // Recognised by raw decimal text, not by re-parsing into a
+                // wider int, so this stays scoped to the exact boundary
+                // rather than accepting any oversized literal after a minus.
+                if let Token::IntegerLiteralOverflow(raw) = self.current().clone() {
+                    if raw == "9223372036854775808" {
+                        self.advance();
+                        return Ok(Expr::IntegerLit(i64::MIN));
+                    }
+                }
                 let operand = self.parse_primary()?;
                 Ok(Expr::UnaryOp {
                     op: UnaryOperator::Negate,
@@ -768,6 +784,9 @@ impl Parser {
             Token::IntegerLiteral(n) => {
                 self.advance();
                 Ok(Expr::IntegerLit(n))
+            }
+            Token::IntegerLiteralOverflow(raw) => {
+                Err(self.integer_literal_overflow_error(&raw))
             }
             Token::FloatLiteral(n) => {
                 self.advance();

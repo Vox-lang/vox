@@ -4,6 +4,31 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The fuzzer's remaining three findings, closed.** With 0.4.3's two
+  segfaults, that clears every bug vox-fuzz has reported.
+  - **An integer literal too large for 64 bits compiled silently and
+    evaluated to `0`** ([#22](docs/BUGS_FOUND.md)) — a wrong answer with
+    no crash, which is the failure mode this manual says the language
+    exists to prevent. It is now a compile-time error naming both the
+    literal and the valid range. `9223372036854775807` still compiles.
+  - **Printing a list of `arguments's all` leaked raw pointers**
+    ([#23](docs/BUGS_FOUND.md)) while `element N of` read the same
+    values back correctly — the payloads were sound, their type tags
+    were not. Same family as #17/#18, fixed the same way.
+  - **A string literal in a function-body `If`/`While` condition
+    resolved as a variable name** ([#21](docs/BUGS_FOUND.md)) —
+    `If w is not "banana"` failed with `Unknown variable: banana`. This
+    one was a **regression**: an analyzer helper reintroduced the
+    pre-0.3.0 quoted-token-as-identifier ambiguity that #19 removed from
+    codegen, and it sat unreachable until an April cleanup widened a
+    recursion guard and exposed it. The helper is deleted; a
+    compile-fail test pins that genuine undeclared-identifier detection
+    still works without it.
+
 ## [0.4.3] - 2026-08-18
 
 ### Fixed

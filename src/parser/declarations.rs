@@ -27,6 +27,18 @@ impl Parser {
         self.make_error_with_suggestion(&msg, &got_str)
     }
 
+    /// BUGS_FOUND #22: a literal whose text cannot be represented in a
+    /// 64-bit signed integer is a compile error, matching the diagnostic
+    /// shape of the existing out-of-range file-descriptor check
+    /// (`analyzer/statements.rs`'s `validate_file_open_path`) rather than
+    /// silently wrapping to 0 or promoting to float.
+    pub(crate) fn integer_literal_overflow_error(&self, raw: &str) -> Box<CompileError> {
+        self.err(&format!(
+            "Integer literal out of range: {} does not fit in a 64-bit number. Valid range is {}..{}.",
+            raw, i64::MIN, i64::MAX
+        ))
+    }
+
     /// Creates an error for invalid buffer size specifications
     pub fn error_invalid_buffer_size(
         &self,

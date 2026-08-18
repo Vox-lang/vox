@@ -63,6 +63,11 @@ pub enum Token {
     
     // Literals
     IntegerLiteral(i64),
+    /// An integer literal whose text does not fit in a 64-bit signed
+    /// integer (BUGS_FOUND #22). Carries the raw source text (with a
+    /// `0x`/`0b` prefix for hex/binary literals) so the parser can name the
+    /// offending literal in its diagnostic. Never silently coerced to 0.
+    IntegerLiteralOverflow(String),
     FloatLiteral(f64),
     StringLiteral(String),
     
@@ -394,6 +399,7 @@ impl Token {
             Token::Without => Some("without"),
             // Not keywords - these are identifiers, literals, punctuation, or special
             Token::IntegerLiteral(_) => None,
+            Token::IntegerLiteralOverflow(_) => None,
             Token::FloatLiteral(_) => None,
             Token::StringLiteral(_) => None,
             Token::Identifier(_) => None,

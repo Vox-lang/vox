@@ -52,6 +52,9 @@ impl Parser {
                 self.advance();
                 Ok(Expr::IntegerLit(n))
             }
+            Token::IntegerLiteralOverflow(raw) => {
+                Err(self.integer_literal_overflow_error(&raw))
+            }
             Token::FloatLiteral(n) => {
                 self.advance();
                 Ok(Expr::FloatLit(n))
@@ -276,6 +279,9 @@ impl Parser {
             Token::IntegerLiteral(n) => {
                 self.advance();
                 Expr::IntegerLit(n)
+            }
+            Token::IntegerLiteralOverflow(raw) => {
+                return Err(self.integer_literal_overflow_error(&raw));
             }
             Token::FloatLiteral(n) => {
                 self.advance();

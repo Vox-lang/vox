@@ -1,0 +1,53 @@
+To check_is with a text called w.
+  If w is "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+To check_is_not with a text called w.
+  If w is not "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+To check_eq with a text called w.
+  If w is equal to "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+To check_neq with a text called w.
+  If w is not equal to "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+To check_while_is_not with a text called w.
+  While w is not "banana",
+      Return a number, 99.
+  Return a number, 0.
+
+To check_number with a number called n.
+  If n is 7 then,
+      Return a number, 1.
+  Return a number, 0.
+
+To check_bound_local with a text called w.
+  a text called target is "banana".
+  If w is target then,
+      Return a number, 1.
+  Return a number, 0.
+
+Print check_is of "banana".
+Print check_is of "x".
+Print check_is_not of "banana".
+Print check_is_not of "x".
+Print check_eq of "banana".
+Print check_eq of "x".
+Print check_neq of "banana".
+Print check_neq of "x".
+Print check_while_is_not of "banana".
+Print check_while_is_not of "x".
+Print check_number of 7.
+Print check_number of 8.
+Print check_bound_local of "banana".
+Print check_bound_local of "x".
+
+If "banana" is "banana" then, Print "top-level-eq". Otherwise, Print "top-level-ne".
+If "banana" is not "apple" then, Print "top-level-neq-eq". Otherwise, Print "top-level-neq-ne".

@@ -641,8 +641,22 @@ impl Parser {
             self.skip_noise();
         }
 
+        // BUGS_FOUND #22: `-9223372036854775808` (i64::MIN) is the one
+        // magnitude that only exists as a negated literal - see the matching
+        // comment in expressions.rs's `parse_primary`. Any other overflowing
+        // literal here is a compile error, named and bounded, same as
+        // everywhere else a literal is consumed.
+        if let Token::IntegerLiteralOverflow(raw) = self.current().clone() {
+            if negated && raw == "9223372036854775808" {
+                // fall through to the advance()/return below via `literal`
+            } else {
+                return Err(self.integer_literal_overflow_error(&raw));
+            }
+        }
+
         let literal = match self.current().clone() {
             Token::IntegerLiteral(n) => Some(Expr::IntegerLit(if negated { -n } else { n })),
+            Token::IntegerLiteralOverflow(_) => Some(Expr::IntegerLit(i64::MIN)),
             Token::FloatLiteral(f) => Some(Expr::FloatLit(if negated { -f } else { f })),
             Token::StringLiteral(s) if !negated => Some(Expr::StringLit(s)),
             Token::True if !negated => Some(Expr::BoolLit(true)),
