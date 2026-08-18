@@ -975,6 +975,39 @@ broader reach than the red team's own search had found). Regression tests:
 `_str_eq`/`_mem_eq` call is emitted for a mismatch, while a genuine
 stringy-vs-stringy comparison still is.
 
+### 21. A string literal in an `If`/`While` condition inside a function body resolves as a variable name
+
+**Status:** open as of v0.4.2. Fix staged in plan 316. Found by the
+vox-fuzz plan red team (2026-08-18); independently reproduced before
+filing.
+
+```vox
+To g with a text called w.
+  If w is not "banana" then,
+      Return a number, 1.
+  Return a number, 0.
+
+Print g of "hang".
+```
+
+```
+error: Unknown variable: banana
+  --> repro.vox:2:15
+```
+
+LANGUAGE.md's identifier rules say a `"..."` is a string literal
+**everywhere** and never an identifier. The same comparison works at top
+level, works as `Return a boolean, w is "banana".` inside a function, and
+works when the literal is first bound to a local. Only `If`/`While`
+**conditions inside a function body**, string literals only, all four
+comparison spellings (`is`, `is equal to`, `is not`, `is not equal to`);
+number literals in the same position are fine.
+
+`grep -rn '^\s\+\(If\|While\) .*is\( not\)\?\( equal to\)\? "' examples/ tests/`
+returns zero hits — no test or example in the repo exercises the shape,
+which is how it survived. Workaround until fixed: bind the literal to a
+named local and compare against that.
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
