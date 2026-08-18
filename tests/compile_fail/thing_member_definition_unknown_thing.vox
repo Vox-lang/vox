@@ -1,0 +1,16 @@
+(Compile-fail: plan 310 §4 - `To do the <thing>'s <name>` defines a member
+ of a thing that already exists, so a definition naming a type nothing
+ defines is reported as the missing type rather than as a stray `the`.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+To do the pointe's 'placed at', with a number called x.
+  a point called plotted.
+  Return a point, plotted.

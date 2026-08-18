@@ -1,0 +1,16 @@
+(Regression guard for the Repeat <count> times, loop. Phase A made
+ `times` a multiplication operator, and `times` is the same token the
+ Repeat loop consumes, yet the suite had only Rust unit tests for Repeat
+ — no .vox integration test at all. This locks the construct at
+ integration level: a literal count, a variable count, and a `times`
+ multiplication in a Print that must not be confused with the loop
+ keyword. Expected: tick, tick, tick, var, var, 24.)
+
+Repeat 3 times,
+  Print "tick".
+
+a number called k is 2.
+Repeat k times,
+  Print "var".
+
+Print 2 times 3 times 4.

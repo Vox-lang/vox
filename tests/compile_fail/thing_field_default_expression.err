@@ -1,0 +1,2 @@
+A field default must be a literal
+Anything computed belongs in a function that returns the thing.

@@ -1,0 +1,2 @@
+A call to 'nudged' returns a whole point, which is not a value
+What a call returns is copied into a point

@@ -1,0 +1,5 @@
+(Compile-fail: plan 310 §1 - a field default is a literal. An
+ identifier is not one.)
+
+A thing called point has
+  a number called x is other.

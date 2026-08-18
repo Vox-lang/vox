@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §3, §9 - and the same rule inside a function body.
+ A thing is defined where a function is defined, at the top level: its
+ layout is fixed for the whole program, so there is no reading of a
+ definition that belongs to one function.)
+
+To 'take a reading'.
+  A thing called measurement has
+    a number called degrees is 0.
+  Print "taken".
+
+'take a reading'.

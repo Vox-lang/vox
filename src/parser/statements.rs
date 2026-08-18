@@ -13,21 +13,72 @@ impl Parser {
         matches!(self.peek(off), Token::The | Token::Identifier(_))
     }
 
+    /// True when the token after the current one (skipping newline noise) is
+    /// the identifier `signal` (case-insensitive). Decides whether a
+    /// statement-initial `send` opens a `Send signal ...` statement or is an
+    /// ordinary call, mirroring `timer_name_follows` for the timer words so a
+    /// user-defined `send` function keeps working (the 0.3.7 precedent for
+    /// `begin`/`stop`/`finish`).
+    pub(crate) fn signal_keyword_follows(&self) -> bool {
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::Identifier(ref s) if s.eq_ignore_ascii_case("signal"))
+    }
+
     pub fn parse(&mut self) -> Result<Program, Box<CompileError>> {
+        let statements = self.parse_statement_list()?;
+
+        // The manifest is checked both ways (plan 310 §4, §10). "Nothing
+        // defines it" is the half that can only be known here, once every
+        // definition in the program has been read - which now means after the
+        // `see`n files have been read too, so a member declared in one file
+        // may be defined in another.
+        self.reject_undefined_members()?;
+
+        // `Program::new` derives the thing registry from the statement list
+        // in definition (layout) order, so there is nothing to attach here -
+        // and no construction path that can forget to. What it does derive is
+        // checked against what the parse actually registered before the
+        // program leaves the parser: two registries that can disagree in
+        // silence are what let a thing be type-checked and then laid out as
+        // nothing.
+        let program = Program::new(statements);
+        self.check_thing_registry(&program)?;
+        Ok(program)
+    }
+
+    /// The top-level statement loop, without the whole-program checks that
+    /// close a parse. A `see`n file is read through here rather than through
+    /// `parse`, because those checks are about the program and a seen file is
+    /// only part of one: a member its manifest declares may well be defined
+    /// in the file that saw it.
+    pub(crate) fn parse_statement_list(
+        &mut self,
+    ) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
+
         while *self.current() != Token::EOF {
             self.skip_all_whitespace();
             if *self.current() == Token::EOF {
                 break;
             }
-            
+
             match self.parse_statement() {
                 Ok(stmt) => {
                     // Function definitions handle their own period and paragraph break
                     let is_func_def = matches!(stmt, Statement::FunctionDef { .. });
-                    statements.push(stmt);
-                    
+                    // A `see "<path>.vox"` is not a statement in the program:
+                    // it stands for the file's statements, which take its
+                    // place here. `Some(empty)` still means "inlined" - a file
+                    // may legitimately have nothing in it, and an already-seen
+                    // file has nothing left to contribute.
+                    match self.included_statements.take() {
+                        Some(mut spliced) => statements.append(&mut spliced),
+                        None => statements.push(stmt),
+                    }
+
                     if !is_func_def {
                         self.skip_noise();
                         self.expect(&Token::Period);
@@ -35,14 +86,33 @@ impl Parser {
                 }
                 Err(e) => return Err(e),
             }
-            
+
             self.skip_all_whitespace();
         }
-        
-        Ok(Program::new(statements))
+
+        Ok(statements)
     }
 
+    /// Parse one statement, counting how deep it sits. Every block body - an
+    /// `If` branch, a `While`/`For` body, a function body - reads its
+    /// statements through here, so depth 1 is the top level and anything
+    /// deeper is inside a block. `parse_thing_definition` is the one parser
+    /// that asks (plan 310 §9); the count is kept here rather than at each
+    /// block parser so a construct added later cannot forget to maintain it.
     pub(crate) fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        self.statement_depth += 1;
+        let parsed = self.dispatch_statement();
+        self.statement_depth -= 1;
+        parsed
+    }
+
+    /// True when the statement being parsed is a top-level one, written
+    /// against the left margin rather than inside some block's body.
+    pub(crate) fn at_top_level(&self) -> bool {
+        self.statement_depth <= 1
+    }
+
+    fn dispatch_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
 
         let stmt = match self.current().clone() {
@@ -165,6 +235,11 @@ impl Parser {
             }
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("pivot") => self.parse_pivot_root(),
             Token::Identifier(ref s) if s.eq_ignore_ascii_case("execute") => self.parse_execute(),
+            Token::Identifier(ref s)
+                if s.eq_ignore_ascii_case("send") && self.signal_keyword_follows() =>
+            {
+                self.parse_send_signal()
+            }
             Token::Identifier(_) => self.parse_identifier_statement(),
             // A statement cannot start with a string literal: the old
             // `"get five".` / `"calc" of 3.` forms are gone (plan 270). A
@@ -276,6 +351,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
+        // Where the `Return` itself sits, so a member definition handing back
+        // the wrong thing can underline this line (plan 310 §4).
+        let return_pos = self.pos;
         self.advance();
         self.skip_noise();
 
@@ -295,6 +373,8 @@ impl Parser {
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
+                        self.typed_returns
+                            .push((return_pos, declared_type.clone()));
                         // Now parse the actual return expression. Use
                         // `parse_condition` (not `parse_expression`) so a typed
                         // return whose body is a comparison or boolean
@@ -380,6 +460,16 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `increment origin's x.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Add,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Increment { name })
@@ -395,12 +485,47 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `decrement cistern's 'litres drained'.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Subtract,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Decrement { name })
     }
 
     pub(crate) fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `origin's 'shift east' on 2.` - the instance possessive stands where
+        // an ordinary call statement stands (plan 310 §4). Tried first because
+        // the write-target path below would otherwise report a call as a field
+        // that does not exist; it rewinds and yields to that path for anything
+        // that is not a call.
+        if let Some(call) = self.try_parse_instance_call_statement()? {
+            return Ok(call);
+        }
+
+        // `origin's y is origin's y add 1.` - a field is an lvalue in a bare
+        // assignment too (plan 310 §3), so this is checked before the name is
+        // read as a variable or a callee.
+        if let Some((base, path, _)) = self.try_parse_thing_field_target()? {
+            self.skip_noise();
+            // `is`/`=` only, exactly like the bare assignment to a plain name
+            // below - `to` is the `Set ... to ...` spelling's separator.
+            if !matches!(self.current(), Token::Is | Token::Equals) {
+                return Err(self.err_expected("'is' after a field of a thing", self.current()));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = self.parse_expression()?;
+            return Ok(Statement::SetThingField { base, path, value });
+        }
+
         let name = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             _ => return Err(self.err("Expected identifier")),
@@ -420,6 +545,9 @@ impl Parser {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
             let value = self.parse_expression()?;
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
+                return Ok(declaration);
+            }
             return Ok(Statement::Assignment { name, value });
         }
 

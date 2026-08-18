@@ -8,6 +8,9 @@ impl CodeGenerator {
         // from declared-return functions. Signature collection only reads
         // FunctionDef.return_type from the AST, so this reorder is safe.
         self.collect_function_signatures(program);
+        // The thing registry and the main line's thing variables, before the
+        // label pass below sizes their `.bss` reservations from them.
+        self.collect_things(program);
         // Resolve the library identity before any function is generated so the
         // `<lib>_<ver>_<func>` label is correct regardless of where the
         // `Library` declaration sits in the source. No-op outside shared mode.
@@ -214,10 +217,46 @@ impl CodeGenerator {
 
     fn generate_statement(&mut self, stmt: &Statement) {
         match stmt {
+            // A thing definition is compile-time only: it names a layout,
+            // allocates nothing, and emits no instructions. Storage is
+            // emitted where a thing is *declared*, not where it is defined.
+            Statement::ThingDecl(_) => {}
+
+            // A thing declaration reserves sized storage and writes its
+            // defaults (plan 310 §9). It must precede the generic VarDecl arm
+            // below, which treats a global's label as a one-quadword slot to
+            // store a value into - for a thing the label is the storage
+            // itself.
+            Statement::VarDecl {
+                name,
+                var_type: Some(Type::Thing(thing)),
+                value,
+            } => {
+                self.generate_thing_decl(name, thing, value.as_ref());
+            }
+
+            // `Set moved to origin.` on a name that already holds a thing:
+            // storage exists, so this copies into it (plan 310 §5). It sits
+            // before the generic VarDecl arm for the same reason the
+            // declaration above does - that arm stores one quadword.
+            Statement::VarDecl {
+                name,
+                var_type: None,
+                value: Some(value),
+            } if self.thing_assigned_to(name).is_some() => {
+                let thing = self.thing_assigned_to(name).unwrap_or_default();
+                self.generate_thing_assignment(name, &thing, value);
+            }
+
+            // `Set origin's x to 3.` and everything that desugars to it.
+            Statement::SetThingField { base, path, value } => {
+                self.generate_set_thing_field(base, path, value);
+            }
+
             Statement::Print { value, without_newline } => {
                 self.generate_print(value, *without_newline);
             }
-            
+
             Statement::VarDecl { name, var_type, value } => {
                 // Decide whether this statement updates a local stack slot or
                 // the global BSS mirror.  A typed declaration (`a number called
@@ -261,6 +300,14 @@ impl CodeGenerator {
 
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
+                    // Declared as something else: this name no longer holds a
+                    // thing here, so it must not keep the label a top-level
+                    // `a point called origin.` left in the table and be
+                    // printed or compared as a point (plan 310 §7/§8). The
+                    // analyzer drops the same label at the same point.
+                    if !matches!(t, Type::Thing(_)) {
+                        self.thing_vars.remove(name);
+                    }
                     self.declared_types.insert(name.clone(), t.clone());
                     let vt = match t {
                         Type::String => VarType::String,
@@ -646,6 +693,13 @@ impl CodeGenerator {
                 // planned to be emitted around this marker in a subsequent iteration.
             }
             
+            // `elsewhere is origin.` copies a whole thing into storage that
+            // already exists (plan 310 §5).
+            Statement::Assignment { name, value } if self.thing_assigned_to(name).is_some() => {
+                let thing = self.thing_assigned_to(name).unwrap_or_default();
+                self.generate_thing_assignment(name, &thing, value);
+            }
+
             Statement::Assignment { name, value } => {
                 if let Some(offset) = self.get_var(name) {
                     // A `value` local (declared `a value called r`) keeps its
@@ -946,6 +1000,34 @@ impl CodeGenerator {
                 }
             }
             
+            // `Return a point, start.` - the caller handed this function the
+            // address it wants the thing written to, so the return copies
+            // into it and answers with that same address (plan 310 §5).
+            Statement::Return { value, .. } if self.current_thing_return_slot.is_some() => {
+                let slot = self.current_thing_return_slot.unwrap_or_default();
+                if let Some(v) = value {
+                    if let Some(thing) = self.emit_thing_address(v) {
+                        self.emit_indent("mov rsi, rax  ; the thing being returned");
+                        self.emit_indent(&format!(
+                            "mov rdi, [rbp-{}]  ; the caller's destination",
+                            slot
+                        ));
+                        let size = self.thing_storage_size(&thing);
+                        self.emit_thing_copy(size, &format!("the returned {}", thing));
+                    }
+                }
+                self.emit_indent(&format!(
+                    "mov rax, [rbp-{}]  ; the result's address",
+                    slot
+                ));
+                if self.in_function_codegen {
+                    self.emit_indent("push rax  ; save return value");
+                    self.emit_indent("call _dec_call_depth");
+                    self.emit_indent("pop rax  ; restore return value");
+                }
+                self.emit_indent("FUNC_EPILOGUE");
+            }
+
             Statement::Return { value, .. } => {
                 if let Some(v) = value {
                     self.generate_expr(v); // leaves return payload in RAX
@@ -1008,6 +1090,7 @@ impl CodeGenerator {
                 // trusts `variable_types` by name with no scope check.
                 let saved_variable_types = self.variable_types.clone();
                 let saved_declared_types = self.declared_types.clone();
+                let saved_thing_vars = self.thing_vars.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
                 // just like `variable_types`, so they need the same
@@ -1062,7 +1145,19 @@ impl CodeGenerator {
                 // over a mixed list, so the 1c predicates/print/append/forward
                 // machinery all work on it unchanged.
                 let word_count = |t: &Type| if matches!(t, Type::Value) { 2 } else { 1 };
-                let total_words: usize = params.iter().map(|(_, t)| word_count(t)).sum();
+
+                // A function returning a whole thing is handed the caller's
+                // destination in a hidden first argument word (plan 310 §5).
+                // Its slot is allocated before the parameters', so word 0 and
+                // slot 0 line up on both sides of the call.
+                let saved_thing_return_slot = self.current_thing_return_slot.take();
+                if matches!(return_type, Type::Thing(_)) {
+                    self.stack_offset += 8;
+                    self.current_thing_return_slot = Some(self.stack_offset);
+                }
+                let hidden_words = if self.current_thing_return_slot.is_some() { 1 } else { 0 };
+                let total_words: usize =
+                    hidden_words + params.iter().map(|(_, t)| word_count(t)).sum::<usize>();
 
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
@@ -1080,7 +1175,16 @@ impl CodeGenerator {
                         Type::Value => VarType::Mixed,
                         _ => VarType::Unknown,
                     };
-                    self.alloc_var(param_name);
+                    // A thing parameter's slot is the whole thing: the frame
+                    // holds this function's own copy, so its fields address
+                    // off rbp exactly like a thing declared in the body.
+                    if let Type::Thing(thing) = param_type {
+                        self.stack_offset += self.thing_storage_size(thing) as i64;
+                        self.variables.insert(param_name.clone(), self.stack_offset);
+                        self.thing_vars.insert(param_name.clone(), thing.clone());
+                    } else {
+                        self.alloc_var(param_name);
+                    }
                     self.variable_types.insert(param_name.clone(), var_type);
                     if matches!(param_type, Type::Value) {
                         let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
@@ -1103,6 +1207,15 @@ impl CodeGenerator {
 
                 // If no explicit return, add a default epilogue
                 if !has_return {
+                    // A thing-returning function that falls off its end still
+                    // owes the caller the address it was given, or the caller
+                    // would copy out of whatever rax happened to hold.
+                    if let Some(slot) = self.current_thing_return_slot {
+                        self.emit_indent(&format!(
+                            "mov rax, [rbp-{}]  ; the caller's destination",
+                            slot
+                        ));
+                    }
                     self.emit_indent("call _dec_call_depth");
                     self.emit_indent("FUNC_EPILOGUE");
                 }
@@ -1144,31 +1257,45 @@ impl CodeGenerator {
                 // pad from the same word count, so they agree.
                 let stack_words = total_words.saturating_sub(param_regs.len());
                 let pad_offset: usize = if stack_words % 2 == 0 { 0 } else { 8 };
+                let read_argument_word = |w: usize| {
+                    if w < param_regs.len() {
+                        format!("mov rax, {}", param_regs[w])
+                    } else {
+                        let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
+                        format!("mov rax, [rbp+{}]", stack_arg_off)
+                    }
+                };
                 let mut word_index = 0usize;
+                if let Some(slot) = self.current_thing_return_slot {
+                    self.emit_indent(&read_argument_word(word_index));
+                    self.emit_indent(&format!(
+                        "mov [rbp-{}], rax  ; where the caller wants the result",
+                        slot
+                    ));
+                    word_index += 1;
+                }
+                // A thing parameter's word is the address of the caller's
+                // thing, parked in the first quadword of this frame's own
+                // region until every argument word has been read out of its
+                // register. Copying on the spot would clobber rsi/rdi/rcx
+                // while later parameters are still living in them.
+                let mut things_to_copy: Vec<(String, i64)> = Vec::new();
                 for (param_name, param_type) in params.iter() {
                     let payload_off = self.get_var(param_name);
                     let tag_off = self.mixed_tag_slots.get(param_name).copied();
                     let is_value = matches!(param_type, Type::Value);
 
-                    // Read argument word `w` into rax: from a register if w < 6,
-                    // else from the stack at [rbp + 16 + pad_offset + (w-6)*8].
-                    let read_word = |w: usize| {
-                        if w < param_regs.len() {
-                            format!("mov rax, {}", param_regs[w])
-                        } else {
-                            let stack_arg_off = 16 + pad_offset + (w - param_regs.len()) * 8;
-                            format!("mov rax, [rbp+{}]", stack_arg_off)
-                        }
-                    };
-
                     if let Some(offset) = payload_off {
                         // Payload word.
-                        self.emit_indent(&read_word(word_index));
+                        self.emit_indent(&read_argument_word(word_index));
                         self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
+                        if let Type::Thing(thing) = param_type {
+                            things_to_copy.push((thing.clone(), offset));
+                        }
                         if is_value {
                             // Tag word (stored as a byte into the shadow slot).
                             if let Some(tag_slot) = tag_off {
-                                self.emit_indent(&read_word(word_index + 1));
+                                self.emit_indent(&read_argument_word(word_index + 1));
                                 self.emit_indent(&format!(
                                     "mov [rbp-{}], al  ; param value tag",
                                     tag_slot
@@ -1183,6 +1310,15 @@ impl CodeGenerator {
                     } else {
                         word_index += 1;
                     }
+                }
+                // The parameter IS the copy: reading the parked address first
+                // and writing over it is safe, because the source is the
+                // caller's storage and this region is a fresh frame's.
+                for (thing, offset) in things_to_copy {
+                    self.emit_indent(&format!("mov rsi, [rbp-{}]  ; the caller's {}", offset, thing));
+                    self.emit_indent(&format!("lea rdi, [rbp-{}]", offset));
+                    let size = self.thing_storage_size(&thing);
+                    self.emit_thing_copy(size, &format!("a {} parameter", thing));
                 }
 
                 // Append the already-generated body
@@ -1199,8 +1335,10 @@ impl CodeGenerator {
                 self.loop_stack = saved_loop_stack;
                 self.in_function_codegen = saved_in_function_codegen;
                 self.current_function_return_type = saved_return_type;
+                self.current_thing_return_slot = saved_thing_return_slot;
                 self.variable_types = saved_variable_types;
                 self.declared_types = saved_declared_types;
+                self.thing_vars = saved_thing_vars;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
@@ -2432,6 +2570,16 @@ impl CodeGenerator {
                 self.emit_indent("EXECVE");
             }
 
+            Statement::SendSignal { signal, pid } => {
+                self.uses_files = true;
+                // kill(2): rdi = pid, rsi = signal. Evaluate both operands
+                // through the stack-parking helper so a later expression
+                // (function call, format string) cannot clobber an earlier
+                // result while the syscall registers are being loaded.
+                self.emit_syscall_args(&[(pid, "rdi"), (signal, "rsi")]);
+                self.emit_indent("SEND_SIGNAL");
+            }
+
             Statement::Symlink { target, linkpath } => {
                 self.uses_files = true;
                 self.emit_syscall_args(&[(target, "rdi"), (linkpath, "rsi")]);
@@ -2701,6 +2849,23 @@ impl CodeGenerator {
                         self.emit_indent(&format!("jnz {}", true_label));
                         self.generate_condition(right, false_label);
                         self.emit(&format!("{}:", true_label));
+                    }
+                    // `origin is marker` between two of the same thing: one
+                    // comparison per field, recursing through nesting (plan
+                    // 310 §8). This precedes every other equality arm because
+                    // a thing's slot holds bytes, not a value any of them
+                    // could read - and the analyzer has already rejected the
+                    // cross-type and ordering spellings.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.thing_compared(left, right).is_some() =>
+                    {
+                        self.emit_thing_equality(
+                            left,
+                            right,
+                            matches!(op, BinaryOperator::NotEqual),
+                        );
+                        self.emit_indent("test rax, rax");
+                        self.emit_indent(&format!("jz {}  ; 1=holds", false_label));
                     }
                     // `x is nothing` / `x is not nothing` (stage 1e3): tag-6
                     // equality. Two values are equal-as-nothing iff BOTH have

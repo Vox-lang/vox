@@ -109,10 +109,15 @@ stress tests run at 10⁶+ iterations and 10⁸+ bytes without faults.
 *The building blocks that crypto, networking, and drivers all require.
 Design doc: [docs/STRUCTS_AND_OBJECTS.md](docs/STRUCTS_AND_OBJECTS.md).*
 
-- [ ] **Structs / user-defined types** with compile-time layout and the
-      possessive `'s` accessor syntax. Exact byte layout control (field
-      widths, ordering, padding) — needed for packet headers, device
-      registers, and on-disk formats.
+- [x] **Structs / user-defined types** — SHIPPED in 0.4.0 as **things**
+      (see LANGUAGE.md §6 and `docs/plans/310_user_defined_structures.md`):
+      compile-time layout, the possessive `'s` accessor, unlimited
+      nesting, value copy semantics, manifest function members, and
+      cross-file definitions. Adversarially tested. Still open from the
+      original item: *exact byte layout control* (field widths, ordering,
+      padding) for packet headers, device registers, and on-disk formats
+      — today every field is an 8-byte slot, so the IPv4-header exit
+      criterion below remains gated on sized integers.
 - [ ] **Sized integers**: 8/16/32/64-bit reads and writes, signed and
       unsigned, with explicit width in the syntax (today everything is a
       64-bit `number`). Wrapping/overflow semantics defined, not accidental.

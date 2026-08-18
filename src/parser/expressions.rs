@@ -423,6 +423,7 @@ impl Parser {
             self.skip_noise();
             let op = match self.current() {
                 Token::Multiply => Some(BinaryOperator::Multiply),
+                Token::Times => Some(BinaryOperator::Multiply),
                 Token::Divide => Some(BinaryOperator::Divide),
                 Token::Modulo => Some(BinaryOperator::Modulo),
                 _ => None,
@@ -596,10 +597,13 @@ impl Parser {
             return None;
         }
         
-        // Try to parse as an English expression (including comparisons)
+        // Try to parse as an English expression (including comparisons).
+        // The sub-parser inherits the thing definitions and thing variables
+        // seen so far, so `"{origin's x}"` parses as the field chain it is
+        // rather than falling back to a literal placeholder (plan 310 §3).
         let mut lexer = Lexer::new(content);
         let tokens = lexer.tokenize();
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::new(tokens).with_things_of(self);
         // Use parse_and_expr to handle comparisons like "0 is equal to 0"
         match parser.parse_and_expr() {
             Ok(expr) => {
@@ -947,6 +951,29 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
+                // plan 311: optional "without waiting" suffix on any reap form
+                // selects WNOHANG (non-blocking) reap. `without` is a distinct
+                // token (Token::Without), so it cannot be mistaken for a call
+                // argument after the pid expression, and `print ... without
+                // newline` is unaffected. `waiting` remains an ordinary
+                // identifier everywhere else.
+                let parse_no_hang = |p: &mut Self| -> Result<bool, Box<CompileError>> {
+                    if *p.current() == Token::Without {
+                        p.advance();
+                        p.skip_noise();
+                        match p.current() {
+                            Token::Identifier(ref w) if w.eq_ignore_ascii_case("waiting") => {
+                                p.advance();
+                                p.skip_noise();
+                                Ok(true)
+                            }
+                            _ => Err(p.err_expected("'waiting' after 'without' in a reap", p.current())),
+                        }
+                    } else {
+                        Ok(false)
+                    }
+                };
+
                 // "reap any child process" -> pid = None (wait for any child)
                 if let Token::Identifier(ref w) = self.current() {
                     if w.eq_ignore_ascii_case("any") {
@@ -961,7 +988,8 @@ impl Parser {
                                 break;
                             }
                         }
-                        return Ok(Expr::ReapChild { pid: None });
+                        let no_hang = parse_no_hang(self)?;
+                        return Ok(Expr::ReapChild { pid: None, no_hang });
                     }
                 }
 
@@ -973,7 +1001,8 @@ impl Parser {
                     }
                 }
                 let pid = self.parse_primary()?;
-                Ok(Expr::ReapChild { pid: Some(Box::new(pid)) })
+                let no_hang = parse_no_hang(self)?;
+                Ok(Expr::ReapChild { pid: Some(Box::new(pid)), no_hang })
             }
 
             Token::Identifier(name) => {
@@ -987,6 +1016,18 @@ impl Parser {
                     return Ok(call);
                 }
 
+                // A thing variable's possessive reads one of its own members,
+                // never an object property (plan 310 §3, §4): a thing has no
+                // builtin properties, and its member space is its fields plus
+                // the functions taking it first. Checked before the property
+                // table below so a member can be named anything the
+                // definition allows.
+                if let Some(thing) = self.thing_of_variable(&name) {
+                    if self.possessive_follows() {
+                        return self.parse_thing_possessive_expr(name, &thing);
+                    }
+                }
+
                 // Check for property access: identifier's property
                 if *self.current() == Token::Apostrophe {
                     self.advance();
@@ -995,7 +1036,7 @@ impl Parser {
                         if s.to_lowercase() == "s" {
                             self.advance();
                             self.skip_noise();
-                            
+
                             // Special handling for arguments's and environment's
                             let name_lower = name.to_lowercase();
                             if name_lower == "arguments" || name_lower == "args" {
@@ -1295,9 +1336,37 @@ impl Parser {
                         }
                     }
                     Token::Identifier(name) => {
+                        // plan 311: "the reaped status" -> raw wait4 status word.
+                        // Only this exact phrase; "the reaped <anything else>" is
+                        // an ordinary variable reference to `reaped`, so we only
+                        // commit when "status" directly follows. `reaped` stays
+                        // usable as an ordinary identifier (tests/102_fork_reap.vox
+                        // does `Set reaped to reap any child process.`).
+                        let reaped_status = name.eq_ignore_ascii_case("reaped");
                         self.advance();
                         self.skip_noise();
+                        if reaped_status {
+                            if let Token::Identifier(ref w) = self.current() {
+                                if w.eq_ignore_ascii_case("status") {
+                                    self.advance();
+                                    self.skip_noise();
+                                    return Ok(Expr::ReapedStatus);
+                                }
+                            }
+                            // "the reaped" not followed by "status": fall through
+                            // to the ordinary variable reference below.
+                        }
                         
+
+                        // `Print the origin's x.` - the same possessive as the
+                        // bare `origin's x`, since `the` is only an article
+                        // here (plan 310 §3).
+                        if let Some(thing) = self.thing_of_variable(&name) {
+                            if self.possessive_follows() {
+                                return self.parse_thing_possessive_expr(name, &thing);
+                            }
+                        }
+
                         // Check for property access: "the now's hour"
                         if *self.current() == Token::Apostrophe {
                             self.advance();
@@ -1433,6 +1502,13 @@ impl Parser {
                 }
             }
             Token::A | Token::An => {
+                // `a point's 'placed at' with 3 and 4` - the type possessive
+                // calls a member the thing declares (plan 310 §4). Asked
+                // before the article is consumed, because the whole shape is
+                // the expression.
+                if self.type_possessive_follows() {
+                    return self.parse_type_possessive_call();
+                }
                 // Check if this is an article before a type, or just the letter "a"/"an" as identifier
                 let is_article = self.current().clone();
                 self.advance();

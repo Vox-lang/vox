@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §4 - the member space includes a type's DECLARED
+ function members, so a plain global function taking a point cannot claim a
+ name the manifest already lists. The manifest entry's own definition is
+ task 5's `To do the point's 'from polar'`; either way the name is spoken
+ for, and Vox refuses the ambiguity rather than choosing.)
+
+A thing called point has
+  a function called 'from polar',
+  a number called x is 0,
+  a number called y is 0.
+
+To 'from polar' with a point called corner.
+  Return a point, corner.

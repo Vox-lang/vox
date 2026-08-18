@@ -1,0 +1,72 @@
+(Plan 310 task 5 - the manifest gives a thing a callable API, and
+ `To do the point's <name>` defines one of the members it declares. Two call
+ forms reach a member: the type possessive `a point's 'placed at' with 1 and
+ 0`, which is the only way to call a maker at all, and - when the member
+ takes its own thing first - task 4's instance possessive as well.
+
+ Every declared member returns its owner (§4). That is what makes the
+ manifest mean "the functions that produce or transform this thing"; a
+ function computing something else from a point, like the 'magnitude
+ squared' of tests/336_instance_sugar.vox, stays a global function and needs
+ no manifest entry.
+
+ 'grid square' declares 'placed at' too. The two definitions compile under
+ distinct internal names, so a member name belongs to its owner rather than
+ to the program, and this is also the only place the type possessive is read
+ from a quoted thing name.
+
+ The tail proves `do` stays an ordinary identifier: `To do.` defines a
+ function called do and `do.` calls it. Only `do` followed by `the
+ <thing>'s` opens a member definition.
+
+ Acceptance: the six lines in the .expected, in that order - the maker, the
+ instance possessive, the same member reached by the type possessive with
+ the receiver written out, both fields of the other thing's maker, and the
+ ordinary function called do.)
+
+A thing called point has
+  a function called 'placed at',
+  a function called 'reflected through the origin',
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called 'grid square' has
+  a function called 'placed at',
+  a number called column is 0,
+  a number called row is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+To do the point's 'reflected through the origin', with a point called original.
+  a point called reflection.
+  Set reflection's x to 0 subtract original's x.
+  Set reflection's y to 0 subtract original's y.
+  Return a point, reflection.
+
+To do the 'grid square''s 'placed at', with a number called column and a number called row.
+  a 'grid square' called square.
+  Set square's column to column.
+  Set square's row to row.
+  Return a 'grid square', square.
+
+The pin is a point's 'placed at' with 1 and 0.
+Print pin's x.
+
+The opposite is pin's 'reflected through the origin'.
+Print opposite's x.
+
+The 'opposite of the opposite' is a point's 'reflected through the origin' of opposite.
+Print 'opposite of the opposite''s x.
+
+The 'marked square' is a 'grid square''s 'placed at' with 5 and 6.
+Print 'marked square''s column.
+Print 'marked square''s row.
+
+To do.
+  Print "do is an ordinary name".
+
+do.

@@ -1,0 +1,7 @@
+(Compile-fail: plan 310 §1 - a field's default is a literal, and its declared
+ type decides how its bytes are read, so the literal must be one of that
+ type. A float's bits stored in a number field would read back as a huge
+ number, and dropping the default would ignore what the author wrote.)
+
+A thing called point has
+  a number called x is 1.5.

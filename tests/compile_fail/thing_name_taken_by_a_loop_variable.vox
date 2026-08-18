@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §10 - a loop variable is a variable, so it claims the
+ identifier space like any other declaration. The check lives at one place
+ every declaration form goes through, which is what makes a form nobody
+ thought about when the rule was written inherit it anyway.)
+
+A thing called point has
+  a number called x is 0.
+
+a list called places is [1, 2].
+For each point in places,
+  Print the point.

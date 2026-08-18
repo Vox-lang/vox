@@ -4,6 +4,213 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-08-18
+
+**Vox has a type system.** This is the biggest release in the language's
+history: as of today, a Vox program can define its own types — in plain
+English, like everything else here.
+
+```vox
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called across and a number called climb.
+  a point called spot.
+  Set spot's x to across.
+  Set spot's y to climb.
+  Return a point, spot.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner.
+```
+
+That prints `{x: 3, y: 4}` — and yes, this example compiles; every
+example in this release does, checked against the compiler before
+shipping.
+
+Things nest to any depth, copy by value, print themselves, compare
+field-by-field, carry their own function members, and work across files —
+all resolved at compile time, with not one byte of runtime added. The
+generated binaries are still just your code and syscalls.
+
+And because a memory-safe language should have to prove it: this release
+was **adversarially tested before it shipped**. A red team attacked the
+type system with 38 runnable probes; it found two real holes, both were
+fixed, and the exact programs that broke the compiler are now regression
+tests that must fail to break it. The copy semantics survived everything
+thrown at them.
+
+Also in this release: Vox grows real process control — `Send signal`
+performs `kill(2)`, `reap ... without waiting` polls without blocking,
+and `the reaped status` finally tells you *how* a child died. Decoding it
+lives in `lib/process.vox`, **the first file of the Vox standard
+library** — written in Vox, naturally. A pure-Vox process supervisor
+(fork, poll, timeout, kill, classify) now needs no shell and no
+coreutils. Timers were caught reporting a 100 ms wait as a full second
+and now measure honestly, which matters rather a lot for the benchmarking
+tool this unblocks. And `Print 6 times 7.` finally does what the manual
+always claimed.
+
+The full ledger:
+
+### Added
+
+- **User-defined things — composite value types declared in the program.**
+  A new `thing` construct lets a program declare its own composite types at
+  the top level, alongside the builtins. `A thing called point has a number
+  called x is 0, a number called y is 0.` declares a type `point` with two
+  number fields, each defaulted by a literal of its own type; the definition
+  fixes a layout for the whole program and emits no code. A thing may also
+  carry function members — `a function called 'placed at'` in the body
+  declares the type's callable surface (its manifest), defined separately
+  with `To do the point's 'placed at', with ...`. Declarations bring a thing
+  into being with `a point called origin.` or `Create a point called p.`;
+  `the` reads a known one. Fields are reached by possessive chains
+  (`commute's leg's start's x`), and things nest (a segment holds two
+  points) under an acyclicity check: a thing may name only previously-
+  defined types, so a cycle is unconstructible within a file and is proved
+  out across `see`d files by the analyzer's registry DFS. Things are
+  values — assignment, argument passing, and return copy the whole thing
+  field by field, so mutating a copy never touches the original. A member
+  is called three ways: the free call `'magnitude squared' of origin`, the
+  instance possessive `origin's 'magnitude squared'` (sugar that fills the
+  first parameter with the receiver), and the type possessive `a point's
+  'placed at' with 3 and 4` (a maker — the article `a` because a new thing
+  comes into being). A manifest member must return its own thing; its first
+  parameter may be the thing (reachable by instance sugar) or not (a maker,
+  reached by naming the type). Things print as `{x: 5, y: 0}` and compare
+  for equality field by field. Type, variable, and function names share one
+  global identifier space (first-come-first-served); each type owns a
+  separate member space. Cross-file, `see "./geometry.vox".` makes another
+  file's things usable — a `see` of an unreadable file is now an error (it
+  was silently skipped without `-v`), and a duplicate type name across a
+  `see` now errors at the second definition, naming the other file. In v1
+  a field's type is `number`, `float`, `boolean`, `time`, or any previously-
+  defined thing (`text`/`list`/`map`/`buffer` deferred); user things are not
+  part of the runtime tag system, so there is no `is a point` predicate, and
+  a `.lib` cannot yet take or return a thing across its boundary (the
+  diagnostic names the fields to pass across instead). Every reserved
+  wrong-shape use has a targeted message — a thing copied from or written
+  as a bare value, returned as a value, interpolated into text, or put in
+  order; a member returning another thing, or declared but never defined;
+  a maker reached by a receiver; a members-only or field-less definition;
+  a definition written with `is` instead of `has`, created as a variable,
+  defined inside a block, or defined after a variable of the same name; a
+  field default of the wrong type; an unknown field type. `thing`, `has`,
+  and `do` are contextual keywords — claimed only inside the construct,
+  ordinary identifiers elsewhere, so `a number called thing is 5.` compiles.
+  See the new [Things](LANGUAGE.md#things) chapter in LANGUAGE.md. Strictly
+  additive: no existing program changes meaning; the construct, its
+  diagnostics, the cross-file and `.lib` refusals, and the `see` behaviour
+  tightenings are all new surface. Tests: `tests/330_thing_definition.vox`
+  through `tests/340_thing_see.vox` plus `tests/include/geometry.vox`, and
+  the `tests/compile_fail/thing_*.err` corpus.
+
+- **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
+  that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
+  62). `child` is accepted as an alias for `process`, mirroring
+  `reap process/child`: `Send signal 9 to child pid.`. On success it clears
+  the error flag; on failure (`ESRCH`, `EINVAL`, `EPERM`) it sets it, so
+  `On error` catches the failure exactly like the other syscall statements.
+  Signal 0 is the standard no-deliver existence check, useful for probing the
+  error path safely. Strictly additive: no existing program changes meaning.
+
+- **`times` is now a multiplication operator, an alias for `multiply`.**
+  `Print 6 times 7.` and `Set n to n times 10.` compile and behave exactly
+  like their `multiply` forms, including precedence — `Print 2 plus 3 times
+  4.` evaluates to 14, multiplication still binding tighter than addition,
+  identical to `2 plus 3 multiply 4.`. `times` was already a reserved
+  keyword for the `Repeat <count> times,` loop, so no lexer change was
+  needed; the `Repeat` count is read with `parse_primary`, which never
+  reaches the multiplicative layer, so the loop construct is unaffected.
+  Strictly widening: no previously-valid program changes meaning.
+
+- **`reap ... without waiting` performs a non-blocking `wait4(2)` (WNOHANG),
+  and `the reaped status` yields the raw wait-status word.** Any reap form
+  (`reap any child process`, `reap process <pid>`, `reap child <pid>`) takes
+  a `without waiting` suffix, which calls `wait4` with `WNOHANG` instead of
+  blocking. The return value is the whole value of the form: the reaped
+  child's PID if one finished; `0` if children exist but none has finished
+  yet (this is **not** an error — it is how "still running" is told from
+  "gone"); or a negative value with the error flag set on a genuine error
+  such as `ECHILD` (no such child), catchable with `On error`. A reap that
+  returns `0` reaps nothing and does not disturb `the reaped status`.
+  `the reaped status` is a new expression yielding the raw `int status` the
+  kernel wrote, undecoded, from the most recent *successful* reap; before
+  any reap it is `-1` (a sentinel kept in `.data`, not `.bss`, so a
+  `--shared` library does not read `0` and misreport "exited cleanly"). The
+  compiler contains no knowledge of the wait-status encoding. `without` is
+  already a reserved keyword (the `print ... without newline` token), so
+  the suffix cannot be confused with a call argument, and `reaped` /
+  `waiting` remain ordinary identifiers everywhere they are not these
+  forms. Strictly additive: no existing program changes meaning.
+
+- **`lib/process.vox`, the first standard-library file.** Ships in the
+  repo as ordinary Vox and decodes the raw wait-status word with four
+  functions matching the `<sys/wait.h>` macros: `'exit code of'` (bits
+  8–15), `'signal of'` (the low 7 bits), `crashed` (true if a signal
+  killed it), and `'exited normally'` (true if no signal was involved).
+  Pulled in with `see "./lib/process.vox".`. Decoding lives here rather
+  than in the compiler so that user-defined things (plan 310) can later
+  wrap a status in a `process` thing with no compiler change.
+
+### Fixed
+
+- **Timer `duration`/`elapsed` reported the wrong time in every unit.**
+  `... in milliseconds` read whole seconds × 1000, so a 30 ms wait read 0
+  and a 1.5-second wait read 1000. The bare `the timer's duration` /
+  `... elapsed` forms and `... in seconds` subtracted the monotonic
+  clock's *calendar second fields* (`end_sec − start_sec`) instead of the
+  real elapsed time, so a 100 ms wait that straddled a second boundary
+  read 1 — a tenfold error — and a 1500 ms wait read 1 or 2 depending on
+  where it began. `Start` and `Stop` already captured the nanosecond
+  halves into `TIMER_START_MONO_NSEC` / `TIMER_END_MONO_NSEC`; nothing
+  ever read them. A new internal `TIMER_ELAPSED_NANOSECONDS` helper now
+  subtracts the full timespec with borrow handling (the shape
+  `TIME_ELAPSED_PRECISE` already used), handles both the stored-end path
+  (timer stopped) and the still-running path (sampling `clock_gettime`
+  into a stack timespec and reading `[rsp + 8]` for nanoseconds), and
+  leaves a 128-bit nanosecond total in `rdx:rax`. `TIMER_DURATION_SECONDS`
+  and `TIMER_DURATION_MILLISECONDS` share that helper and differ only in
+  the divisor (`NANOSECONDS_PER_SECOND` vs `NANOSECONDS_PER_MILLISECOND`),
+  so seconds is now true truncation of the real elapsed time and
+  milliseconds is true milliseconds. The meaning of the seconds/bare
+  forms is unchanged — still whole truncated seconds, never milliseconds
+  — but their values are now correct and no longer depend on where the
+  interval fell within a second. This unblocks the planned Vox
+  benchmarking tool, which is useless when a sub-second run reads zero.
+  Regression tests: `tests/350_timer_subsecond_milliseconds.vox`,
+  `tests/351_timer_millisecond_boundary.vox`,
+  `tests/352_timer_seconds_still_whole.vox`,
+  `tests/353_timer_elapsed_while_running.vox`,
+  `tests/354_timer_bare_duration_whole_seconds.vox`.
+
+- **A reserved word used as a loop variable reported "Missing loop
+  variable" instead of naming the reserved word.** `print each arg from
+  argv.` failed with "Missing loop variable after 'each'" even though
+  the variable was not missing — it was `arg`, which the lexer folds
+  onto `Token::Argument` (an alias of the reserved keyword `argument`).
+  Because the parser saw a keyword token where it expected an
+  identifier, it reported the variable as absent and sent the reader
+  hunting for a syntax error that did not exist. Both each-loop variable
+  sites (`each <var> from ...` and `for each <var> from ...`) now
+  delegate to the existing `check_not_keyword` diagnostic when the token
+  in the variable slot is a keyword, so the message names the spelling
+  the user actually typed and notes that `arg` is an alternate spelling
+  of `argument`. A genuinely omitted variable is still reported as
+  "Missing loop variable": the loop's own `from`/`between` delimiters
+  are excluded from the keyword check, so `print each from argv.` keeps
+  its existing message. Diagnostics only — the program is still
+  rejected, just with an accurate reason. No words were un-reserved and
+  no loop semantics changed. Regression tests:
+  `tests/compile_fail/087_reserved_word_each_loop_variable.vox`,
+  `tests/compile_fail/088_reserved_word_for_each_loop_variable.vox`,
+  `tests/compile_fail/089_missing_loop_variable_keyword_delim.vox`, and
+  `tests/322_each_loop_reserved_word_regression.vox` (the renamed form
+  still compiles and iterates).
+
 ## [0.3.7] - 2026-08-16
 
 ### Changed

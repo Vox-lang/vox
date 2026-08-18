@@ -28,6 +28,11 @@ impl CodeGenerator {
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
+            // A float field reads as its bit pattern, exactly like a float
+            // variable's slot, so it must take the same float paths.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
+            }
             Expr::Cast { target_type, .. } => {
                 // Cast to float produces a float
                 matches!(target_type, Type::Float)
@@ -166,6 +171,11 @@ impl CodeGenerator {
             Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
+            }
+            // Same reason as in `is_float_expr`: a float field is a float
+            // operand, so arithmetic on it takes the float instructions.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
             }
             Expr::Cast { target_type, .. } => {
                 // A cast to float yields a float operand - must route through
@@ -381,6 +391,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("lea rax, [rel {}]", label));
             }
             
+            // A field of a thing: one load from `base + constant` (plan 310 §3).
+            Expr::ThingField { base, path } => {
+                self.generate_thing_field(base, path);
+            }
+
             Expr::Identifier(name) => {
                 if self.emit_load_named_var_into_rax(name) {
                     // loaded as a variable
@@ -400,12 +415,21 @@ impl CodeGenerator {
                 // Use has_float_operands for instruction selection (includes comparisons)
                 let has_floats = self.has_float_operands(left) || self.has_float_operands(right);
 
+                // `origin is marker` between two of the same thing: one
+                // comparison per field, recursing through nesting (plan 310
+                // §8). Expression-position twin of the guard in
+                // `generate_condition`, and first for the same reason.
+                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && self.thing_compared(left, right).is_some()
+                {
+                    self.emit_thing_equality(left, right, matches!(op, BinaryOperator::NotEqual));
+                }
                 // `x is nothing` / `x is not nothing` in expression position
                 // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
                 // the float/stringy/integer paths or `0 is nothing` would
                 // compare payloads and be true. Mirrors the condition-position
                 // guard in `generate_condition`.
-                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (self.is_nothing_expr(left) || self.is_nothing_expr(right))
                 {
                     let equal = matches!(op, BinaryOperator::Equal);
@@ -1715,7 +1739,7 @@ impl CodeGenerator {
                 self.emit_indent("FORK");
             }
 
-            Expr::ReapChild { pid } => {
+            Expr::ReapChild { pid, no_hang } => {
                 self.uses_files = true;
                 match pid {
                     None => {
@@ -1726,8 +1750,25 @@ impl CodeGenerator {
                         self.emit_indent("mov rdi, rax  ; wait for this specific pid");
                     }
                 }
-                self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
-                self.emit_indent("REAP_CHILD");
+                // plan 311: WNOHANG (1) for non-blocking reap, 0 for blocking.
+                // REAP_CHILD stores the raw status word to _reaped_status only
+                // when a child is actually reaped (rax > 0); a WNOHANG reap that
+                // returns 0 leaves it untouched.
+                if *no_hang {
+                    self.emit_indent("; wait4() with WNOHANG - non-blocking reap");
+                    self.emit_indent("REAP_CHILD 1");
+                } else {
+                    self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
+                    self.emit_indent("REAP_CHILD 0");
+                }
+            }
+
+            // plan 311: the raw wait4 status word from the most recent
+            // successful reap. -1 sentinel before any reap. _reaped_status is
+            // in core.asm (always linked), so this needs no feature gate.
+            Expr::ReapedStatus => {
+                self.emit_indent("; the reaped status - raw wait4 status word (plan 311)");
+                self.emit_indent("mov rax, [rel _reaped_status]");
             }
             
             // Type casting
@@ -1939,16 +1980,46 @@ impl CodeGenerator {
             // Duration cast (timer's duration in seconds/milliseconds)
             Expr::DurationCast { value, unit } => {
                 self.uses_time = true;
-                self.generate_expr(value);
                 match unit {
                     TimeUnit::Seconds => {
-                        // Value is already in seconds
+                        // Whole seconds, unchanged: bare `the timer's
+                        // duration` and `... in seconds` must keep reading
+                        // whole seconds exactly as before.
+                        self.generate_expr(value);
                         self.emit_indent("; Duration in seconds");
                     }
                     TimeUnit::Milliseconds => {
-                        // Multiply by 1000
+                        // True milliseconds. The old code re-used the
+                        // whole-seconds macro and multiplied by 1000, so a
+                        // 30 ms wait read 0 and a 1500 ms wait read 1000.
+                        // Instead, resolve the same timer pointer the
+                        // seconds path loads and call the millisecond macro,
+                        // which subtracts the full timespec and divides
+                        // down from nanoseconds.
                         self.emit_indent("; Duration in milliseconds");
-                        self.emit_indent("imul rax, 1000");
+                        if let Expr::PropertyAccess { object, property } = value.as_ref() {
+                            let offset = self.get_var(object);
+                            self.emit_indent(&format!(
+                                "lea rax, [rbp - {}]",
+                                offset.unwrap_or(0) + 48
+                            ));
+                            match property {
+                                ObjectProperty::Duration => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                                ObjectProperty::Elapsed => {
+                                    self.emit_indent("TIMER_ELAPSED_MILLISECONDS rax");
+                                }
+                                _ => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                            }
+                        } else {
+                            // Defensive: a duration cast's inner expression
+                            // is always a timer property access.
+                            self.generate_expr(value);
+                            self.emit_indent("imul rax, 1000");
+                        }
                     }
                 }
             }
@@ -2136,6 +2207,14 @@ impl CodeGenerator {
                 .get(name)
                 .cloned()
                 .or_else(|| self.zero_arg_func_return_type(name)),
+            // A field yields its declared type (plan 310 §6): a float prints
+            // as a float, a boolean and a time as the numbers they are.
+            Expr::ThingField { base, path } => match self.thing_field_type(base, path) {
+                Some(Type::Float) => Some(VarType::Float),
+                Some(Type::Boolean) => Some(VarType::Boolean),
+                Some(_) => Some(VarType::Integer),
+                None => None,
+            },
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name)).cloned()
             }

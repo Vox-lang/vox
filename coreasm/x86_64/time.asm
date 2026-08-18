@@ -497,9 +497,70 @@ section .text
     pop rbx
 %endmacro
 
-; Get timer duration in seconds (whole seconds only)
+; Internal helper: elapsed nanoseconds.
+; Args: timer_ptr (in %1).
+; Leaves the elapsed time as a 128-bit nanosecond total in rdx:rax.
+; CONTRACT - the caller must have pushed rbx, rcx, rdx, rsi, rdi, r8 and
+; reserved 16 bytes at [rsp] for a stack timespec, then restore them
+; afterwards. This helper clobbers rax, rbx, rcx, rdx, rsi, rdi, r8 and
+; uses [rsp]/[rsp + 8].
+; Both end-time paths are handled: a still-running timer samples
+; clock_gettime into the stack timespec; a stopped timer reads the end
+; fields that STOP stored. The start timespec is subtracted with borrow
+; handling (the same shape TIME_ELAPSED_PRECISE uses), then the result is
+; promoted to a 128-bit nanosecond total. The caller divides that total
+; down to the unit it wants, so seconds and milliseconds share one
+; elapsed-time computation and differ only in the divisor.
+%macro TIMER_ELAPSED_NANOSECONDS 1
+    mov r8, %1                      ; timer pointer
+
+    ; Still running? Sample the clock now; otherwise use the stored end.
+    cmp qword [r8 + TIMER_RUNNING], 1
+    jne %%use_stored_end
+
+    mov rax, SYS_CLOCK_GETTIME
+    mov rdi, CLOCK_MONOTONIC
+    mov rsi, rsp
+    syscall
+    mov rax, [rsp]                  ; current seconds
+    mov rbx, [rsp + 8]             ; current nanoseconds
+    jmp %%subtract
+
+%%use_stored_end:
+    mov rax, [r8 + TIMER_END_MONO_SEC]
+    mov rbx, [r8 + TIMER_END_MONO_NSEC]
+
+%%subtract:
+    ; rax = end seconds, rbx = end nanoseconds. Subtract the start
+    ; timespec and borrow a second when the nsec difference goes negative,
+    ; exactly as TIME_ELAPSED_PRECISE does.
+    sub rax, [r8 + TIMER_START_MONO_SEC]
+    sub rbx, [r8 + TIMER_START_MONO_NSEC]
+    test rbx, rbx
+    jns %%no_borrow
+    add rbx, NANOSECONDS_PER_SECOND
+    dec rax
+%%no_borrow:
+
+    ; Form the 128-bit nanosecond total: seconds * 1e9, then add the
+    ; nsec remainder. mul writes the high half into rdx; the add carries
+    ; into it. Durations are non-negative, so a later unsigned div is safe,
+    ; and no real duration reaches rdx >= 1e9 (that would be ~584 years).
+    mov rcx, NANOSECONDS_PER_SECOND
+    mul rcx                         ; rdx:rax = seconds * 1e9
+    add rax, rbx                    ; add the nsec remainder
+    adc rdx, 0
+%endmacro
+
+; Get timer duration in seconds (whole truncated seconds)
 ; Args: timer_ptr
 ; Returns: seconds in rax
+; The elapsed time is computed in nanoseconds and divided by
+; NANOSECONDS_PER_SECOND, so this is true truncation of the real elapsed
+; time. The old form subtracted the calendar second fields directly, which
+; made a 100 ms wait that straddled a second boundary read 1 instead of 0;
+; dividing the full nanosecond total removes that boundary dependence
+; while keeping the meaning - whole truncated seconds, never milliseconds.
 %macro TIMER_DURATION_SECONDS 1
     push rbx
     push rcx
@@ -507,29 +568,12 @@ section .text
     push rsi
     push rdi
     push r8
-    sub rsp, 16
-    
-    mov r8, %1
-    
-    ; Check if still running - if so, get current time
-    cmp qword [r8 + TIMER_RUNNING], 1
-    jne %%use_stored_end
-    
-    ; Get current monotonic time
-    mov rax, SYS_CLOCK_GETTIME
-    mov rdi, CLOCK_MONOTONIC
-    mov rsi, rsp
-    syscall
-    
-    mov rax, [rsp]                  ; current seconds
-    sub rax, [r8 + TIMER_START_MONO_SEC]
-    jmp %%done
-    
-%%use_stored_end:
-    mov rax, [r8 + TIMER_END_MONO_SEC]
-    sub rax, [r8 + TIMER_START_MONO_SEC]
-    
-%%done:
+    sub rsp, 16                     ; stack timespec for the running path
+
+    TIMER_ELAPSED_NANOSECONDS %1    ; rdx:rax = elapsed nanoseconds
+    mov rcx, NANOSECONDS_PER_SECOND
+    div rcx                         ; rax = whole seconds, rdx = rem
+
     add rsp, 16
     pop r8
     pop rdi
@@ -542,6 +586,40 @@ section .text
 ; Get timer elapsed seconds (while running) - alias
 %macro TIMER_ELAPSED_SECONDS 1
     TIMER_DURATION_SECONDS %1
+%endmacro
+
+; Get timer duration in milliseconds (true millisecond precision)
+; Args: timer_ptr
+; Returns: milliseconds in rax
+; Shares the elapsed-nanosecond computation with the seconds form and
+; divides by NANOSECONDS_PER_MILLISECOND, so a 30 ms wait reads 30 and a
+; 1500 ms wait reads 1500 instead of the whole-seconds-times-1000 the old
+; imul path produced.
+%macro TIMER_DURATION_MILLISECONDS 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    sub rsp, 16                     ; stack timespec for the running path
+
+    TIMER_ELAPSED_NANOSECONDS %1    ; rdx:rax = elapsed nanoseconds
+    mov rcx, NANOSECONDS_PER_MILLISECOND
+    div rcx                         ; rax = total milliseconds, rdx = rem
+
+    add rsp, 16
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
+; Get timer elapsed milliseconds (while running) - alias
+%macro TIMER_ELAPSED_MILLISECONDS 1
+    TIMER_DURATION_MILLISECONDS %1
 %endmacro
 
 ; Get timer start time (unix timestamp)

@@ -836,6 +836,53 @@ impl Parser {
         Ok(Statement::Mkdir { path })
     }
 
+    pub(crate) fn parse_send_signal(&mut self) -> Result<Statement, Box<CompileError>> {
+        // "Send signal <N-expr> to process <pid-expr>."
+        //   - `child` is accepted as an alias for `process`, mirroring
+        //     `reap process/child`.
+        self.advance(); // consume 'send'
+        self.skip_noise();
+
+        // Expect "signal"
+        if let Token::Identifier(ref id) = self.current() {
+            if !id.eq_ignore_ascii_case("signal") {
+                return Err(self.err(&format!(
+                    "Expected 'signal' after 'send', got '{}'",
+                    id
+                )));
+            }
+            self.advance();
+        } else {
+            return Err(self.err("Expected 'signal' after 'send'"));
+        }
+        self.skip_noise();
+
+        let signal = self.parse_primary()?;
+        self.skip_noise();
+
+        // Expect "to"
+        if !matches!(self.current(), Token::To) {
+            return Err(self.err(&format!(
+                "Expected 'to' after the signal value, got {:?}",
+                self.current()
+            )));
+        }
+        self.advance();
+        self.skip_noise();
+
+        // Optional "process" / "child" qualifier (either accepted).
+        if let Token::Identifier(ref id) = self.current() {
+            if id.eq_ignore_ascii_case("process") || id.eq_ignore_ascii_case("child") {
+                self.advance();
+                self.skip_noise();
+            }
+        }
+
+        let pid = self.parse_primary()?;
+
+        Ok(Statement::SendSignal { signal, pid })
+    }
+
     pub(crate) fn parse_chdir(&mut self) -> Result<Statement, Box<CompileError>> {
         // "Change directory to <path>"
         self.advance(); // consume 'change'

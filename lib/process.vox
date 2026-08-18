@@ -1,0 +1,18 @@
+(The low seven bits of a wait status hold the signal that killed the
+ process, and are zero when it exited on its own. The exit code lives
+ in the next eight bits up. This is the kernel's encoding, not ours -
+ see wait(2).)
+
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
+
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
+
+To crashed with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is not 0.
+
+To 'exited normally' with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is 0.

@@ -1,0 +1,2 @@
+'origin' holds a point and 'span' holds a segment, so they cannot be compared
+only two of the same thing have the same fields

@@ -1,0 +1,39 @@
+(The spec's supervisor loop, end to end, on the clean-exit path. The
+ child exits at once; the parent polls with non-blocking reap until it
+ sees the child's pid, then decodes the status with lib/process.vox. The
+ fast child is reaped long before the five-second deadline fires. This
+ is the acceptance test for the whole plan: both new forms plus the
+ library, working together with no shelling out.)
+
+see "../lib/process.vox".
+
+Set pid to fork the process.
+If pid is 0 then,
+    Exit 0.
+
+a timer called clock.
+Start the clock.
+a boolean called 'child is still running' is true.
+a boolean called 'child was killed' is false.
+While 'child is still running',
+    Set 'reap result' to reap child pid without waiting,
+    If 'reap result' is pid then,
+        Set 'child is still running' to false.
+    If 'child is still running' then,
+        a number called 'milliseconds waited' is the clock's elapsed in milliseconds,
+        If 'milliseconds waited' is greater than 5000 then,
+            Send signal 9 to process pid,
+            Set 'reap result' to reap child pid,
+            Set 'child is still running' to false,
+            Set 'child was killed' to true.
+    If 'child is still running' then,
+        Wait 10 milliseconds.
+
+If 'child was killed' then,
+    Print "hang".
+If 'child was killed' is false then,
+    Set status to the reaped status,
+    If crashed of status then,
+        Print "died by signal {'signal of' of status}".
+    If 'exited normally' of status then,
+        Print "exit {'exit code of' of status}".

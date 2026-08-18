@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §7 - `Print "{origin}"` renders the thing's fields
+ straight out, because Print is the sink that writes them. A text initializer
+ is a different sink: it builds its bytes in a buffer, and appending a thing's
+ rendering into one is not written. Rejected rather than interpolated as the
+ first eight bytes of the point's storage.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+a text called note is "the point is {origin}".
+Print note.

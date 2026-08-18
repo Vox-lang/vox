@@ -1,0 +1,17 @@
+(Compile-fail: plan 310 §4 - every declared member returns its owner. That
+ is what gives the manifest a crisp meaning: it lists the functions that
+ produce or transform the thing. A function computing something else from a
+ point is an ordinary function, reached by the instance possessive without
+ any manifest entry at all.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+A thing called 'grid square' has
+  a number called column is 0.
+
+To do the point's 'placed at', with a number called x.
+  a 'grid square' called square.
+  Set square's column to x.
+  Return a 'grid square', square.

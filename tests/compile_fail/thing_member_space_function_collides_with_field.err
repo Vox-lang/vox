@@ -1,0 +1,2 @@
+point already has a field called 'x', so a function taking a point cannot be called 'x' too
+point is defined on line 7. A type owns one member space

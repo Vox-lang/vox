@@ -14,8 +14,52 @@ pub enum Type {
     Time,
     Timer,
     Value,
+    // A user-defined thing (plan 310): the payload is the thing's name as
+    // written in `A thing called <name> has ...`. Layout, size, and field
+    // offsets are resolved from the `ThingDef` registry at compile time;
+    // the type itself carries only the name.
+    Thing(String),
     Void,
     Unknown,
+}
+
+/// One user-defined composite type, as written in a definition construct
+/// (plan 310 §1). Built by the parser and carried on the `Program` so the
+/// analyzer and codegen can compute layout without re-parsing.
+///
+/// Function members take no storage - they are the type's declared
+/// callable API (the manifest, plan 310 §4), so `fields` and `members` are
+/// deliberately separate lists: everything sensitive to layout (size,
+/// offsets, copying, printing, equality) reads `fields` alone.
+///
+/// `allow(dead_code)`: definition parsing lands ahead of the declaration,
+/// field-access, and codegen work that reads the registry, so these fields
+/// are written but not yet read. Same treatment as `Type` and the other
+/// ahead-of-consumer shapes in this file.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ThingDef {
+    pub name: String,
+    /// Data fields only, in definition order (which is layout order).
+    pub fields: Vec<FieldDef>,
+    /// Manifest function-member names, in definition order.
+    pub members: Vec<String>,
+    /// 1-based source line of the `A thing called <name> has` opener, so a
+    /// later duplicate definition can point back at this one.
+    pub line: usize,
+}
+
+/// One data field of a `ThingDef`. `allow(dead_code)` for the same reason
+/// as `ThingDef`: written by the parser, read once layout work lands.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: String,
+    /// A builtin type noun, or `Type::Thing(name)` for a nested thing.
+    pub field_type: Type,
+    /// The literal written after `is`, when the field declares a default.
+    /// `None` means the field takes its type's zero/empty value.
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +145,17 @@ pub enum Expr {
         property: ObjectProperty,
     },
 
+    // A field of a user-defined thing (plan 310 §3): `origin's x`, and
+    // through nesting to any depth, `route's leg's start's x`. `base` is the
+    // thing variable's name; `path` is the field names in order, outermost
+    // first. Every step is a compile-time offset, so the whole chain folds
+    // into one `base_address + constant` - there is no pointer chase and no
+    // runtime failure path (unlike list element access).
+    ThingField {
+        base: String,
+        path: Vec<String>,
+    },
+
     // Map key access: person's "name". `map` is the variable name (like
     // PropertyAccess.object); `key` is an expression that evaluates to a
     // text value (usually a StringLit). Tag of the found value travels in
@@ -157,7 +212,11 @@ pub enum Expr {
     Fork,                       // fork() - 0 in child, child pid in parent, negative on error
     ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
         pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+        no_hang: bool,          // plan 311: true = WNOHANG (non-blocking); false = blocking
     },
+    // plan 311: the raw wait4 status word from the most recent successful reap.
+    // -1 sentinel before any reap. Decoding lives in lib/process.vox, not here.
+    ReapedStatus,
     
     // Type casting
     Cast {
@@ -297,6 +356,23 @@ pub enum Statement {
         name: String,
         var_type: Option<Type>,
         value: Option<Expr>,
+    },
+
+    // A user-defined thing definition (plan 310 §1). Declares a type, not a
+    // variable: it allocates nothing and emits no code. It stays in the
+    // statement stream so a definition keeps its source position relative to
+    // the uses that must follow it.
+    ThingDecl(ThingDef),
+
+    // Write to a field of a user-defined thing (plan 310 §3): `Set origin's x
+    // to 3.`, the bare `origin's x is 3.`, and `increment origin's x.` (which
+    // the parser desugars into this statement with a `+ 1` value, since the
+    // target is an offset, not a name). The read counterpart is
+    // `Expr::ThingField`, and `base`/`path` mean exactly the same there.
+    SetThingField {
+        base: String,
+        path: Vec<String>,
+        value: Expr,
     },
 
     FlagSchemaDecl {
@@ -598,6 +674,13 @@ pub enum Statement {
         path: Expr,
         args: Expr, // expected to be an Expr::ListLit
     },
+
+    // kill(2): "Send signal <N> to process <pid>." / "... to child <pid>."
+    // rdi = pid, rsi = signal. Sets _last_error on failure, clears on success.
+    SendSignal {
+        signal: Expr,
+        pid: Expr,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -614,16 +697,35 @@ pub struct Program {
     pub uses_strings: bool,
     pub uses_io: bool,
     pub uses_args: bool,
+    /// Every thing defined in this program, in definition order. The parser
+    /// fills this from its own registry after a successful parse; consumers
+    /// look layout up here rather than walking the statement list.
+    pub things: Vec<ThingDef>,
 }
 
 impl Program {
     pub fn new(statements: Vec<Statement>) -> Self {
+        // `things` is DERIVED here, not filled in by the caller, so every
+        // construction path populates it. The `--shared` driver builds a
+        // Program directly from the combined statements of several inputs
+        // (src/main.rs), bypassing the parser's own post-parse derivation -
+        // which left `things` empty for a multi-input build, so every
+        // consumer of the registry (layout, offsets, cycle checks) silently
+        // saw no things at all.
+        let things = statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::ThingDecl(def) => Some(def.clone()),
+                _ => None,
+            })
+            .collect();
         Program {
             statements,
             uses_heap: false,
             uses_strings: false,
             uses_io: false,
             uses_args: false,
+            things,
         }
     }
 }

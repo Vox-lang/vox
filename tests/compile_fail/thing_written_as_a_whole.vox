@@ -1,0 +1,12 @@
+(Compile-fail: plan 310 §5 - a step on a whole thing would `inc qword` its
+ first field and silently corrupt it. A thing is copied whole or written one
+ field at a time; there is no arithmetic on the shape itself, so both
+ spellings name what to write instead.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+increment origin.
+decrement origin.

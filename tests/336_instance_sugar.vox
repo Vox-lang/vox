@@ -1,0 +1,56 @@
+(Plan 310 task 4 - the instance possessive. `origin's magnitude squared` is
+ sugar for `'magnitude squared' of origin`: the receiver fills the function's
+ first parameter and any remaining arguments follow the call preposition
+ (§4). It is a compile-time rewrite into an ordinary call, so everything the
+ rewritten form does - copying a thing argument, returning a thing, being
+ inferred into a declaration - is task 3's machinery unchanged.
+
+ A field always wins: `origin's x` stays a field read even though a function
+ could be written with the same name, because the collision rule refuses that
+ program at the function's own line rather than letting one shadow the other.
+
+ Acceptance: the six lines in the .expected, in that order - the free call and
+ the sugared call agreeing, a call that carries a further argument, the sugar
+ read from a quoted variable name, and the sugar read through a field that
+ holds a thing.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+(The magnitude itself needs a square root, so what this returns is the
+ squared form - and that is what its name says.)
+To 'magnitude squared' with a point called corner.
+  a number called 'x squared' is corner's x multiply corner's x.
+  a number called 'y squared' is corner's y multiply corner's y.
+  Return a number, 'x squared' add 'y squared'.
+
+To 'scaled by' with a point called corner and a number called factor.
+  a point called scaled.
+  Set scaled's x to corner's x multiply factor.
+  Set scaled's y to corner's y multiply factor.
+  Return a point, scaled.
+
+a point called origin.
+Set origin's x to 3.
+Set origin's y to 4.
+Print 'magnitude squared' of origin.
+Print origin's 'magnitude squared'.
+Print origin's x.
+
+The 'tripled corner' is origin's 'scaled by' on 3.
+Print 'tripled corner''s x.
+
+a point called 'the point in question'.
+Set 'the point in question''s x to 7.
+Print 'the point in question''s 'magnitude squared'.
+
+(A receiver is anything that names a whole thing, so a field holding one
+ reads the same way.)
+a segment called 'the line'.
+Set 'the line''s end's y to 12.
+Print 'the line''s end's 'magnitude squared'.

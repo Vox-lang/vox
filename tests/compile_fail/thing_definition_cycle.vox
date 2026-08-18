@@ -1,0 +1,5 @@
+(Compile-fail: plan 310 §6/§10 - a thing containing itself has no finite
+ size, so the definition that closes the cycle is an error naming the chain.)
+
+A thing called ouroboros has
+  an ouroboros called tail.

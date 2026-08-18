@@ -1,0 +1,3 @@
+point declares 'placed at', but a receiver cannot reach it here
+'placed at' is a maker: its first parameter is not a point, so a receiver has nothing to fill
+Name the type instead: `a point's 'placed at' with <arguments>`

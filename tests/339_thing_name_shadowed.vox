@@ -1,0 +1,37 @@
+(Plan 310 task 6 - a print now asks whether the name in front of it holds a
+ thing, so the table that answers has to be exactly as scoped as the
+ declarations are. A boolean declared inside a function shadows a top-level
+ thing of the same name for the length of that function, and printing it must
+ print the boolean - not read sixteen more bytes off the stack as though a
+ stamp were sitting there.
+
+ The second function proves the same table the other way: a local thing of a
+ different shape prints as its own shape, and the top-level stamp is whole
+ again once both functions have returned.
+
+ Acceptance: the boolean, the sentence it guards, the package, then the
+ top-level stamp.)
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a number called 'cost in pence' is 12.
+
+A thing called package has
+  a stamp called stamp,
+  a number called 'weight in grams' is 20.
+
+a stamp called posted.
+
+To 'check the letter went out'.
+  a boolean called posted is true.
+  Print posted.
+  If posted then,
+    Print "the letter went out".
+
+To 'weigh what was sent'.
+  a package called posted.
+  Print posted.
+
+'check the letter went out'.
+'weigh what was sent'.
+Print posted.

@@ -1,0 +1,4 @@
+(Compile-fail: plan 310 §10 - a thing is defined, not created as a
+ variable. This shape is never valid Vox, in any version.)
+
+Create a thing called point.

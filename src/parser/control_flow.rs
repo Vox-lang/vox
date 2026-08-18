@@ -382,17 +382,41 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
             Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
-            _ => return Err(self.err(
-                "Missing loop variable after 'for each'\n  \
-                 Syntax: For each <variable> from <start> to <end>, <action>.\n  \
-                 Example: For each number from 1 to 10, print the number."
-            )),
+            _ => {
+                // The variable is either genuinely absent or the user
+                // typed a reserved keyword where a name belonged (e.g.
+                // `for each arg from ...` where `arg` is an alias of
+                // `argument`). Distinguish: when the current token is
+                // one of this loop's own range delimiters (`from` /
+                // `between`) the variable was simply omitted, so fall
+                // through to "Missing loop variable"; any other keyword
+                // was typed as a name, so check_not_keyword gives the
+                // accurate "reserved keyword" diagnostic instead of the
+                // misleading "Missing loop variable" (BUGS_FOUND #6
+                // family). Everything else is genuinely absent.
+                if *self.current() != Token::From
+                    && *self.current() != Token::Between
+                {
+                    if let Err(e) = self.check_not_keyword(self.current()) {
+                        return Err(e);
+                    }
+                }
+                return Err(self.err(
+                    "Missing loop variable after 'for each'\n  \
+                     Syntax: For each <variable> from <start> to <end>, <action>.\n  \
+                     Example: For each number from 1 to 10, print the number."
+                ));
+            }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         if *self.current() == Token::From || *self.current() == Token::Between {
@@ -772,17 +796,39 @@ impl Parser {
         self.skip_noise();
         
         // Get loop variable name
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
             Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
-            _ => return Err(self.err(
-                "Missing loop variable after 'each'\n  \
-                 Syntax: each <variable> from <collection>\n  \
-                 Example: each filename from arguments's all"
-            )),
+            _ => {
+                // The variable is either genuinely absent or the user
+                // typed a reserved keyword where a name belonged (e.g.
+                // `each arg from ...` where `arg` is an alias of
+                // `argument`). Distinguish: when the current token is
+                // this loop's own `from` delimiter the variable was
+                // simply omitted, so fall through to "Missing loop
+                // variable"; any other keyword was typed as a name, so
+                // check_not_keyword gives the accurate "reserved
+                // keyword" diagnostic instead of the misleading
+                // "Missing loop variable" (BUGS_FOUND #6 family).
+                // Everything else is genuinely absent.
+                if *self.current() != Token::From {
+                    if let Err(e) = self.check_not_keyword(self.current()) {
+                        return Err(e);
+                    }
+                }
+                return Err(self.err(
+                    "Missing loop variable after 'each'\n  \
+                     Syntax: each <variable> from <collection>\n  \
+                     Example: each filename from arguments's all"
+                ));
+            }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         // Expect "from"

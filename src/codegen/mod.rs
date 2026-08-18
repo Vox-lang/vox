@@ -118,6 +118,12 @@ pub struct CodeGenerator {
     // level). When it is `Type::Value`, the `Return` path must leave the
     // value's runtime tag in r11 for the caller to consume.
     current_function_return_type: Option<Type>,
+    // Frame slot holding the caller's destination address for a function that
+    // returns a whole thing (plan 310 §5). The address arrives as a hidden
+    // first argument word; `Return` copies the thing into it and hands it
+    // back in rax, so a thing-returning call is an address like every other
+    // thing-valued expression. `None` for every other function.
+    current_thing_return_slot: Option<i64>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -147,6 +153,16 @@ pub struct CodeGenerator {
     initialized_globals: std::collections::HashSet<String>,
     in_function_codegen: bool,
     target_arch: String,
+    /// Every thing defined in the program (plan 310), keyed by name. Sizes and
+    /// field offsets are read from `analyzer::things`, so validation and
+    /// emission compute one layout from one place.
+    things: crate::analyzer::things::ThingRegistry,
+    /// Which thing each thing variable holds, by variable name. Seeded from
+    /// the whole main line before any label or statement is emitted, then
+    /// extended by each declaration as it is generated. Clone-and-restored
+    /// around a function body like `declared_types`, so a function's own
+    /// locals do not leak into what is generated after it.
+    thing_vars: HashMap<String, String>,
 }
 
 
@@ -209,6 +225,7 @@ mod collections;
 mod print;
 mod expr;
 mod statements;
+mod things;
 
 // ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
 //
@@ -381,6 +398,7 @@ impl CodeGenerator {
             function_param_types: std::collections::HashMap::new(),
             function_return_full_types: std::collections::HashMap::new(),
             current_function_return_type: None,
+            current_thing_return_slot: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -391,6 +409,8 @@ impl CodeGenerator {
             initialized_globals: std::collections::HashSet::new(),
             in_function_codegen: false,
             target_arch: "x86_64".to_string(),
+            things: HashMap::new(),
+            thing_vars: HashMap::new(),
         }
     }
 

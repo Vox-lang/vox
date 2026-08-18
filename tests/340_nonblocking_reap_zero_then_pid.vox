@@ -1,0 +1,25 @@
+(Non-blocking reap (WNOHANG) returns 0 while a child is still running,
+ then the child's PID after it exits - the whole value of the form. The
+ parent forks a child that sleeps 30 seconds, reaps without waiting -
+ which must be 0, nothing finished yet, and not an error - and checks
+ the reaped status is still the -1 sentinel, because a reap that reaps
+ nothing must not disturb it. Then it SIGKILLs the child, lets it settle
+ into a zombie, and reaps without waiting again, which must return the
+ child's pid. The pid is variable, so it is checked against the forked
+ child's pid rather than printed.)
+
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    a number called 'status before any reap' is the reaped status,
+    Set 'reap result' to reap child pid without waiting,
+    a number called 'status after nonblocking reap' is the reaped status,
+    Print "before any reap: {'status before any reap'}",
+    Print "first reap child alive: {'reap result'}",
+    Print "status after nonblocking reap: {'status after nonblocking reap'}",
+    Send signal 9 to process pid,
+    Wait 100 milliseconds,
+    Set 'reap result' to reap child pid without waiting,
+    If 'reap result' is pid then,
+        Print "second reap returned child pid".

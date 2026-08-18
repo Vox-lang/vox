@@ -3,6 +3,17 @@ use super::*;
 impl CodeGenerator {
     pub(crate) fn generate_print(&mut self, value: &Expr, without_newline: bool) {
         self.uses_io = true;
+        // `Print origin.` / `Print span's start.` - a whole thing prints as
+        // its fields, map-style and recursive (plan 310 §7). This precedes
+        // the match because both spellings otherwise fall to arms that would
+        // print the first eight bytes of the thing's storage as a number.
+        if let Some((thing, place)) = self.thing_place(value) {
+            self.emit_thing_print(&thing, &place, 0);
+            if !without_newline {
+                self.emit_indent("PRINT_NEWLINE");
+            }
+            return;
+        }
         match value {
             Expr::FormatString { parts } => {
                 // Print each part of the format string
@@ -13,6 +24,15 @@ impl CodeGenerator {
                             self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                         }
                         FormatPart::Variable { name, format } => {
+                            // `"{origin}"` renders the thing exactly as
+                            // `Print origin.` does (plan 310 §7): the same
+                            // emission, straight into the same stream.
+                            if let Some((thing, place)) =
+                                self.thing_place(&Expr::Identifier(name.clone()))
+                            {
+                                self.emit_thing_print(&thing, &place, 0);
+                                continue;
+                            }
                             let var_type: Option<VarType> = match self.resolve_format_variable(name) {
                                 FormatPartValue::Loaded(t) => {
                                     self.emit_indent("mov rdi, rax");
@@ -84,6 +104,12 @@ impl CodeGenerator {
                             }
                         }
                         FormatPart::Expression { expr, format } => {
+                            // `"{span's start}"` - a chain ending on a nested
+                            // thing names the whole thing, and renders as one.
+                            if let Some((thing, place)) = self.thing_place(expr) {
+                                self.emit_thing_print(&thing, &place, 0);
+                                continue;
+                            }
                             let expr_type = self.infer_expr_type(expr);
                             let fmt_spec = self.parse_format_spec(format.as_deref());
 

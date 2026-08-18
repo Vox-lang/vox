@@ -2054,3 +2054,136 @@ Otherwise, a number called s is 1, append s to out.\n";
             "_map_print must clear _last_error on its normal return path"
         );
     }
+
+    /// Plan 310 §7: printing a whole thing is written out by the compiler.
+    /// Every field name is a string constant and every field's address is a
+    /// compile-time operand, so the emitted program has no descriptor to read
+    /// and no loop to run - which is the whole reason this costs nothing at
+    /// runtime. A loop here would mean a tag table had crept in.
+    #[test]
+    fn printing_a_thing_bakes_its_fields_into_the_program() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a number called x is 0,\n  \
+               a number called y is 0.\n\
+             a point called origin.\n\
+             Print origin.\n",
+        );
+        assert!(
+            asm.contains("db '{', 0") && asm.contains("db '}', 0"),
+            "the braces around a printed thing are string constants: {}",
+            asm
+        );
+        assert!(
+            asm.contains("db 'x: ', 0") && asm.contains("db 'y: ', 0"),
+            "each field's name is a string constant, in definition order: {}",
+            asm
+        );
+        assert_eq!(
+            asm.matches("PRINT_INT rdi").count(),
+            2,
+            "one print per field, written out - not a loop over a descriptor"
+        );
+        assert!(
+            !asm.contains("call _map_print") && !asm.contains("call _list_print"),
+            "a thing prints map-STYLE, but through none of the map runtime"
+        );
+    }
+
+    /// Plan 310 §4/§7: a function member is the type's declared API, not its
+    /// state. It takes no storage, so it takes no part in the rendering -
+    /// printing one would have nothing to print.
+    #[test]
+    fn a_function_member_takes_no_part_in_printing() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a function called 'placed at',\n  \
+               a number called x is 0.\n\
+             To do the point's 'placed at', with a number called x.\n  \
+               a point called plotted.\n  \
+               Set plotted's x to x.\n  \
+               Return a point, plotted.\n\
+             a point called origin.\n\
+             Print origin.\n",
+        );
+        assert!(
+            !asm.contains("db 'placed at: ', 0"),
+            "a manifest member is not one of the printed fields: {}",
+            asm
+        );
+        assert!(
+            asm.contains("db 'x: ', 0"),
+            "the data field is still printed: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §7: a field name that is not one plain word prints in the
+    /// single quotes it is written with, so the printed name is the name a
+    /// reader would type to read that field back.
+    #[test]
+    fn a_multi_word_field_name_prints_in_its_quotes() {
+        let asm = compile_to_asm(
+            "A thing called stamp has\n  \
+               a number called 'day sent' is 25.\n\
+             a stamp called posted.\n\
+             Print posted.\n",
+        );
+        // `add_string` spells a quote as its character code, so the constant
+        // `'day sent': ` is emitted as this run of pieces.
+        assert!(
+            asm.contains("db '', 39, 'day sent', 39, ': ', 0"),
+            "a multi-word field name keeps its quotes: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §8: `is` between two things is one comparison per field,
+    /// flattened through nesting - four slots for two segments, not two
+    /// pointer comparisons and not a call.
+    #[test]
+    fn comparing_two_things_expands_to_one_compare_per_slot() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a number called x is 0,\n  \
+               a number called y is 0.\n\
+             A thing called segment has\n  \
+               a point called start,\n  \
+               a point called end.\n\
+             a segment called span.\n\
+             a segment called 'the detour'.\n\
+             If span is 'the detour' then,\n    \
+                 Print \"same\".\n",
+        );
+        assert_eq!(
+            asm.matches("jne .things_differ").count(),
+            4,
+            "two segments are four scalar slots, compared one at a time: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _mem_eq") && !asm.contains("call _str_eq"),
+            "a thing comparison calls nothing at runtime: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §8: a float field is compared as a float, not as its bits, so
+    /// `is` between two things says exactly what `is` between the two fields
+    /// says - -0.0 equals 0.0, and a NaN equals nothing.
+    #[test]
+    fn a_float_field_is_compared_as_a_float() {
+        let asm = compile_to_asm(
+            "A thing called measurement has\n  \
+               a float called celsius is 0.0.\n\
+             a measurement called 'the first sample'.\n\
+             a measurement called 'the second sample'.\n\
+             If 'the first sample' is 'the second sample' then,\n    \
+                 Print \"same\".\n",
+        );
+        assert!(
+            asm.contains("FLOAT_EQ"),
+            "a float field compares through FLOAT_EQ, not a bitwise cmp: {}",
+            asm
+        );
+    }

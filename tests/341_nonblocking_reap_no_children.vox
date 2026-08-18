@@ -1,0 +1,9 @@
+(Non-blocking reap with no children at all is a genuine error (ECHILD),
+ distinct from the 0 "nothing finished yet" return: it goes negative and
+ sets the error flag, catchable with On error. The exact errno is not
+ asserted - only that the return is negative and the flag fires.)
+
+Set 'reap result' to reap any child process without waiting.
+On error print "no children error caught".
+If 'reap result' is less than 0 then,
+    Print "reap result is negative as expected".

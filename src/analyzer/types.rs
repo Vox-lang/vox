@@ -352,6 +352,11 @@ impl Analyzer {
             Type::Time => "time",
             Type::Timer => "timer",
             Type::Value => "value",
+            // The thing's own name would read better here, but this returns
+            // a `&'static str` and the name is owned by the `Type`. No
+            // diagnostic reaches a thing yet (definitions declare a type and
+            // nothing else); revisit the signature when declarations land.
+            Type::Thing(_) => "thing",
             Type::Void => "void",
             Type::Unknown => "unknown",
         }
