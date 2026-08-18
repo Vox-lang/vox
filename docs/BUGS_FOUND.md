@@ -1085,6 +1085,66 @@ signal is precisely the invariant the fuzzer exists to enforce.
 
 ---
 
+### 25. A declaration on a non-`If` conditional path stays in scope over storage nothing ever initialises — stack garbage for numbers, segfault for text
+
+**Status:** open as of v0.4.2; reproduces identically on released 0.4.0.
+Found by the vox-fuzz Task 9 hunt (2026-08-18): the fuzzer's finding
+dissolved under adjudication into two documented parsing rules — and this
+underneath. Fix staged in plan 318.
+
+`If` bodies are properly scoped: `collect_definite_decls` refuses to call
+a some-branches declaration definite, and use-after is rejected
+(LANGUAGE.md "Declarations in Branches"). But `On error`, `While`, and
+`for each` bodies are not scoped at all — the analyzer walks their
+declarations in the enclosing environment — so a name declared there is
+accepted everywhere after, while its initialising store sits behind the
+branch that never ran. The slot is never written on the zero-execution
+path: no default emission, no `.bss` mirror.
+
+```vox
+To dirty.
+  a number called scratch is 12345.
+  Print scratch.
+
+To probe.
+  On error print "handler ran",
+  a number called total is 7.
+  Print total.
+
+dirty.
+probe.
+```
+
+Prints `12345` — `dirty`'s leftover frame slot, read out of `probe` as if
+it were `total`. Exit 0, no warning: the "wrong answer that looks
+completely plausible" LANGUAGE.md:2560 says the language exists to
+prevent. The text form is worse:
+
+```vox
+a number called n is 0.
+While n is greater than 5,
+  a text called label is "hi",
+  the n is n add 1.
+Print label.
+```
+
+Segfault (exit 139) — an uninitialised slot read as a string pointer.
+This is #16's exact failure mode reached by a route its fix does not
+cover: that fix added defaults for declarations *without* initializers;
+here the initializer exists but its statement never runs.
+
+**Rule violated:** LANGUAGE.md:429-433 and the defaults table — a
+declared name holds its initializer or its type's default; there is no
+documented state in which an accepted, in-scope name holds neither.
+
+**The fix most consistent with the book** (LANGUAGE.md:526: no
+block-level scoping; these names are meant to be visible): emit the
+type's default at frame setup for any name whose declaration sits on a
+conditional path. Rejecting the use `if`-style would contradict :526 and
+break programs that declare in a loop body and read after.
+
+---
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
