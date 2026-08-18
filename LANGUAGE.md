@@ -13,21 +13,22 @@ This document defines the syntax and semantics of Vox (sentence based code).
 3. [Variables](#variables)
 4. [Names and strings](#names-and-strings)
 5. [Functions](#functions)
-6. [Expressions](#expressions)
-7. [Control Flow](#control-flow)
-8. [Lists and Collections](#lists-and-collections)
-9. [Input/Output](#inputoutput)
-10. [File I/O](#file-io)
-11. [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
-12. [Time and Timers](#time-and-timers)
-13. [Command-Line Arguments](#command-line-arguments)
-14. [Environment Variables](#environment-variables)
-15. [Operators](#operators)
-16. [Keywords](#keywords)
-17. [Examples](#examples)
-18. [Libraries and Imports](#libraries-and-imports)
-19. [Compiler Usage](#compiler-usage)
-20. [Grammar Summary](#grammar-summary)
+6. [Things](#things)
+7. [Expressions](#expressions)
+8. [Control Flow](#control-flow)
+9. [Lists and Collections](#lists-and-collections)
+10. [Input/Output](#inputoutput)
+11. [File I/O](#file-io)
+12. [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)
+13. [Time and Timers](#time-and-timers)
+14. [Command-Line Arguments](#command-line-arguments)
+15. [Environment Variables](#environment-variables)
+16. [Operators](#operators)
+17. [Keywords](#keywords)
+18. [Examples](#examples)
+19. [Libraries and Imports](#libraries-and-imports)
+20. [Compiler Usage](#compiler-usage)
+21. [Grammar Summary](#grammar-summary)
 
 ---
 
@@ -395,6 +396,7 @@ If the loop variable equals `<match>`, it's replaced with `<replacement>` for th
 | File | `file` | File descriptor handle (auto-cleaned) |
 | Time | `time` | Date/time value (unix timestamp with components) |
 | Timer | `timer` | Stopwatch for measuring durations |
+| Thing | `thing` *(contextual)* | User-defined composite value type — see [Things](#things) |
 
 ---
 
@@ -501,7 +503,7 @@ The error names the variable, its declared type and where it was declared,
 the type of the value that doesn't match, and the exact cast that would fix
 it:
 
-```
+```text
 error: cannot assign text to 'n', which is a number
   --> prog.vox:2:1
    |
@@ -736,6 +738,1003 @@ ping.
 ```vox fragment
 Print 'add numbers' of x and y.
 ```
+
+---
+
+## Things
+
+Vox's eleven builtin types are the compiler's own composite values — a
+buffer is `[capacity][length][flags][data]` with `'s` reading a field at a
+fixed offset. A **thing** opens that same mechanism to the program: a
+user-defined composite value type, built from named fields, with every
+offset fixed at compile time. No vtables, no dispatch, no runtime
+component — a thing is a layout, copied, printed, and compared by the
+compiler the way a buffer is.
+
+A thing is defined once, at the top level, and its name then works
+everywhere a builtin type keyword works: in declarations, parameters, and
+return types. A definition declares a type — it allocates nothing and
+emits no code, so the only output around it comes from the ordinary
+statements.
+
+### Defining a thing
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+Print "defined".
+```
+
+The keyword is **`thing`**, and the verb is **`has`**. A definition has two
+kinds of entry:
+
+- a **data field** — `a <type> called <name>`, with an optional `is
+  <literal>` default;
+- a **function member** — `a function called <name>`, the manifest (see
+  [The manifest](#the-manifest) below).
+
+A field without a default takes its type's zero value. `thing` is a
+keyword only inside this construct — everywhere else it is an ordinary
+identifier, exactly like `send`, so a variable may be called `thing`:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a number called thing is 42.
+Print thing.
+```
+
+A thing name may be a bare word (`point`) or a quoted multi-word name
+(`'bounding box'`), the same forms any identifier takes:
+
+```
+A thing called 'bounding box' has
+  a number called width is 1,
+  a number called height is 1.
+
+a 'bounding box' called viewport.
+Print viewport's width.
+```
+
+**Field types in v1.** A field may be `number`, `float`, `boolean`,
+`time`, or any **previously defined** thing (things nest to any depth —
+see [Nesting](#nesting)). `text`, `list`, `map`, and `buffer` fields are
+deferred: they carry references and would reopen the aliasing question
+value copy semantics (below) is designed to avoid.
+
+#### The article rule
+
+`a`/`an` pairs with **types** and with values coming into being; `the`
+pairs with **known identifiers**. The rule is load-bearing in the surface
+syntax, so it is worth naming once:
+
+- `A thing called point has ...` — a *type* comes into being, so `A`.
+- `a point called origin.` — a value of that type comes into being, so `a`.
+- `the point's 'placed at'` in a member definition
+  (`To do the point's 'placed at'`) — `point` is a known identifier (the
+  type, declared in the manifest), so `the`.
+- `a point's 'placed at' with 1 and 0` — a *new point* comes into being
+  from the maker, so `a`.
+
+The same word, two articles, two meanings: `the point's` reads a known
+member; `a point's` calls a maker that brings a new point into being.
+
+### Declarations and field access
+
+A thing name is a type noun everywhere the builtin ones are, so every
+declaration form works. All three lines below declare a `point` and give
+every field its declared default:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin's x to 3.
+Set origin's y to 4.
+Print origin's x.
+origin's y is origin's y add 1.
+increment origin's x.
+Print "origin sits at {origin's x}, {origin's y}".
+If origin's x is greater than 3 then,
+    Print "the origin moved right".
+```
+
+A field is an ordinary expression and an ordinary lvalue everywhere
+either is allowed — read, `Set ... to`, bare assignment, increment,
+decrement, format-string interpolation, and a comparison in a condition
+all appear above. `Create` declares with defaults too, and a quoted
+variable name is read and written through the same possessive:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+Create a point called 'the far corner'.
+Print 'the far corner''s x.
+Set 'the far corner''s y to 2.
+Print 'the far corner''s y.
+```
+
+A field with no default takes its type's zero. A `float` and a `boolean`
+field carry defaults; a `number` field with none is `0`:
+
+```
+A thing called 'water tank' has
+  a float called 'depth in metres' is 1.5,
+  a boolean called 'the pump is running' is true,
+  a number called 'litres drained'.
+
+a 'water tank' called cistern.
+Print cistern's 'depth in metres'.
+If cistern's 'the pump is running' then,
+    Print "the pump is running".
+Print cistern's 'litres drained'.
+```
+
+A thing declared inside a function is local to that function (its storage
+is the stack, not `.bss`):
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To 'plot a point'.
+  a point called cursor.
+  Set cursor's x to 9.
+  increment cursor's y.
+  Print "the cursor sits at {cursor's x}, {cursor's y}".
+
+'plot a point'.
+```
+
+### Nesting
+
+A field may be a thing, so things nest to any depth. A nested thing
+contributes its own bytes inline, so a chained possessive is one sum of
+compile-time offsets — never a pointer chase — and the route's own
+`'route number'` sits after the whole nested segment:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+A thing called route has
+  a segment called leg,
+  a number called 'route number'.
+
+a route called commute.
+Set commute's leg's start's x to 3.
+Print commute's leg's start's x.
+increment commute's leg's end's y.
+Set commute's 'route number' to 66.
+Print commute's 'route number'.
+```
+
+Defaults apply recursively: a field whose type is a thing takes that
+thing's own defaults, written into the nested bytes at declaration, so a
+stamp carried by a letter begins life with its own defaults even though
+nothing initialises it:
+
+```
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a number called 'cost in pence' is 12.
+
+A thing called letter has
+  a stamp called posted,
+  a number called 'weight in grams' is 2.
+
+a letter called invitation.
+Print invitation's posted's 'day sent'.
+Print invitation's posted's 'cost in pence'.
+Print invitation's 'weight in grams'.
+```
+
+A thing containing itself — directly, or through other things — has no
+finite size, so the definition that closes the cycle is a compile error
+naming the chain:
+
+```
+A thing called ouroboros has
+  an ouroboros called tail.
+(compile error: ouroboros contains ouroboros
+   no finite size)
+```
+
+Things are acyclic by **two mechanisms**. Within one file, the
+**defined-earlier** ordering rule makes a cycle unconstructible: a field
+type must be a thing defined above the line, so a thing can never name
+itself or a thing defined below it. Across files reached by `see`, the
+analyzer's registry DFS proves the merged registry is acyclic. The DFS is
+load-bearing: it is what keeps the merged, multi-file registry acyclic,
+and it stands as defence-in-depth alongside the within-file ordering rule.
+
+### Value copy semantics
+
+A thing is a value. Assignment copies the whole thing, and the copy
+shares nothing with the original — a thing's size is a compile-time
+constant, so a copy is a run of inline moves, no allocation and no
+pointer left aliased:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin's x to 5.
+a point called moved is origin.
+Set moved's x to 9.
+Print origin's x.
+Print moved's x.
+```
+
+The three spellings of assignment — a declaration with an initialiser, a
+bare `is`, and `Set ... to` — are all assignment, so all three copy. A
+copy is deep by construction: a nested thing is just more bytes, so
+copying a letter carries its point along and neither half is shared:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called letter has
+  a point called postbox,
+  a number called 'weight in grams' is 2.
+
+a letter called invitation.
+Set invitation's postbox's x to 3.
+a letter called reply is invitation.
+Set reply's postbox's x to 7.
+Print invitation's postbox's x.
+Print reply's postbox's x.
+```
+
+The same is true across a call. A function receives a copy of a thing
+and hands one back by returning it; nudging the parameter cannot reach
+the caller's point, because the only way out is the `Return`, which
+copies into the caller's own storage:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a point called before.
+The after is nudged of before.
+Print before's x.
+Print after's x.
+```
+
+`The after is nudged of before.` declares `after` from what the call
+returns, so a maker never has to have its type written twice. A whole
+nested thing read out of a segment is copied the same way:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a segment called span.
+Set span's start's x to 40.
+a point called 'the far end' is nudged of span's start.
+Print 'the far end''s x.
+Print span's start's x.
+```
+
+Because a thing is a whole shape, not a value, the things you cannot do
+to one are named rather than done to its first field. Assigning a single
+value to a whole thing, or stepping one with `increment`, is rejected
+with the field to write named instead:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin to 5.
+(compile error: 'origin' holds a whole point, so only a whole point can be copied into it
+   A copy source is a variable holding a point, a field that holds one, or a call that returns one (plan 310 §5)
+   To write one field instead, name it - point's fields are: x, y)
+```
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+increment origin.
+(compile error: 'origin' holds a whole point, not a value
+   A whole thing is copied, passed, and returned whole (plan 310 §5)
+   its fields are: x, y)
+```
+
+Writing one field is what those lines mean: `Set origin's x to 5.`
+A thing also cannot be interpolated into a text initializer (a text
+initializer is a different sink from `Print`) or compared with a single
+value; see [Printing](#printing) and [Equality](#equality).
+
+Printing a call's result directly needs a variable, because the result
+is a whole thing that must land in storage before it can be read:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a point called before.
+Print nudged of before.
+(compile error: A call to 'nudged' returns a whole point, which is not a value
+   What a call returns is copied into a point)
+```
+
+The workaround is the inference form above — declare a scratch slot from
+the call, then print it:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a point called before.
+The after is nudged of before.
+Print after.
+```
+
+### Printing
+
+`Print p.` walks the fields in definition order and recurses into the
+things they hold, map-style. Every field name is baked into the emitted
+program, so nothing is read from a descriptor and nothing is allocated.
+A quoted field name prints in the quotes it is written with, and a
+function member takes no part — it is the type's API, not its state:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a float called 'cost in pounds' is 1.5,
+  a boolean called 'first class' is true.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+a point called origin.
+Set origin's x to 5.
+Print origin.
+
+a segment called span.
+Set span's end's y to 2.
+Print span.
+Print "the span runs {span}".
+
+a stamp called posted.
+Print posted.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner.
+```
+
+A whole thing interpolates into a format string under `Print` (`Print "the
+span runs {span}".`), because `Print` is the sink that renders the fields.
+A text initializer is a different sink — it builds its bytes in a buffer
+— and interpolating a whole thing there is rejected, naming the field to
+interpolate instead:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+a text called note is "the point is {origin}".
+(compile error: 'origin' holds a whole point, which only `Print` can interpolate
+   Interpolate a field instead - point's fields are: x, y)
+```
+
+### Equality
+
+`is` between two values of the same thing compares those same fields at
+the same depth; `is not` is its negation. Like printing, the comparison is
+written out by the compiler, so it recurses into nested things:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+a point called origin.
+Set origin's x to 5.
+a point called marker.
+Set marker's x to 5.
+If origin is marker then,
+    Print "the marker is where the origin is".
+Set marker's y to 9.
+If origin is not marker then,
+    Print "the marker has moved off the origin".
+```
+
+Two things of *different* types cannot be compared (`origin is span` is
+rejected — only two of the same thing have the same fields), and there is
+no ordering on a whole thing — `origin is greater than marker` is
+rejected, naming the field to compare instead:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+a point called marker.
+If origin is greater than marker then,
+    Print "further along".
+(compile error: 'origin' holds a whole point, which nothing puts in order
+   Two things are compared for equality only (plan 310 §8)
+   Compare a field instead - point's fields are: x, y)
+```
+
+### The manifest
+
+A thing's callable API is declared in one place, the **manifest**: each
+`a function called <name>` entry names a member. The member is then
+defined with **`To do the <type>'s <name>`**, and `do` is a keyword only
+in that position — everywhere else it is an ordinary identifier. The
+member definition uses `the point's` (a known identifier) — the
+[article rule](#the-article-rule):
+
+```
+A thing called point has
+  a function called 'placed at',
+  a function called 'reflected through the origin',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+To do the point's 'reflected through the origin', with a point called original.
+  a point called reflection.
+  Set reflection's x to 0 subtract original's x.
+  Set reflection's y to 0 subtract original's y.
+  Return a point, reflection.
+```
+
+Function members take no storage, so layout, copy, printing, and equality
+see only the data fields.
+
+**Every declared member returns its owner.** That is what gives the
+manifest a crisp meaning — it lists the functions that *produce or
+transform* the thing. A definition whose `Return` is not `Return a point,`
+is a compile error naming both lines:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+A thing called 'grid square' has
+  a number called column is 0.
+
+To do the point's 'placed at', with a number called x.
+  a 'grid square' called square.
+  Set square's column to x.
+  Return a 'grid square', square.
+(compile error: A declared member returns its own thing: point's 'placed at' must return a point
+   hands back a grid square
+   A function that computes something else from a point is an ordinary function)
+```
+
+A function computing some other type from a point (like `'magnitude
+squared'`) is an ordinary global function, reached by the instance
+possessive, with no manifest entry at all. The owner-return check reads
+the body's `Return` lines, not the signature — so a member whose only
+`Return` sits inside an `If` is not wrongly rejected.
+
+The manifest is checked both ways. A `To do` naming a member the
+manifest does not list errors at the definition, naming the entry to add:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's sparkle, with a point called original.
+  Return a point, original.
+(compile error: point does not declare sparkle - add `a function called sparkle` to the type
+   Membership is declared in the thing's definition
+   point declares: placed at)
+```
+
+and a declared member nothing defines errors at the type, where the
+promise was made:
+
+```
+A thing called point has
+  a function called 'never written',
+  a number called x is 0.
+
+a point called origin.
+Print origin's x.
+(compile error: point declares 'never written' but nothing defines it
+   To do the point's 'never written', with <parameters>.
+   Return a point, <value>.)
+```
+
+A member is defined once: a second `To do the point's 'placed at'`
+errors at the second definition, naming the first.
+
+### The three call forms
+
+Three ways to call, one rule each.
+
+**Free call** — the function's own name, unchanged, in the global
+namespace. `of`, `to`, `with`, and `on` all introduce arguments:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To 'magnitude squared' with a point called corner.
+  a number called 'x squared' is corner's x multiply corner's x.
+  a number called 'y squared' is corner's y multiply corner's y.
+  Return a number, 'x squared' add 'y squared'.
+
+a point called origin.
+Set origin's x to 3.
+Set origin's y to 4.
+Print 'magnitude squared' of origin.
+```
+
+**Instance possessive** — `receiver's 'member'`: sugar for `'member' of
+receiver`. The receiver fills the function's *first parameter*; any
+further arguments follow the call preposition. A field always wins over
+a function of the same name, because the [collision rule](#one-identifier-space)
+refuses that program rather than letting one shadow the other. A
+receiver is anything that names a whole thing, so a field holding one
+reads the same way:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+To 'magnitude squared' with a point called corner.
+  a number called 'x squared' is corner's x multiply corner's x.
+  a number called 'y squared' is corner's y multiply corner's y.
+  Return a number, 'x squared' add 'y squared'.
+
+To 'scaled by' with a point called corner and a number called factor.
+  a point called scaled.
+  Set scaled's x to corner's x multiply factor.
+  Set scaled's y to corner's y multiply factor.
+  Return a point, scaled.
+
+a point called origin.
+Set origin's x to 3.
+Set origin's y to 4.
+Print origin's 'magnitude squared'.
+The 'tripled corner' is origin's 'scaled by' on 3.
+Print 'tripled corner''s x.
+
+a segment called 'the line'.
+Set 'the line''s end's y to 12.
+Print 'the line''s end's 'magnitude squared'.
+```
+
+**Type possessive** — `a <type>'s 'member'`: calls a member *declared in
+the manifest*. The article is `a` because a new thing comes into being.
+This is the only way to call a **maker** — a member whose first parameter
+is not the thing:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+The pin is a point's 'placed at' with 1 and 0.
+Print pin's x.
+```
+
+A maker cannot be reached by the instance possessive (a receiver has
+nothing to fill), and the message says so rather than reporting the
+member as missing — the manifest does declare it:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+a point called origin.
+Print origin's 'placed at'.
+(compile error: point declares 'placed at', but a receiver cannot reach it here
+   'placed at' is a maker: its first parameter is not a point, so a receiver has nothing to fill
+   Name the type instead: `a point's 'placed at' with <arguments>`)
+```
+
+A member whose first parameter *is* the thing gets both the type
+possessive and the instance possessive:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a function called 'reflected through the origin',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+To do the point's 'reflected through the origin', with a point called original.
+  a point called reflection.
+  Set reflection's x to 0 subtract original's x.
+  Set reflection's y to 0 subtract original's y.
+  Return a point, reflection.
+
+The pin is a point's 'placed at' with 1 and 0.
+The opposite is pin's 'reflected through the origin'.
+The 'opposite of the opposite' is a point's 'reflected through the origin' of opposite.
+Print opposite's x.
+Print 'opposite of the opposite''s x.
+```
+
+A member name belongs to its owner, not to the program: two things may
+each declare a `'placed at'`, and the two definitions compile under
+distinct internal names, so the same member name is fine on two different
+types:
+
+```
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called 'grid square' has
+  a function called 'placed at',
+  a number called column is 0,
+  a number called row is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+To do the 'grid square''s 'placed at', with a number called column and a number called row.
+  a 'grid square' called square.
+  Set square's column to column.
+  Set square's row to row.
+  Return a 'grid square', square.
+
+The 'marked square' is a 'grid square''s 'placed at' with 5 and 6.
+Print 'marked square''s column.
+Print 'marked square''s row.
+```
+
+`do` stays an ordinary identifier outside `To do the <type>'s`: `To do.`
+defines a function called `do`, and `do.` calls it.
+
+### One identifier space
+
+Type names, variable names, and function names share a single global
+identifier namespace. This is what makes `the point's` unambiguous: there
+is only one `point`. Reusing a name is first-come-first-served, and the
+second definition errors at its own line, naming the first — whatever
+kind the first was:
+
+```
+a number called point is 0.
+A thing called point has
+  a number called x is 0.
+(compile error: 'point' is already defined as a variable on line 1
+   identifier space)
+```
+
+The same error names a function, a parameter, a loop variable, an
+inferred variable, or another thing, whichever came first. A thing's own
+fields and members live in a separate per-type **member space** (a type
+owns one), so `point's x` and `segment's x` do not collide. The collision
+rule there is first-come-first-served too: the second definition of any
+name in a type's member space — a field, a declared member, or a global
+function whose first parameter is that type — errors at its own line,
+pointing at the first:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To x with a point called corner.
+  Return a number, corner's y.
+(compile error: point already has a field called 'x', so a function taking a point cannot be called 'x' too
+   point is defined on line 1. A type owns one member space)
+```
+
+### Definitions are top-level only
+
+A thing is defined where a function is defined — at the top level. Its
+layout is fixed for the whole program and has no block scope, so a
+definition inside an `If`, a loop, or a function body is a compile error,
+and the message says to move it above the block:
+
+```
+To 'take a reading'.
+  A thing called measurement has
+    a number called degrees is 0.
+  Print "taken".
+(compile error: A thing is defined at the top level, like a function
+   Canonical form: A thing called measurement has <fields>.
+   Move the definition above the block it is written in)
+```
+
+### Cross-file definitions
+
+A thing defined in one file is usable from another via `see` (the
+definition is parsed into the program the way a function is). The whole
+surface crosses the boundary: the type noun in a declaration, a field
+read and write, the manifest member reached by the type possessive, and
+a global function taking the thing reached by the instance possessive.
+The seen file arrives where the `see` is written, so the same
+defined-earlier rule that orders one file orders the pair — every use
+below stands after the definition it names.
+
+```vox fragment
+(./include/geometry.vox — the definition and the maker travel together)
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+(An ordinary global function taking a point first, so the including file
+ can reach it through the instance possessive as well as by name.)
+To 'shifted east' with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+```
+
+```vox fragment
+(Consumer file — sees the definition above.)
+see "./include/geometry.vox".
+
+a point called origin.
+Set origin's x to 11.
+Print origin's x.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner's x.
+Print corner's y.
+
+The 'shifted corner' is corner's 'shifted east'.
+Print 'shifted corner''s x.
+```
+
+A type name is one identifier across the whole compilation: defining the
+same thing in two files reached by `see` errors at the second definition,
+naming the other file. The diagnostic reads `'point' is already defined
+as a thing on line 4`, then names the file that defined it first
+(`include/point_defined_elsewhere.vox`) and the rule (`identifier space`).
+
+Two behaviour changes landed with cross-file things. A `see` of a file
+that cannot be read is now an error (it was previously silent without
+`-v`), and a duplicate type name across a `see` now errors at the second
+definition, naming the other file (above).
+
+### `.lib` export of a thing is not yet supported
+
+A `.lib` interface file names types by noun, and no noun spells a
+user-defined thing, so an exported signature that takes or returns a
+thing cannot be written. Ordinary compilation is unaffected; an exported
+library function whose signature mentions a thing is refused with a
+message naming the field and the canonical workaround — pass the thing's
+fields across the boundary instead. A library that exports a function
+`To 'nudged east' with a point called start.` — taking a point and, in the
+same case, returning one — is refused when compiled with `--shared`:
+
+> takes a point ('start'), which a library interface cannot describe yet
+> returns a point, which a library interface cannot describe yet
+> A thing is a layout private to one compilation
+
+The same source compiles fine as an ordinary program; the refusal fires
+only at the library interface, because the interface has no noun for a
+user-defined thing. The diagnostic names each crossing field and points at
+the workaround — pass `start's x` and `start's y` as separate values.
+
+### Sentence consumption and multi-line definitions
+
+A thing definition is a new place the [sentence consumption](#sentence-consumption)
+rules bite. Its entries are comma-separated, and the construct closes on
+a **period** or a **blank line**, the same termination rules every other
+construct follows: a period closes the entry list, and a blank line
+force-closes it (along with anything else still open). Indenting the
+entries is conventional but not required — the commas and the terminator
+carry the structure.
+
+### Definition diagnostics
+
+The definition construct creates a family of sentences that are never
+valid Vox. Each gets a targeted error stating the intent it recognises
+and naming the canonical form.
+
+```
+Create a thing called point.
+(compile error: A thing is defined, not created as a variable
+   Canonical form: A thing called point has <fields>.)
+```
+
+```
+A thing called point is 5.
+(compile error: 'is' declares a variable; a thing definition uses 'has'
+   Canonical form: A thing called point has <fields>.)
+```
+
+```
+A thing called point has.
+(compile error: A thing needs at least one field
+   Canonical form: A thing called point has)
+```
+
+A definition listing only manifest entries describes a zero-byte thing,
+so v1 requires at least one data field:
+
+```
+A thing called point has
+  a function called 'from polar'.
+(compile error: A thing needs at least one field
+   `a function called <name>` declares callable API, not storage.)
+```
+
+A field default must be a literal of the field's own type — a computed
+value belongs in a function that returns the thing:
+
+```
+A thing called point has
+  a number called x is 1.5.
+(compile error: Field 'x' of thing 'point' is a number, but its default is a float
+   literal of the field's own type)
+```
+
+Declaring with an unknown type name keeps the existing unknown-type
+error, extended to suggest near-miss **user-defined** type names alongside
+the builtins:
+
+```
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a poimt called origin.
+(compile error: Unknown type 'poimt'
+   did you mean
+   point)
+```
+
+### Type predicates and the runtime tag
+
+User-defined things are not in the runtime tag system in v1. The type
+nouns `is a <type>` recognises are the builtins (`number`, `text`,
+`decimal`, `boolean`, `list`, `map`); there is no `is a point` yet, and a
+`list` or `map` of user things, or a `value` holding one, is likewise
+deferred. Things live in the compile-time type table, not the runtime tag.
+
+### Design notes for review
+
+The four items below are judgement calls the implementation made on the
+way; they are marked here so they are visible without hunting.
+
+<!-- REVIEW: members-only definitions -->
+1. **Members-only definitions are rejected.** A thing listing only `a
+   function called ...` entries and no data fields is a zero-byte thing,
+   so v1 refuses it (see [Definition diagnostics](#definition-diagnostics)).
+   Conservative and reversible: a later version could admit a member-only
+   thing as a pure interface.
+
+<!-- REVIEW: .lib export refused -->
+2. **`.lib` export of a thing is refused.** An exported library signature
+   cannot take or return a thing yet; the diagnostic says to pass its
+   fields across the boundary instead (see
+   [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported)).
+   Ordinary compilation is unaffected. A cross-boundary type system that
+   knows about user things would lift this.
+
+<!-- REVIEW: origin naming -->
+3. **The `origin` naming question.** The tests (and STYLE.md's own model
+   line `Print magnitude of origin.`) declare `a point called origin` then
+   set it to `(3,4)`. The origin is `(0,0)`, so the name is arguably
+   untruthful under the read-aloud guide. This is a guide-level question,
+   not a things-feature one — flagged here for a STYLE pass, not a
+   compiler change.
+
+<!-- REVIEW: acyclicity correction -->
+4. **Acyclicity — corrected from the plan.** Plan 310 framed things as
+   "acyclic by grammar"; that framing is wrong. Things are acyclic by two
+   mechanisms: the within-file defined-earlier ordering rule (a field type
+   must be defined above the line), and the analyzer's registry DFS across
+   files reached by `see`. The DFS is load-bearing across the merged
+   registry, not redundant — it is what proves the multi-file registry
+   acyclic.
 
 ---
 
@@ -1334,6 +2333,12 @@ or `item as a float` (see Type Casting).
 A predicate result is itself a boolean value, so you can store one in a
 list — `append item is a number to flags` — and each stored slot carries
 the boolean tag, so a later `is a boolean` recognises it.
+
+**User-defined things are not in this tag system in v1.** The nouns
+above are the builtins; there is no `is a point` for a thing you define,
+and a `list` or `map` of user things, or a `value` holding one, is
+likewise deferred. A thing lives in the compile-time type table, not the
+runtime tag — see [Things](#things).
 
 ### Dynamic Values (`value`)
 
@@ -2108,7 +3113,7 @@ Print msg.  (prints "Jello")
 
 Efficiently combine buffers without byte-by-byte loops:
 
-```
+```vox fragment
 append source to destination.
 copy source to destination.
 clear destination.
@@ -2622,7 +3627,7 @@ catches `ECHILD` when the PID is not actually your child).
 
 Unlike `fork`/`reap`, this is a **statement**, not an expression:
 
-```
+```vox fragment
 Send signal <N-expr> to process <pid-expr>.
 ```
 
@@ -2691,7 +3696,7 @@ the machine.
 
 Get the current date/time as a `time` value:
 
-```
+```vox fragment
 Get current time into now.
 a time called now is current time.
 ```
@@ -3246,6 +4251,25 @@ These cannot be used as variable names. The diagnostic names the spelling you wr
 
 Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'`, `'length'` — if you genuinely need it.)
 
+### Contextual Keywords (Things)
+
+Three words the things feature claims only inside their construct, and
+treats as ordinary identifiers everywhere else — the same treatment
+`send`/`begin`/`stop` get for timers. None of them is a reserved variable
+name, so `a number called thing is 1.` and `To do.` (a function named
+`do`) both compile.
+
+| Word | Claimed in | Elsewhere |
+|------|-----------|-----------|
+| `thing` | `A thing called <name> has ...` (a definition) | ordinary identifier |
+| `has` | the verb of a thing definition | ordinary identifier |
+| `do` | `To do the <type>'s <member>` (a member definition) | ordinary identifier |
+
+A fourth, **`the`**, gains a second reading in this company: in `To do
+the point's 'placed at'` it pairs with a *known identifier* (the type),
+where `a point's 'placed at'` calls a maker that brings a new point into
+being. See the [article rule](#the-article-rule).
+
 ---
 
 ## Examples
@@ -3302,7 +4326,7 @@ For each number from 1 to 15, print the number, but if 'check divisibility' of t
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
 
-```
+```vox fragment
 see "./utils.vox".
 see mathkit version "1.0" from "./libmathkit.lib".
 ```
@@ -3679,8 +4703,8 @@ vox main.vox --link math --lib-path ./libs
 ```ebnf
 program     ::= statement*
 statement   ::= print_stmt | var_decl | assignment | if_stmt | while_stmt 
-              | for_stmt | func_def | increment | decrement | break | continue
-              | append_stmt
+              | for_stmt | func_def | thing_def | member_def | increment | decrement
+              | break | continue | append_stmt
 
 var_decl    ::= ("a" | "an") type "called" name "is" expr "."
               | ("Set" | "Create") "the"? type? "called"? name "to" expr "."
@@ -3696,6 +4720,14 @@ param       ::= "a" type "called" name
 
 func_call   ::= identifier ("of" | "with" | "to" | "on") args
 args        ::= expr ("and" expr)*
+
+thing_def   ::= "A" "thing" "called" name "has" thing_entry ("," thing_entry)* "."
+thing_entry ::= field_decl | member_decl
+field_decl  ::= "a" type "called" name ("is" literal)?
+member_decl ::= "a" "function" "called" name
+
+member_def  ::= "To" "do" "the" name "'s" name (("," ("with" | "of"))? params)? "."
+                body "Return" "a" name "," expr "."
 
 if_stmt     ::= ("If" | "When") condition "then" "," block 
                 ("but if" condition "then" "," block)* 
@@ -3724,6 +4756,7 @@ primary     ::= literal | identifier | func_call | "(" expr ")"
 
 type        ::= "number" | "float" | "text" | "boolean" | "list"
               | "map" | "buffer" | "file" | "time" | "timer" | "value"
+              | <user-defined thing name>   ; defined by `thing_def`
 name        ::= identifier
 identifier  ::= bare | quoted          ; see Naming Rules for the lexical rule
 literal     ::= string | number | "true" | "false" | "nothing"
