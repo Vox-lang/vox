@@ -1176,6 +1176,39 @@ break programs that declare in a loop body and read after.
 
 ---
 
+### 26. Out-of-range `arguments`/`environment` positional properties segfault
+
+**Status:** open as of v0.4.4-dev. Flagged (not filed) during #24's fix
+as "`_get_env_at` has the identical null-return-on-out-of-bounds shape";
+this entry is that sibling, and testing showed it is **wider than
+flagged** — the `arguments` family has it too.
+
+Reading a positional property that does not exist returns a null
+pointer, which the reader dereferences:
+
+```vox
+Print arguments's first.    (no user arguments -> SIGSEGV, exit 139)
+Print arguments's second.   (fewer than 2 -> SIGSEGV)
+Print environment's first.  (empty environment -> SIGSEGV)
+Print environment's last.   (empty environment -> SIGSEGV)
+```
+
+Reproduce the environment cases with `env -i ./program`, the argument
+cases by running with no arguments.
+
+**Safe, and worth noting as the shape a fix should match:**
+`arguments's last`, `arguments's name`, `arguments's all`,
+`arguments's raw`, and every `count` return sensible empty/zero values
+rather than faulting — so the correct behaviour is already implemented
+next door. `arguments's last` being safe while `arguments's first`
+faults is the clearest possible evidence this is an oversight rather
+than a design position.
+
+Same family as #16, #24, and #25: a text-typed slot handed to a reader
+with nothing behind it. Per LANGUAGE.md's contract, a fallible read
+should set the error flag and yield empty text, catchable by
+`On error` — never fault.
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
