@@ -229,6 +229,22 @@ sudo dnf copr enable vox-lang/Vox
 sudo dnf install vox
 ```
 
+Libraries live in their own project,
+[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs), and are optional —
+Vox has no standard library and the compiler never needs them. They ship from
+the same Copr repository, so no extra setup is required:
+
+```sh
+sudo dnf install vox-libs
+```
+
+Or with cargo, on any platform with a Rust toolchain — the compiler
+carries its own `coreasm` and needs nothing else installed:
+
+```bash
+cargo install vox-lang
+```
+
 On `zypper`/`urpmi`/`tdnf`-based distros (openSUSE, Mageia, Azure Linux),
 grab the matching repo file from the project page instead.
 

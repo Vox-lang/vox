@@ -4,6 +4,28 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-08-18
+
+### Fixed
+
+- **`cargo install vox-lang` produced a compiler that could not compile
+  anything.** Cargo copies only the binary into `~/.cargo/bin`, leaving the
+  crate's `coreasm/` behind in the registry cache, so every step of the
+  resolution order missed and the first compile died with `unable to open
+  include file 'coreasm/x86_64/core.asm'`. The crate already ships all 21
+  `.asm` files — they are inside the crates.io tarball and covered by its
+  checksum — so the compiler now carries them in the binary (a `build.rs`
+  walks `coreasm/` at build time, so a newly added file ships without any
+  list to update) and writes them to `~/.cache/vox/<version>/coreasm` the
+  first time it needs them. The tree is written to a temporary directory
+  and renamed into place, so it is never observably half-written and two
+  vox processes racing on first use is harmless. Nothing is downloaded, at
+  build time or run time. The embedded copy is consulted **last**, after
+  `VOX_CORE_PATH`, the XDG config, the system paths, the executable-relative
+  search, and `./coreasm` — so an RPM install, a development tree, and
+  `VOX_CORE_PATH` all behave exactly as before. See
+  [plan 312](docs/plans/312_cargo_install_coreasm.md).
+
 ## [0.4.1] - 2026-08-18
 
 ### Changed
