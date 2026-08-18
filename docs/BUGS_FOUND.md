@@ -1051,6 +1051,40 @@ them as integers, printing the pointers. Same shape as #17's root cause
 whatever expression produces `arguments's all`'s elements needs the same
 tag arm.
 
+### 24. Reading an unset environment variable by name segfaults — `On error` cannot catch it
+
+**Status:** open as of v0.4.2. Found 2026-08-18 during review of vox-fuzz's
+foundation work; minimal repro is one line.
+
+```vox
+Print environment's "DEFINITELY_NOT_SET_ANYWHERE".
+```
+
+Dies with SIGSEGV (exit 139). An `On error` handler on the reading
+statement does not fire — the crash happens before any error flag is set.
+The same read with the variable present works, and the documented
+guard-then-read pattern works in both directions:
+
+```vox
+a text called 'the compiler' is "../vox/target/release/vox".
+If the environment variable "VOX" exists then,
+    Set 'the compiler' to environment's "VOX".
+```
+
+LANGUAGE.md's own examples only ever read after an exists-check (or read
+variables like USER that always exist), so the unguarded read is arguably
+misuse — but Vox's core promise is that failure surfaces through
+compile-time rejection or runtime error flags, never memory corruption. A
+missing variable should set the error flag and yield empty text, the same
+contract as every other fallible read. Same family as #16 (uninitialised
+text read segfaults): a text-typed slot consumed before anything backs it.
+
+Noted with some satisfaction: this is the first compiler bug surfaced by
+the vox-fuzz project's own build-out — a one-line program that dies by
+signal is precisely the invariant the fuzzer exists to enforce.
+
+---
+
 ---
 
 ## Not bugs — my own mistakes, worth knowing about anyway
