@@ -1,0 +1,3 @@
+For each k from 1 to 0,
+  a text called label is "hi".
+Print label.

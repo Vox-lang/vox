@@ -927,15 +927,25 @@ impl Analyzer {
                 // (leave/ret) which is undefined from _start, so reject
                 // it here rather than produce broken output.
                 if !self.in_function_scope {
-                    let hint = self.pending_blank_line_truncation.as_ref().map(|(func, _, loc)| {
-                        format!(
+                    let mut location = None;
+                    let hint = if let Some((func, _, loc)) = &self.pending_blank_line_truncation {
+                        location = Some(loc.clone());
+                        Some(format!(
                             "a blank line ended `{}`'s body early at line {} — a paragraph break closes all open clauses, so this Return is no longer inside it",
                             func, loc.line
-                        )
-                    });
-                    self.push_error_with_hint(
+                        ))
+                    } else if let Some((func, loc)) = &self.pending_return_truncation {
+                        location = Some(loc.clone());
+                        Some(format!(
+                            "a Return closed `{}`'s body early at line {} — a body-level Return ends the function it's in, so this Return is no longer inside it",
+                            func, loc.line
+                        ))
+                    } else {
+                        None
+                    };
+                    self.push_error_with_hint_at(
                         "Return is only valid inside a function".to_string(),
-                        None,
+                        location,
                         hint.as_deref(),
                     );
                 }
@@ -995,8 +1005,9 @@ impl Analyzer {
                 self.analyze_call_arguments(name, args);
             }
             
-            Statement::FunctionDef { name, params, return_type, body, body_ended_early } => {
+            Statement::FunctionDef { name, params, return_type, body, body_ended_early, body_ended_via_return } => {
                 self.pending_blank_line_truncation = None;
+                self.pending_return_truncation = None;
                 // A leading underscore is the runtime's namespace (see
                 // docs/SYMBOL_MANGLING.md). A function name emits a label
                 // verbatim, so `To _str_eq ...` redefines a coreasm symbol
@@ -1169,6 +1180,9 @@ impl Analyzer {
                 self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {
                     (name.clone(), params.iter().map(|(n, _)| n.clone()).collect(), loc.clone())
                 });
+                self.pending_return_truncation = body_ended_via_return
+                    .as_ref()
+                    .map(|loc| (name.clone(), loc.clone()));
             }
 
             Statement::Increment { name } | Statement::Decrement { name } => {

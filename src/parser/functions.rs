@@ -583,6 +583,11 @@ impl Parser {
         // used to suppress the "still open at EOF" warning for a function
         // that legitimately ends in a Return with no trailing blank line.
         let mut ended_via_return = false;
+        // The closing Return's own location, captured the same way
+        // `body_ended_early` captures the paragraph break's - so the
+        // analyzer can point at (and explain) the body-level Return that
+        // silently promoted everything after it to top-level code.
+        let mut body_ended_via_return: Option<SourceLocation> = None;
         while !body_ended_at_return
             && !matches!(self.current(), Token::ParagraphBreak | Token::EOF | Token::To | Token::Library)
         {
@@ -602,6 +607,7 @@ impl Parser {
                 }
                 break;
             }
+            let stmt_start = self.current_location();
             let stmt = self.parse_statement()?;
             let is_return = matches!(stmt, Statement::Return { .. });
             // Gate B: `Return` isn't the function's first statement, so its
@@ -619,6 +625,7 @@ impl Parser {
             // body; consume its trailing period and stop.
             if is_return {
                 ended_via_return = true;
+                body_ended_via_return = stmt_start;
                 self.skip_noise();
                 if matches!(self.current(), Token::Period | Token::Comma) {
                     self.advance();
@@ -695,6 +702,7 @@ impl Parser {
             return_type,
             body,
             body_ended_early,
+            body_ended_via_return,
         })
     }
 

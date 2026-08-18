@@ -1,0 +1,4 @@
+Return is only valid inside a function
+090_return_after_body_level_return.vox:3:3
+a Return closed `f`'s body early at line 3
+so this Return is no longer inside it

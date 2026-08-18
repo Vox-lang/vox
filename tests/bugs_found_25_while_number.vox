@@ -1,0 +1,5 @@
+a number called n is 0.
+While n is greater than 5,
+  a number called total is 42,
+  the n is n add 1.
+Print total.

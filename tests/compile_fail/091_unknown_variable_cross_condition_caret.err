@@ -1,0 +1,4 @@
+Unknown variable: y
+091_unknown_variable_cross_condition_caret.vox:4:7
+declared only in some branches of an `if`/`otherwise`
+declare it in every branch, or before the `if`
