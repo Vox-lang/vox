@@ -1,0 +1,11 @@
+To dirty.
+  a number called scratch is 12345.
+  Print scratch.
+
+To probe.
+  On error print "handler ran",
+  a number called total is 7.
+  Print total.
+
+dirty.
+probe.

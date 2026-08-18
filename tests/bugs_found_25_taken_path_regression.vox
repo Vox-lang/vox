@@ -1,0 +1,7 @@
+To probe.
+  On error print "handler ran",
+  a number called total is 7.
+  Print total.
+
+Print environment's "DEFINITELY_NOT_SET_ANYWHERE".
+probe.

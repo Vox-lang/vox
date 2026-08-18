@@ -123,6 +123,15 @@ pub struct Analyzer {
     /// starts analysis, bounding it to just the orphaned statements in between.
     pending_blank_line_truncation: Option<(String, Vec<String>, SourceLocation)>,
     // (function_name, its parameter names, the blank line's location)
+    /// Set right after analyzing a function whose body a body-level `Return`
+    /// (not the function's first statement) closed early - the "Gate B"
+    /// case in `src/parser/functions.rs`. Same lifecycle and purpose as
+    /// `pending_blank_line_truncation` above, but for the sibling cause: a
+    /// `Return` closes the function it's in, exactly like a blank line does,
+    /// so a second Return written after it (meant as another branch of the
+    /// same function) is silently promoted to top-level code instead.
+    pending_return_truncation: Option<(String, SourceLocation)>,
+    // (function_name, the closing Return's own location)
     /// Stage A4: functions imported by `see '<lib>' version "<ver>" from
     /// "...lib".`, resolved against the filesystem by the driver (parse +
     /// .dynsym verification) and handed here for name resolution and call
@@ -193,6 +202,7 @@ impl Analyzer {
             shared_mode: false,
             current_library: None,
             pending_blank_line_truncation: None,
+            pending_return_truncation: None,
             imports: Vec::new(),
             warnings: Vec::new(),
             things: HashMap::new(),

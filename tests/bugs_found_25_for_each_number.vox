@@ -1,0 +1,4 @@
+a list called xs is [].
+For each item in xs,
+  a number called total is 42.
+Print total.

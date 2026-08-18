@@ -1232,6 +1232,7 @@ mod tests {
                 return_type: Type::Void,
                 body: vec![decl("local", "point")],
                 body_ended_early: None,
+                body_ended_via_return: None,
             },
         ];
         let vars = collect_thing_vars(&stmts);

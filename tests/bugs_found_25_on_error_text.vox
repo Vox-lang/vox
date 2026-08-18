@@ -1,0 +1,11 @@
+To dirty.
+  a text called scratch is "garbage".
+  Print scratch.
+
+To probe.
+  On error print "handler ran",
+  a text called label is "hi".
+  Print label.
+
+dirty.
+probe.
