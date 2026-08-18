@@ -1178,7 +1178,16 @@ break programs that declare in a loop body and read after.
 
 ### 26. Out-of-range `arguments`/`environment` positional properties segfault
 
-**Status:** open as of v0.4.4-dev. Flagged (not filed) during #24's fix
+**Status:** **fixed in v0.4.4.** Every out-of-range positional read now
+sets the error flag and yields empty text, catchable by `On error`,
+matching the already-correct neighbours. Five shapes were fixed — the
+four below plus a negative-index form found during the audit.
+Regression tests: `tests/bugs_found_26_*` (the faulting shapes, an
+`On error` proof, the out-of-range `environment ... at N` stand-in, the
+negative index, and an in-range/safe-neighbour guard). Note for the
+harness: `test.sh` cannot run a test with an empty environment, so the
+two `env -i` cases were verified by hand and the automated coverage uses
+a far-out-of-range index instead. Flagged (not filed) during #24's fix
 as "`_get_env_at` has the identical null-return-on-out-of-bounds shape";
 this entry is that sibling, and testing showed it is **wider than
 flagged** — the `arguments` family has it too.
