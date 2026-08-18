@@ -1,0 +1,75 @@
+(Plan 310 task 6 - printing a whole thing walks its fields in definition
+ order and recurses into the things they hold (§7), and `is` between two of
+ the same thing compares those same fields at the same depth (§8). Both are
+ written out by the compiler: every field name is baked into the emitted
+ program, so nothing is read from a descriptor and nothing is allocated.
+
+ The point's manifest member proves a function member takes no part in
+ either. It is the type's API, not its state, so it is neither printed nor
+ compared.
+
+ The stamp carries the three remaining shapes of field - a quoted multi-word
+ name, a float, and a boolean - so it proves each prints as it does anywhere
+ else, with a multi-word name printed in the quotes it is written with.
+
+ Acceptance: the twelve lines in the .expected, in that order.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a float called 'cost in pounds' is 1.5,
+  a boolean called 'first class' is true.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+a point called origin.
+Set origin's x to 5.
+Print origin.
+
+a segment called span.
+Set span's end's y to 2.
+Print span.
+Print span's start.
+Print "the span runs {span}".
+Print "it starts at {span's start}".
+
+a stamp called posted.
+Print posted.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner.
+
+a point called marker.
+Set marker's x to 5.
+If origin is marker then,
+    Print "the marker is where the origin is".
+Set marker's y to 9.
+If origin is marker then,
+    Print "SHOULD NOT PRINT".
+If origin is not marker then,
+    Print "the marker has moved off the origin".
+
+a segment called 'the detour'.
+Set 'the detour''s end's y to 2.
+If span is 'the detour' then,
+    Print "the detour runs the same way".
+
+a stamp called 'the reply stamp'.
+If posted is 'the reply stamp' then,
+    Print "two fresh stamps match".
+Set 'the reply stamp''s 'cost in pounds' to 2.0.
+If posted is 'the reply stamp' then,
+    Print "SHOULD NOT PRINT".
+Print "done".

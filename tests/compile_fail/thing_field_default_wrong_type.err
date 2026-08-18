@@ -1,0 +1,2 @@
+Field 'x' of thing 'point' is a number, but its default is a float
+literal of the field's own type

@@ -1,0 +1,9 @@
+(Compile-fail: plan 310 §10/§4 - type names, variable names, and function
+ names share one identifier space, first-come-first-serve. `a point called
+ point.` asks for a variable named after its own type, and the definition
+ claimed that name first.)
+
+A thing called point has
+  a number called x is 0.
+
+a point called point.

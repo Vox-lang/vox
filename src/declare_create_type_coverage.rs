@@ -20,13 +20,16 @@ mod tests {
     use crate::parser::ast::{Statement, Type};
     use crate::parser::Parser;
 
-    fn parse_one_statement(source: &str) -> Result<Statement, String> {
+    fn parse_statements(source: &str) -> Result<Vec<Statement>, String> {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens).with_source("probe", source);
         let program = parser.parse().map_err(|e| e.to_string())?;
-        program
-            .statements
+        Ok(program.statements)
+    }
+
+    fn parse_one_statement(source: &str) -> Result<Statement, String> {
+        parse_statements(source)?
             .into_iter()
             .next()
             .ok_or_else(|| "parser produced no statements".to_string())
@@ -71,6 +74,51 @@ mod tests {
             Err(e) => panic!(
                 "Create a {} called probe. should parse (this type is supposed to default-initialize), but got: {}",
                 keyword, e
+            ),
+        }
+    }
+
+    /// A user-defined thing's name is a type noun in declaration position, so
+    /// it wires into the same resolver - but only after a definition has
+    /// claimed the name, which is why this needs a two-statement fixture
+    /// rather than the one-line probe every builtin type uses.
+    ///
+    /// Both spellings are asserted because plan 310 §10 states they are
+    /// equivalent: `Create a point called probe.` is valid and means exactly
+    /// `a point called probe.` (all defaults).
+    fn assert_thing_declaration_wires_up(verb: &str) {
+        let source = format!(
+            "A thing called point has\n  a number called x is 0.\n\n{} point called probe.\n\nPrint \"ok\".\n",
+            verb
+        );
+        let statements = match parse_statements(&source) {
+            Ok(statements) => statements,
+            Err(e) => panic!("`{} point called probe.` should parse, but got: {}", verb, e),
+        };
+        assert!(
+            matches!(statements.first(), Some(Statement::ThingDecl(_))),
+            "the definition should parse into a ThingDecl, got {:?}",
+            statements.first()
+        );
+        match statements.get(1) {
+            Some(Statement::VarDecl { name, var_type, value }) => {
+                assert_eq!(name, "probe");
+                assert_eq!(
+                    var_type.as_ref(),
+                    Some(&Type::Thing("point".to_string())),
+                    "`{} point called probe.` parsed with var_type {:?}",
+                    verb,
+                    var_type
+                );
+                assert!(
+                    value.is_none(),
+                    "a thing declaration takes its fields' defaults, so it carries no value: {:?}",
+                    value
+                );
+            }
+            other => panic!(
+                "`{} point called probe.` parsed as an unexpected statement: {:?}",
+                verb, other
             ),
         }
     }
@@ -146,6 +194,14 @@ mod tests {
                     "time",
                     "A time variable must be initialized",
                 ),
+                // A user-defined thing is spellable here: `Create a point
+                // called p.` is valid by plan 310 §10, equivalent to `a point
+                // called p.`. Both spellings go through the same resolver,
+                // after a definition has claimed the name.
+                Type::Thing(_) => {
+                    assert_thing_declaration_wires_up("Create a");
+                    assert_thing_declaration_wires_up("a");
+                }
                 // Not spellable in Vox source - there is no keyword that
                 // lexes to these, so there is no `Create` syntax to probe.
                 // Deliberately excluded, mirroring the same judgment call
@@ -167,6 +223,7 @@ mod tests {
             Type::Timer,
             Type::File,
             Type::Time,
+            Type::Thing("point".to_string()),
             Type::Void,
             Type::Unknown,
         ] {

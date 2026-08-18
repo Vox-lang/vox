@@ -1,0 +1,12 @@
+(Compile-fail: plan 310 §4 - a type owns ONE member space, so a function
+ taking a point cannot be called 'x' when point already has a field 'x'.
+ The function is always the second definition, because point has to be
+ defined before its name can be a parameter type, so the error lands on the
+ function's own line and names the line the field was defined on.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To x with a point called corner.
+  Return a number, corner's y.

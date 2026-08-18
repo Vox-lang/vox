@@ -1,0 +1,4 @@
+A declared member returns its own thing: point's 'placed at' must return a point
+makes 'placed at' a member of point
+hands back a grid square
+A function that computes something else from a point is an ordinary function

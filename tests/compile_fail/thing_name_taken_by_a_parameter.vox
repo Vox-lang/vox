@@ -1,0 +1,12 @@
+(Compile-fail: plan 310 §10 - a parameter names a variable, and the
+ identifier space is one space for the whole program. A parameter called
+ `point` would make the type name unreadable for the length of the body,
+ which is exactly the shadowing the settled rule refuses.)
+
+A thing called point has
+  a number called x is 0.
+
+To 'measure the distance' with a number called point.
+  Print point.
+
+'measure the distance' of 3.

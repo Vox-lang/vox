@@ -1,0 +1,4 @@
+(Compile-fail: plan 310 §10 - `A thing called point.` with no fields.
+ Same mistake as a bare `has`, so it gets the same message.)
+
+A thing called point.

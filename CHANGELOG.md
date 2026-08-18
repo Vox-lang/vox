@@ -8,6 +8,57 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **User-defined things — composite value types declared in the program.**
+  A new `thing` construct lets a program declare its own composite types at
+  the top level, alongside the builtins. `A thing called point has a number
+  called x is 0, a number called y is 0.` declares a type `point` with two
+  number fields, each defaulted by a literal of its own type; the definition
+  fixes a layout for the whole program and emits no code. A thing may also
+  carry function members — `a function called 'placed at'` in the body
+  declares the type's callable surface (its manifest), defined separately
+  with `To do the point's 'placed at', with ...`. Declarations bring a thing
+  into being with `a point called origin.` or `Create a point called p.`;
+  `the` reads a known one. Fields are reached by possessive chains
+  (`commute's leg's start's x`), and things nest (a segment holds two
+  points) under an acyclicity check: a thing may name only previously-
+  defined types, so a cycle is unconstructible within a file and is proved
+  out across `see`d files by the analyzer's registry DFS. Things are
+  values — assignment, argument passing, and return copy the whole thing
+  field by field, so mutating a copy never touches the original. A member
+  is called three ways: the free call `'magnitude squared' of origin`, the
+  instance possessive `origin's 'magnitude squared'` (sugar that fills the
+  first parameter with the receiver), and the type possessive `a point's
+  'placed at' with 3 and 4` (a maker — the article `a` because a new thing
+  comes into being). A manifest member must return its own thing; its first
+  parameter may be the thing (reachable by instance sugar) or not (a maker,
+  reached by naming the type). Things print as `{x: 5, y: 0}` and compare
+  for equality field by field. Type, variable, and function names share one
+  global identifier space (first-come-first-served); each type owns a
+  separate member space. Cross-file, `see "./geometry.vox".` makes another
+  file's things usable — a `see` of an unreadable file is now an error (it
+  was silently skipped without `-v`), and a duplicate type name across a
+  `see` now errors at the second definition, naming the other file. In v1
+  a field's type is `number`, `float`, `boolean`, `time`, or any previously-
+  defined thing (`text`/`list`/`map`/`buffer` deferred); user things are not
+  part of the runtime tag system, so there is no `is a point` predicate, and
+  a `.lib` cannot yet take or return a thing across its boundary (the
+  diagnostic names the fields to pass across instead). Every reserved
+  wrong-shape use has a targeted message — a thing copied from or written
+  as a bare value, returned as a value, interpolated into text, or put in
+  order; a member returning another thing, or declared but never defined;
+  a maker reached by a receiver; a members-only or field-less definition;
+  a definition written with `is` instead of `has`, created as a variable,
+  defined inside a block, or defined after a variable of the same name; a
+  field default of the wrong type; an unknown field type. `thing`, `has`,
+  and `do` are contextual keywords — claimed only inside the construct,
+  ordinary identifiers elsewhere, so `a number called thing is 5.` compiles.
+  See the new [Things](LANGUAGE.md#things) chapter in LANGUAGE.md. Strictly
+  additive: no existing program changes meaning; the construct, its
+  diagnostics, the cross-file and `.lib` refusals, and the `see` behaviour
+  tightenings are all new surface. Tests: `tests/330_thing_definition.vox`
+  through `tests/340_thing_see.vox` plus `tests/include/geometry.vox`, and
+  the `tests/compile_fail/thing_*.err` corpus.
+
 - **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
   that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
   62). `child` is accepted as an alias for `process`, mirroring

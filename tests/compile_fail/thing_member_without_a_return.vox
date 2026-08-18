@@ -1,0 +1,12 @@
+(Compile-fail: plan 310 §4 - a declared member produces or transforms its
+ thing, so a definition that hands nothing back is not one. The manifest
+ promised a point; this definition never writes the line that keeps the
+ promise, and there is no second line to point at, so the caret stays on the
+ definition.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  Print x.

@@ -1,0 +1,105 @@
+  1: "("  ->  comment.block.vox
+  1: "Thing grammar fixture: the definition, a member definition, declarations,"  ->  comment.block.vox
+  2: " the three call forms, and the contextual-keyword proof that 'thing' and"  ->  comment.block.vox
+  3: " 'do' are ordinary identifiers outside their construct."  ->  comment.block.vox
+  3: ")"  ->  comment.block.vox
+  4: "A"  ->  punctuation.definition.vox
+  4: "thing"  ->  keyword.other.vox
+  4: "called"  ->  punctuation.definition.vox
+  4: "point"  ->  entity.name.type.vox
+  4: "has"  ->  keyword.other.vox
+  5: "a"  ->  punctuation.definition.vox
+  5: "function"  ->  storage.type.vox
+  5: "called"  ->  punctuation.definition.vox
+  5: "'placed at'"  ->  variable.other.vox
+  5: ","  ->  (none)
+  6: "a"  ->  punctuation.definition.vox
+  6: "number"  ->  storage.type.vox
+  6: "called"  ->  punctuation.definition.vox
+  6: "x"  ->  variable.other.vox
+  6: "is"  ->  keyword.operator.vox
+  6: "0"  ->  constant.numeric.integer.vox
+  6: ","  ->  (none)
+  7: "a"  ->  punctuation.definition.vox
+  7: "number"  ->  storage.type.vox
+  7: "called"  ->  punctuation.definition.vox
+  7: "y"  ->  variable.other.vox
+  7: "is"  ->  keyword.operator.vox
+  7: "0"  ->  constant.numeric.integer.vox
+  7: "."  ->  (none)
+  9: "To"  ->  storage.type.function.vox
+  9: "do"  ->  keyword.other.vox
+  9: "the"  ->  punctuation.definition.vox
+  9: "point"  ->  storage.type.vox
+  9: "'s"  ->  punctuation.accessor.vox
+  9: "'placed at'"  ->  entity.name.function.vox
+  9: ", "  ->  (none)
+  9: "with"  ->  punctuation.definition.vox
+  9: "a"  ->  punctuation.definition.vox
+  9: "number"  ->  storage.type.vox
+  9: "called"  ->  punctuation.definition.vox
+  9: "x"  ->  variable.other.vox
+  9: "and"  ->  keyword.operator.vox
+  9: "a"  ->  punctuation.definition.vox
+  9: "number"  ->  storage.type.vox
+  9: "called"  ->  punctuation.definition.vox
+  9: "y"  ->  variable.other.vox
+  9: "."  ->  (none)
+ 10: "a"  ->  punctuation.definition.vox
+ 10: "point"  ->  storage.type.vox
+ 10: "called"  ->  punctuation.definition.vox
+ 10: "plotted"  ->  variable.other.vox
+ 10: "."  ->  (none)
+ 11: "Set"  ->  keyword.other.vox
+ 11: "plotted"  ->  variable.other.vox
+ 11: "'s"  ->  punctuation.accessor.vox
+ 11: "x"  ->  variable.other.vox
+ 11: "to"  ->  punctuation.definition.vox
+ 11: "x"  ->  variable.other.vox
+ 11: "."  ->  (none)
+ 12: "Return"  ->  keyword.control.vox
+ 12: "a"  ->  punctuation.definition.vox
+ 12: "point"  ->  variable.other.vox
+ 12: ", "  ->  (none)
+ 12: "plotted"  ->  variable.other.vox
+ 12: "."  ->  (none)
+ 14: "a"  ->  punctuation.definition.vox
+ 14: "point"  ->  storage.type.vox
+ 14: "called"  ->  punctuation.definition.vox
+ 14: "origin"  ->  variable.other.vox
+ 14: "."  ->  (none)
+ 15: "The"  ->  punctuation.definition.vox
+ 15: "pin"  ->  variable.other.vox
+ 15: "is"  ->  keyword.operator.vox
+ 15: "a"  ->  punctuation.definition.vox
+ 15: "point"  ->  storage.type.vox
+ 15: "'s"  ->  punctuation.accessor.vox
+ 15: "'placed at'"  ->  variable.other.vox
+ 15: "with"  ->  punctuation.definition.vox
+ 15: "1"  ->  constant.numeric.integer.vox
+ 15: "and"  ->  keyword.operator.vox
+ 15: "0"  ->  constant.numeric.integer.vox
+ 15: "."  ->  (none)
+ 16: "Print"  ->  keyword.other.vox
+ 16: "origin"  ->  variable.other.vox
+ 16: "'s"  ->  punctuation.accessor.vox
+ 16: "'magnitude squared'"  ->  variable.other.vox
+ 16: "."  ->  (none)
+ 18: "("  ->  comment.block.vox
+ 18: "thing and do are ordinary identifiers here, not keywords"  ->  comment.block.vox
+ 18: ")"  ->  comment.block.vox
+ 19: "a"  ->  punctuation.definition.vox
+ 19: "number"  ->  storage.type.vox
+ 19: "called"  ->  punctuation.definition.vox
+ 19: "thing"  ->  variable.other.vox
+ 19: "is"  ->  keyword.operator.vox
+ 19: "5"  ->  constant.numeric.integer.vox
+ 19: "."  ->  (none)
+ 20: "To"  ->  storage.type.function.vox
+ 20: "do"  ->  entity.name.function.definition.vox
+ 20: "."  ->  (none)
+ 21: "Print"  ->  keyword.other.vox
+ 21: "thing"  ->  variable.other.vox
+ 21: "."  ->  (none)
+ 22: "do"  ->  variable.other.vox
+ 22: "."  ->  (none)

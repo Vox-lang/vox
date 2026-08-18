@@ -17,7 +17,12 @@ mod tests {
         let mut lexer = Lexer::new(&source);
         let tokens = lexer.tokenize();
 
-        let mut parser = Parser::new(tokens).with_source(source_name, &source);
+        // The case is displayed under its bare file name - the `.err`
+        // fixtures pin that - but its `see` paths resolve against the
+        // directory it actually lives in, the same as any other Vox source.
+        let mut parser = Parser::new(tokens)
+            .with_source(source_name, &source)
+            .with_include_base(vox_path.parent().unwrap_or(Path::new(".")));
         let mut program = match parser.parse() {
             Ok(p) => p,
             Err(err) => return Err(err.to_string()),

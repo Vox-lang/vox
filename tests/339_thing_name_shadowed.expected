@@ -1,0 +1,4 @@
+1
+the letter went out
+{stamp: {'day sent': 25, 'cost in pence': 12}, 'weight in grams': 20}
+{'day sent': 25, 'cost in pence': 12}

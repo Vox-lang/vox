@@ -1,0 +1,9 @@
+(Compile-fail: plan 310 §10 - `Create a thing called X.` is never valid Vox,
+ and the message names the canonical form. The name here is one the lexer
+ folds into a keyword token, so by the time the diagnostic runs the token no
+ longer carries the author's spelling; it is read back from the source line
+ and quoted, because `A thing called 'reading' has ...` is the form that
+ compiles. Echoing it bare would spell advice that is refused the moment it
+ is written.)
+
+Create a thing called reading.

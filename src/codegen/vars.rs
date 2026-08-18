@@ -24,7 +24,17 @@ impl CodeGenerator {
         let label = format!("gvar_{}", self.global_var_counter);
         self.global_var_counter += 1;
         self.global_var_labels.insert(name.to_string(), label.clone());
-        self.bss_section.push_str(&format!("    {}: resq 1\n", label));
+        // A thing global's label reserves the thing's whole size and IS its
+        // storage - field offsets index into it (plan 310 §9). Every other
+        // global holds one quadword: a scalar's value, or a pointer to a
+        // buffer/list/map allocated elsewhere.
+        match self.thing_global_size(name) {
+            Some(size) => self.bss_section.push_str(&format!(
+                "    {}: resb {}  ; {} is a thing\n",
+                label, size, name
+            )),
+            None => self.bss_section.push_str(&format!("    {}: resq 1\n", label)),
+        }
     }
 
     pub(crate) fn global_var_label(&self, name: &str) -> Option<&String> {

@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §3, §9 - a thing is defined at the top level, like
+ a function. A definition written inside an `If` body used to register the
+ type with the parser while never reaching the program's registry, so every
+ size computed for it came back 0 - and a parameter of a 0-byte thing takes
+ frame offset 0, which is the saved base pointer, not storage.)
+
+a number called temperature is 20.
+
+If temperature is 20 then,
+  A thing called measurement has
+    a number called degrees is 0.

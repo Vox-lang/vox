@@ -1,0 +1,22 @@
+(Thing grammar fixture: the definition, a member definition, declarations,
+ the three call forms, and the contextual-keyword proof that 'thing' and
+ 'do' are ordinary identifiers outside their construct.)
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+a point called origin.
+The pin is a point's 'placed at' with 1 and 0.
+Print origin's 'magnitude squared'.
+
+(thing and do are ordinary identifiers here, not keywords)
+a number called thing is 5.
+To do.
+  Print thing.
+do.

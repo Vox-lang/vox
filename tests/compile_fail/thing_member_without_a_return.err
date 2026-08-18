@@ -1,0 +1,2 @@
+A declared member returns its own thing: point's 'placed at' must return a point
+nothing in it declares a `Return a point, <value>.`

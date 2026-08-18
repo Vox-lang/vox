@@ -1,0 +1,17 @@
+(Compile-fail: plan 310 §4 - a maker's first parameter is not the thing, so
+ a receiver has nothing to fill and the instance possessive cannot reach it.
+ The full name of a maker is `a point's 'placed at'`, and the message says
+ so rather than reporting the member as missing - the manifest does declare
+ it.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+a point called origin.
+Print origin's 'placed at'.

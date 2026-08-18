@@ -1,0 +1,14 @@
+(Compile-fail: plan 310 §4 - the identifier space is one space for the whole
+ program, and a `see` splices another file into that program. Two definitions
+ of `point` used to compile, one silently winning, and the loser's author got
+ "point has no field 'x'" against a definition that plainly declares one.
+ Refusing the ambiguity is what the collision rule says everywhere else.)
+
+see "./include/point_defined_elsewhere.vox".
+
+A thing called point has
+  a number called x is 0.
+
+a point called origin.
+Set origin's x to 11.
+Print origin's x.

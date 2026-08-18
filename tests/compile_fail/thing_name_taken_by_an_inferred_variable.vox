@@ -1,0 +1,10 @@
+(Compile-fail: plan 310 §10 - the same collision reached through the other
+ declaration spelling. `The <name> is <value>.` brings a variable into being
+ just as `a number called <name>` does, so the identifier space has to be
+ claimed at both, or the rule holds only where someone remembered it.)
+
+A thing called point has
+  a number called x is 0.
+
+The point is 42.
+Print point.

@@ -1,0 +1,2 @@
+'edge's start' holds a whole point, not a value
+no other position reads it as one value

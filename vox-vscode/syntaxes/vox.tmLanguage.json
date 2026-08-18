@@ -9,6 +9,8 @@
     { "include": "#reap-no-hang" },
     { "include": "#library-declaration" },
     { "include": "#see-import" },
+    { "include": "#thing-definition" },
+    { "include": "#member-definition" },
     { "include": "#function-definition" },
     { "include": "#function-call" },
     { "include": "#strings" },
@@ -27,6 +29,8 @@
     { "include": "#operators" },
     { "include": "#property-keywords" },
     { "include": "#properties" },
+    { "include": "#type-possessive" },
+    { "include": "#declared-type" },
     { "include": "#articles" },
     { "include": "#function-call-bare" },
     { "include": "#bare-identifier" }
@@ -83,6 +87,47 @@
       "captures": {
         "1": { "name": "storage.type.function.vox" },
         "2": { "name": "entity.name.function.definition.vox" }
+      }
+    },
+    "thing-definition": {
+      "comment": "Thing definition: A thing called <name> has <fields>. 'thing' and 'has' are contextual keywords only here (ordinary identifiers elsewhere, like 'send'). The defined name is a user type, so it is entity.name.type.",
+      "match": "(?i)(?<![\\w-])(A)\\s+(thing)\\s+(called)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)\\s+(has)(?![\\w-])",
+      "captures": {
+        "1": { "name": "punctuation.definition.vox" },
+        "2": { "name": "keyword.other.vox" },
+        "3": { "name": "punctuation.definition.vox" },
+        "4": { "name": "entity.name.type.vox" },
+        "5": { "name": "keyword.other.vox" }
+      }
+    },
+    "member-definition": {
+      "comment": "Member definition: To do the <type>'s <member>. 'do' is a contextual keyword only in this position ('To do.' still defines a function named do). Positional type highlighting: the <type> word is scoped as a type, the <member> as a function name.",
+      "match": "(?i)(?<![\\w-])(To)\\s+(do)\\s+(the)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)('s(?![A-Za-z0-9_]))\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.vox" },
+        "2": { "name": "keyword.other.vox" },
+        "3": { "name": "punctuation.definition.vox" },
+        "4": { "name": "storage.type.vox" },
+        "5": { "name": "punctuation.accessor.vox" },
+        "6": { "name": "entity.name.function.vox" }
+      }
+    },
+    "declared-type": {
+      "comment": "Positional type highlighting: in 'a/an <word> called', the <word> is always a type name (builtin or a user-defined thing). Scopes <word> as a type without semantic analysis, so user things highlight exactly like builtins wherever they are declared. 'a'/'an'/'called' keep their muted article scope via captures. Runs before #articles.",
+      "match": "(?i)(?<![\\w-])(a|an)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)\\s+(called)(?![\\w-])",
+      "captures": {
+        "1": { "name": "punctuation.definition.vox" },
+        "2": { "name": "storage.type.vox" },
+        "3": { "name": "punctuation.definition.vox" }
+      }
+    },
+    "type-possessive": {
+      "comment": "Positional type highlighting: in 'a <word>'s' (the type possessive that calls a maker), the <word> is a type name. The instance possessive 'origin's' has no leading 'a', so it is NOT matched here and stays a variable — only the type possessive gets the type scope. Runs before #articles.",
+      "match": "(?i)(?<![\\w-])(a)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)('s(?![A-Za-z0-9_]))",
+      "captures": {
+        "1": { "name": "punctuation.definition.vox" },
+        "2": { "name": "storage.type.vox" },
+        "3": { "name": "punctuation.accessor.vox" }
       }
     },
     "function-call": {

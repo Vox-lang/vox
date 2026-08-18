@@ -1,0 +1,5 @@
+(Seen by thing_defined_twice_across_a_see.vox. It defines `point` first, so
+ the definition in the file that sees it is the second one into the name.)
+
+A thing called point has
+  a number called width is 0.
