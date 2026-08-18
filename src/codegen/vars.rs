@@ -184,6 +184,33 @@ impl CodeGenerator {
         label
     }
 
+    /// `docs/BUGS_FOUND.md #26`: a positional `arguments`/`environment`
+    /// accessor (`first`, `second`, `last`, `at N`) is backed by a coreasm
+    /// lookup (`_get_arg`, `_get_parsed_arg`, `_get_env_at`) that already
+    /// returns a NULL pointer when the index is out of range - the same
+    /// shape `_get_env` has for a missing name, which `Expr::EnvironmentVariable`
+    /// (BUGS_FOUND #24) already handles this way. Call this immediately
+    /// after such a lookup, with the result still in `rax`: on NULL it sets
+    /// `_last_error` and substitutes the shared empty-text pointer so the
+    /// read behaves like every other fallible read (`On error` catches it,
+    /// nothing dereferences 0); on a real pointer it just clears the flag.
+    /// `label_prefix` only needs to be unique per call site.
+    pub(crate) fn emit_text_or_empty_on_null(&mut self, label_prefix: &str) {
+        let missing_label = self.new_label(&format!("{}_missing", label_prefix));
+        let done_label = self.new_label(&format!("{}_done", label_prefix));
+        self.emit_indent("test rax, rax");
+        self.emit_indent(&format!("jz {}  ; out of range", missing_label));
+        self.emit_indent("mov qword [rel _last_error], 0  ; in range");
+        self.emit_indent(&format!("jmp {}", done_label));
+        self.emit(&format!("{}:", missing_label));
+        let empty_label = self.get_empty_string_label();
+        self.emit_indent(&format!(
+            "lea rax, [rel {}]  ; empty text for out-of-range positional read", empty_label));
+        self.emit_indent("mov qword [rel _last_error], 1  ; out of range");
+        self.emit(&format!("{}:", done_label));
+        self.uses_strings = true;
+    }
+
     pub(crate) fn add_float(&mut self, f: f64) -> String {
         let label = format!("float_{}", self.float_counter);
         self.float_counter += 1;
