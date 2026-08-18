@@ -376,7 +376,11 @@ impl LibParser {
     fn parse_block(&mut self) -> Result<LibFileBlock, String> {
         self.advance(); // consume 'Library'
         let lib = self.take_identifier("a library name after 'Library'")?;
-        if *self.current() == Token::Version {
+        // `version` is a contextual word (claimed here by lexeme); the
+        // `ver` alias still lexes to `Token::Version`, so accept both.
+        let is_version = *self.current() == Token::Version
+            || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "version");
+        if is_version {
             self.advance();
         } else {
             return Err(self.err(format!(

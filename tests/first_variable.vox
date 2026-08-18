@@ -1,0 +1,11 @@
+A number called first is 0.
+Set first to first add 1.
+Print first.
+While first is less than 3,
+  Set first to first add 1,
+  Print first.
+To 'shift' with a number called first. Return a number, first add 10.
+Print 'shift' of first.
+a list called letters is ["a", "b", "c"].
+Print letters's first.
+Print arguments's first.

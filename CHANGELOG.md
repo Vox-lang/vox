@@ -4,6 +4,44 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Nine more reserved words are now legal identifiers** — `capacity`,
+  `raw`, `all`, `first`, `last`, `second`, `size`, `length`, and
+  `version`. Each was reserved as a keyword but is only special in one
+  fixed grammatical position, the same contextual-keyword treatment that
+  freed `count` in 0.4.2. The compiler now lexes all nine as identifiers
+  and claims each by lexeme at the position where it means something,
+  leaving it an ordinary variable name everywhere else:
+
+  - `capacity` — after a possessive marker (`data's capacity`) and in the
+    `with capacity N` / `of capacity N` buffer-declaration phrase.
+  - `raw` — after a possessive marker (`the program's raw`).
+  - `all` — after a possessive marker (`the numbers's all`) and in the
+    `all the numbers from/between … to and …` range literal.
+  - `first`, `last`, `second` — after a possessive marker
+    (`arguments's first`, `the letters's last`, `arguments's second`);
+    `second` also names the `Wait 1 second.` time unit, so
+    `Set second to 1. Wait second seconds.` waits one second while `a
+    number called second is 0.` compiles.
+  - `size` and its synonym `length` — after a possessive marker
+    (`the letters's size`, `the letters's length`); `size` also in the
+    `with size N` / `N bytes in size` declaration phrases.
+  - `version` — the `Library <name> version "…"` and `see <lib>
+    version "…"` header sentences only.
+
+  Each is a bare variable name everywhere except its one fixed
+  grammatical position; `arguments's first` and `a number called first is
+  0.` both work in the same program. The quoted forms (`'first'`,
+  `'size'`, etc.), which always lexed identically to the bare forms, are
+  unaffected. The reserved alias `length` (previously an alternate
+  spelling of `size` in the alias table) is now a contextual keyword — a
+  synonym of `size` in the possessive dispatch only — so
+  `a number called length is 1.` compiles and `x's length` still means the
+  same as `x's size`. See [plan 315](docs/plans/315_contextual_keyword_family.md).
+
 ## [0.4.2] - 2026-08-18
 
 ### Fixed

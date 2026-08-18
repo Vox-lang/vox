@@ -356,7 +356,12 @@ impl<'a> Lexer<'a> {
             "the" => Token::The,
             "a" => Token::A,
             "an" => Token::An,
-            "all" => Token::All,
+            // `all` is contextual, not reserved: a property only after a
+            // possessive marker (`arguments's all`) and the `all the
+            // numbers from/between ...` range literal, both claimed by
+            // matching this ordinary identifier. Everywhere else `all` is
+            // a bare variable name.
+            "all" => Token::Identifier("all".to_string()),
             "number" | "numbers" => Token::Number,
             "float" | "decimal" | "real" => Token::Float,
             "int" | "integer" => Token::Int,
@@ -385,8 +390,20 @@ impl<'a> Lexer<'a> {
             "buffer" => Token::Buffer,
             "file" => Token::File,
             "bytes" => Token::Bytes,
-            "size" | "length" => Token::Size,
-            "capacity" => Token::Capacity,
+            // `size` and `length` are contextual, not reserved: `size` is a
+            // property after a possessive marker (`buffer's size`) and in
+            // the `with/of size N` and `N bytes in size` declaration phrases;
+            // `length` is its synonym in the possessive dispatch only
+            // (`buffer's length` == `buffer's size`). Both are ordinary
+            // variable names everywhere else, claimed by lexeme in those
+            // fixed positions.
+            "size" => Token::Identifier("size".to_string()),
+            "length" => Token::Identifier("length".to_string()),
+            // `capacity` is contextual, not reserved: it is a property only
+            // after a possessive marker (`buffer's capacity`), which the
+            // parser claims by matching this ordinary identifier. Everywhere
+            // else `capacity` is a bare variable name.
+            "capacity" => Token::Identifier("capacity".to_string()),
             "into" => Token::Into,
             "reading" => Token::Reading,
             "writing" => Token::Writing,
@@ -404,8 +421,12 @@ impl<'a> Lexer<'a> {
             "readable" => Token::Readable,
             "writable" => Token::Writable,
             "full" => Token::Full,
-            "first" => Token::First,
-            "last" => Token::Last,
+            // `first`/`last` are contextual, not reserved: properties only
+            // after a possessive marker (`x's first`, `arguments's first`,
+            // `environment's first`), claimed by matching these ordinary
+            // identifiers. Everywhere else they are bare variable names.
+            "first" => Token::Identifier("first".to_string()),
+            "last" => Token::Identifier("last".to_string()),
             "keys" => Token::Keys,
             "values" => Token::Values,
             "absolute" | "abs" => Token::Absolute,
@@ -413,7 +434,13 @@ impl<'a> Lexer<'a> {
             // Library system
             "see" | "import" | "include" | "require" => Token::See,
             "library" | "lib" => Token::Library,
-            "version" | "ver" => Token::Version,
+            // `version` is contextual, not reserved: claimed only inside the
+            // `Library <name> version "<v>".` and `see <lib> version "<v>"
+            // from "<path>.lib".` header sentences, by lexeme. Everywhere
+            // else it is a bare variable name. The `ver` alias stays reserved
+            // (Class C, deferred) and keeps its own `Token::Version` mapping.
+            "version" => Token::Identifier("version".to_string()),
+            "ver" => Token::Version,
             // Arguments and environment
             "argument" | "arg" | "param" | "parameter" => Token::Argument,
             "arguments" | "args" | "params" | "parameters" => Token::Arguments,
@@ -429,7 +456,11 @@ impl<'a> Lexer<'a> {
             // never had a `Token::Count` form here that other positions
             // needed; the possessive dispatch reads the identifier.
             "count" => Token::Identifier("count".to_string()),
-            "raw" => Token::Raw,
+            // `raw` is contextual, not reserved: a property only after a
+            // possessive marker (`arguments's raw`), claimed by matching
+            // this ordinary identifier. Everywhere else it is a bare
+            // variable name.
+            "raw" => Token::Identifier("raw".to_string()),
             "treating" | "treat" => Token::Treating,
             // Time and Timers
             "wait" | "pause" => Token::Wait,
@@ -446,7 +477,13 @@ impl<'a> Lexer<'a> {
             "get" | "fetch" | "retrieve" => Token::Get,
             "current" => Token::Current,
             "time" => Token::Time,
-            "second" => Token::Second,
+            // `second` is contextual, not reserved: a duration unit
+            // (`Wait 1 second.`) and a possessive property (`arguments's
+            // second`, `current time's second`), both claimed by matching
+            // this ordinary identifier. `seconds` (plural) stays a token.
+            // A variable named `second` coexists with both: `Set second to
+            // 1. Wait second seconds.` waits one second.
+            "second" => Token::Identifier("second".to_string()),
             "seconds" => Token::Seconds,
             "millisecond" => Token::Millisecond,
             "milliseconds" | "ms" => Token::Milliseconds,

@@ -109,8 +109,12 @@ impl Parser {
 
         self.skip_noise();
 
-        // Parse version — a string literal.
-        let version = if *self.current() == Token::Version {
+        // Parse version — a string literal. `version` is a contextual word
+        // (claimed here by lexeme); the `ver` alias still lexes to
+        // `Token::Version`, so accept both.
+        let is_version = *self.current() == Token::Version
+            || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "version");
+        let version = if is_version {
             self.advance();
             self.skip_noise();
             match self.current().clone() {
@@ -174,7 +178,8 @@ impl Parser {
             while matches!(self.peek(k), Token::Newline) {
                 k += 1;
             }
-            if matches!(self.peek(k), Token::Version) {
+            if matches!(self.peek(k), Token::Version)
+                || matches!(self.peek(k), Token::Identifier(ref id) if id.to_lowercase() == "version") {
                 return Err(self.err_string_as_name(s));
             }
         }
@@ -187,7 +192,9 @@ impl Parser {
         self.advance();
         self.skip_noise();
 
-        if *self.current() == Token::Version {
+        let is_version = *self.current() == Token::Version
+            || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "version");
+        if is_version {
             // see '<lib>' version "<ver>" from "<path>.lib".
             // `first` is the library name (an identifier in canonical form).
             lib_name = Some(first);

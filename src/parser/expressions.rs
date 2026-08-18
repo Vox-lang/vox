@@ -833,7 +833,7 @@ impl Parser {
                                 let property = match self.current() {
                                     Token::Hour => ObjectProperty::Hour,
                                     Token::Minute => ObjectProperty::Minute,
-                                    Token::Second => ObjectProperty::Second,
+                                    Token::Identifier(ref id) if id.to_lowercase() == "second" => ObjectProperty::Second,
                                     Token::Day => ObjectProperty::Day,
                                     Token::Month => ObjectProperty::Month,
                                     Token::Year => ObjectProperty::Year,
@@ -882,19 +882,18 @@ impl Parser {
                             
                             return match self.current() {
                                 Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
-                                Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
-                                    self.advance(); Ok(Expr::ArgumentName) 
+                                Token::Identifier(ref id) if id.to_lowercase() == "name" => {
+                                    self.advance(); Ok(Expr::ArgumentName)
                                 }
-                                Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
-                                Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
-                                Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
-                                    self.advance(); Ok(Expr::ArgumentSecond) 
+                                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::ArgumentFirst) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "second" => {
+                                    self.advance(); Ok(Expr::ArgumentSecond)
                                 }
-                                Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::ArgumentLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
-                                Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
-                                _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
+                                Token::Identifier(ref id) if id.to_lowercase() == "all" => { self.advance(); Ok(Expr::ArgumentAll) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "raw" => { self.advance(); Ok(Expr::ArgumentRaw) }
+                                _ => Err(self.err_expected("arguments property (count, name, first, second, last, empty, all, raw)", self.current())),
                             };
                         }
                     }
@@ -915,8 +914,8 @@ impl Parser {
                             
                             return match self.current() {
                                 Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
-                                Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
-                                Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
                                 Token::StringLiteral(env_name) => {
                                     let env_name = env_name.clone();
@@ -1009,6 +1008,34 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
+                // `all the numbers from/between ... to and ...` — the
+                // contextual range literal. `all` is an ordinary variable
+                // name everywhere else; only this exact phrase claims it.
+                if name.eq_ignore_ascii_case("all") && *self.current() == Token::The {
+                    self.advance(); // consume 'the'
+                    self.skip_noise();
+                    self.expect(&Token::Number);
+                    self.skip_noise();
+                    if *self.current() == Token::From || *self.current() == Token::Between {
+                        let inclusive = *self.current() == Token::Between;
+                        self.advance();
+                        self.skip_noise();
+                        let start = self.parse_primary_reserving(true, false)?;
+                        self.skip_noise();
+                        self.expect(&Token::To);
+                        self.expect(&Token::And);
+                        self.skip_noise();
+                        let end = self.parse_primary()?;
+                        return Ok(Expr::Range {
+                            start: Box::new(start),
+                            end: Box::new(end),
+                            inclusive,
+                        });
+                    } else {
+                        return Err(self.err("Expected 'from' or 'between' after 'all the numbers'"));
+                    }
+                }
+
                 // Call with arguments: `name of/with/to/on args` (plan 270 G1).
                 // A bare or quoted identifier is the callee; this is the
                 // expression-level counterpart of the statement-level call.
@@ -1042,27 +1069,26 @@ impl Parser {
                             if name_lower == "arguments" || name_lower == "args" {
                                 return match self.current() {
                                     Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
-                                    Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
-                                        self.advance(); Ok(Expr::ArgumentName) 
+                                    Token::Identifier(ref id) if id.to_lowercase() == "name" => {
+                                        self.advance(); Ok(Expr::ArgumentName)
                                     }
-                                    Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
-                                    Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
-                                    Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
-                                        self.advance(); Ok(Expr::ArgumentSecond) 
+                                    Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::ArgumentFirst) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "second" => {
+                                        self.advance(); Ok(Expr::ArgumentSecond)
                                     }
-                                    Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::ArgumentLast) }
                                     Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
-                                    Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                    Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
-                                    _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
+                                    Token::Identifier(ref id) if id.to_lowercase() == "all" => { self.advance(); Ok(Expr::ArgumentAll) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "raw" => { self.advance(); Ok(Expr::ArgumentRaw) }
+                                    _ => Err(self.err_expected("arguments property (count, name, first, second, last, empty, all, raw)", self.current())),
                                 };
                             }
                             
                             if name_lower == "environment" || name_lower == "env" {
                                 return match self.current() {
                                     Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
-                                    Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
-                                    Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
                                     Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
                                     Token::StringLiteral(env_name) => {
                                         let env_name = env_name.clone();
@@ -1079,10 +1105,16 @@ impl Parser {
                             // property), so it is recognised here by its lexeme, not a token kind.
                             let is_count = matches!(self.current(),
                                 Token::Identifier(ref id) if id.to_lowercase() == "count");
-                            let is_arguments_property = is_count || matches!(self.current(),
-                                Token::First | Token::Last | Token::Empty | Token::All);
-                            let is_env_property = is_count || matches!(self.current(),
-                                Token::First | Token::Last | Token::Empty);
+                            let is_all = matches!(self.current(),
+                                Token::Identifier(ref id) if id.to_lowercase() == "all");
+                            let is_first = matches!(self.current(),
+                                Token::Identifier(ref id) if id.to_lowercase() == "first");
+                            let is_last = matches!(self.current(),
+                                Token::Identifier(ref id) if id.to_lowercase() == "last");
+                            let is_arguments_property = is_count || is_all || is_first || is_last
+                                || matches!(self.current(), Token::Empty);
+                            let is_env_property = is_count || is_first || is_last
+                                || matches!(self.current(), Token::Empty);
                             
                             if is_arguments_property {
                                 if let Some(suggestion) = find_similar_keyword(&name, &["arguments", "args"]) {
@@ -1117,9 +1149,11 @@ impl Parser {
 
                             // Parse property name for other objects
                             let property = match self.current() {
-                                // Buffer properties
-                                Token::Size => ObjectProperty::Size,
-                                Token::Capacity => ObjectProperty::Capacity,
+                                // Buffer properties. `size` and `length`
+                                // are synonyms here (both contextual words,
+                                // claimed by lexeme in possessive position).
+                                Token::Identifier(ref id) if id.to_lowercase() == "size" || id.to_lowercase() == "length" => ObjectProperty::Size,
+                                Token::Identifier(ref id) if id.to_lowercase() == "capacity" => ObjectProperty::Capacity,
                                 Token::Empty => ObjectProperty::Empty,
                                 Token::Full => ObjectProperty::Full,
 
@@ -1132,8 +1166,8 @@ impl Parser {
                                 Token::Writable => ObjectProperty::Writable,
 
                                 // List properties
-                                Token::First => ObjectProperty::First,
-                                Token::Last => ObjectProperty::Last,
+                                Token::Identifier(ref id) if id.to_lowercase() == "first" => ObjectProperty::First,
+                                Token::Identifier(ref id) if id.to_lowercase() == "last" => ObjectProperty::Last,
 
                                 // Map properties
                                 Token::Keys => ObjectProperty::Keys,
@@ -1151,7 +1185,7 @@ impl Parser {
                                 // Time properties
                                 Token::Hour => ObjectProperty::Hour,
                                 Token::Minute => ObjectProperty::Minute,
-                                Token::Second => ObjectProperty::Second,
+                                Token::Identifier(ref id) if id.to_lowercase() == "second" => ObjectProperty::Second,
                                 Token::Day => ObjectProperty::Day,
                                 Token::Month => ObjectProperty::Month,
                                 Token::Year => ObjectProperty::Year,
@@ -1190,9 +1224,14 @@ impl Parser {
                                     self.advance();
                                     self.skip_noise();
                                 }
-                                if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
+                                if matches!(self.current(), Token::Seconds | Token::Milliseconds | Token::Millisecond)
+                                    || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "second") {
                                     let unit = match self.current() {
-                                        Token::Seconds | Token::Second => {
+                                        Token::Seconds => {
+                                            self.advance();
+                                            ast::TimeUnit::Seconds
+                                        }
+                                        Token::Identifier(ref id) if id.to_lowercase() == "second" => {
                                             self.advance();
                                             ast::TimeUnit::Seconds
                                         }
@@ -1245,36 +1284,6 @@ impl Parser {
                 
                 self.expect(&Token::CloseBracket);
                 Ok(Expr::ListLit { elements })
-            }
-            Token::All => {
-                self.advance();
-                self.skip_noise();
-                self.expect(&Token::The);
-                self.skip_noise();
-                self.expect(&Token::Number);
-                self.skip_noise();
-                
-                if *self.current() == Token::From || *self.current() == Token::Between {
-                    let inclusive = *self.current() == Token::Between;
-                    self.advance();
-                    self.skip_noise();
-                    
-                    let start = self.parse_primary_reserving(true, false)?;
-                    self.skip_noise();
-                    self.expect(&Token::To);
-                    self.expect(&Token::And);
-                    self.skip_noise();
-
-                    let end = self.parse_primary()?;
-                    
-                    Ok(Expr::Range {
-                        start: Box::new(start),
-                        end: Box::new(end),
-                        inclusive,
-                    })
-                } else {
-                    Err(self.err("Expected 'from' or 'between' after 'all the numbers'"))
-                }
             }
             Token::Number => {
                 self.advance();
@@ -1383,7 +1392,7 @@ impl Parser {
                                         // Time properties
                                         Token::Hour => ObjectProperty::Hour,
                                         Token::Minute => ObjectProperty::Minute,
-                                        Token::Second => ObjectProperty::Second,
+                                        Token::Identifier(ref id) if id.to_lowercase() == "second" => ObjectProperty::Second,
                                         Token::Day => ObjectProperty::Day,
                                         Token::Month => ObjectProperty::Month,
                                         Token::Year => ObjectProperty::Year,
@@ -1392,9 +1401,11 @@ impl Parser {
                                         Token::Duration => ObjectProperty::Duration,
                                         Token::Elapsed => ObjectProperty::Elapsed,
                                         Token::Running => ObjectProperty::Running,
-                                        // Other properties
-                                        Token::Size => ObjectProperty::Size,
-                                        Token::Capacity => ObjectProperty::Capacity,
+                                        // Other properties. `size`/`length`
+                                        // are synonyms here (contextual words,
+                                        // claimed by lexeme in possessive).
+                                        Token::Identifier(ref id) if id.to_lowercase() == "size" || id.to_lowercase() == "length" => ObjectProperty::Size,
+                                        Token::Identifier(ref id) if id.to_lowercase() == "capacity" => ObjectProperty::Capacity,
                                         Token::Empty => ObjectProperty::Empty,
                                         Token::Full => ObjectProperty::Full,
                                         // Handle single-quoted multi-word property names and 'start'
@@ -1448,9 +1459,14 @@ impl Parser {
                                             self.advance();
                                             self.skip_noise();
                                         }
-                                        if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
+                                        if matches!(self.current(), Token::Seconds | Token::Milliseconds | Token::Millisecond)
+                                            || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "second") {
                                             let unit = match self.current() {
-                                                Token::Seconds | Token::Second => {
+                                                Token::Seconds => {
+                                                    self.advance();
+                                                    ast::TimeUnit::Seconds
+                                                }
+                                                Token::Identifier(ref id) if id.to_lowercase() == "second" => {
                                                     self.advance();
                                                     ast::TimeUnit::Seconds
                                                 }

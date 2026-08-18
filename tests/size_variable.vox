@@ -1,0 +1,12 @@
+A number called size is 0.
+Set size to size add 1.
+Print size.
+While size is less than 3,
+  Set size to size add 1,
+  Print size.
+To 'shift' with a number called size. Return a number, size add 10.
+Print 'shift' of size.
+a list called letters is ["a", "b", "c"].
+Print letters's size.
+a buffer called data is 16 bytes in size.
+Print data's capacity.

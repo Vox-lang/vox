@@ -1,0 +1,12 @@
+A number called capacity is 0.
+Set capacity to capacity add 1.
+Print capacity.
+While capacity is less than 3,
+  Set capacity to capacity add 1,
+  Print capacity.
+To 'double' with a number called capacity. Return a number, capacity multiply 2.
+Print 'double' of capacity.
+a buffer called data is 16 bytes.
+Print data's capacity.
+Create a buffer called buf with capacity 8.
+Print buf's capacity.

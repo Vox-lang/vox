@@ -1,0 +1,11 @@
+A number called last is 0.
+Set last to last add 1.
+Print last.
+While last is less than 3,
+  Set last to last add 1,
+  Print last.
+To 'shift' with a number called last. Return a number, last add 10.
+Print 'shift' of last.
+a list called letters is ["a", "b", "c"].
+Print letters's last.
+Print arguments's last.
