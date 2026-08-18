@@ -47,7 +47,7 @@ pub enum Token {
     See, Library, Version,
     
     // Arguments and Environment
-    Argument, Arguments, Environment, Variable, Count, Raw,
+    Argument, Arguments, Environment, Variable, Raw,
     
     // Time and Timers
     Wait, Sleep, Timer,
@@ -208,7 +208,8 @@ impl Token {
             "arguments" | "args" | "params" | "parameters" => Some("arguments"),
             "environment" | "env" => Some("environment"),
             "variable" | "var" => Some("variable"),
-            "count" => Some("count"),
+            // `count` is not reserved here: it is a contextual possessive
+            // property (`arguments's count`), not a banned variable name.
             "raw" => Some("raw"),
             // Time and timers
             "wait" | "pause" => Some("wait"),
@@ -369,7 +370,6 @@ impl Token {
             Token::Arguments => Some("arguments"),
             Token::Environment => Some("environment"),
             Token::Variable => Some("variable"),
-            Token::Count => Some("count"),
             Token::Raw => Some("raw"),
             // Time and Timers
             Token::Wait => Some("wait"),

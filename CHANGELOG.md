@@ -4,6 +4,23 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Bare `count` is now a legal identifier.** It was reserved as a keyword
+  alongside `capacity`, `length`, `first`, and `last`, but the word is only
+  special after a possessive marker (`arguments's count`,
+  `environment's count`) or in the `the argument count` / `the environment
+  variable count` phrases. A word that is special in one syntactic position
+  is no longer banned from every other, so `count` is now an ordinary
+  variable name — declarations, `Set`, loop variables, function parameters,
+  arithmetic, conditions — while every possessive `'s count` use is
+  unchanged. The compiler now lexes `count` as an identifier and claims it
+  for the possessive property in the parser, the same contextual-keyword
+  treatment `start`/`begin`/`stop` already get for timers. The quoted form
+  `'count'` (which always lexed identically to the bare form) is unaffected.
+
 ## [0.4.2] - 2026-08-18
 
 ### Fixed

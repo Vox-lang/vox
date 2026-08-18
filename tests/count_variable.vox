@@ -1,0 +1,12 @@
+A number called count is 0.
+Set count to count add 1.
+Print count.
+While count is less than 3,
+  Set count to count add 1,
+  Print count.
+To 'triple' with a number called count. Return a number, count multiply 3.
+Print 'triple' of count.
+Print arguments's count.
+Print the argument count.
+Print the argument count add count.
+Print 'count'.
