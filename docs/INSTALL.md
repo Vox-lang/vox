@@ -58,6 +58,25 @@ At this point you should be able to run:
 vox /path/to/program.vox --run
 ```
 
+## Libraries (optional)
+
+Vox has no standard library, and the compiler never needs one — it builds and
+runs with `/usr/include/vox/` empty. Libraries are separate, and ship from the
+same Copr repository, so no extra setup is needed:
+
+```sh
+sudo dnf install vox-libs
+```
+
+That installs each library's `.lib` interface into `/usr/include/vox/` and its
+`.so` into `/usr/lib64/` — the same split a C library uses between its header
+and its shared object. See
+[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs).
+
+The compiler's RPM carries `Suggests: vox-libs`, which records that they exist
+without dnf installing them: a plain `dnf install vox` gets the compiler alone,
+exactly as before.
+
 ## How `vox` finds `coreasm`
 
 The compiler searches for `coreasm` using the following resolution order:
