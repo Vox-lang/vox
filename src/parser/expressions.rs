@@ -881,7 +881,7 @@ impl Parser {
                             self.skip_noise();
                             
                             return match self.current() {
-                                Token::Count => { self.advance(); Ok(Expr::ArgumentCount) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
                                 Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
                                     self.advance(); Ok(Expr::ArgumentName) 
                                 }
@@ -914,7 +914,7 @@ impl Parser {
                             self.skip_noise();
                             
                             return match self.current() {
-                                Token::Count => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
                                 Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
                                 Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
@@ -1041,7 +1041,7 @@ impl Parser {
                             let name_lower = name.to_lowercase();
                             if name_lower == "arguments" || name_lower == "args" {
                                 return match self.current() {
-                                    Token::Count => { self.advance(); Ok(Expr::ArgumentCount) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
                                     Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
                                         self.advance(); Ok(Expr::ArgumentName) 
                                     }
@@ -1060,7 +1060,7 @@ impl Parser {
                             
                             if name_lower == "environment" || name_lower == "env" {
                                 return match self.current() {
-                                    Token::Count => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
+                                    Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
                                     Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
                                     Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
                                     Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
@@ -1074,11 +1074,15 @@ impl Parser {
                             }
                             
                             // Check if user meant 'arguments' or 'environment' but made a typo
-                            // If so, the property they're accessing might be valid for that object
-                            let is_arguments_property = matches!(self.current(), 
-                                Token::Count | Token::First | Token::Last | Token::Empty | Token::All);
-                            let is_env_property = matches!(self.current(),
-                                Token::Count | Token::First | Token::Last | Token::Empty);
+                            // If so, the property they're accessing might be valid for that object.
+                            // `count` is now an ordinary identifier (a contextual possessive
+                            // property), so it is recognised here by its lexeme, not a token kind.
+                            let is_count = matches!(self.current(),
+                                Token::Identifier(ref id) if id.to_lowercase() == "count");
+                            let is_arguments_property = is_count || matches!(self.current(),
+                                Token::First | Token::Last | Token::Empty | Token::All);
+                            let is_env_property = is_count || matches!(self.current(),
+                                Token::First | Token::Last | Token::Empty);
                             
                             if is_arguments_property {
                                 if let Some(suggestion) = find_similar_keyword(&name, &["arguments", "args"]) {
@@ -1286,7 +1290,7 @@ impl Parser {
                         self.advance();
                         self.skip_noise();
                         
-                        if *self.current() == Token::Count {
+                        if matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "count") {
                             self.advance();
                             Ok(Expr::ArgumentCount)
                         } else if *self.current() == Token::On { // "at" maps to Token::On
@@ -1310,7 +1314,7 @@ impl Parser {
                         }
                         
                         // "the environment variable count"
-                        if *self.current() == Token::Count {
+                        if matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "count") {
                             self.advance();
                             Ok(Expr::EnvironmentVariableCount)
                         }

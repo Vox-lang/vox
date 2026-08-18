@@ -419,7 +419,16 @@ impl<'a> Lexer<'a> {
             "arguments" | "args" | "params" | "parameters" => Token::Arguments,
             "environment" | "env" => Token::Environment,
             "variable" | "var" => Token::Variable,
-            "count" => Token::Count,
+            // `count` is contextual, not reserved: it is a property only
+            // after a possessive marker (`arguments's count`,
+            // `environment's count`) or in the `the argument count` /
+            // `the environment variable count` phrases, which the parser
+            // claims by matching this ordinary identifier. Everywhere
+            // else `count` is a bare variable name — the most common
+            // local in programming — so it is never banned as one. It
+            // never had a `Token::Count` form here that other positions
+            // needed; the possessive dispatch reads the identifier.
+            "count" => Token::Identifier("count".to_string()),
             "raw" => Token::Raw,
             "treating" | "treat" => Token::Treating,
             // Time and Timers
