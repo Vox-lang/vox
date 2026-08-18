@@ -130,6 +130,27 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
+    /// Like `find_symbol_location`, but excludes `symbol`'s own declaration
+    /// line. `find_symbol_location`'s first-occurrence search makes an
+    /// "Unknown variable" error for a cross-condition use (declared only in
+    /// an `if` branch, read after it) anchor on the declaration itself - the
+    /// textually first place the name appears - instead of the read that
+    /// actually failed (plan 318 §3, same class as the accepted #11
+    /// finding). Falls back to `find_symbol_location` when there is no
+    /// recorded declaration to exclude, or every occurrence found IS that
+    /// declaration (a name reported unknown with no other occurrence at all -
+    /// better to point at something than nothing).
+    pub(crate) fn find_use_site_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
+        let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
+        let patterns = [
+            format!("{{{}", symbol),
+            format!("\"{}\"", symbol),
+            symbol.to_string(),
+        ];
+        self.find_pattern_location(symbol, &patterns, occurrence, decl_line, true)
+            .or_else(|| self.find_symbol_location(symbol, occurrence))
+    }
+
     /// Like `find_write_site_location`, for a statement that *binds* `name`
     /// through some construct-specific syntax rather than `is`/`to`
     /// (a for-range/for-each loop header, `open ... called X`, `Allocate N
@@ -217,6 +238,28 @@ impl Analyzer {
         self.errors.push(err);
     }
 
+    /// Same as `push_error_with_hint`, but for a caller that already has a
+    /// real `SourceLocation` in hand (from parser state, not a textual
+    /// symbol search) - e.g. `Statement::Return`'s "only valid inside a
+    /// function" error, which has no symbol name to search for and instead
+    /// points at wherever the body-level Return or blank line closed the
+    /// enclosing function early.
+    pub(crate) fn push_error_with_hint_at(
+        &mut self,
+        message: String,
+        location: Option<SourceLocation>,
+        hint: Option<&str>,
+    ) {
+        let mut err = CompileError::new(&message);
+        if let Some(loc) = location {
+            err = err.with_location(loc);
+        }
+        if let Some(h) = hint {
+            err = err.with_hint(h);
+        }
+        self.errors.push(err);
+    }
+
     pub(crate) fn push_unknown_variable(&mut self, name: &str) {
         let hint = self.pending_blank_line_truncation.as_ref().and_then(|(func, params, loc)| {
             if params.iter().any(|p| p == name) {
@@ -227,8 +270,24 @@ impl Analyzer {
             } else {
                 None
             }
+        }).or_else(|| {
+            // `declared_locations` records EVERY declaration this walk has
+            // seen, including a some-branches-only one that didn't survive
+            // the if/otherwise merge (LANGUAGE.md "Declarations in
+            // Branches") - so its presence here, when nothing else
+            // explains the error, means `name` isn't a typo: it exists,
+            // just not on every path that reaches this read.
+            self.declared_locations.get(name).map(|_| format!(
+                "`{}` is declared only in some branches of an `if`/`otherwise`, so it is not in scope after it - declare it in every branch, or before the `if`",
+                name
+            ))
         });
-        self.push_error_with_hint(format!("Unknown variable: {}", name), Some(name), hint.as_deref());
+        // Anchor on the actual failing read, not the (textually earlier)
+        // declaration that happens to contain the same name (plan 318 §3).
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let location = self.find_use_site_location(name, occurrence);
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+        self.push_error_with_hint_at(format!("Unknown variable: {}", name), location, hint.as_deref());
     }
 
     pub(crate) fn current_env(&self) -> AnalysisEnv {

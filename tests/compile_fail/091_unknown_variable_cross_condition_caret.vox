@@ -1,0 +1,4 @@
+a boolean called ready is true.
+If ready,
+    a number called y is 5.
+Print y.

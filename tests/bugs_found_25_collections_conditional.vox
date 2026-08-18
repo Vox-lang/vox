@@ -1,0 +1,9 @@
+a number called n is 0.
+While n is greater than 5,
+  a list called xs is [1, 2, 3],
+  a map called m is {"a": 1},
+  a buffer called scratch,
+  the n is n add 1.
+Print xs.
+Print m.
+Print scratch's size.

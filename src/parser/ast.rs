@@ -456,6 +456,13 @@ pub enum Statement {
         // clauses" rule. Consulted by the analyzer to explain otherwise
         // confusing errors in the top-level statements that follow.
         body_ended_early: Option<SourceLocation>,
+        // Set to the location of a body-level `Return` (one that isn't the
+        // function's first statement - "Gate B") when IT closed the body,
+        // rather than a blank line. Statements written after it in source
+        // are silently promoted to top-level entry code (plan 318 §2) - if
+        // one of them is itself a `Return`, the analyzer's "Return is only
+        // valid inside a function" error consults this to explain why.
+        body_ended_via_return: Option<SourceLocation>,
     },
     
     FunctionCall {
@@ -827,5 +834,90 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
             _ => {}
         }
     }
+    out
+}
+
+/// Every typed declaration reachable in this statement sequence, at ANY
+/// nesting depth, regardless of whether the path that reaches it is
+/// guaranteed to run - the complement of `collect_definite_decls`.
+///
+/// `On error`, `While`, `for each` (both `ForRange` and `ForEach`), and
+/// `Repeat` bodies are not scoped (LANGUAGE.md:526: no block scoping) -
+/// a name declared in one of them is accepted everywhere after, exactly
+/// like a top-level declaration, but the analyzer never proves the body
+/// ran. `collect_definite_decls` correctly refuses to call such a
+/// declaration definite; this function is the other half - it finds
+/// EVERY declaration so codegen can tell "definitely declared" apart
+/// from "declared on some path, might be skipped" and emit the type's
+/// default for the latter at frame setup (docs/BUGS_FOUND.md #25,
+/// plan 318 §1). `If` bodies are included too, for the same reason
+/// `collect_definite_decls` recurses into them: a some-branches name
+/// still needs its type known here even though its own use-after is
+/// separately rejected by the analyzer's branch tracking.
+///
+/// Function bodies are their own scope and are never entered - same
+/// rule as `collect_definite_decls`.
+pub fn collect_all_typed_decls(stmts: &[Statement]) -> std::collections::HashMap<String, Type> {
+    let mut out = std::collections::HashMap::new();
+    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    fn record(
+        out: &mut std::collections::HashMap<String, Type>,
+        poisoned: &mut std::collections::HashSet<String>,
+        name: &str,
+        ty: Type,
+    ) {
+        if poisoned.contains(name) {
+            return;
+        }
+        match out.get(name) {
+            Some(existing) if *existing != ty => {
+                out.remove(name);
+                poisoned.insert(name.to_string());
+            }
+            _ => {
+                out.insert(name.to_string(), ty);
+            }
+        }
+    }
+
+    fn walk(
+        stmts: &[Statement],
+        out: &mut std::collections::HashMap<String, Type>,
+        poisoned: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, var_type: Some(t), .. } => {
+                    record(out, poisoned, name, t.clone());
+                }
+                Statement::BufferDecl { name, .. } => {
+                    record(out, poisoned, name, Type::Buffer);
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    walk(then_block, out, poisoned);
+                    for (_, block) in else_if_blocks {
+                        walk(block, out, poisoned);
+                    }
+                    if let Some(block) = else_block {
+                        walk(block, out, poisoned);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. } => {
+                    walk(body, out, poisoned);
+                }
+                Statement::OnError { actions } => {
+                    walk(actions, out, poisoned);
+                }
+                Statement::FunctionDef { .. } => {}
+                _ => {}
+            }
+        }
+    }
+
+    walk(stmts, &mut out, &mut poisoned);
     out
 }

@@ -8,6 +8,35 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Two segfaults, found by Vox's own fuzzer.** vox-fuzz — a fuzzer
+  written in Vox — generated the programs that surfaced both, and both
+  are now closed.
+  - **A declaration on a conditional path read uninitialised storage**
+    ([#25](docs/BUGS_FOUND.md)). A name declared inside an `On error`,
+    `While`, `for each`, or `Repeat` body registered in the enclosing
+    scope, but its initialising store sat behind the branch — so when
+    the branch never ran, the name read a raw stack slot: a `number`
+    leaked a neighbouring frame's values (one program printed `12345`
+    from an unrelated function, exit 0, no warning), and a `text` was a
+    wild pointer that segfaulted. The compiler now emits the type's
+    default at frame setup for any such name, so a declared name always
+    holds its initializer or its type's default, exactly as this manual
+    has always promised. Programs where the branch *does* run are
+    unaffected.
+  - **Reading an unset environment variable segfaulted**
+    ([#24](docs/BUGS_FOUND.md)), and `On error` could not catch it,
+    because the fault preceded any error-flag write. A missing variable
+    now sets the error flag and yields empty text, like every other
+    fallible read.
+- **Two diagnostics that pointed at the wrong thing.** The orphaned
+  `Return` error now carries a source location and explains that a
+  body-level `Return` closed the function early; the cross-condition
+  `Unknown variable` caret now lands on the failing read rather than on
+  the declaration it was complaining about, with a hint naming the
+  branch rule.
+
+### Fixed
+
 - **Nine more reserved words are now legal identifiers** — `capacity`,
   `raw`, `all`, `first`, `last`, `second`, `size`, `length`, and
   `version`. Each was reserved as a keyword but is only special in one

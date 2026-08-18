@@ -1,0 +1,3 @@
+a text called p is environment's "PATH".
+On error print "handler ran - BAD, PATH should exist".
+Print "ok".

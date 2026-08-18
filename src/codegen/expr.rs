@@ -1683,9 +1683,31 @@ impl CodeGenerator {
             
             // Environment variables
             Expr::EnvironmentVariable { name } => {
+                // `_get_env` returns a NULL pointer for a name that isn't
+                // set (BUGS_FOUND.md #24) - the caller used to hand that
+                // straight back as "the text", so the next read (Print,
+                // interpolation, ...) dereferenced 0. A fallible read's
+                // contract is the error flag, not a fault: on a miss, set
+                // `_last_error` and hand back the shared empty string
+                // (the same substitute #16 uses for an uninitialised
+                // text), so `On error` catches it exactly like a missing
+                // map key does.
                 self.generate_expr(name);
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env");
+                let missing_label = self.new_label("env_missing");
+                let done_label = self.new_label("env_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}  ; env var not set", missing_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; env var found");
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", missing_label));
+                let empty_label = self.get_empty_string_label();
+                self.emit_indent(&format!(
+                    "lea rax, [rel {}]  ; empty text for missing env var", empty_label));
+                self.emit_indent("mov qword [rel _last_error], 1  ; env var not set");
+                self.emit(&format!("{}:", done_label));
+                self.uses_strings = true;
             }
             
             Expr::EnvironmentVariableCount => {

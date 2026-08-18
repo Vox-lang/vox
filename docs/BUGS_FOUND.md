@@ -1053,8 +1053,14 @@ tag arm.
 
 ### 24. Reading an unset environment variable by name segfaults — `On error` cannot catch it
 
-**Status:** open as of v0.4.2. Found 2026-08-18 during review of vox-fuzz's
-foundation work; minimal repro is one line.
+**Status:** **fixed in v0.4.3.** A missing variable now sets the error flag
+and yields empty text, so `On error` catches it like every other fallible
+read. Regression tests: `tests/bugs_found_24_missing_env_var.vox`,
+`tests/bugs_found_24_present_env_var_unaffected.vox`,
+`tests/bugs_found_24_exists_guard_unaffected.vox`. (Still open, flagged
+during the fix: `_get_env_at`, behind `At`/`First`/`Last`, has the same
+null-return-on-out-of-bounds shape.) Found 2026-08-18 during review of
+vox-fuzz's foundation work; minimal repro is one line.
 
 ```vox
 Print environment's "DEFINITELY_NOT_SET_ANYWHERE".
@@ -1087,10 +1093,18 @@ signal is precisely the invariant the fuzzer exists to enforce.
 
 ### 25. A declaration on a non-`If` conditional path stays in scope over storage nothing ever initialises — stack garbage for numbers, segfault for text
 
-**Status:** open as of v0.4.2; reproduces identically on released 0.4.0.
+**Status:** **fixed in v0.4.3.** Per plan 318 §1 and LANGUAGE.md:526's
+no-block-scoping model, the compiler now emits the type's default at frame
+setup for any name whose declaration sits on a conditional path, so a
+declared name always holds initializer-or-default. `emit_type_default`
+factors out the code a no-initializer declaration always emitted;
+`collect_all_typed_decls` (the explicit complement of
+`collect_definite_decls`) tells codegen which names need it. 12 regression
+tests, `tests/bugs_found_25_*.vox`, covering `On error`/`While`/`for
+each`/`Repeat` × number and text, collections, and a taken-path guard.
 Found by the vox-fuzz Task 9 hunt (2026-08-18): the fuzzer's finding
 dissolved under adjudication into two documented parsing rules — and this
-underneath. Fix staged in plan 318.
+underneath.
 
 `If` bodies are properly scoped: `collect_definite_decls` refuses to call
 a some-branches declaration definite, and use-after is rejected
