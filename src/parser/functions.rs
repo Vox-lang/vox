@@ -160,6 +160,11 @@ impl Parser {
                 Token::StringLiteral(s) => Some(s.clone()),
                 Token::Identifier(s) => Some(s.clone()),
                 Token::IntegerLiteral(n) => Some(n.to_string()),
+                // A version number is a label, not arithmetic - BUGS_FOUND
+                // #22's overflow rejection is about literals used as
+                // values, which this isn't, so an oversized one is still a
+                // legal (if unusual) version string.
+                Token::IntegerLiteralOverflow(raw) => Some(raw.clone()),
                 _ => None,
             }
         };

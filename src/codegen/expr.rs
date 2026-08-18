@@ -1474,6 +1474,18 @@ impl CodeGenerator {
                 self.emit_indent("mov [r14 + 8], r12  ; length");
                 self.emit_indent("mov qword [r14 + 16], 8  ; element size");
 
+                // BUGS_FOUND #23: every element here is a string pointer
+                // (argv), so every filled slot's type tag must be
+                // TAG_STRING. mmap zero-fills, and TAG_INTEGER is 0 (see
+                // ListLit's identical comment above), so leaving the tag
+                // region untouched - as this loop did before - silently
+                // tags every element TAG_INTEGER; whole-list printing
+                // dispatches on that byte and misreads the pointer as a
+                // number, while `element N of` (which doesn't consult it)
+                // stayed correct. rbx holds the tag region's base address
+                // for the loop's life - r13/r14 are fixed once computed.
+                self.emit_indent(&format!("lea rbx, [r14 + r13*8 + {}]  ; tag region base", LIST_DATA_OFFSET));
+
                 // Fill data from parsed args
                 self.emit_indent("xor r15, r15  ; r15 = index");
                 self.emit(&format!("{}:", loop_label));
@@ -1482,6 +1494,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_parsed_arg");
                 self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -1536,6 +1549,12 @@ impl CodeGenerator {
                 self.emit_indent("mov [r14 + 8], r12  ; length");
                 self.emit_indent("mov qword [r14 + 16], 8  ; element size");
 
+                // BUGS_FOUND #23 sibling: same fix as `arguments's all`
+                // above - every element is a string pointer, so every
+                // filled slot needs its tag byte set to TAG_STRING rather
+                // than left at the mmap-zeroed TAG_INTEGER default.
+                self.emit_indent(&format!("lea rbx, [r14 + r13*8 + {}]  ; tag region base", LIST_DATA_OFFSET));
+
                 self.emit_indent("xor r15, r15  ; r15 = index");
                 self.emit(&format!("{}:", loop_label));
                 self.emit_indent("cmp r15, r12");
@@ -1543,6 +1562,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_raw_arg");
                 self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));

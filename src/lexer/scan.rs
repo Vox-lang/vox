@@ -219,9 +219,16 @@ impl<'a> Lexer<'a> {
         }
         
         if is_float {
+            // BUGS_FOUND #22 flags an analogous hole here: `num.parse()` on
+            // a decimal string that overflows f64 does not error in Rust,
+            // it saturates to `inf` - a second silent-wrong-answer path,
+            // deliberately not fixed in this session.
             Token::FloatLiteral(num.parse().unwrap_or(0.0))
         } else {
-            Token::IntegerLiteral(num.parse().unwrap_or(0))
+            match num.parse::<i64>() {
+                Ok(n) => Token::IntegerLiteral(n),
+                Err(_) => Token::IntegerLiteralOverflow(num),
+            }
         }
     }
     
@@ -238,7 +245,10 @@ impl<'a> Lexer<'a> {
         if num.is_empty() {
             Token::IntegerLiteral(0)
         } else {
-            Token::IntegerLiteral(i64::from_str_radix(&num, 16).unwrap_or(0))
+            match i64::from_str_radix(&num, 16) {
+                Ok(n) => Token::IntegerLiteral(n),
+                Err(_) => Token::IntegerLiteralOverflow(format!("0x{}", num)),
+            }
         }
     }
     
@@ -255,7 +265,10 @@ impl<'a> Lexer<'a> {
         if num.is_empty() {
             Token::IntegerLiteral(0)
         } else {
-            Token::IntegerLiteral(i64::from_str_radix(&num, 2).unwrap_or(0))
+            match i64::from_str_radix(&num, 2) {
+                Ok(n) => Token::IntegerLiteral(n),
+                Err(_) => Token::IntegerLiteralOverflow(format!("0b{}", num)),
+            }
         }
     }
     
