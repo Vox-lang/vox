@@ -1,0 +1,68 @@
+(A supervisor for child processes, written entirely in Vox - no shell,
+ no coreutils, and no guessing.
+
+ The parent starts two jobs. The first does a scrap of work and finishes
+ on its own; the second hangs, so the supervisor runs out of patience,
+ kills it, and reports how it died. Every step is a syscall the language
+ makes a sentence: `fork the process`, `reap ... without waiting`,
+ `Send signal`, and `the reaped status`.)
+
+(The kernel packs how a child ended into one status word. Decoding it is
+ ordinary Vox, and it lives in the standard library.)
+see "../lib/process.vox".
+
+(A job that has not finished within this long is a job that never will.)
+a number called 'the patience in milliseconds' is 300.
+
+(Poll the child instead of blocking on it, so the clock is still being
+ read while the child runs. One non-blocking reap answers all three
+ questions at once: the child's own pid means it has finished, a zero
+ means it is still running, and a negative means there was never such a
+ child.)
+To supervise with a number called pid.
+  a timer called clock.
+  Start the clock.
+  a boolean called 'the child is still running' is true.
+  a boolean called 'the child ran out of time' is false.
+  While 'the child is still running',
+      a number called 'the reaped child' is reap child pid without waiting,
+      If 'the reaped child' is pid then,
+          Set 'the child is still running' to false.
+      If 'the child is still running' then,
+          a number called 'the milliseconds waited' is the clock's elapsed in milliseconds,
+          If 'the milliseconds waited' is greater than 'the patience in milliseconds' then,
+              Send signal 9 to child pid,
+              Set 'the reaped child' to reap child pid,
+              Set 'the child is still running' to false,
+              Set 'the child ran out of time' to true.
+      If 'the child is still running' then,
+          Wait 5 milliseconds.
+  Stop the clock.
+  a number called status is the reaped status.
+  If 'the child ran out of time' then,
+      Print "  it outstayed its welcome, so it was sent signal 9".
+  If crashed of status then,
+      Print "  it died by signal {'signal of' of status}".
+  If 'exited normally' of status then,
+      Print "  it finished on its own with exit code {'exit code of' of status}".
+
+Print "The tidy job:".
+a number called 'the tidy child' is fork the process.
+If 'the tidy child' is 0 then,
+    (In the child: a scrap of work, then an exit code for the parent to read back.)
+    Wait 20 milliseconds,
+    Exit 3.
+supervise with 'the tidy child'.
+
+Print "The stuck job:".
+a number called 'the stuck child' is fork the process.
+If 'the stuck child' is 0 then,
+    (In the child: hang for far longer than the supervisor will allow.)
+    Wait 30 seconds,
+    Exit 0.
+supervise with 'the stuck child'.
+
+(Signal 0 delivers nothing and only asks whether a process is there at
+ all, which is the safe way to find out that a pid is gone.)
+Send signal 0 to process 'the stuck child'.
+On error print "The stuck job is gone: no process answers to its pid.".
