@@ -4,6 +4,19 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-08-18
+
+### Changed
+
+- **Examples for everything 0.4.0 shipped.** `examples/delivery.vox` (user-
+  defined things end to end) and `examples/supervisor.vox` (fork, non-
+  blocking reap, deadline, Send signal, inline status decode) are new;
+  `examples/pi.vox` adopts `times`; README's feature list catches up.
+- **The compiler ships no libraries.** `lib/process.vox` moved out to
+  [Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs). The reaped-
+  status tests decode inline, proving the feature is complete with
+  nothing installed. The shared-library machinery tests are unchanged.
+
 ## [0.4.0] - 2026-08-18
 
 **Vox has a type system.** This is the biggest release in the language's
