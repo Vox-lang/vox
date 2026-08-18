@@ -757,6 +757,11 @@ return types. A definition declares a type — it allocates nothing and
 emits no code, so the only output around it comes from the ordinary
 statements.
 
+[`examples/delivery.vox`](examples/delivery.vox) is a complete program
+built from two things of its own: it declares them, makes one with a
+manifest member, nests one inside the other, copies, prints, and compares
+them.
+
 ### Defining a thing
 
 ```
@@ -3698,7 +3703,10 @@ If 'exited normally' of status then,
 
 These pieces compose into a complete supervisor — poll a child with
 non-blocking reap, time it out, kill it, and report how it died — using
-only Vox, no `/bin/sh` and no coreutils:
+only Vox, no `/bin/sh` and no coreutils.
+[`examples/supervisor.vox`](examples/supervisor.vox) is this loop as a
+runnable program, supervising both a job that finishes and a job that
+hangs:
 
 ```
 see "./lib/process.vox".

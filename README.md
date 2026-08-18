@@ -105,10 +105,21 @@ This makes Vox well-suited for static utilities, constrained environments, and s
   path with no tag checks emitted
 * An explicit dynamic `value` type for carrying "whatever this slot holds"
   across function boundaries, and a `nothing` value distinct from `0`
+* User-defined composite types - **things**. `A thing called point has a
+  number called x is 0, a number called y is 0.` declares a type with a
+  compile-time layout; things nest to any depth, copy by value, print
+  themselves, compare field by field, and carry their own function members,
+  with no runtime component emitted; see
+  [examples/delivery.vox](examples/delivery.vox) and the
+  [Things](LANGUAGE.md#things) chapter
 * Filesystem, mount, and process-control operations (directories, device
   nodes, symlinks, mount/unmount, `pivot_root`, `execve`, `fork`/`reap`,
-  `shutdown`/`reboot`/`halt`) - enough to write a working early-userspace
-  init entirely in Vox; see [examples/initramfs.vox](examples/initramfs.vox)
+  `Send signal` (`kill`), non-blocking `reap ... without waiting`,
+  `the reaped status`, `shutdown`/`reboot`/`halt`) - enough to write a
+  working early-userspace init entirely in Vox, see
+  [examples/initramfs.vox](examples/initramfs.vox), or a process supervisor
+  with no shell and no coreutils, see
+  [examples/supervisor.vox](examples/supervisor.vox)
 
 ---
 
@@ -271,7 +282,12 @@ Vox is under active development. Planned work includes:
    Versioned shared libraries with explicit naming, symbol scoping, and backward compatibility guarantees.
 
 2. **User-Defined Types**
-   Structs and custom types with compile-time layout and predictable memory semantics.
+   Shipped in 0.4.0 as **things**: compile-time layout, possessive field
+   access, unlimited nesting, value copy semantics, function members, and
+   cross-file definitions (see the [Things](LANGUAGE.md#things) chapter).
+   Remaining: exact byte layout control - field widths, ordering, and
+   padding - which is gated on sized integers, since every field is an
+   8-byte slot today.
 
 3. **Networking Abstractions**
    High-level interfaces built on top of system calls, provided via libraries (e.g. HTTP/1.0 reference implementation).
@@ -280,7 +296,7 @@ Vox is under active development. Planned work includes:
    Planned targets include Win64, AArch64, ARM64, MIPS, and RISC-V.
 
 5. **Expanded System Interfaces**
-   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, basic process control (`fork`/`reap`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
+   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, process control (`fork`/`reap`, non-blocking `reap ... without waiting`, `the reaped status`, `Send signal` for `kill`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
 
 6. **Math and Numeric Optimization**
    Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.
