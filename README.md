@@ -228,6 +228,13 @@ sudo dnf copr enable vox-lang/Vox
 sudo dnf install vox
 ```
 
+Or with cargo, on any platform with a Rust toolchain — the compiler
+carries its own `coreasm` and needs nothing else installed:
+
+```bash
+cargo install vox-lang
+```
+
 On `zypper`/`urpmi`/`tdnf`-based distros (openSUSE, Mageia, Azure Linux),
 grab the matching repo file from the project page instead.
 
