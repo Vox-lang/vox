@@ -977,8 +977,20 @@ stringy-vs-stringy comparison still is.
 
 ### 21. A string literal in an `If`/`While` condition inside a function body resolves as a variable name
 
-**Status:** open as of v0.4.2. Fix staged in plan 316. Found by the
-vox-fuzz plan red team (2026-08-18); independently reproduced before
+**Status:** **fixed in v0.4.4.** A **regression**, not a latent defect:
+the analyzer's `validate_function_condition_variable_refs` matched
+`Expr::StringLit` and checked it against known variable names —
+reintroducing the pre-0.3.0 quoted-token-as-identifier ambiguity that
+#19 removed from five codegen sites but missed in the analyzer. It stayed
+unreachable until `7d5895d` ("Cleaned up the code", April 2026) widened a
+`BinaryOp` recursion guard from `And`/`Or` to all operators. The helper is
+deleted entirely (per #19's precedent) and was proven redundant —
+`analyze_expr`'s `Identifier` arm already validates bare identifiers at
+every scope. Regression tests: `tests/bugs_found_21_literal_condition.vox`
+(all four spellings × `If`/`While`) and
+`tests/compile_fail/094_function_condition_unknown_bare_identifier.vox`
+(pinning that real undeclared-identifier detection still fires). Found by
+the vox-fuzz plan red team (2026-08-18); independently reproduced before
 filing.
 
 ```vox
@@ -1010,8 +1022,11 @@ named local and compare against that.
 
 ### 22. An integer literal too large for 64 bits compiles silently and evaluates to 0
 
-**Status:** open as of v0.4.2. Found by the vox-fuzz plan red team
-(2026-08-18); independently reproduced before filing.
+**Status:** **fixed in v0.4.4.** Now a compile-time error naming both the
+literal and the valid range, in the shape of the existing out-of-range
+file-descriptor check; `i64::MAX` still compiles and the negative boundary
+is pinned. Found by the vox-fuzz plan red team (2026-08-18); independently
+reproduced before filing.
 
 ```vox
 Print 99999999999999999999999999.
@@ -1033,9 +1048,11 @@ recorded in vox-fuzz's DECISIONS.md as evidence for the deferred oracle.
 
 ### 23. Printing a list of `arguments's all` elements leaks raw pointers; element access is fine
 
-**Status:** open as of v0.4.2. Sibling of #17 and #18 (element-tag
-mis-attribution), distinct site. Found by the vox-fuzz plan red team
-(2026-08-18); independently reproduced before filing.
+**Status:** **fixed in v0.4.4** with the same explicit tag arm #17's fix
+established; a homogeneous number list is pinned to guard against
+blanket-tagging. Sibling of #17 and #18 (element-tag mis-attribution),
+distinct site. Found by the vox-fuzz plan red team (2026-08-18);
+independently reproduced before filing.
 
 ```vox
 a list called everything is arguments's all.
