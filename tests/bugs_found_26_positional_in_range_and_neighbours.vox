@@ -1,0 +1,20 @@
+a text called argname is arguments's name.
+a text called argzero is the argument at 0.
+If argname is equal to argzero then,
+    Print "name matches at0".
+Otherwise,
+    Print "MISMATCH".
+Print arguments's first.
+Print arguments's second.
+Print arguments's last.
+Print the argument at 1.
+Print the argument at 3.
+Print arguments's count.
+Print arguments's empty.
+Print each item from arguments's all.
+On error print "BAD - should not fire".
+a text called envfirst is environment's first.
+On error print "BAD-envfirst".
+a text called envlast is environment's last.
+On error print "BAD-envlast".
+Print "survived".

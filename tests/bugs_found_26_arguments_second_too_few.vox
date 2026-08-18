@@ -1,0 +1,4 @@
+Print arguments's first.
+Print arguments's second.
+On error print "handler ran".
+Print "survived".
