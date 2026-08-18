@@ -4,6 +4,32 @@
 benchmarking tool** — that repo comes first; this plan exists so the
 design survives until then. Not started.
 
+> **2026-08-18, later the same day: the domain arrived, and the scope
+> grew.** TheJostler bought **`vox-lang.dev`** (canonical) and
+> **`voxlang.dev`** (already redirecting to it), which gives the
+> playground a real home instead of a Pages subdomain — and raised a
+> larger question this plan does not cover: a proper language *site*
+> with tutorials and a language reference, plus an **AI-facing way to
+> serve the language rules** (an API and/or an MCP server) so that
+> assistants writing Vox can consult the real grammar instead of
+> guessing at it.
+>
+> That is at least four separable pieces — the site, the tutorials, this
+> playground, and the rules service — with very different shapes
+> (static generation, writing, systems engineering, a service contract).
+> Writing one spec across all four would produce something too vague to
+> build. **Shelved deliberately for a later brainstorm**, undecided at
+> the point it was shelved: whether they are one phased site in one repo
+> or separate projects sharing a domain. The argument for one repo is
+> that the docs, the language reference, and whatever the rules service
+> serves are *the same content*, and splitting them means maintaining
+> the language rules in two places.
+>
+> What this plan should absorb when it is next opened: the site is
+> hosted at `vox-lang.dev` (custom domain, canonical URL, `.dev` is
+> HSTS-preloaded so HTTPS-only from day one), the playground lives under
+> a path on it rather than standing alone, and `voxlang.dev` redirects.
+
 **What it is:** a static website — `Vox-lang/vox-playground` — where the
 Vox compiler runs in the visitor's browser as WASM and the programs it
 produces execute there too. Zero install, zero server, and the screen no
