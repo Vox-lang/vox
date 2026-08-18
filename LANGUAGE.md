@@ -757,6 +757,11 @@ return types. A definition declares a type — it allocates nothing and
 emits no code, so the only output around it comes from the ordinary
 statements.
 
+[`examples/delivery.vox`](examples/delivery.vox) is a complete program
+built from two things of its own: it declares them, makes one with a
+manifest member, nests one inside the other, copies, prints, and compares
+them.
+
 ### Defining a thing
 
 ```
@@ -3672,13 +3677,28 @@ as that exact phrase, and `the reaped` followed by anything else is an
 ordinary variable reference. (`tests/102_fork_reap.vox` does
 `Set reaped to reap any child process.` and keeps passing.)
 
-#### Decoding the status: `lib/process.vox`
+#### Decoding the status
 
-The compiler knows nothing about the wait-status encoding. Decoding lives
-in `lib/process.vox`, Vox's first standard-library file, as ordinary Vox:
+The compiler knows nothing about the wait-status encoding — `the reaped
+status` hands back the raw word, and a program decodes it with `divide`,
+`modulo`, and `bit-and`. Vox has no standard library on purpose, and this
+feature is complete with nothing installed:
 
 ```
-see "./lib/process.vox".
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
+
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
+```
+
+For ready-made decoding — these two plus `crashed` and `'exited
+normally'`, matching the `<sys/wait.h>` macros — the `process` library
+lives at [Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs),
+installable as an ordinary shared library:
+
+```
+see process version "0.1" from "./libprocess.lib".
 ```
 
 It provides four functions over the raw status word, matching the
@@ -3698,10 +3718,13 @@ If 'exited normally' of status then,
 
 These pieces compose into a complete supervisor — poll a child with
 non-blocking reap, time it out, kill it, and report how it died — using
-only Vox, no `/bin/sh` and no coreutils:
+only Vox, no `/bin/sh` and no coreutils.
+[`examples/supervisor.vox`](examples/supervisor.vox) is this loop as a
+runnable program, supervising both a job that finishes and a job that
+hangs:
 
 ```
-see "./lib/process.vox".
+see process version "0.1" from "./libprocess.lib".
 
 Set pid to fork the process.
 If pid is 0 then,

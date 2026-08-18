@@ -29,12 +29,12 @@ While steps is less than 500000,
     a float called IIIrd is the denominator add 2.0,
 
     (The denominator is their product)
-    a float called product is the Ist multiply the IInd,
-    the product is the product multiply the IIIrd,
+    a float called product is the Ist times the IInd,
+    the product is the product times the IIIrd,
 
     (Calculate this term of the series)
     a float term is 4.0 divide product,
-    the term is term multiply direction,
+    the term is term times direction,
 
     (Add this term to our approximation)
     the pi is pi add term,

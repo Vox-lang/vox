@@ -1,0 +1,75 @@
+(A morning's deliveries, written with types of the program's own making.
+
+ A stop is a corner of the town grid; a leg is one drive between two
+ stops. Kept as loose numbers this would be four variables per leg, held
+ in step by hand and easy to get wrong. Kept as things, a stop travels as
+ one value: it copies whole, it prints itself, and two stops compare
+ corner for corner.)
+
+A thing called stop has
+  a function called 'at the corner of',
+  a number called street is 0,
+  a number called avenue is 0.
+
+A thing called leg has
+  a stop called start,
+  a stop called end.
+
+(A stop comes into being at a crossing, so the maker is named for the way
+ it is called: a stop's 'at the corner of' with 4 and 1.)
+To do the stop's 'at the corner of', with a number called street and a number called avenue.
+  a stop called corner.
+  Set corner's street to street.
+  Set corner's avenue to avenue.
+  Return a stop, corner.
+
+(The van drives along the streets and never through the buildings, so a
+ leg is as long as the blocks crossed one way plus the blocks crossed the
+ other. Its first parameter is a whole leg, which is what lets a leg be
+ asked for its own length: drive's 'the blocks driven'.)
+To 'the blocks driven' with a leg called drive.
+  a number called 'streets crossed' is drive's end's street subtract drive's start's street.
+  If 'streets crossed' is less than 0 then,
+      Set 'streets crossed' to 0 subtract 'streets crossed'.
+  a number called 'avenues crossed' is drive's end's avenue subtract drive's start's avenue.
+  If 'avenues crossed' is less than 0 then,
+      Set 'avenues crossed' to 0 subtract 'avenues crossed'.
+  Return a number, 'streets crossed' add 'avenues crossed'.
+
+The depot is a stop's 'at the corner of' with 1 and 1.
+The bakery is a stop's 'at the corner of' with 4 and 1.
+The school is a stop's 'at the corner of' with 4 and 5.
+
+Print "The depot stands at {depot}.".
+
+(Each leg begins where the last one ended, so the whole round is one leg
+ moved along, not a fresh pair of corners every time.)
+a leg called drive.
+a number called 'blocks driven today' is 0.
+
+Set drive's start to depot.
+Set drive's end to bakery.
+Print "The first leg is {drive}.".
+Set 'blocks driven today' to 'blocks driven today' add drive's 'the blocks driven'.
+Print "The bakery is {drive's 'the blocks driven'} blocks from the depot.".
+
+Set drive's start to drive's end.
+Set drive's end to school.
+Set 'blocks driven today' to 'blocks driven today' add drive's 'the blocks driven'.
+Print "Then {drive's 'the blocks driven'} blocks on to the school.".
+
+Set drive's start to drive's end.
+Set drive's end to depot.
+Set 'blocks driven today' to 'blocks driven today' add drive's 'the blocks driven'.
+Print "And {drive's 'the blocks driven'} blocks home again.".
+Print "The round comes to {blocks driven today} blocks.".
+
+(A thing is a value, so the van parked at the school holds a copy of that
+ corner. Sending the van on cannot move the school.)
+a stop called 'the van' is school.
+Set 'the van''s avenue to 9.
+Print "The van has gone on to {'the van'}, and the school is still at {school}.".
+
+(Two stops are equal when they are the same corner, field for field.)
+If drive's end is depot then,
+    Print "The van is home for the day.".
