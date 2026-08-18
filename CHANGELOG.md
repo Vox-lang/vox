@@ -6,6 +6,55 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.4.0] - 2026-08-18
 
+**Vox has a type system.** This is the biggest release in the language's
+history: as of today, a Vox program can define its own types — in plain
+English, like everything else here.
+
+```vox
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called across and a number called climb.
+  a point called spot.
+  Set spot's x to across.
+  Set spot's y to climb.
+  Return a point, spot.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner.
+```
+
+That prints `{x: 3, y: 4}` — and yes, this example compiles; every
+example in this release does, checked against the compiler before
+shipping.
+
+Things nest to any depth, copy by value, print themselves, compare
+field-by-field, carry their own function members, and work across files —
+all resolved at compile time, with not one byte of runtime added. The
+generated binaries are still just your code and syscalls.
+
+And because a memory-safe language should have to prove it: this release
+was **adversarially tested before it shipped**. A red team attacked the
+type system with 38 runnable probes; it found two real holes, both were
+fixed, and the exact programs that broke the compiler are now regression
+tests that must fail to break it. The copy semantics survived everything
+thrown at them.
+
+Also in this release: Vox grows real process control — `Send signal`
+performs `kill(2)`, `reap ... without waiting` polls without blocking,
+and `the reaped status` finally tells you *how* a child died. Decoding it
+lives in `lib/process.vox`, **the first file of the Vox standard
+library** — written in Vox, naturally. A pure-Vox process supervisor
+(fork, poll, timeout, kill, classify) now needs no shell and no
+coreutils. Timers were caught reporting a 100 ms wait as a full second
+and now measure honestly, which matters rather a lot for the benchmarking
+tool this unblocks. And `Print 6 times 7.` finally does what the manual
+always claimed.
+
+The full ledger:
+
 ### Added
 
 - **User-defined things — composite value types declared in the program.**
