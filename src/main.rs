@@ -10,7 +10,6 @@ mod compile_fail_tests;
 #[cfg(test)]
 mod declare_create_type_coverage;
 
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -200,86 +199,6 @@ fn get_config_lib_path() -> Option<PathBuf> {
     None
 }
 
-/// Track included files to prevent circular dependencies
-fn process_includes(
-    program: &mut parser::ast::Program,
-    base_path: &Path,
-    included: &mut HashSet<PathBuf>,
-    verbose: bool,
-) {
-    let mut new_statements = Vec::new();
-    
-    for stmt in program.statements.drain(..) {
-        if let Statement::See { ref path, .. } = stmt {
-            // Resolve path relative to current file
-            let include_path = if path.starts_with("./") || path.starts_with("../") {
-                base_path.parent().unwrap_or(Path::new(".")).join(path)
-            } else if path.starts_with('/') {
-                PathBuf::from(path)
-            } else {
-                // Check system library path first
-                let system_path = PathBuf::from("/usr/share/vox/lib").join(path);
-                if system_path.exists() {
-                    system_path
-                } else {
-                    base_path.parent().unwrap_or(Path::new(".")).join(path)
-                }
-            };
-            
-            let canonical = include_path.canonicalize().unwrap_or(include_path.clone());
-            
-            // Skip if already included (prevents circular dependencies)
-            if included.contains(&canonical) {
-                if verbose {
-                    println!("Skipping already included: {}", path);
-                }
-                new_statements.push(stmt);
-                continue;
-            }
-            
-            // Only inline Vox source. A `see` of a source file splices its
-            // statements in here, before compilation; a `.lib` import is kept
-            // as a marker and resolved later by resolve_program_imports. (A
-            // `.so` `see` never reaches here — stage A5 made it a parse error
-            // directing the user to the `.lib`.)
-            if path.ends_with(".vox") {
-                if let Ok(source) = fs::read_to_string(&include_path) {
-                    if verbose {
-                        println!("Including: {}", include_path.display());
-                    }
-                    
-                    included.insert(canonical);
-                    
-                    let mut lexer = Lexer::new(&source);
-                    let tokens = lexer.tokenize();
-                    let mut parser = Parser::new(tokens);
-                    
-                    if let Ok(mut included_program) = parser.parse() {
-                        // Recursively process includes in the included file
-                        process_includes(&mut included_program, &include_path, included, verbose);
-                        
-                        // Add included statements (replaces the see statement)
-                        new_statements.extend(included_program.statements);
-                    } else if verbose {
-                        eprintln!("Warning: Failed to parse {}", include_path.display());
-                    }
-                } else if verbose {
-                    eprintln!("Warning: Could not read file: {}", include_path.display());
-                }
-                // Don't keep the see statement for source files - content is inlined
-            } else {
-                // Keep the see statement — a `.lib` import, resolved later
-                // by resolve_program_imports (which keys on the `.lib` suffix).
-                new_statements.push(stmt);
-            }
-        } else {
-            new_statements.push(stmt);
-        }
-    }
-    
-    program.statements = new_statements;
-}
-
 fn show_version() {
     eprintln!("vox v{} By Josjuar Lister 2026", env!("CARGO_PKG_VERSION"));
 }
@@ -453,7 +372,7 @@ fn main() {
         let mut parser = Parser::new(tokens)
             .with_source(source_path, &source)
             .with_shared_mode(build_shared);
-        let mut program = match parser.parse() {
+        let program = match parser.parse() {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("{}", e);
@@ -468,16 +387,16 @@ fn main() {
             eprintln!("{}", warning);
         }
 
-        // Process includes (see statements) with circular dependency tracking,
-        // relative to this input's directory.
+        // A `see "<path>.vox"` is read by the parse itself, where the names it
+        // brings can still change how the rest of the file reads. Nothing is
+        // left to splice here; what remains in the statement list is the
+        // `.lib` import markers, resolved just below.
+        if verbose {
+            for included in &parser.included_paths {
+                println!("Including: {}", included);
+            }
+        }
         let source_path_buf = PathBuf::from(source_path);
-        let mut included_files = HashSet::new();
-        included_files.insert(
-            source_path_buf
-                .canonicalize()
-                .unwrap_or(source_path_buf.clone()),
-        );
-        process_includes(&mut program, &source_path_buf, &mut included_files, verbose);
 
         // Stage A4: resolve this input's `see ... from "*.lib"` imports NOW,
         // while this input's directory is in hand (the .lib resolves relative

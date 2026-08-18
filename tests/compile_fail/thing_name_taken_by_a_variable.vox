@@ -1,0 +1,10 @@
+(Compile-fail: plan 310 §10 - one identifier space, first-come-first-serve.
+ The definition claimed `point`, so a number cannot take the same name: the
+ possessive puts a type and a variable in the same grammatical position, so
+ a later `a point's ...` would have no way to say which one it meant.)
+
+A thing called point has
+  a number called x is 0.
+
+a number called point is 42.
+Print point.

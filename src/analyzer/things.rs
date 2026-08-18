@@ -328,11 +328,51 @@ pub(crate) fn registry(things: &[ThingDef]) -> ThingRegistry {
 }
 
 impl Analyzer {
+    /// Two definitions of one name in the merged program (plan 310 §4, §10).
+    /// The parse refuses this wherever it can see both halves - which, since
+    /// a `see` is read by the parse itself, is every single-input build. What
+    /// it cannot see is a `--shared` build's several inputs: those are parsed
+    /// separately and their statements combined afterwards, and the registry
+    /// this builds keeps the last definition of a repeated name. That silence
+    /// is the whole failure this guards: the loser's author gets "point has
+    /// no field 'x'" against a definition that plainly declares one, pointed
+    /// at their own line.
+    ///
+    /// The registry is what layout, offsets and the cycle walk all read, so
+    /// this runs before it is built - the same reason the parse claims a name
+    /// before reading what follows it.
+    fn reject_things_defined_twice(&mut self, program: &Program) {
+        let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for def in &program.things {
+            match seen.get(def.name.as_str()) {
+                Some(first_line) => {
+                    self.push_error(
+                        format!(
+                            "'{}' is defined as a thing twice\n  \
+                             One definition is on line {}, the other on line {}. A \
+                             `--shared` build compiles several sources into one \
+                             program and they share one identifier space, so the two \
+                             lines may well be in different inputs.\n  \
+                             Type names, variable names, and function names share that \
+                             space; give one of the two shapes its own name.",
+                            def.name, first_line, def.line
+                        ),
+                        Some(&def.name),
+                    );
+                }
+                None => {
+                    seen.insert(def.name.as_str(), def.line);
+                }
+            }
+        }
+    }
+
     /// Load the program's definitions and validate them (plan 310 §6, §10),
     /// then seed the main line's thing variables. Runs before the statement
     /// walk, because a size or a field path can only be checked against a
     /// registry that is already complete.
     pub(crate) fn load_things(&mut self, program: &Program) {
+        self.reject_things_defined_twice(program);
         self.things = registry(&program.things);
         self.thing_vars = collect_thing_vars(&program.statements);
 
@@ -955,6 +995,66 @@ mod tests {
                 ],
             ),
         ])
+    }
+
+    /// The mutual cycle the registry walk exists for, built the way only a
+    /// merged program can build it. No single parse can hand this over: a
+    /// field naming a thing defined later is an unknown type, so within one
+    /// parse the second half of a pair is always refused before it exists -
+    /// which is exactly why the walk is not a duplicate of the parser's rule
+    /// but the invariant behind it. The shape reproduces the red team's
+    /// cross-file probe (each file internally legal, the pair not) and the
+    /// `--shared` build that merges several inputs after they are parsed.
+    #[test]
+    fn the_registry_walk_finds_a_mutual_cycle_no_single_parse_can_make() {
+        let defs = registry(&[
+            def("ring", vec![field("rim", Type::Thing("hoop".into()))]),
+            def("hoop", vec![field("band", Type::Thing("ring".into()))]),
+        ]);
+        let chain = find_cycle(&defs, "ring").expect("a mutual cycle should be found");
+        assert_eq!(chain, vec!["ring", "hoop", "ring"]);
+        // Read from either end: the chain always begins and ends on the name
+        // it was asked about, so the diagnostic can print it verbatim.
+        let from_hoop = find_cycle(&defs, "hoop").expect("a mutual cycle should be found");
+        assert_eq!(from_hoop, vec!["hoop", "ring", "hoop"]);
+    }
+
+    /// A thing holding itself, and a chain of three - the shortest and a
+    /// longer one, so the walk is pinned past the two-name case.
+    #[test]
+    fn the_registry_walk_finds_a_self_cycle_and_a_longer_chain() {
+        let itself = registry(&[def(
+            "ouroboros",
+            vec![field("tail", Type::Thing("ouroboros".into()))],
+        )]);
+        assert_eq!(
+            find_cycle(&itself, "ouroboros").expect("a self cycle should be found"),
+            vec!["ouroboros", "ouroboros"]
+        );
+
+        let three = registry(&[
+            def("first", vec![field("next", Type::Thing("second".into()))]),
+            def("second", vec![field("next", Type::Thing("third".into()))]),
+            def("third", vec![field("next", Type::Thing("first".into()))]),
+        ]);
+        assert_eq!(
+            find_cycle(&three, "first").expect("a three-name cycle should be found"),
+            vec!["first", "second", "third", "first"]
+        );
+    }
+
+    /// And it says no when the nesting is finite, however deep - a walk that
+    /// answered "cycle" to everything would pass the tests above too.
+    #[test]
+    fn the_registry_walk_leaves_finite_nesting_alone() {
+        let defs = nested_registry();
+        for name in ["point", "segment", "route"] {
+            assert!(
+                find_cycle(&defs, name).is_none(),
+                "{} nests finitely and must not report a cycle",
+                name
+            );
+        }
     }
 
     #[test]

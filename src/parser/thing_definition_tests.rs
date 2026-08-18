@@ -685,16 +685,132 @@
         );
     }
 
-    /// A thing name is only a type noun before `called`, so it stays an
-    /// ordinary identifier everywhere else - the same guard `value` has.
+    /// A thing name is only a type noun before `called`, so in a *name*
+    /// position it stays an ordinary name - the same guard `value` has. A
+    /// field is such a position: a type owns one member space (§4) and the
+    /// program owns one identifier space (§10), and a field name belongs to
+    /// the first, so `route` may have a field called `point` while `point` is
+    /// a thing.
     #[test]
     fn a_thing_name_is_only_a_type_noun_before_called() {
-        let program = parse_input(&format!("{}a number called point is 42.\nPrint point.\n", POINT))
-            .expect("a thing's name should still be usable as a variable name");
+        let program = parse_input(&format!(
+            "{}A thing called route has\n  a number called point is 0.\n",
+            POINT
+        ))
+        .expect("a field may be named after a thing");
+        let route = program
+            .things
+            .iter()
+            .find(|def| def.name == "route")
+            .expect("route should be registered");
+        assert_eq!(route.fields[0].name, "point");
+        assert_eq!(route.fields[0].field_type, Type::Integer);
+    }
+
+    /// A thing defined in a `see`n file reaches `Program.things`, not just the
+    /// parser's own table. The two are filled by different walks - the parse
+    /// records a definition as it reads it, `Program::new` derives the
+    /// registry from a flat scan of the top-level statements - and layout,
+    /// offsets and the cycle walk all read the second one. While a `see` was
+    /// spliced *after* the parse, the registry a merged program carried was
+    /// the outer file's alone: the seen file's definitions were in the
+    /// statement list and in nothing that reads it.
+    #[test]
+    fn a_seen_files_things_reach_the_programs_registry() {
+        let source = "see \"./geometry.vox\".\n\na point called origin.\n";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let program = Parser::new(tokens)
+            .with_include_base(std::path::Path::new("tests/include"))
+            .parse()
+            .expect("a thing defined in a seen file should be usable");
+
+        let point = program
+            .things
+            .iter()
+            .find(|def| def.name == "point")
+            .expect("the seen file's thing should be in Program.things");
+        let fields: Vec<&str> = point.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(fields, vec!["x", "y"]);
+        // The `see` statement itself is gone: the file's statements stand
+        // where it stood, so the definition is ahead of the declaration that
+        // names it, in layout order.
+        assert!(matches!(program.statements[0], Statement::ThingDecl(_)));
+        assert!(!program
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::See { .. })));
+    }
+
+    /// A reserved word can name a thing when it is quoted, which is what the
+    /// `Create a thing called reading.` diagnostic now tells the author to
+    /// write (`tests/compile_fail/thing_created_as_a_variable_named_by_a_reserved_word`).
+    /// Pinned here because advice that does not compile is worse than the
+    /// `<name>` placeholder it replaced.
+    #[test]
+    fn a_quoted_reserved_word_can_name_a_thing() {
+        let program = parse_input(
+            "A thing called 'reading' has\n  a number called x is 0.\n\n\
+             a 'reading' called gauge.\n",
+        )
+        .expect("a quoted reserved word is an ordinary name");
+        assert_eq!(only_thing(&program).name, "reading");
         assert!(matches!(
-            &program.statements[1],
-            Statement::VarDecl { name, var_type: Some(Type::Integer), .. } if name == "point"
+            program.statements.last(),
+            Some(Statement::VarDecl { name, var_type: Some(Type::Thing(thing)), .. })
+                if name == "gauge" && thing == "reading"
         ));
+    }
+
+    /// The other half of the same sentence, and what §10 settles: a name the
+    /// program's one identifier space already holds cannot be declared again,
+    /// whatever spelling reaches for it. Every declaration form goes through
+    /// `claim_name`, so this holds for the five spellings that used to
+    /// compile as well as for the one that was guarded.
+    #[test]
+    fn a_thing_name_cannot_be_taken_by_a_variable() {
+        for spelling in [
+            "a number called point is 42.\n",
+            "The point is 42.\n",
+            "Set point to 42.\n",
+            "Create a number called point is 42.\n",
+            "To point with a number called across.\n  Print across.\n",
+            "To 'measure the distance' with a number called point.\n  Print point.\n",
+        ] {
+            let err = parse_err(&format!("{}{}", POINT, spelling));
+            assert!(
+                err.contains("'point' is already defined as a thing")
+                    && err.contains("identifier space"),
+                "unexpected error for {:?}: {}",
+                spelling,
+                err
+            );
+        }
+    }
+
+    /// And in the other direction: a definition is refused when a variable or
+    /// a function got to the name first, so the rule does not depend on which
+    /// kind of declaration the author happened to write first.
+    #[test]
+    fn a_thing_cannot_take_a_name_a_declaration_already_holds() {
+        let after_variable = parse_err(
+            "a number called point is 42.\n\nA thing called point has\n  a number called x is 0.\n",
+        );
+        assert!(
+            after_variable.contains("'point' is already defined as a variable"),
+            "unexpected error: {}",
+            after_variable
+        );
+
+        let after_function = parse_err(
+            "To point with a number called across.\n  Print across.\n\n\
+             A thing called point has\n  a number called x is 0.\n",
+        );
+        assert!(
+            after_function.contains("'point' is already defined as a function"),
+            "unexpected error: {}",
+            after_function
+        );
     }
 
     // ---------------------------------------------------------------------

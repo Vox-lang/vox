@@ -382,6 +382,7 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
@@ -412,7 +413,10 @@ impl Parser {
                 ));
             }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         if *self.current() == Token::From || *self.current() == Token::Between {
@@ -792,6 +796,7 @@ impl Parser {
         self.skip_noise();
         
         // Get loop variable name
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
@@ -820,7 +825,10 @@ impl Parser {
                 ));
             }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         // Expect "from"

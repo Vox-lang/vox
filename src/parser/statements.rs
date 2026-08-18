@@ -28,34 +28,13 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<Program, Box<CompileError>> {
-        let mut statements = Vec::new();
-        
-        while *self.current() != Token::EOF {
-            self.skip_all_whitespace();
-            if *self.current() == Token::EOF {
-                break;
-            }
-            
-            match self.parse_statement() {
-                Ok(stmt) => {
-                    // Function definitions handle their own period and paragraph break
-                    let is_func_def = matches!(stmt, Statement::FunctionDef { .. });
-                    statements.push(stmt);
-                    
-                    if !is_func_def {
-                        self.skip_noise();
-                        self.expect(&Token::Period);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-            
-            self.skip_all_whitespace();
-        }
+        let statements = self.parse_statement_list()?;
 
         // The manifest is checked both ways (plan 310 §4, §10). "Nothing
         // defines it" is the half that can only be known here, once every
-        // definition in the file has been read.
+        // definition in the program has been read - which now means after the
+        // `see`n files have been read too, so a member declared in one file
+        // may be defined in another.
         self.reject_undefined_members()?;
 
         // `Program::new` derives the thing registry from the statement list
@@ -68,6 +47,50 @@ impl Parser {
         let program = Program::new(statements);
         self.check_thing_registry(&program)?;
         Ok(program)
+    }
+
+    /// The top-level statement loop, without the whole-program checks that
+    /// close a parse. A `see`n file is read through here rather than through
+    /// `parse`, because those checks are about the program and a seen file is
+    /// only part of one: a member its manifest declares may well be defined
+    /// in the file that saw it.
+    pub(crate) fn parse_statement_list(
+        &mut self,
+    ) -> Result<Vec<Statement>, Box<CompileError>> {
+        let mut statements = Vec::new();
+
+        while *self.current() != Token::EOF {
+            self.skip_all_whitespace();
+            if *self.current() == Token::EOF {
+                break;
+            }
+
+            match self.parse_statement() {
+                Ok(stmt) => {
+                    // Function definitions handle their own period and paragraph break
+                    let is_func_def = matches!(stmt, Statement::FunctionDef { .. });
+                    // A `see "<path>.vox"` is not a statement in the program:
+                    // it stands for the file's statements, which take its
+                    // place here. `Some(empty)` still means "inlined" - a file
+                    // may legitimately have nothing in it, and an already-seen
+                    // file has nothing left to contribute.
+                    match self.included_statements.take() {
+                        Some(mut spliced) => statements.append(&mut spliced),
+                        None => statements.push(stmt),
+                    }
+
+                    if !is_func_def {
+                        self.skip_noise();
+                        self.expect(&Token::Period);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+
+            self.skip_all_whitespace();
+        }
+
+        Ok(statements)
     }
 
     /// Parse one statement, counting how deep it sits. Every block body - an

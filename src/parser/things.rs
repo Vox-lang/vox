@@ -148,6 +148,14 @@ impl Parser {
     /// parser position - every caller is about to abort, but a diagnostic
     /// that silently consumed tokens would be a trap for the next person to
     /// reuse one. Call at the contextual `thing` keyword.
+    ///
+    /// A name the lexer has folded into a keyword token (`reading`, `size`,
+    /// and their aliases) no longer carries its spelling, so it is read back
+    /// from the source line the way `check_not_keyword` does, and handed back
+    /// **quoted**: `A thing called 'reading' has ...` is how a reserved word
+    /// names a thing, and it compiles. Echoing it bare would spell a
+    /// canonical form that is refused the moment the author writes it, and
+    /// `<name>` told them nothing about their own word.
     fn peek_defined_thing_name(&mut self) -> String {
         let saved = self.pos;
         self.advance(); // `thing`
@@ -156,10 +164,13 @@ impl Parser {
         self.skip_noise();
         let name = match self.current().clone() {
             Token::Identifier(n) | Token::StringLiteral(n) => n,
-            // Whatever follows `called` is not a name at all; a placeholder
-            // is honest where inventing one would misreport what was
-            // written.
-            _ => "<name>".to_string(),
+            keyword => match (keyword.as_keyword(), self.current_lexeme()) {
+                (Some(_), Some(typed)) => format!("'{}'", typed),
+                // Whatever follows `called` is not a name at all; a
+                // placeholder is honest where inventing one would misreport
+                // what was written.
+                _ => "<name>".to_string(),
+            },
         };
         self.pos = saved;
         name
@@ -212,18 +223,10 @@ impl Parser {
 
         let name_pos = self.pos;
         let name = self.parse_name()?;
-        if let Some(previous) = self.things.get(&name) {
-            let previous_line = previous.line;
-            // Rewind so the underline lands on the duplicate name rather
-            // than on whatever follows it. The parse is aborting anyway.
-            self.pos = name_pos;
-            return Err(self.err(&format!(
-                "'{}' is already defined as a thing on line {}\n  \
-                 Type names, variable names, and function names share one \
-                 identifier space; the first definition wins.",
-                name, previous_line
-            )));
-        }
+        // The definition is a claim on the one identifier space like any
+        // other, in both directions: a name a variable or a function already
+        // took is refused here just as this name is refused to them later.
+        self.claim_name(&name, NameKind::Thing, name_pos)?;
         self.skip_noise();
 
         // `has` opens the entry list. The two reserved near-misses get their
@@ -272,7 +275,6 @@ impl Parser {
             self.thing_returning_functions
                 .insert(member_function_name(&name, member), name.clone());
         }
-        self.thing_name_positions.insert(name.clone(), name_pos);
         self.things.insert(name, def.clone());
         Ok(Statement::ThingDecl(def))
     }
@@ -313,8 +315,8 @@ impl Parser {
             .join(", ");
         // Point at the first definition that went missing, so the caret lands
         // on a thing rather than at end of file.
-        if let Some(name_pos) = self.thing_name_positions.get(missing[0]) {
-            self.pos = *name_pos;
+        if let Some(name_pos) = self.thing_name_position(missing[0]) {
+            self.pos = name_pos;
         }
         Err(self.err(&format!(
             "Compiler bug: {} parsed as a thing but is missing from the \
@@ -325,6 +327,96 @@ impl Parser {
              Please report this file to the Vox maintainers.",
             names
         )))
+    }
+
+    /// Take `name` for `kind`, or refuse because something already has it.
+    /// This is the whole of the one-identifier-space rule (plan 310 §4, §10):
+    /// every declaration form goes through here, so a form added later
+    /// inherits the rule instead of having to remember it. The rule used to
+    /// be written at one spelling - `a <thing> called <thatname>` - and the
+    /// five other spellings that reach the same collision all compiled.
+    ///
+    /// A type name is exclusive: nothing else may take a name a thing has,
+    /// and a thing may not take a name already in use. Two variables, or a
+    /// variable and a function, keep the behaviour they have always had - a
+    /// local shadowing an outer name is how every existing Vox program is
+    /// written (tests/339), and widening the rule to those is a separate
+    /// language decision, not part of this feature. What the spec settles is
+    /// the half the possessive needs: `the point's` reads one way only if
+    /// `point` names exactly one thing in the program.
+    ///
+    /// `name_pos` is the token index of the name, so the caret lands on the
+    /// second declaration - the one that is being refused - and the message
+    /// names the first.
+    pub(crate) fn claim_name(
+        &mut self,
+        name: &str,
+        kind: NameKind,
+        name_pos: usize,
+    ) -> Result<(), Box<CompileError>> {
+        let line = self.tokens.get(name_pos).map(|info| info.line).unwrap_or(0);
+        let file = self.source_file.as_ref().map(|src| src.filename.clone());
+
+        if let Some(previous) = self.claimed_names.get(name) {
+            if previous.kind == NameKind::Thing || kind == NameKind::Thing {
+                let previous_kind = previous.kind.noun();
+                let previous_line = previous.line;
+                // A `see` splices another file into the same identifier
+                // space, so the line the message names may be in a file the
+                // reader is not looking at. Name it when it differs.
+                let elsewhere = match (&previous.file, &file) {
+                    (Some(claimed_in), Some(reading)) if claimed_in != reading => {
+                        format!(" of {}", claimed_in)
+                    }
+                    _ => String::new(),
+                };
+                // Rewind so the underline lands on the name rather than on
+                // whatever follows it. The parse is aborting anyway.
+                self.pos = name_pos;
+                return Err(self.err(&format!(
+                    "'{}' is already defined as a {} on line {}{}\n  \
+                     Type names, variable names, and function names share one \
+                     identifier space; the first definition wins.",
+                    name, previous_kind, previous_line, elsewhere
+                )));
+            }
+            // First claim stands: a second variable or function of the same
+            // name is not this rule's business.
+            return Ok(());
+        }
+
+        self.claimed_names.insert(
+            name.to_string(),
+            NameClaim { kind, line, pos: name_pos, file },
+        );
+        Ok(())
+    }
+
+    /// "line 6", or "line 6 of tests/include/geometry.vox" when the thing was
+    /// defined in a file this one saw. A `see` splices another file into the
+    /// same program, so a bare line number would send the reader to the wrong
+    /// file's line 6.
+    pub(crate) fn where_thing_was_defined(&self, thing: &str, line: usize) -> String {
+        let elsewhere = match (
+            self.claimed_names.get(thing).and_then(|claim| claim.file.as_ref()),
+            self.source_file.as_ref().map(|src| &src.filename),
+        ) {
+            (Some(claimed_in), Some(reading)) if claimed_in != reading => {
+                format!(" of {}", claimed_in)
+            }
+            _ => String::new(),
+        };
+        format!("line {}{}", line, elsewhere)
+    }
+
+    /// Where a thing's name was written, for the two checks that can only run
+    /// once the whole program has been read and still want their caret on the
+    /// type. `None` when the definition came from a `see`n file, whose token
+    /// indices belong to a different stream than this parser's.
+    fn thing_name_position(&self, name: &str) -> Option<usize> {
+        let claim = self.claimed_names.get(name)?;
+        let reading = self.source_file.as_ref().map(|src| &src.filename);
+        (claim.kind == NameKind::Thing && claim.file.as_ref() == reading).then_some(claim.pos)
     }
 
     /// The no-data-field diagnostic, shared by `A thing called X.` (no `has`
@@ -607,28 +699,16 @@ impl Parser {
     }
 
     /// Close a `a <thing> called <name>` declaration, with the name already
-    /// parsed. `name_pos` is the token index of that name, so a rejected
-    /// declaration underlines the name rather than what follows it.
+    /// parsed and already claimed in the one identifier space by the caller -
+    /// `claim_name` runs for every declaration whatever its type, so this
+    /// path no longer keeps its own copy of the rule in step. Keeping it here
+    /// is how the rule came to hold for `a point called point.` and for none
+    /// of the five other spellings that reach the same collision.
     pub(crate) fn finish_thing_declaration(
         &mut self,
         thing: String,
         name: String,
-        name_pos: usize,
     ) -> Result<Statement, Box<CompileError>> {
-        // One identifier space, first-come-first-serve (plan 310 §10): the
-        // definition claimed this name already, so `a point called point.`
-        // cannot also mean a variable.
-        if let Some(previous) = self.things.get(&name) {
-            let previous_line = previous.line;
-            self.pos = name_pos;
-            return Err(self.err(&format!(
-                "'{}' is already defined as a thing on line {}\n  \
-                 Type names, variable names, and function names share one \
-                 identifier space; the first definition wins.",
-                name, previous_line
-            )));
-        }
-
         // An initialiser copies the whole thing into the storage this
         // declaration reserves (plan 310 §5). The separator set is the one
         // every other typed declaration takes, so `a point called moved is
@@ -792,13 +872,15 @@ impl Parser {
         } else {
             return Ok(());
         };
-        let defined_on = def.line;
+        let defined_line = def.line;
+        let thing = thing.clone();
+        let defined_on = self.where_thing_was_defined(&thing, defined_line);
 
         self.pos = name_pos;
         Err(self.err(&format!(
             "{} already has a {} called '{}', so a function taking a {} cannot \
              be called '{}' too\n  \
-             {} is defined on line {}. A type owns one member space: its \
+             {} is defined on {}. A type owns one member space: its \
              fields, its declared function members, and every function whose \
              first parameter is that type (plan 310 §4).\n  \
              Rename one of the two - Vox refuses the ambiguity rather than \
@@ -1417,12 +1499,24 @@ impl Parser {
         let Some((thing, member, line)) = unmet else {
             return Ok(());
         };
-        if let Some(pos) = self.thing_name_positions.get(&thing) {
-            self.pos = *pos;
+        let defined_on = self.where_thing_was_defined(&thing, line);
+        // The caret goes on the type whose promise is unmet - unless the
+        // definition came from a `see`n file, whose token indices belong to a
+        // different stream. There the message names the file and the line,
+        // and no caret is drawn: one pointing at a line of the wrong file
+        // reads as a claim about that line.
+        let in_this_file = self.thing_name_position(&thing);
+        if let Some(pos) = in_this_file {
+            self.pos = pos;
         }
-        Err(self.err(&format!(
+        let report = if in_this_file.is_some() {
+            |parser: &Self, message: &str| parser.err(message)
+        } else {
+            |_: &Self, message: &str| Box::new(CompileError::new(message))
+        };
+        Err(report(self, &format!(
             "{} declares '{}' but nothing defines it\n  \
-             The definition on line {} lists '{}' as part of {}'s callable API, \
+             The definition on {} lists '{}' as part of {}'s callable API, \
              so somewhere the program has to write it:\n    \
              To do the {}'s {}, with <parameters>.\n      \
              ...\n      \
@@ -1431,7 +1525,7 @@ impl Parser {
              needs no manifest entry (plan 310 §4).",
             thing,
             member,
-            line,
+            defined_on,
             member,
             thing,
             thing,

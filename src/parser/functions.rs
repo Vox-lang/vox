@@ -239,7 +239,114 @@ impl Parser {
             ));
         }
 
+        // A source include is read HERE, in the middle of this parse, rather
+        // than spliced into the statement list afterwards. Everything the
+        // parse decides from a name - whether `point` is a type noun, whether
+        // `origin's x` is a field chain, whether a name is still free - it has
+        // to decide while reading, so a definition that arrives after the
+        // parse has finished arrives too late to be usable (plan 310 §3), and
+        // every rule the parser enforces would hold only inside one file.
+        // Reading the file where its `see` stands also keeps the
+        // defined-earlier rule meaning what it says across the boundary.
+        if path.ends_with(".vox") && self.at_top_level() {
+            self.included_statements = self.inline_source_include(&path)?;
+        }
+
         Ok(Statement::See { path, lib_name, lib_version })
+    }
+
+    /// Read a `see`n Vox source into this parse: its statements land where the
+    /// `see` stands, and its definitions, declarations and manifests join the
+    /// tables this parser is deciding against. Returns `None` when the file
+    /// was already read into this compilation, which leaves the `see`
+    /// statement in place exactly as a repeated include always has.
+    fn inline_source_include(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<Vec<Statement>>, Box<CompileError>> {
+        use std::path::{Path, PathBuf};
+
+        let base = self
+            .include_base
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let include_path = if path.starts_with("./") || path.starts_with("../") {
+            base.join(path)
+        } else if path.starts_with('/') {
+            PathBuf::from(path)
+        } else {
+            // A bare name is a system library first, then a sibling file.
+            let system_path = Path::new("/usr/share/vox/lib").join(path);
+            if system_path.exists() {
+                system_path
+            } else {
+                base.join(path)
+            }
+        };
+        // `tests/./include/geometry.vox` and `tests/include/geometry.vox` name
+        // the same file; only one of them is worth putting in a diagnostic.
+        let display: PathBuf = include_path.components().collect();
+        let canonical = include_path
+            .canonicalize()
+            .unwrap_or_else(|_| display.clone());
+
+        if self.included_files.contains(&canonical) {
+            return Ok(None);
+        }
+
+        let source = std::fs::read_to_string(&include_path).map_err(|e| {
+            self.err(&format!(
+                "Cannot read '{}', the file this `see` names: {}\n  \
+                 A source include is resolved against the directory of the \
+                 file that writes it.",
+                display.display(),
+                e
+            ))
+        })?;
+
+        self.included_files.insert(canonical);
+        self.included_paths.push(display.display().to_string());
+
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize();
+        let mut inner = Parser::new(tokens)
+            .with_source(&display.display().to_string(), &source)
+            // An included file is a collection of definitions with no
+            // top-level entry of its own, so its last function body reaching
+            // EOF is how such a file is written - not the swallowed-program
+            // shape the warning is looking for.
+            .with_shared_mode(true);
+        inner.include_base = Some(
+            include_path
+                .parent()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(|dir| dir.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(".")),
+        );
+        // One identifier space, one set of things, one set of files already
+        // read: the seen file continues this parse rather than starting a
+        // private one of its own.
+        inner.claimed_names = std::mem::take(&mut self.claimed_names);
+        inner.things = std::mem::take(&mut self.things);
+        inner.thing_vars = std::mem::take(&mut self.thing_vars);
+        inner.thing_returning_functions = std::mem::take(&mut self.thing_returning_functions);
+        inner.function_first_parameters = std::mem::take(&mut self.function_first_parameters);
+        inner.member_functions = std::mem::take(&mut self.member_functions);
+        inner.included_files = std::mem::take(&mut self.included_files);
+
+        let statements = inner.parse_statement_list();
+
+        self.claimed_names = std::mem::take(&mut inner.claimed_names);
+        self.things = std::mem::take(&mut inner.things);
+        self.thing_vars = std::mem::take(&mut inner.thing_vars);
+        self.thing_returning_functions = std::mem::take(&mut inner.thing_returning_functions);
+        self.function_first_parameters = std::mem::take(&mut inner.function_first_parameters);
+        self.member_functions = std::mem::take(&mut inner.member_functions);
+        self.included_files = std::mem::take(&mut inner.included_files);
+        self.included_paths.append(&mut inner.included_paths);
+        self.warnings.append(&mut inner.warnings);
+
+        Ok(Some(statements?))
     }
 
     pub(crate) fn parse_function_def(&mut self) -> Result<Statement, Box<CompileError>> {
@@ -285,6 +392,14 @@ impl Parser {
             })?,
         };
 
+        // A function name is a name in the one identifier space (plan 310 §4,
+        // §10). A member is not: its name lives in its owner's member space,
+        // under an internal name that keeps two things' same-named members
+        // apart, and the manifest already checked it.
+        if member.is_none() {
+            self.claim_name(&name, NameKind::Function, name_pos)?;
+        }
+
         self.skip_noise();
 
         // The comma before a member's parameter list, on the `Return a
@@ -311,7 +426,9 @@ impl Parser {
                 // Check for simple parameter: just an identifier
                 if let Token::Identifier(n) = self.current().clone() {
                     // Simple parameter without type
+                    let param_pos = self.pos;
                     self.advance();
+                    self.claim_name(&n, NameKind::Variable, param_pos)?;
                     params.push((n, Type::Unknown));
                 } else {
                     // Full syntax: "a <type> called <name>"
@@ -332,7 +449,13 @@ impl Parser {
                         self.skip_noise();
                     }
                     
+                    // A parameter names a variable, so it claims the one
+                    // identifier space too - a parameter called `point` would
+                    // make the type name unreadable for the length of the
+                    // body, which is the shadowing §4 refuses.
+                    let param_pos = self.pos;
                     let param_name = self.parse_name()?;
+                    self.claim_name(&param_name, NameKind::Variable, param_pos)?;
 
                     params.push((param_name, param_type));
                 }

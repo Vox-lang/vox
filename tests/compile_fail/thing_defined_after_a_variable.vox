@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §10 - the rule runs in both directions. A variable
+ claimed `point` first, so the definition that follows is the second one into
+ the name and errors at its own line, naming the first.)
+
+a number called point is 42.
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+Print point.

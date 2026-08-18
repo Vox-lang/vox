@@ -9,6 +9,43 @@ type TreatingClause = (Expr, Expr);
 type LoopExpansion = (String, Expr, Option<TreatingClause>);
 type PathInfo = Result<Expr, LoopExpansion>;
 
+/// Which kind of declaration took a name. Plan 310 §4 settles that these
+/// three share ONE space: Vox's possessive puts a type and a variable in the
+/// same grammatical position, so `the point's` only reads one way if nothing
+/// else in the program is called `point`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NameKind {
+    Thing,
+    Variable,
+    Function,
+}
+
+impl NameKind {
+    /// The word the diagnostic uses for this kind of declaration.
+    fn noun(self) -> &'static str {
+        match self {
+            NameKind::Thing => "thing",
+            NameKind::Variable => "variable",
+            NameKind::Function => "function",
+        }
+    }
+}
+
+/// One name in the identifier space, and where it was claimed - so the
+/// second declaration into it can name the first (plan 310 §10). The file is
+/// carried because a `see` splices another file into the same space, and a
+/// line number alone would then name a line in a file the reader is not
+/// looking at.
+pub(crate) struct NameClaim {
+    kind: NameKind,
+    line: usize,
+    /// Token index of the name, for the caret - only meaningful when `file`
+    /// is the file being parsed, since another file's tokens are a different
+    /// stream.
+    pos: usize,
+    file: Option<String>,
+}
+
 pub struct Parser {
     tokens: Vec<TokenInfo>,
     pos: usize,
@@ -94,10 +131,18 @@ pub struct Parser {
     // declare the same member name, so the owner is half the key - which is
     // also what the internal name it records keeps apart.
     member_functions: std::collections::HashMap<(String, String), things::MemberFunction>,
-    // The token index of each thing's name, so "declares X but nothing
-    // defines it" - a check that can only run once the whole file has been
-    // read - can still put its caret on the type it is about.
-    thing_name_positions: std::collections::HashMap<String, usize>,
+    // The one identifier space (plan 310 §4, §10). Every declaration form -
+    // a thing definition, a variable declaration in any of its spellings, a
+    // function definition, a parameter, a loop variable - claims its name
+    // here through `claim_name`, and that one operation is where the
+    // collision rule lives. Enforcing it at each spelling instead is how five
+    // of the six spellings came to be unguarded: a rule written at a call
+    // site is a rule the next call site has to remember.
+    //
+    // It doubles as the caret table the two whole-program checks need
+    // ("declares X but nothing defines it", and the registry assertion),
+    // which is why the token index is kept alongside.
+    claimed_names: std::collections::HashMap<String, NameClaim>,
     // How deep the statement being parsed sits: 1 while the top-level loop
     // is reading a statement, 2 or more anywhere inside a block - an `If`
     // branch, a loop body, a function body. A thing is defined at the top
@@ -107,6 +152,23 @@ pub struct Parser {
     // body reaches its statements through `parse_statement`, which is the
     // one door this is counted at.
     statement_depth: usize,
+    // The directory a `see "./x.vox"` resolves against: the directory of the
+    // file being parsed. Set from the source filename, or given directly by
+    // a caller that displays a file under a different name than it reads it
+    // from (the compile_fail harness).
+    include_base: Option<std::path::PathBuf>,
+    // Canonical paths already spliced into this compilation, so a diamond or
+    // a circular `see` splices each file once. Seeded with the file being
+    // parsed, so a file cannot see itself.
+    included_files: std::collections::HashSet<std::path::PathBuf>,
+    // Every source file this parse read through a `see`, in the order it read
+    // them, for the driver's `-v` listing.
+    pub included_paths: Vec<String>,
+    // The statements a `see "<path>.vox"` just spliced in, waiting for the
+    // top-level loop to put them where the `see` stood. `None` means the
+    // statement is an ordinary one; `Some` (even empty) means it was a source
+    // include and the `See` statement itself is not part of the program.
+    included_statements: Option<Vec<Statement>>,
     // Every `Return` in the definition being parsed that declared a type,
     // as (token index, declared type). The member rule is about the Return
     // LINES (plan 310 §4), not about the one type the function ends up
@@ -154,14 +216,42 @@ impl Parser {
             thing_returning_functions: std::collections::HashMap::new(),
             function_first_parameters: std::collections::HashMap::new(),
             member_functions: std::collections::HashMap::new(),
-            thing_name_positions: std::collections::HashMap::new(),
+            claimed_names: std::collections::HashMap::new(),
             statement_depth: 0,
             typed_returns: Vec::new(),
+            include_base: None,
+            included_files: std::collections::HashSet::new(),
+            included_paths: Vec::new(),
+            included_statements: None,
         }
     }
 
     pub fn with_source(mut self, filename: &str, content: &str) -> Self {
+        // A `see "./x.vox"` resolves against the directory of the file that
+        // wrote it, and this is where the parse learns what that is. Seeding
+        // the already-included set with this file is what stops a file that
+        // sees itself from recursing.
+        let path = std::path::PathBuf::from(filename);
+        self.include_base = Some(
+            path.parent()
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(|dir| dir.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from(".")),
+        );
+        self.included_files
+            .insert(path.canonicalize().unwrap_or(path));
         self.source_file = Some(SourceFile::new(filename, content));
+        self
+    }
+
+    /// Resolve this parse's `see` paths against `dir` rather than against the
+    /// directory of the name the source is displayed under. Only the
+    /// compile_fail harness needs the two to differ: its `.err` fixtures pin
+    /// the bare file name in the rendered error, while the cases themselves
+    /// live in `tests/compile_fail`.
+    #[cfg(test)]
+    pub(crate) fn with_include_base(mut self, dir: &std::path::Path) -> Self {
+        self.include_base = Some(dir.to_path_buf());
         self
     }
 

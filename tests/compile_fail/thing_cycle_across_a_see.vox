@@ -1,0 +1,22 @@
+(Compile-fail regression: a mutual cycle assembled across a `see`, where each
+ file is internally legal. This file's `hoop` holds a `ring`; the seen file's
+ `ring` holds a `hoop`. Neither parser could see the other half while every
+ rule was enforced per file, so the analyzer's registry walk was the only
+ thing standing between this and a layout of infinite size.
+
+ The parse reads the seen file into the same identifier space now, so it is
+ refused earlier and more plainly: the seen file's `ring` is the second
+ definition of a name this file already claimed. Either way the program must
+ not compile, and that is what this pins.)
+
+A thing called ring has
+  a number called radius is 0.
+
+see "./include/hoop_holding_a_ring.vox".
+
+A thing called hoop has
+  a ring called band,
+  a number called width is 0.
+
+a hoop called wheel.
+Print wheel's width.

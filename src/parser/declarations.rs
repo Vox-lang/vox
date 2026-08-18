@@ -158,6 +158,50 @@ impl Parser {
         }
     }
 
+    /// `a poimt called origin.` - a declaration whose type noun is neither a
+    /// builtin nor a thing (plan 310 §10). Only the shape `<word> called` is
+    /// claimed, which is the one shape that can only have been meant as a
+    /// declaration, so nothing else the article can open is disturbed.
+    ///
+    /// The near miss is offered over the user's own type names as well as the
+    /// builtin nouns, because a thing's name is a type noun everywhere a
+    /// builtin one is - a suggestion that could only ever say `number` would
+    /// be silent for exactly the types this feature adds.
+    pub(crate) fn reject_unknown_declared_type(
+        &mut self,
+        type_was_read: bool,
+    ) -> Result<(), Box<CompileError>> {
+        if type_was_read {
+            return Ok(());
+        }
+        let Token::Identifier(word) = self.current().clone() else {
+            return Ok(());
+        };
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Called) {
+            return Ok(());
+        }
+
+        let mut known: Vec<&str> = Self::DECLARATION_TYPE_NOUNS.to_vec();
+        known.extend(self.things.keys().map(|name| name.as_str()));
+        known.sort();
+        let mut err = *self.err(&format!(
+            "Unknown type '{}'\n  \
+             A declaration names a builtin type noun or a thing defined \
+             earlier in the program.\n  \
+             Known here: {}",
+            word,
+            known.join(", ")
+        ));
+        if let Some(near) = find_similar_keyword(&word, &known) {
+            err = err.with_suggestion(&near);
+        }
+        Err(Box::new(err))
+    }
+
     pub(crate) fn parse_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Set/Create
         self.skip_noise();
@@ -265,6 +309,7 @@ impl Parser {
         let var_type = self
             .try_parse_type_noun()
             .or_else(|| self.try_parse_thing_type_noun());
+        self.reject_unknown_declared_type(var_type.is_some())?;
 
         if let Some(var_type) = var_type {
             // Types that must be followed by `called` in declaration position
@@ -294,13 +339,15 @@ impl Parser {
 
             let name_pos = self.pos;
             let name = self.parse_name()?;
+            // Every declaration takes a name out of the one identifier space,
+            // whatever its type (plan 310 §4, §10).
+            self.claim_name(&name, NameKind::Variable, name_pos)?;
 
             self.skip_noise();
 
-            // A thing declaration takes no initializer in this task, and its
-            // name may not reuse the thing's own (plan 310 §5, §10).
+            // A thing declaration takes no initializer in this task (§5).
             if let Type::Thing(thing) = var_type {
-                return self.finish_thing_declaration(thing, name, name_pos);
+                return self.finish_thing_declaration(thing, name);
             }
 
             // Timer has its own statement type.
@@ -382,13 +429,16 @@ impl Parser {
 
         // No type noun: parse the name directly (with optional "called" for
         // the bare untyped forms).
-        let name = if *self.current() == Token::Called {
+        if *self.current() == Token::Called {
             self.advance();
             self.skip_noise();
-            self.parse_name()
-        } else {
-            self.parse_name()
-        }?;
+        }
+        let name_pos = self.pos;
+        let name = self.parse_name()?;
+        // `Set point to 42.` brings a variable into being where none stood,
+        // which is a claim on the one identifier space like any other (plan
+        // 310 §4, §10). Writing an existing variable claims nothing new.
+        self.claim_name(&name, NameKind::Variable, name_pos)?;
 
         self.skip_noise();
 
@@ -420,6 +470,15 @@ impl Parser {
             value,
         })
     }
+
+    /// The builtin type nouns a declaration may name, spelled the way the
+    /// author writes them - the vocabulary `try_parse_type_noun` reads, in
+    /// words, for the diagnostic that has to say what was available. Kept
+    /// beside that function so the two cannot drift.
+    pub(crate) const DECLARATION_TYPE_NOUNS: [&'static str; 11] = [
+        "number", "float", "text", "boolean", "file", "list", "map", "buffer", "time", "timer",
+        "value",
+    ];
 
     /// Resolve a type noun at the current token position.
     ///
@@ -507,6 +566,7 @@ impl Parser {
         let var_type = self
             .try_parse_type_noun()
             .or_else(|| self.try_parse_thing_type_noun());
+        self.reject_unknown_declared_type(var_type.is_some())?;
 
         // Types that must be followed by `called` in declaration position
         // get their existing specific diagnostic before the generic expect.
@@ -539,13 +599,15 @@ impl Parser {
         // string literal).
         let name_pos = self.pos;
         let name = self.parse_name()?;
+        // Every declaration takes a name out of the one identifier space,
+        // whatever its type (plan 310 §4, §10).
+        self.claim_name(&name, NameKind::Variable, name_pos)?;
 
         self.skip_noise();
 
-        // A thing declaration takes no initializer in this task, and its name
-        // may not reuse the thing's own (plan 310 §5, §10).
+        // A thing declaration takes no initializer in this task (§5).
         if let Some(Type::Thing(thing)) = var_type {
-            return self.finish_thing_declaration(thing, name, name_pos);
+            return self.finish_thing_declaration(thing, name);
         }
 
         // Timer has its own statement type.
@@ -683,13 +745,16 @@ impl Parser {
 
         // Could be "the <type> called <name>" (typed reference) or just a name.
         let var_type = self.try_parse_type_noun();
+        let mut name_pos = self.pos;
         let name = if let Some(_) = var_type {
             self.skip_noise();
             if *self.current() == Token::Called {
                 self.advance();
                 self.skip_noise();
+                name_pos = self.pos;
                 self.parse_name()?
             } else if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+                name_pos = self.pos;
                 self.parse_name()?
             } else {
                 // "the number" without "called" - could be loop iterator reference
@@ -704,6 +769,11 @@ impl Parser {
 
         // Check for assignment: "is <value>"
         if matches!(self.current(), Token::Is | Token::Equals) {
+            // `The point is 42.` brings a variable into being just as `a
+            // number called point is 42.` does, so it claims the one
+            // identifier space at the same door (plan 310 §4, §10). Claimed
+            // before the value is read, so the caret is still on the name.
+            self.claim_name(&name, NameKind::Variable, name_pos)?;
             self.advance();
             self.skip_noise();
             // In-place retype of a `value` variable: `the name is a number.`.
