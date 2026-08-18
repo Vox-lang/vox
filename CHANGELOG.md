@@ -4,7 +4,7 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.2] - 2026-08-18
 
 ### Fixed
 
@@ -20,11 +20,6 @@ adheres to [Semantic Versioning](https://semver.org/).
   for the possessive property in the parser, the same contextual-keyword
   treatment `start`/`begin`/`stop` already get for timers. The quoted form
   `'count'` (which always lexed identically to the bare form) is unaffected.
-
-## [0.4.2] - 2026-08-18
-
-### Fixed
-
 - **`cargo install vox-lang` produced a compiler that could not compile
   anything.** Cargo copies only the binary into `~/.cargo/bin`, leaving the
   crate's `coreasm/` behind in the registry cache, so every step of the
@@ -42,6 +37,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   search, and `./coreasm` — so an RPM install, a development tree, and
   `VOX_CORE_PATH` all behave exactly as before. See
   [plan 312](docs/plans/312_cargo_install_coreasm.md).
+
+### Added
+
+- **Installing vox on dnf suggests vox-libs.** The RPM carries
+  `Suggests: vox-libs` — a weak dependency, so nothing is pulled in
+  automatically and the compiler stays standalone, but the relationship is
+  recorded where packaging tools can see it. README and INSTALL.md now
+  document the libraries and where they install.
 
 ## [0.4.1] - 2026-08-18
 

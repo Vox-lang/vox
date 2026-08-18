@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.4.1**
+**Version 0.4.2**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -4389,6 +4389,27 @@ A few alternate spellings are also reserved because the compiler recognizes them
 These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called length is ...` reports `'length'` as an alternate spelling of `'size'`, not the internal canonical name.
 
 Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'`, `'length'` — if you genuinely need it.)
+
+### Two classes of special word
+
+Not every word with a special meaning is reserved. Vox distinguishes:
+
+- **Reserved keywords** — banned as bare names everywhere, because they
+  would be ambiguous anywhere: statement starters, operators (`times`,
+  `add`), type names, connectors.
+- **Contextual keywords** — claimed only in the position where they mean
+  something, and ordinary identifiers everywhere else: `start`/`begin`/
+  `stop`/`finish` for timers, `send` for signals, `waiting` in
+  `without waiting`, `available` in `is available`, the things words, the
+  property word `name`, and (since 0.4.2) the property word `count` —
+  claimed after a possessive marker and in the `the argument count` /
+  `the environment variable count` phrases, so
+  `a number called count is 0.` compiles while `arguments's count` keeps
+  its meaning.
+
+The test for which class a word belongs in: if every position where the
+word means something is grammatically identifiable, it is contextual; only
+a word that would be ambiguous in ordinary positions is reserved.
 
 ### Contextual Keywords (Things)
 
