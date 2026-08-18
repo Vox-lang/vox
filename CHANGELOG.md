@@ -8,8 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- **The fuzzer's remaining three findings, closed.** With 0.4.3's two
-  segfaults, that clears every bug vox-fuzz has reported.
+- **The fuzzer's remaining findings, closed — the bug register is empty.**
+  With 0.4.3's two segfaults, every bug vox-fuzz has reported is now
+  fixed, and so is the sibling that fixing #24 uncovered.
   - **An integer literal too large for 64 bits compiled silently and
     evaluated to `0`** ([#22](docs/BUGS_FOUND.md)) — a wrong answer with
     no crash, which is the failure mode this manual says the language
@@ -19,6 +20,14 @@ adheres to [Semantic Versioning](https://semver.org/).
     ([#23](docs/BUGS_FOUND.md)) while `element N of` read the same
     values back correctly — the payloads were sound, their type tags
     were not. Same family as #17/#18, fixed the same way.
+  - **Out-of-range positional properties segfaulted**
+    ([#26](docs/BUGS_FOUND.md)) — `arguments's first` with no arguments,
+    `arguments's second` with fewer than two, `environment's first` and
+    `last` on an empty environment, and a negative index. Each handed a
+    reader a null pointer to dereference. They now set the error flag
+    and yield empty text, catchable by `On error`, matching `last`,
+    `name`, `all`, `raw`, and `count`, which were already correct — the
+    right behaviour had been implemented next door the whole time.
   - **A string literal in a function-body `If`/`While` condition
     resolved as a variable name** ([#21](docs/BUGS_FOUND.md)) —
     `If w is not "banana"` failed with `Unknown variable: banana`. This
