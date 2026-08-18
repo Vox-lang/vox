@@ -329,6 +329,15 @@ Actively developed, free and open-source projects written in Vox:
 
 - **[voxos](https://github.com/TheJostler/voxos)** — a collection of utilities
   and an init for a minimal operating system, written in pure Vox.
+- **[vox-fuzz](https://github.com/Vox-lang/vox-fuzz)** — a fuzzer for this
+  compiler, written in Vox. It generates random valid programs, compiles
+  them, and supervises the binaries natively (fork, non-blocking reap,
+  deadline kill, raw wait status) to catch any that die by signal, hang,
+  or make the compiler itself fall over. Its first hunt found two
+  memory-safety bugs, both fixed in 0.4.3.
+- **[vox-libs](https://github.com/Vox-lang/vox-libs)** — shared libraries
+  for Vox, written in Vox. Not a standard library: the compiler builds and
+  runs with none of them installed.
 
 Building something in Vox? We'd like this list to point to real, actively
 maintained FOSS projects — email **vox-lang@tegosec.com** to have yours added.
