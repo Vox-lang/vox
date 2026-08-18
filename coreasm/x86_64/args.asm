@@ -53,9 +53,14 @@ _get_argc:
 ; Returns: pointer to null-terminated string in rax, or 0 if out of bounds
 global _get_arg
 _get_arg:
-    ; Check bounds
+    ; Check bounds. Unsigned (jae, not jge/signed): BUGS_FOUND #26's "at N"
+    ; form passes a caller-computed index that can be negative (`the
+    ; argument at 0 subtract 1`) - a signed check let a negative rdi slip
+    ; past as "less than argc" and read argv[-1], which is the raw argc
+    ; word one qword below argv[0] on the stack, misread as a string
+    ; pointer. Any negative index is unsigned-huge, so jae rejects it too.
     cmp rdi, [rel _argc]
-    jge .out_of_bounds
+    jae .out_of_bounds
     
     ; Get argv[index]
     mov rax, [rel _argv]
@@ -93,8 +98,9 @@ _get_raw_argc:
 global _get_raw_arg
 _get_raw_arg:
     call _get_raw_argc
+    ; Unsigned compare - see _get_arg above; same negative-index hole.
     cmp rdi, rax
-    jge .raw_oob
+    jae .raw_oob
     mov rax, [rel _argv]
     lea rdx, [rdi + 1]
     mov rax, [rax + rdx*8]
@@ -144,8 +150,9 @@ global _get_parsed_arg
 _get_parsed_arg:
     cmp qword [rel _parsed_valid], 0
     je _get_raw_arg
+    ; Unsigned compare - see _get_arg above; same negative-index hole.
     cmp rdi, [rel _parsed_argc]
-    jge .parsed_oob
+    jae .parsed_oob
     lea rdx, [rel _parsed_args]
     mov rax, [rdx + rdi*8]
     ret

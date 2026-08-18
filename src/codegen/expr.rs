@@ -1346,6 +1346,14 @@ impl CodeGenerator {
                 }
             }
             
+            // BUGS_FOUND #26: `_get_arg`/`_get_parsed_arg` already return
+            // NULL for an out-of-range index (unlike index 0, the program
+            // name, which execve guarantees always exists - see
+            // `ArgumentName` below). The old codegen handed that NULL
+            // straight back as "the text", so the next read dereferenced
+            // 0; `emit_text_or_empty_on_null` substitutes the shared empty
+            // string and sets `_last_error`, matching `ArgumentLast` and
+            // `EnvironmentVariable` (#24), which already got this right.
             Expr::ArgumentAt { index } => {
                 self.generate_expr(index);
                 if self.argument_view_uses_parsed() {
@@ -1365,13 +1373,14 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_at");
             }
-            
+
             Expr::ArgumentName => {
                 self.emit_indent("xor rdi, rdi  ; index 0 - program name");
                 self.emit_indent("call _get_arg");
             }
-            
+
             Expr::ArgumentFirst => {
                 if self.argument_view_uses_parsed() {
                     self.emit_indent("xor rdi, rdi  ; parsed index 0 - first user arg");
@@ -1380,8 +1389,9 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, 1  ; index 1 - first user arg");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_first");
             }
-            
+
             Expr::ArgumentSecond => {
                 if self.argument_view_uses_parsed() {
                     self.emit_indent("mov rdi, 1  ; parsed index 1 - second user arg");
@@ -1390,6 +1400,7 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, 2  ; index 2 - second user arg");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_second");
             }
             
             Expr::ArgumentLast => {
@@ -1734,12 +1745,19 @@ impl CodeGenerator {
                 self.emit_indent("call _get_env_count");
             }
             
+            // BUGS_FOUND #26 (flagged as a sibling during #24's fix):
+            // `_get_env_at` returns NULL for an out-of-range index exactly
+            // like `_get_env` does for a missing name - these three sites
+            // handed that NULL back unchecked. `emit_text_or_empty_on_null`
+            // applies the same empty-text-and-flag substitution
+            // `Expr::EnvironmentVariable` already uses for #24.
             Expr::EnvironmentVariableAt { index } => {
                 self.generate_expr(index);
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_at");
             }
-            
+
             Expr::EnvironmentVariableExists { name } => {
                 self.generate_expr(name);
                 self.emit_indent("mov rdi, rax");
@@ -1748,17 +1766,19 @@ impl CodeGenerator {
                 self.emit_indent("setnz al");
                 self.emit_indent("movzx rax, al  ; 1 if exists, 0 otherwise");
             }
-            
+
             Expr::EnvironmentVariableFirst => {
                 self.emit_indent("xor rdi, rdi  ; index 0");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_first");
             }
-            
+
             Expr::EnvironmentVariableLast => {
                 self.emit_indent("call _get_env_count");
                 self.emit_indent("dec rax  ; last index = count - 1");
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_last");
             }
             
             Expr::EnvironmentVariableEmpty => {
