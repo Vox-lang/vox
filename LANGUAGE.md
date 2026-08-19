@@ -2107,6 +2107,51 @@ a list called nums is [1, 2, 3].
 For each n in nums, print the n.
 ```
 
+### Repeat
+
+Run a body a fixed number of times.
+
+```vox fragment
+Repeat <count> times, <statements>.
+```
+
+**Single-line example:**
+```vox fragment
+Repeat 3 times, print "hello".
+```
+
+**Multi-action loops** are comma-separated actions within one sentence,
+exactly like `While`:
+
+```vox fragment
+Repeat 2 times, print "a", print "b".
+```
+
+This prints `a`, `b`, `a`, `b` — two actions per iteration, two iterations.
+
+**Termination.** `Repeat` closes by the same rules as `While` and `For
+each`: a period ends the body (and closes the construct — rule 1), and a
+blank line force-closes it (rule 2). The statements after a closing
+period belong to the surrounding scope, not the loop:
+
+```vox
+Repeat 2 times, print "r".
+Print "after".
+```
+→ `r` `r` `after`
+
+Because a period closes the construct, periods stack: write one period
+per level you want to close, so a `Repeat` nested in another loop takes
+two periods to close both (see [Closing more than one
+level](#closing-more-than-one-level)):
+
+```vox
+For each n from 1 to 2,
+    Repeat 2 times, print "r"..
+Print "after".
+```
+→ `r` `r` `r` `r` `after`
+
 ### Loop Control
 
 ```vox fragment

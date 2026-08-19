@@ -4,6 +4,36 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A period now closes a `Repeat` body** ([#27](docs/BUGS_FOUND.md)) — the
+  construct that `Repeat N times, <actions>.` is a sentence-ending loop, the
+  shape LANGUAGE.md documents for `While` and `For each`, never closed on a
+  period. The continuation was silently absorbed into the loop and re-run
+  once per iteration, with no error: `Repeat 2 times, print "r". Print
+  "after".` printed `r after r after` (the absorbed statement run inside
+  the loop) instead of `r r after`. A second symptom shared the same root:
+  a comma did not separate actions in a `Repeat` body, so `Repeat 2 times,
+  print "a", print "b".` was a parse error at the comma — `Repeat`'s body
+  loop was missing the entire separator handling that `While`'s had. Both
+  are the same gap: the spec already promised that a period closes the
+  innermost open clause and that `Repeat` is one such clause, so this is a
+  fix, not a feature. `parse_repeat` now shares one body loop with
+  `parse_while` (factored into `parse_loop_body` so the two cannot drift
+  apart again): comma continues, period closes, blank line closes, EOF
+  closes. `Repeat` was also added to `parse_block`'s self-terminating
+  construct list alongside `If`/`While`/`For`, so a `Repeat` that is not the
+  last action in a branch no longer swallows the action that follows it.
+  Regression tests cover the period-closes case, the comma-continues case,
+  the blank-line-closes case (the one path that already worked, kept as a
+  guard), stacked periods closing a `Repeat` nested in each of `For each`,
+  `While`, and `If`, a `Repeat` inside a function followed by a statement,
+  a nested `If` as the last action, and the self-termination parity case.
+  Parser-only; analyzer and codegen already handled a closed `Repeat`
+  correctly. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #27.
+
 ## [0.4.5] - 2026-08-19
 
 ### Fixed

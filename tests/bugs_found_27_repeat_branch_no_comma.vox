@@ -1,0 +1,14 @@
+(Bug #27 regression: a Repeat that is not the last action in an If
+ branch. The Repeat owns its trailing period (rule 1), which then serves
+ as the separator, so the next action `Print "b"` follows with no comma
+ and belongs to the If's then-block — exactly as a nested While or For
+ each already behaves. Because the If condition is false, neither "a"
+ nor "b" runs; only "after", at the top level, prints. Before the fix the
+ Repeat absorbed "b" and "after" into its body, but the false condition
+ swallowed the whole branch, so nothing printed at all. Expected:
+ after.)
+
+If false then,
+    Repeat 2 times, Print "a".
+    Print "b".
+Print "after".
