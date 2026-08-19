@@ -1,0 +1,4 @@
+(Plan 320 rule 12: `append` has one source value slot, so a second `each`
+clause is the one-slot arity error, same as `print`.)
+a list called out is [].
+append each x from [1, 2] and each y from [3, 4] to out.

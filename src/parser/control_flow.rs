@@ -908,6 +908,19 @@ impl Parser {
     /// Parses any additional comma-separated statements as part of the loop body.
     /// Supports "but if" conditional branching for any action in the loop.
     pub(crate) fn wrap_in_loop_expansion(&mut self, variable: String, collection: Expr, base_stmt: Statement) -> Result<Statement, Box<CompileError>> {
+        let body = self.parse_loop_body_tail(base_stmt)?;
+        Ok(Self::for_each_loop(variable, collection, body))
+    }
+
+    /// After the base action of a loop expansion, parse the optional
+    /// `, but if ...` conditional or `, <more statements>` body and the
+    /// terminating period. Returns the loop body - the base statement,
+    /// wrapped in a conditional chain when `but if` is present, plus any
+    /// extra comma-separated statements. A loop expansion is a
+    /// self-terminating statement, so it owns its trailing period the way
+    /// `If`/`While`/`For` do; the top-level loop's `expect(Period)` is
+    /// tolerant of that.
+    fn parse_loop_body_tail(&mut self, base_stmt: Statement) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut body = vec![base_stmt];
 
         // Check for comma to parse additional body statements or "but if" conditionals
@@ -942,11 +955,11 @@ impl Parser {
                     if *self.current() == Token::Period {
                         break;
                     }
-                    
+
                     let stmt = self.parse_statement()?;
                     body.push(stmt);
                     self.skip_noise();
-                    
+
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
@@ -962,26 +975,151 @@ impl Parser {
                 }
             }
         }
-        
+
         // Consume period if present
         if *self.current() == Token::Period {
             self.advance();
             self.skip_noise();
         }
-        
-        // Use ForRange for range collections, ForEach otherwise
+
+        Ok(body)
+    }
+
+    /// Build the single loop statement for one expansion clause: `ForRange`
+    /// for a range collection, `ForEach` for anything else. An associated
+    /// function (no `self`): it only assembles a statement.
+    fn for_each_loop(variable: String, collection: Expr, body: Vec<Statement>) -> Statement {
         match collection {
-            Expr::Range { .. } => Ok(Statement::ForRange {
+            Expr::Range { .. } => Statement::ForRange {
                 variable,
                 range: collection,
                 body,
-            }),
-            _ => Ok(Statement::ForEach {
+            },
+            _ => Statement::ForEach {
                 variable,
                 collection,
                 body,
-            }),
+            },
         }
+    }
+
+    /// The argument expression a loop expansion contributes to its call:
+    /// the loop variable, optionally wrapped in a `treating X as Y`
+    /// substitution when the clause had one.
+    pub(crate) fn each_arg_expr(variable: &str, treating: &Option<TreatingClause>) -> Expr {
+        if let Some((match_val, replacement)) = treating {
+            Expr::TreatingAs {
+                value: Box::new(Expr::Identifier(variable.to_string())),
+                match_value: Box::new(match_val.clone()),
+                replacement: Box::new(replacement.clone()),
+            }
+        } else {
+            Expr::Identifier(variable.to_string())
+        }
+    }
+
+    /// Parse a call's argument clauses after a connector (`of`/`to`/`with`/
+    /// `on`): a non-empty sequence of clauses joined by `and`, where each
+    /// clause is either a loop expansion (`each <name> from <collection>
+    /// [treating X as Y]`) or a plain expression. The expansions become
+    /// nested loops (left-to-right = outermost-to-innermost); the fixed
+    /// expressions ride along as per-call arguments (plan 320).
+    ///
+    /// Two `each` clauses that bind the same variable are a compile error
+    /// named for the variable - the nested loops would shadow, and the
+    /// sentence does not say which collection a bare use of the name means.
+    pub(crate) fn parse_arg_clauses(&mut self) -> Result<Vec<ArgClause>, Box<CompileError>> {
+        let mut clauses = Vec::new();
+        let mut expansion_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            // The position of `each`, so a duplicate-variable diagnostic can
+            // land its caret on the offending clause.
+            let each_pos = self.pos;
+            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
+                if !expansion_vars.insert(variable.clone()) {
+                    self.pos = each_pos;
+                    return Err(self.err(&format!(
+                        "Loop variable '{}' is bound twice in one sentence.\n  \
+                         Each `each` clause must use a different name; for paired \
+                         iteration use separate statements.",
+                        variable
+                    )));
+                }
+                clauses.push(ArgClause::Expansion((variable, collection, treating)));
+            } else {
+                let expr = self.parse_expression()?;
+                clauses.push(ArgClause::Fixed(expr));
+            }
+
+            self.skip_noise();
+            if *self.current() == Token::And {
+                self.advance();
+                self.skip_noise();
+            } else {
+                break;
+            }
+        }
+        Ok(clauses)
+    }
+
+    /// Split parsed clauses into the call's argument list and the loop
+    /// expansions to wrap around it, in source order (outermost first).
+    pub(crate) fn clauses_to_args_and_expansions(
+        clauses: &[ArgClause],
+    ) -> (Vec<Expr>, Vec<LoopExpansion>) {
+        let mut args = Vec::new();
+        let mut expansions = Vec::new();
+        for clause in clauses {
+            match clause {
+                ArgClause::Expansion((variable, collection, treating)) => {
+                    args.push(Self::each_arg_expr(variable, treating));
+                    expansions.push((variable.clone(), collection.clone(), treating.clone()));
+                }
+                ArgClause::Fixed(expr) => {
+                    args.push(expr.clone());
+                }
+            }
+        }
+        (args, expansions)
+    }
+
+    /// Wrap an inner statement in the nested loops of a grid: one loop per
+    /// expansion clause, the first clause outermost. The inner statement is
+    /// the call (or a `print` of a call); the `, but if ...` / body / period
+    /// tail attaches to that innermost iteration, and its conditions can
+    /// reference every loop variable because every loop is outside it.
+    pub(crate) fn finish_grid(
+        &mut self,
+        inner_stmt: Statement,
+        expansions: Vec<LoopExpansion>,
+    ) -> Result<Statement, Box<CompileError>> {
+        let mut body = self.parse_loop_body_tail(inner_stmt)?;
+        // Wrap innermost-first so the first clause ends up outermost.
+        for (variable, collection, _treating) in expansions.iter().rev() {
+            let wrapped = Self::for_each_loop(
+                variable.clone(),
+                collection.clone(),
+                std::mem::take(&mut body),
+            );
+            body = vec![wrapped];
+        }
+        // `parse_loop_body_tail` always returns at least the base statement,
+        // and every caller passes a non-empty `expansions`, so there is a
+        // wrapped loop to hand back.
+        Ok(body.into_iter().next().unwrap())
+    }
+
+    /// The diagnostic for a one-value-slot action (`print`, `append`, `open`)
+    /// given more than one argument clause: those forms take a single value,
+    /// so a grid of two or more `each` clauses is an arity error, not a
+    /// concatenation. Worded without a count so it stays honest whether the
+    /// extra clauses are `each` clauses, fixed arguments, or a mix — `print`
+    /// of one value plus anything else is the same mistake (plan 320 rule 4).
+    pub(crate) fn one_slot_arity_error(&self, action: &str) -> Box<CompileError> {
+        self.err(&format!(
+            "`{}` takes one value but this sentence supplies more than one argument clause.",
+            action
+        ))
     }
 
     pub(crate) fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {

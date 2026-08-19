@@ -1,0 +1,67 @@
+two-clause grid (expect 1,10 1,20 2,10 2,20):
+1,10
+1,20
+2,10
+2,20
+three-clause grid (expect 117 118 127 128 217 218 227 228):
+117
+118
+127
+128
+217
+218
+227
+228
+fixed then expansion (expect 5,10 5,20):
+5,10
+5,20
+expansion then fixed (expect 1,99 2,99):
+1,99
+2,99
+triangle (expect 1,1 2,1 2,2 3,1 3,2 3,3):
+1,1
+2,1
+2,2
+3,1
+3,2
+3,3
+empty first (expect nothing then DONE-1):
+DONE-1
+empty middle (expect nothing then DONE-2):
+DONE-2
+empty last (expect nothing then DONE-3):
+DONE-3
+but if both (expect diag 1,2 1,3 2,1 diag 2,3 3,1 3,2 diag):
+diag
+1,2
+1,3
+2,1
+diag
+2,3
+3,1
+3,2
+diag
+after-loop values (expect left=3 right=20):
+1,10
+1,20
+2,10
+2,20
+3,10
+3,20
+left=3 right=20
+function-body use (expect 1,10 1,20 2,10 2,20 after grid):
+1,10
+1,20
+2,10
+2,20
+after grid
+treating in a grid (expect 1,10 1,20 9,10 9,20):
+1,10
+1,20
+9,10
+9,20
+five-clause grid (expect 13578 13579 23578 23579):
+13578
+13579
+23578
+23579

@@ -4,6 +4,39 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Loop expansion now honours its documented universality.** LANGUAGE.md
+  promises that `each...from` is a *universal* loop expansion that "works
+  with any action," yet an argument list holding more than one `each <name>
+  from <collection>` clause — or an expansion mixed with a fixed argument —
+  was a parse error at the `and`. That rejection was a gap in a promise the
+  spec had already made, so this is a fix, not a new feature. A call's
+  argument list may now hold any number of `each <name> from <collection>`
+  clauses joined by `and`, and the action runs once per element of the
+  Cartesian product, row-major — the leftmost clause is the outermost loop,
+  exactly as if the clauses were nested `For each` loops. `'pair' of each x
+  from [1, 2] and each y from [10, 20]` calls `'pair'` four times:
+  `(1,10), (1,20), (2,10), (2,20)`. There is no clause cap; a fixed
+  (non-`each`) argument may sit in any position; an inner collection may use
+  an outer clause's variable (triangle iteration). Arity is still checked —
+  a one-value action with two `each` clauses is a compile error, not a
+  concatenation (`` `print` takes one value but this sentence supplies 2
+  `each` clauses. ``), which is what keeps `print each x from A and each y
+  from B` from being misread. Duplicate loop variables in one sentence are a
+  compile error naming the variable; an empty collection in any position
+  yields zero calls; `but if` attaches to the innermost iteration and may
+  reference every loop variable; each loop variable retains its
+  last-iteration value after the loop. The semantics is the Cartesian
+  product (matching comprehension syntax in Haskell, Python, and Rust), not
+  zip — `respectively` is left as a possible future zip marker. A pure
+  extension: today's spellings of the form were all parse errors.
+  Parser-only; the analyzer and codegen already handled nested `For each`
+  loops. See
+  [docs/plans/320_grid_expansion.md](docs/plans/320_grid_expansion.md).
+
 ## [0.4.4] - 2026-08-18
 
 ### Fixed

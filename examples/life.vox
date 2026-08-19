@@ -79,18 +79,19 @@ To 'print row' with a number called row.
       the v is v add 0.
   Print line.
 
-(step row is also single-argument -- the other loop-expansion candidate.)
+(step cell takes a row and a column, because no cell's fate depends on)
+(any other cell in its row. One chained expansion then walks the whole)
+(grid: the row clause is the outer loop, the column clause the inner.)
 
-To 'step row' with a number called row.
-  For each col from 1 to WIDTH,
-      a number called idx is 'cell index' of row and col,
-      a number called n is 'alive neighbors' of row and col,
-      a number called cur is byte idx of grid,
-      a number called nextval is 0,
-      If cur is equal to 1 and n is equal to 2 then, the nextval is 1.
-      If cur is equal to 1 and n is equal to 3 then, the nextval is 1.
-      If cur is equal to 0 and n is equal to 3 then, the nextval is 1.
-      Set byte idx of grid2 to nextval.
+To 'step cell' with a number called row and a number called col.
+  a number called idx is 'cell index' of row and col.
+  a number called n is 'alive neighbors' of row and col.
+  a number called cur is byte idx of grid.
+  a number called nextval is 0.
+  If cur is equal to 1 and n is equal to 2 then, the nextval is 1.
+  If cur is equal to 1 and n is equal to 3 then, the nextval is 1.
+  If cur is equal to 0 and n is equal to 3 then, the nextval is 1.
+  Set byte idx of grid2 to nextval.
 
 (run generation is single-argument (gen) -- folds header/render/step/copy)
 (into one homemade function, which is what lets the entire simulation)
@@ -99,7 +100,7 @@ To 'step row' with a number called row.
 To 'run generation' with a number called gen.
   Print "-- Generation {gen} of {GENERATIONS} --".
   'print row' of each row from 1 to HEIGHT.
-  'step row' of each row from 1 to HEIGHT.
+  'step cell' of each row from 1 to HEIGHT and each col from 1 to WIDTH.
   copy grid2 to grid.
 
 a number called seedIdx is 0.

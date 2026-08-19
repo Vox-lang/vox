@@ -1,0 +1,4 @@
+(Plan 320 rule 4: `print` takes one value, so two `each` clauses are an
+arity error, not a concatenation. This stops `print each x from A and each
+y from B` being misread as printing both on one line.)
+print each x from [1, 2] and each y from [3, 4].

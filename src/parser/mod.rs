@@ -9,6 +9,18 @@ type TreatingClause = (Expr, Expr);
 type LoopExpansion = (String, Expr, Option<TreatingClause>);
 type PathInfo = Result<Expr, LoopExpansion>;
 
+/// One clause of a call's argument list. A sentence's arguments are a
+/// sequence of these joined by `and`: each `each <name> from <collection>`
+/// clause is a loop expansion that becomes one nested loop, and each plain
+/// expression clause is a fixed argument evaluated once per call. The
+/// expansions run left-to-right outermost-to-innermost, so the whole list
+/// is the Cartesian product of the collections - a grid (plan 320).
+#[derive(Clone, Debug)]
+pub(crate) enum ArgClause {
+    Expansion(LoopExpansion),
+    Fixed(Expr),
+}
+
 /// Which kind of declaration took a name. Plan 310 §4 settles that these
 /// three share ONE space: Vox's possessive puts a type and a variable in the
 /// same grammatical position, so `the point's` only reads one way if nothing

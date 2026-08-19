@@ -294,6 +294,7 @@ print each number from 1 to 15.
 process of each item from mylist, print "done".
 
 (Open a file for each argument)
+a buffer called content.
 open a file for reading called source at each filename from arguments's all,
   read from source into content,
   print the content,
@@ -314,6 +315,48 @@ The action executes once per item in the collection or range, with the loop vari
 - **Ranges:** `1 to 10`, `start to end` - numeric sequences
 - **Lists:** `[1, 2, 3]`, any list variable
 - `arguments's all` - all command-line arguments (argv[1..])
+
+#### Chained `each` clauses — a grid
+
+More than one `each <variable> from <collection>` clause may appear in a single
+sentence, joined by `and`. The action then runs once per element of the
+**Cartesian product** of the collections, in **row-major order** — the
+leftmost clause is the outermost loop, exactly as if the clauses were nested
+`For each` loops written left to right:
+
+```
+'pair' of each x from [1, 2] and each y from [10, 20].
+```
+
+runs `'pair'` four times — `(1,10), (1,20), (2,10), (2,20)` — identical to:
+
+```
+For each x from [1, 2],
+    For each y from [10, 20],
+        'pair' of x and y.
+```
+
+There is **no limit** on the number of clauses. A fixed (non-`each`) argument
+may sit among them in any position, and is evaluated once per call:
+
+```
+'pair' of 5 and each y from [10, 20].       (fixed first, then expansion)
+'pair' of each x from [1, 2] and 99.        (expansion first, then fixed)
+```
+
+An inner collection may use a variable bound by an outer clause, giving
+triangle iteration:
+
+```
+'pair' of each row from [1, 2, 3] and each col from 1 to row.
+```
+
+A range bound in an `each` clause takes a primary, not an expression —
+`each col from row add 1 to 4` is a parse error. Brace an arithmetic bound:
+`each col from {row add 1} to 4`.
+
+See **Loop Expansion with Collections** below for the arity rule, the
+empty-collection rule, duplicate loop variables, and after-loop values.
 
 ### Conditional Branching with `but if`
 
@@ -2751,6 +2794,86 @@ append each x from source to dest.
 print each n from [].
 ```
 
+#### Chained clauses: the grid
+
+`and` joins any number of `each` clauses in one sentence. The action runs
+once per element of the **Cartesian product**, **row-major** (leftmost
+clause = outermost loop):
+
+```
+'pair' of each x from [1, 2] and each y from [10, 20].
+(triple grid: a list and two ranges, 2 x 2 x 2 = 8 calls)
+'triple' of each first from [1, 2] and each second from 1 to 2 and each third from 7 to 8.
+```
+
+A fixed argument may appear in any position among the clauses:
+
+```
+'pair' of 5 and each y from [10, 20].
+'pair' of each x from [1, 2] and 99.
+```
+
+**Arity is checked.** The number of argument clauses must equal the callee's
+parameter count, just as for an ordinary call. A one-value action supplied
+two `each` clauses is a compile error, not a concatenation:
+
+```
+print each x from [1, 2] and each y from [3, 4].
+(`print` takes one value but this sentence supplies more than one argument clause.)
+```
+
+This is what stops `print each x from A and each y from B` from being misread
+as printing both on one line. The single-value specialized forms (`print`,
+`append`, `open`) therefore take one clause only; a second `each` is the
+arity error above.
+
+One asymmetry, kept deliberately: in `print <func> of ...` the grid form
+requires the **first** clause to be an `each` — `print pair of 5 and each y
+from B` stays an error, because grid-parsing every printed call would change
+what `print f of x add 1` has always meant (`f(x) add 1`). When a fixed
+argument must come first, use a plain call statement and print inside the
+function.
+
+**Empty collection anywhere → zero calls.** If any clause's collection is
+empty, the whole grid produces no calls, regardless of position:
+
+```
+'pair' of each left from [] and each right from [10, 20].   (zero calls)
+'triple' of each first from [1, 2] and each second from [] and each third from [5].  (zero calls)
+```
+
+**Duplicate loop variables in one sentence are a compile error**, naming the
+variable:
+
+```
+'pair' of each x from [1, 2] and each x from [3, 4].
+(Loop variable 'x' is bound twice in one sentence.
+ Each `each` clause must use a different name.)
+```
+
+**`but if`** attaches to the innermost iteration; its condition may reference
+every loop variable, since every loop is outside the conditional:
+
+```
+'pair' of each left from [1, 2, 3] and each right from [1, 2, 3], but if left is right print "diag".
+```
+
+**After-loop values.** Each loop variable retains its last-iteration value,
+independently — the same shadowing rule as a single clause, applied per
+variable. For a range clause, "last-iteration value" means what it means for
+a handwritten `For each ... from 1 to N`: the counter that ended the loop.
+
+```
+'pair' of each left from [1, 2, 3] and each right from [10, 20].
+print the left.   (prints 3)
+print the right.  (prints 20)
+```
+
+**Zip is not the semantics.** `each x from A and each y from B` is a
+Cartesian product, not a zip — matching comprehension syntax in Haskell,
+Python, and Rust. English's zip marker is `respectively`, which is reserved
+as a possible future marker for a zip mode; it is not parsed today.
+
 **Variable shadowing:**
 
 Loop variables shadow outer variables with the same name. After the loop, the variable retains the value from the last iteration:
@@ -4888,7 +5011,8 @@ params      ::= param ("and" param)*
 param       ::= "a" type "called" name
 
 func_call   ::= identifier ("of" | "with" | "to" | "on") args
-args        ::= expr ("and" expr)*
+args        ::= arg_clause ("and" arg_clause)*
+arg_clause  ::= loop_expansion | expr
 
 thing_def   ::= "A" "thing" "called" name "has" thing_entry ("," thing_entry)* "."
 thing_entry ::= field_decl | member_decl

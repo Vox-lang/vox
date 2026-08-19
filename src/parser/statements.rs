@@ -271,26 +271,38 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
-        // Check for loop expansion: "print each X from Y [treating X as Y]"
-        if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-            // Create the variable expression, with optional treating substitution
-            let var_expr = if let Some((match_val, replacement)) = treating {
-                Expr::TreatingAs {
-                    value: Box::new(Expr::Identifier(variable.clone())),
-                    match_value: Box::new(match_val),
-                    replacement: Box::new(replacement),
+        // `print` takes exactly one value. A loop expansion is that one
+        // value: `print each X from Y`. Two or more `each` clauses would be
+        // a grid, which is an arity error here, not a concatenation - the
+        // one-value rule is what stops `print each x from A and each y from
+        // B` being misread (plan 320 rule 4).
+        if *self.current() == Token::Each {
+            let clauses = self.parse_arg_clauses()?;
+            if clauses.len() != 1 {
+                return Err(self.one_slot_arity_error("print"));
+            }
+            // The first token was `each`, so the single clause is an
+            // expansion. Match exhaustively so a fixed clause (unreachable
+            // here, since `each` starts an expansion) still compiles cleanly.
+            match &clauses[0] {
+                ArgClause::Expansion((variable, collection, treating)) => {
+                    let var_expr = Self::each_arg_expr(variable, treating);
+                    let print_stmt = Statement::Print { value: var_expr, without_newline: false };
+                    return self.wrap_in_loop_expansion(variable.clone(), collection.clone(), print_stmt);
                 }
-            } else {
-                Expr::Identifier(variable.clone())
-            };
-            let print_stmt = Statement::Print { value: var_expr, without_newline: false };
-            return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+                ArgClause::Fixed(expr) => {
+                    let print_stmt = Statement::Print { value: expr.clone(), without_newline: false };
+                    return Ok(print_stmt);
+                }
+            }
         }
-        
-        // Check for function call with loop expansion: "print func of each X from Y"
-        // The callee is a bare or quoted identifier (plan 270). A string
-        // literal here is data, not a callee; it is left for parse_expression
-        // to handle as a value (and reject if followed by `of/with/to/on`).
+
+        // `print <func> of <args>`: the call's argument list may itself be a
+        // grid of `each` clauses (`print pair of each x from A and each y
+        // from B`), and `print` reports each result. Only entered when the
+        // first argument is `each`; fixed-argument calls fall through to
+        // `parse_expression`, which keeps the first-argument cast-level
+        // binding (`print f of x add 1` is `f(x) add 1`, not `f(x add 1)`).
         if let Token::Identifier(func_name) = self.current().clone() {
             let saved_pos = self.pos;
             self.advance();
@@ -300,24 +312,12 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
-                // Check if next is "each" for loop expansion
-                if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-                    // Create function call with loop variable as argument
-                    let arg_expr = if let Some((match_val, replacement)) = treating {
-                        Expr::TreatingAs {
-                            value: Box::new(Expr::Identifier(variable.clone())),
-                            match_value: Box::new(match_val),
-                            replacement: Box::new(replacement),
-                        }
-                    } else {
-                        Expr::Identifier(variable.clone())
-                    };
-                    let func_call = Expr::FunctionCall {
-                        name: func_name,
-                        args: vec![arg_expr]
-                    };
+                if *self.current() == Token::Each {
+                    let clauses = self.parse_arg_clauses()?;
+                    let (args, expansions) = Self::clauses_to_args_and_expansions(&clauses);
+                    let func_call = Expr::FunctionCall { name: func_name, args };
                     let print_stmt = Statement::Print { value: func_call, without_newline: false };
-                    return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+                    return self.finish_grid(print_stmt, expansions);
                 } else {
                     // Not a loop expansion, restore position and parse normally
                     self.pos = saved_pos;
@@ -327,7 +327,7 @@ impl Parser {
                 self.pos = saved_pos;
             }
         }
-        
+
         let value = self.parse_expression()?;
         
         // Check for "without newline" modifier
@@ -553,43 +553,24 @@ impl Parser {
 
         // Call with arguments: `name of/with/to/on args ...` (plan 270 G1).
         // A bare or quoted identifier callee is accepted; a string literal
-        // callee is rejected at the statement dispatch above.
+        // callee is rejected at the statement dispatch above. The argument
+        // list is a sequence of clauses joined by `and`, each either a loop
+        // expansion (`each X from Y`) or a fixed expression. The expansions
+        // become nested loops - a Cartesian-product grid (plan 320).
         if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
             self.advance();
             self.skip_noise();
 
-            // Loop-expansion: `name of each X from Y [treating X as Y]`.
-            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-                let arg_expr = if let Some((match_val, replacement)) = treating {
-                    Expr::TreatingAs {
-                        value: Box::new(Expr::Identifier(variable.clone())),
-                        match_value: Box::new(match_val),
-                        replacement: Box::new(replacement),
-                    }
-                } else {
-                    Expr::Identifier(variable.clone())
-                };
-                let call_stmt = Statement::FunctionCall {
-                    name: name.clone(),
-                    args: vec![arg_expr],
-                };
-                return self.wrap_in_loop_expansion(variable, collection, call_stmt);
+            let clauses = self.parse_arg_clauses()?;
+            let (args, expansions) = Self::clauses_to_args_and_expansions(&clauses);
+            // No expansion clauses: a plain fixed-argument call. It is not a
+            // self-terminating statement, so leave the trailing period for
+            // the caller - exactly as the old fixed-argument loop did.
+            if expansions.is_empty() {
+                return Ok(Statement::FunctionCall { name, args });
             }
-
-            let mut args = Vec::new();
-            loop {
-                let arg = self.parse_expression()?;
-                args.push(arg);
-
-                self.skip_noise();
-                if *self.current() == Token::And {
-                    self.advance();
-                    self.skip_noise();
-                } else {
-                    break;
-                }
-            }
-            return Ok(Statement::FunctionCall { name, args });
+            let call_stmt = Statement::FunctionCall { name, args };
+            return self.finish_grid(call_stmt, expansions);
         }
 
         // Zero-argument call: `name.`

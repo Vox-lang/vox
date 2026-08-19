@@ -172,8 +172,15 @@ impl Parser {
         
         // Check for loop expansion: "append each X from Y to Z"
         if let Some((variable, collection, _treating)) = self.try_parse_each_from(true)? {
-            // Get target list name after "to"
+            // `append` has one source value slot, so a grid of two or more
+            // `each` clauses is an arity error, not a multi-source append
+            // (plan 320 rule 12). The separator `to` must follow the single
+            // collection; an `and` here starts a second clause.
             self.skip_noise();
+            if *self.current() == Token::And {
+                return Err(self.one_slot_arity_error("append"));
+            }
+            // Get target list name after "to"
             if *self.current() != Token::To {
                 return Err(self.err("Expected 'to' after collection in append"));
             }
