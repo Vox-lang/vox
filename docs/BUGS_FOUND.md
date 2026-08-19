@@ -1642,6 +1642,61 @@ the defect to undefaulted pointer types.
 
 ---
 
+### 32. A flag read inside a function body is typed `boolean`, whatever it was declared as
+
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against
+`main`, immediately after #31, while rewriting vox-fuzz's CLI onto the
+flag schema.
+
+```vox
+a flag called voxpath is "-V" or "--vox", it is a text with default "".
+Parse flags.
+a text called target is "unset".
+
+To apply.
+    Set target to voxpath.
+
+apply.
+```
+→ `error: cannot assign boolean to 'target', which is a text`
+
+**It affects every non-boolean flag**, not just text — a `number` flag
+fails the same way. Only reads **inside a function body** are affected;
+at top level the declaration's own type is still in scope, so the bad
+path is never consulted. That is why the defect survived: the obvious
+one-line test passes.
+
+**Cause.** `src/analyzer/mod.rs` kept flags as a bare
+`HashSet<String>` — names only, no types. Both type-query sites in
+`src/analyzer/types.rs` (lines ~21 and ~235) therefore hardcoded:
+
+```rust
+} else if self.flag_variables.contains(name) {
+    Some(Type::Boolean)
+}
+```
+
+Every flag answered *boolean* to a type question, regardless of
+`it is a text` or `it is a number`.
+
+**Fix.** `flag_variables` becomes `HashMap<String, Type>`, populated
+from `value_type` at declaration, and both sites answer with the
+declared type. The other consumers only tested membership, so they moved
+to `contains_key` unchanged.
+
+**Why this and #31 were found together.** vox-fuzz's CLI hand-rolled its
+own argument parsing in a `While` loop instead of using the language's
+flag schema. Rewriting it onto the documented feature exercised the
+schema properly for the first time and surfaced two defects immediately
+— a null-pointer crash (#31) and this mis-typing. A documented facility
+with no real user can carry bugs indefinitely.
+
+**Regression test:** `tests/bugs_found_32_flag_type_in_function.vox` —
+all three flag types round-tripped through a function body. It fails on
+the unfixed compiler with the exact error above.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only

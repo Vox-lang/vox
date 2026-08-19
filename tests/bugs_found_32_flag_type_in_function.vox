@@ -1,0 +1,26 @@
+(Bug #32 - a flag read inside a function body was typed boolean whatever
+ it was declared as. The analyzer kept flag names in a bare set and
+ answered Type::Boolean for any of them, so `Set target to voxpath.`
+ inside a function failed with "cannot assign boolean to 'target', which
+ is a text". Top level escaped it because the declaration's own type was
+ still in scope; only the in-function path consulted the hardcode.
+
+ All three flag types must survive a round trip through a function.)
+a flag called voxpath is "-V" or "--vox", it is a text with default "path".
+a flag called optseed is "-s" or "--seed", it is a number with default 7.
+a flag called verbose is "-v" or "--verbose", it is a boolean.
+Parse flags.
+
+a text called got_text is "unset".
+a number called got_number is 0.
+a boolean called got_boolean is true.
+
+To apply.
+    Set got_text to voxpath.
+    Set got_number to optseed.
+    Set got_boolean to verbose.
+
+apply.
+Print "text:{got_text}".
+Print "number:{got_number}".
+Print "boolean:{got_boolean}".
