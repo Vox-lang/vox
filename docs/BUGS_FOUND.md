@@ -1322,6 +1322,59 @@ passed / 0 failed — the eight fixed tests, no regressions.
 
 ---
 
+### 28. A `buffer` declared on an untaken `If` branch, then redeclared at top level, segfaults on first read
+
+**Status:** **open**, found 2026-08-19 against `main` (post-#27). Surfaced
+by a vox-fuzz generator worker whose generated program hit it through a
+name collision; hand-reduced by that worker to a form with nothing
+fuzzer-specific left, then independently reproduced and characterised by
+the master.
+
+```vox
+a number called n is 0.
+If n is greater than 5 then,
+  a buffer called b is "x".      (branch never taken)
+a buffer called b is "y".
+Print b.                          (segfault)
+```
+
+**It is specific to `buffer`, and to the redeclaration.** The controls
+isolate it exactly:
+
+| Case | Result |
+|---|---|
+| `buffer`, untaken branch declares `b`, top level redeclares `b` | **segfault (139)** |
+| identical but the branch **is** taken (`n is 9`) | exit 0 |
+| `buffer`, but the two declarations use **different names** | exit 0 |
+| `number` in place of `buffer`, same shape | exit 0 |
+| `text` in place of `buffer`, same shape | exit 0 |
+
+So neither conditional declaration alone nor redeclaration alone is
+enough: it takes both, on a buffer.
+
+**Family.** This is bug #25 — declarations on a conditional path in
+scope over storage nothing initialises — with the buffer redeclaration
+case missed when #25 was fixed. #25's cure was `emit_type_default`,
+giving a conditionally-declared name the same default a plain
+declaration gets. The likely gap here is that the *second* declaration
+is treated as a redeclaration of an existing name and so emits no
+initialisation at all, leaving the buffer's header or data pointer as
+whatever was on the stack — which `Print` then dereferences.
+
+**Severity: high.** A runtime segfault from legal-looking code, with no
+diagnostic. The shape is not exotic: a buffer declared inside a guard
+and again outside it is an ordinary thing to write, and the program is
+silently fine whenever the guard happens to be true, which is the worst
+possible failure pattern for anyone trying to reproduce it.
+
+**Fix direction:** find where a redeclaration suppresses initialisation
+and make the top-level declaration initialise unconditionally, as its
+non-conditional counterpart does. Regression tests must cover all five
+rows above, not just the failing one — the passing rows are what pin the
+diagnosis.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only
