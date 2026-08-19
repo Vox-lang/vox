@@ -1,0 +1,5 @@
+a number called n is 0.
+If n is greater than 5 then,
+  a text called b is "x".
+a text called b is "y".
+Print b.

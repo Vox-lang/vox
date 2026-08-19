@@ -1367,11 +1367,227 @@ and again outside it is an ordinary thing to write, and the program is
 silently fine whenever the guard happens to be true, which is the worst
 possible failure pattern for anyone trying to reproduce it.
 
+
+**CORRECTION (master, 2026-08-19, after reviewing the regression tests).**
+My original matrix understated the reach of this bug in two places, and
+the fix worker found shapes I had not tried:
+
+- **`Repeat 0 times` is not immune.** Closing its body with a *period*
+  survives; closing it with a **blank line** segfaults. My "the odd one
+  out, a free control sample" note applied only to the period form and
+  should not be read as `Repeat` being safe.
+- **A sized declaration does not protect the later one.** Sized→sized
+  survives, but **sized-in-branch followed by a string-initialised
+  redeclaration segfaults**. The protection came from the *second*
+  declaration being sized, not the first.
+
+Both shapes are covered by regression tests and both segfault on the
+unfixed compiler. The lesson for the entry: the trigger is a
+string-initialised declaration reusing a name whose only prior
+allocation sat on a path that did not run — the enclosing construct and
+the *earlier* declaration's form are both incidental.
+
+**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19 (master).**
+Not a guess: `vox --emit-asm` on the crashing program shows it exactly.
+
+```asm
+    jle .else_1
+    mov rdi, 1024
+    call _alloc_buffer          ; allocation happens INSIDE the If branch
+    mov [rel gvar_0], rax
+    ...
+.if_end_0:
+    mov rdi, [rel gvar_0]       ; still 0 (.bss) when the branch did not run
+    call _buffer_clear          ; clear on a NULL pointer -> SIGSEGV
+```
+
+The **second** declaration emits no `_alloc_buffer` at all — only
+`_buffer_clear` + `_buffer_append_bytes` — because the name is already
+known. But the allocation it relies on was emitted only on the
+conditional path, so when that path is not taken the pointer is null and
+the very first thing the second declaration does is dereference it.
+
+This also explains every control:
+
+- **`never read` still crashes** — the fault is in the *declaration*
+  (`_buffer_clear`), not in any read. This is why the original
+  "stack garbage dereferenced by `Print`" guess was wrong.
+- **Sized buffers survive** — `a buffer called b is 8 bytes` emits
+  `_alloc_buffer_sized` on **every** declaration (2 calls in the same
+  shape, versus 1 for the string form). Allocating unconditionally is
+  precisely what keeps it safe.
+- **`text`/`number`/`list` survive** — their declarations do not depend
+  on a prior heap allocation the same way.
+- **Branch taken survives** — the allocation ran.
+
+**Fix, therefore:** make the string-initialised buffer declaration
+allocate unconditionally, exactly as the sized path already does, rather
+than skipping allocation whenever the name is already bound. The sized
+path is the working reference implementation sitting in the same
+compiler.
+
 **Fix direction:** find where a redeclaration suppresses initialisation
 and make the top-level declaration initialise unconditionally, as its
 non-conditional counterpart does. Regression tests must cover all five
 rows above, not just the failing one — the passing rows are what pin the
 diagnosis.
+
+---
+
+### 29. A string literal inside a list literal is resolved as a variable name — silent wrong data, or a segfault
+
+**Status:** **open**, found 2026-08-19 against `main` (post-#27/#28).
+Found by the vox-fuzz generator red team; reproduced and characterised
+by the master. **This is [#19](#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision)'s
+family, and #19 is marked fixed in v0.4.4 — the list-literal path was
+missed.**
+
+```vox
+a list called hello is [1, 2].
+a list called L is ["hello", "hello"].
+Print L.
+```
+
+prints roughly 96KB of `8589934592` (`0x200000000` — a corrupted tag)
+and then **segfaults**.
+
+**The controls, which show the crash is the lesser problem:**
+
+| Program | Result |
+|---|---|
+| `a number called hello is 7.` + `["hello"]` | prints **`[4198536]`** — *silent wrong data* |
+| `a list called hello is [1,2].` + `["hello"]` | prints `[[]]` — wrong |
+| `a list called hello is [1,2].` + `["hello","hello"]` | **segfault (139)** |
+| no variable named `hello` exists | correct: `["hello", "hello"]` |
+| the colliding variable is a `text` | correct: `["hello"]` |
+| collision present, list never printed | survives |
+
+**The rule being broken is stated in the grammar**, so there is no
+reading in which the compiler is right:
+
+```
+string      ::= '"' ... '"'            ; a string literal is data, never a name
+```
+
+**Severity: the highest of anything currently open.**
+
+- The **number-collision case corrupts data silently.** `["hello"]`
+  becomes `[4198536]` — a pointer printed where a string was written —
+  with no crash, no diagnostic, nothing to notice. That is worse than
+  the segfault, which at least announces itself.
+- The **list-collision case is memory-unsafe.**
+- The trigger is *ordinary code*. A list of strings, one of which
+  happens to match a variable name in scope, is not an exotic program.
+
+**Why the fuzzer never caught it.** It cannot generate the shape: its
+string literals never spell an identifier, and its lists are never
+nested nor printed whole. Three coverage gaps intersect exactly here.
+The fuzzer did not look and find nothing — it could not look.
+
+**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19 (master).**
+
+Compiling the colliding and non-colliding programs and diffing the
+assembly isolates it to a single instruction — the list slot's **type
+tag**:
+
+```asm
+    mov byte [rbx+88], 1   ; slot 1 type tag  <- no collision  (correct: text)
+    mov byte [rbx+88], 4   ; slot 1 type tag  <- collides with a list (wrong)
+```
+
+The tag is taken from **the colliding variable's type**, not from the
+literal:
+
+| The literal collides with | Slot tag emitted | |
+|---|---|---|
+| *nothing* | **1** (text) | correct |
+| a `text` | 1 | correct **only by coincidence** |
+| a `float` | 2 | wrong |
+| a `list` | 4 | wrong — later dereferenced as a list, hence the segfault |
+| a `number` | (immediate form) | wrong — the pointer prints as an integer |
+
+So the element's *value* is written correctly; its **tag** is not. The
+consumer then reads a string pointer as whatever the tag claims — an
+integer (silent wrong data) or a list (dereference, crash).
+
+**Critical for anyone fixing this: the `text` case passing is not
+evidence that the text path is correct.** It passes because the wrong
+answer and the right answer happen to be the same number. Any fix
+validated only against a `text` collision will look correct and change
+nothing.
+
+**The fix is therefore narrow and clear:** a string literal in a list
+element must always be tagged as text, with no lookup of its content
+against variable names at all.
+
+**Fix direction:** #19's cure deleted the resolve-literal-as-identifier
+behaviour from five codegen sites. Find the list-literal element path
+that still does it. The `text`-collision case behaving correctly is a
+useful control: whatever that path does differently is probably the
+right shape. Regression tests must cover **every row of the table
+above**, because the passing rows are what pin the diagnosis, and the
+silent-wrong-data row is the one most likely to regress unnoticed.
+
+**Generator follow-up (vox-fuzz):** teach the generator to sometimes
+emit a string literal that spells an existing variable name. It is a
+demonstrated bug-finding shape and costs almost nothing to add.
+
+---
+
+### 30. A buffer initialised from a string literal copies a same-named buffer instead — silently
+
+**Status:** **open**, found 2026-08-19 against `main`. Found by the
+master while locating #29's code site; same family as #19/#29.
+
+```vox
+a buffer called hello is "SURPRISE".
+a buffer called b is "hello".
+Print b.
+```
+
+**prints `SURPRISE`.** It should print `hello`. The string literal
+`"hello"` is resolved as a variable name, the buffer of that name is
+found, and its *contents* are copied in place of the literal.
+
+`Set b to "hello"` behaves identically.
+
+**Controls:**
+
+| Program | Output | |
+|---|---|---|
+| no variable named `hello` | `hello` | correct |
+| a **buffer** named `hello` exists | **`SURPRISE`** | wrong |
+| a **text** named `hello` exists | `hello` | correct |
+
+Only a `buffer`-typed collision triggers it, because the site tests
+exactly that.
+
+**Site:** `src/codegen/buffers.rs`, the `Expr::StringLit(s)` arm of the
+buffer-value path:
+
+```rust
+Expr::StringLit(s) => {
+    if self.variable_types.get(s) == Some(&VarType::Buffer) {
+        ... emit _buffer_copy / _buffer_append from that variable ...
+```
+
+The literal's own text is used as a lookup key. This is the same defect
+as #29 at a different site, and note it does **not** match the
+`Expr::StringLit(name) | Expr::Identifier(name)` shape — so a search for
+that pattern alone will miss it. The real search is *any* place a
+`StringLit`'s content is used as a name.
+
+**Severity: high, and arguably worse than #29.** #29 crashes, which
+announces itself. This one silently substitutes different data and the
+program carries on. A `buffer` initialised from a literal that happens
+to match a buffer name in scope gets the wrong contents, with no
+diagnostic at any stage.
+
+**Fix:** a string literal is data. Delete the lookup; initialise the
+buffer from the literal bytes unconditionally. If copying a named buffer
+into another is a wanted feature it needs its own syntax
+(`a buffer called b is the hello` or similar) — it must not be spelled
+identically to a string literal.
 
 ---
 

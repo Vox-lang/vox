@@ -1,0 +1,4 @@
+(Bug #29 - list slot tag. A string literal inside a list whose text collides with a float variable name must print as that string, not as the float's value. Unfixed output: [0.0].)
+a float called pi is 3.14.
+a list called L is ["pi"].
+Print L.

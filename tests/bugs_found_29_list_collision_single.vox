@@ -1,0 +1,3 @@
+(Bug #29 - list slot tag. "hello" inside a list literal must stay a string even when a list variable named hello is in scope. Unfixed output: [[]] - the literal is mis-tagged as the list variable and read as an empty list.)
+a list called hello is [1, 2].
+Print ["hello"].
