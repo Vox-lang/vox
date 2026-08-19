@@ -152,24 +152,13 @@ impl CodeGenerator {
                 true
             }
             Expr::StringLit(s) => {
-                if self.variable_types.get(s) == Some(&VarType::Buffer) {
-                    if let Some(src_offset) = self.get_var(s) {
-                        self.uses_buffers = true;
-                        emit_dst_load(self);
-                        self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
-                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
-                        emit_dst_store(self);
-                        return true;
-                    } else if let Some(label) = self.global_var_label(s).cloned() {
-                        self.uses_buffers = true;
-                        emit_dst_load(self);
-                        self.emit_indent(&format!("mov rsi, [rel {}]", label));
-                        self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
-                        emit_dst_store(self);
-                        return true;
-                    }
-                }
-
+                // A string literal is data, never a name (bug #30 / #19's
+                // family). Initialise from the literal bytes unconditionally;
+                // the text is never looked up as a variable. Copying a named
+                // buffer into another is spelled with an *unquoted* identifier
+                // (the `Expr::Identifier` arm below), never a string literal,
+                // so deleting this lookup removes the silent substitution
+                // without losing the buffer-to-buffer feature.
                 if clear_first {
                     if let Some(offset) = dst_local {
                         self.emit_clear_buffer_slot(offset);

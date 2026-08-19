@@ -1,0 +1,3 @@
+(Bug #29 - list slot tag. "hello" must stay a string even when a number variable named hello is in scope. Unfixed output: a garbage integer read from the string pointer.)
+a number called hello is 7.
+Print ["hello"].

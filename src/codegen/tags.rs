@@ -333,7 +333,16 @@ impl CodeGenerator {
             // as `TAG_INTEGER`. Tag it `TAG_BOOLEAN` explicitly so it matches
             // `prescan_expr_tag`, which recurses to the (boolean) operand.
             Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(TAG_BOOLEAN),
-            Expr::StringLit(name) | Expr::Identifier(name)
+            // A string literal is data, never a name (bug #29 / #19's
+            // family). It must be tagged TAG_STRING unconditionally, before
+            // any lookup of its text against variable names — a literal that
+            // happens to spell an in-scope variable name is still a literal,
+            // and resolving it would write the colliding variable's type tag
+            // onto the slot (an integer tag over a string pointer = silent
+            // wrong data; a list tag = a later wild dereference). Only an
+            // `Identifier` may be looked up.
+            Expr::StringLit(_) => Some(TAG_STRING),
+            Expr::Identifier(name)
                 if self.unprovable_scalars.contains(name)
                     && self.variable_types.get(name) != Some(&VarType::List) =>
             {
@@ -349,7 +358,7 @@ impl CodeGenerator {
                 // TAG_LIST here would silently un-nest a nested list.
                 None
             }
-            Expr::StringLit(name) | Expr::Identifier(name) => {
+            Expr::Identifier(name) => {
                 match self.variable_types.get(name) {
                     Some(VarType::Integer) => Some(TAG_INTEGER),
                     Some(VarType::Float) => Some(TAG_FLOAT),
