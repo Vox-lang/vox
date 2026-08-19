@@ -4,7 +4,7 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.6] - 2026-08-20
 
 ### Fixed
 
@@ -33,6 +33,92 @@ adheres to [Semantic Versioning](https://semver.org/).
   a nested `If` as the last action, and the self-termination parity case.
   Parser-only; analyzer and codegen already handled a closed `Repeat`
   correctly. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #27.
+
+- **A buffer declaration always allocates** ([#28](docs/BUGS_FOUND.md)) — a
+  `buffer` declared inside an `If` body that never ran, then redeclared at
+  top level, segfaulted. The second declaration emitted no allocation at
+  all — only `_buffer_clear` and `_buffer_append_bytes` — because the name
+  was already bound, so the only `_alloc_buffer` sat inside the branch that
+  did not run and the slot still held null when the clear dereferenced it.
+  It needed both halves: neither a conditional declaration alone nor a
+  redeclaration alone reproduced it, and only `buffer` was affected —
+  `number` and `text` in the same shape were fine, as was the sized buffer
+  path, which already allocated on every declaration. Diagnosed from the
+  emitted assembly rather than from the symptom: the register's original
+  guess (stack garbage dereferenced by `Print`) was wrong, since the crash
+  happens even when the buffer is never read. The string-initialised
+  declaration now allocates unconditionally, as the sized path always did,
+  while preserving sizedness — an earlier attempt that allocated a dynamic
+  auto-growing buffer everywhere silently disabled fixed-size overflow
+  detection language-wide, which the full suite caught and the bug's own
+  matrix did not. Twelve regression tests; eight segfault on the unfixed
+  compiler and the rest are controls that must pass on both sides.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #28.
+
+- **A string literal is data, never a name** ([#29](docs/BUGS_FOUND.md),
+  [#30](docs/BUGS_FOUND.md)) — two live defects from one design
+  inconsistency, both cases of a string literal being resolved as a
+  variable name when a variable happened to share its text. In a list
+  literal (#29) the literal took its slot type tag from the colliding
+  variable: colliding with a list gave a tag that led to a wild
+  dereference and a segfault, and colliding with a number tagged a string
+  pointer as an integer, so it printed as `4198536` — silent wrong data,
+  the worse half. Colliding with a `text` was correct only by coincidence,
+  the wrong tag and the right tag being the same number. In a buffer
+  initialiser (#30), `a buffer called hello is "SURPRISE".` followed by
+  `a buffer called b is "hello".` printed `SURPRISE`: no crash, no
+  diagnostic, just the wrong contents. Both belong to #19's family, marked
+  fixed in v0.4.4 — that fix removed the pattern from five codegen sites
+  and missed these two. LANGUAGE.md's grammar is unambiguous that a string
+  literal is data, so this is a fix, not a change of meaning. The cure is
+  narrow at each site: `tags.rs` gains an `Expr::StringLit` arm returning
+  `TAG_STRING` ahead of any lookup, leaving `Expr::Identifier` alone, and
+  `buffers.rs` loses its `variable_types` lookup entirely, the code
+  beneath it already appending the literal's bytes correctly. Eight
+  regression tests covering every row of the matrix, controls included.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #29 and #30.
+
+- **A `text` flag with no default reads as empty, not null**
+  ([#31](docs/BUGS_FOUND.md)) — `a flag called name is "-n" or "--name",
+  it is a text.` segfaulted the moment the flag was read and the user had
+  not supplied it. A flag's slot was initialised to `0` whatever its
+  declared type, which is right for a `number` or a `boolean` and is a
+  null pointer for a `text`. A `text` flag with no explicit default now
+  initialises to the empty string, so an unsupplied flag reads as `""` and
+  can be tested with `is empty` the way the documented shape implies.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #31.
+
+- **A flag keeps its declared type inside a function body**
+  ([#32](docs/BUGS_FOUND.md)) — a flag read inside a function was typed
+  `boolean` whatever it had been declared as, so a `text` or `number` flag
+  compared or interpolated inside a function produced wrong code. The
+  analyzer held declared flags in a bare `HashSet<String>` — names, no
+  types — and both type-query sites answered `Some(Type::Boolean)` for any
+  name in the set. It misbehaved only inside a function body, because at
+  top level the declaration's own type is still in scope and answers
+  first, which is why the obvious one-line test passes and the defect
+  could sit indefinitely. `flag_variables` is now a `HashMap<String,
+  Type>`, populated from the declaration's `value_type`, and both query
+  sites return the declared type. The regression test carries a top-level
+  control alongside the function-body case to pin the diagnosis.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #32.
+
+- **`is empty` on a `text` tests the contents, not the pointer**
+  ([#33](docs/BUGS_FOUND.md)) — `"" is empty` was always false, for
+  every `text` in the language. The predicate special-cased buffers and
+  lists (read the length field) and fell back to `test rax, rax` for
+  everything else; a text's value is a pointer to its NUL-terminated
+  bytes, which is never null, so the predicate compiled to "is this
+  pointer null". Found while verifying the documentation line #31's fix
+  earned — the claim that an unsupplied text flag can be tested with
+  `is empty` was written, then proven false before it shipped. The spec
+  already promised the predicate on a text (its own worked example uses
+  `if 'output file' is empty then,`), so this is a fix, not a feature.
+  A text now tests its first byte, null-safely, at both twin codegen
+  sites (expression and branch forms); both sites also stop resolving a
+  string literal through `variable_types` — the #19/#29 family pattern,
+  removed. Not one test in the suite used `is empty` before this bug's
+  regression pair. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #33.
 
 ## [0.4.5] - 2026-08-19
 

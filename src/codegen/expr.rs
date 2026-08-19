@@ -744,15 +744,38 @@ impl CodeGenerator {
                         self.emit_indent("movzx rax, al");
                     }
                     Property::Empty => {
-                        // For buffer/list variables, check the size field at offset 8
+                        // Buffers and lists carry an explicit length at
+                        // [rax+8]. A text is a pointer to NUL-terminated
+                        // bytes and the pointer itself is never null, so
+                        // testing it answered "not empty" even for ""
+                        // (docs/BUGS_FOUND.md #33). Empty for a text means
+                        // the first byte is NUL; a null pointer is
+                        // defensively redirected at "" rather than
+                        // dereferenced. A string literal is data, never a
+                        // name (the #19/#29 family), so a literal always
+                        // takes the text path and no longer consults
+                        // variable_types.
                         let is_buffer_or_list = match value.as_ref() {
-                            Expr::StringLit(s) | Expr::Identifier(s) => {
+                            Expr::Identifier(s) => {
                                 matches!(self.variable_types.get(s), Some(VarType::Buffer) | Some(VarType::List))
+                            }
+                            _ => false,
+                        };
+                        let is_text = match value.as_ref() {
+                            Expr::StringLit(_) => true,
+                            Expr::Identifier(s) => {
+                                matches!(self.variable_types.get(s), Some(VarType::String))
                             }
                             _ => false,
                         };
                         if is_buffer_or_list {
                             self.emit_indent("mov rax, [rax + 8]  ; get size/length");
+                        } else if is_text {
+                            let label = self.get_empty_string_label();
+                            self.emit_indent(&format!("lea rcx, [rel {}]  ; \"\" stands in for a null text", label));
+                            self.emit_indent("test rax, rax");
+                            self.emit_indent("cmovz rax, rcx");
+                            self.emit_indent("movzx rax, byte [rax]  ; first byte: NUL means empty");
                         }
                         self.emit_indent("test rax, rax");
                         self.emit_indent("setz al");

@@ -1,0 +1,9 @@
+blank:empty
+filled:not
+flag-no-default:empty
+flag-default:not
+empty-list:empty
+full-list:not
+empty-buffer:empty
+full-buffer:not
+while:sees-empty
