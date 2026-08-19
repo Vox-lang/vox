@@ -1,0 +1,2 @@
+Loop variable 'x' is bound twice in one sentence.
+Each `each` clause must use a different name

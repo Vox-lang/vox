@@ -1,0 +1,6 @@
+(Plan 320 rule 12: `open` takes one path, so a second `each` clause is the
+one-slot arity error, same as `print` and `append`.)
+a buffer called content.
+open a file for reading called source at each path from ["a.txt"] and each other from ["b.txt"],
+  read from source into content,
+  close source.

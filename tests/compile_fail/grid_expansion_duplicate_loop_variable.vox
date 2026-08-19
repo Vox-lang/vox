@@ -1,0 +1,4 @@
+(Plan 320 rule 7: two `each` clauses binding the same variable in one
+sentence are a compile error. The nested loops would shadow, and a bare use
+of the name would not say which collection it meant.)
+'pair' of each x from [1, 2] and each x from [3, 4].
