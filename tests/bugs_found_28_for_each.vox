@@ -1,0 +1,5 @@
+a list called xs is [].
+For each item in xs,
+  a buffer called b is "x".
+a buffer called b is "y".
+Print b.

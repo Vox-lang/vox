@@ -1,0 +1,6 @@
+a number called n is 0.
+If n is greater than 5 then,
+  a buffer called b is "x".
+a buffer called b is "y".
+a buffer called b is "z".
+Print b.
