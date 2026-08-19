@@ -173,8 +173,15 @@ impl Analyzer {
                     self.function_signatures
                         .insert(key, (params.clone(), return_type.clone()));
                 }
-                Statement::FlagSchemaDecl { name, .. } => {
-                    self.flag_variables.insert(name.clone());
+                Statement::FlagSchemaDecl { name, value_type, .. } => {
+                    self.flag_variables.insert(
+                        name.clone(),
+                        match value_type {
+                            FlagValueType::Boolean => Type::Boolean,
+                            FlagValueType::Number => Type::Integer,
+                            FlagValueType::Text => Type::String,
+                        },
+                    );
                     self.global_variables.insert(name.clone());
                     if explicit_parse_seen {
                         self.push_error(
@@ -1167,7 +1174,7 @@ impl Analyzer {
                     || self.is_list_variable(name)
                     || self.is_map_variable(name)
                     || self.file_variables.contains(name.as_str())
-                    || self.flag_variables.contains(name.as_str())
+                    || self.flag_variables.contains_key(name.as_str())
                     || self.timer_variables.contains(name.as_str())
                     || matches!(self.named_value_type(name), Some(Type::String))
                 {

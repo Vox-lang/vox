@@ -45,7 +45,11 @@ pub struct Analyzer {
     in_function_scope: bool,
     block_depth: usize,
     global_variables: HashSet<String>,
-    flag_variables: HashSet<String>,
+    /// Declared flag name -> its declared value type. A set was not
+    /// enough: every flag then answered `boolean` to a type query,
+    /// which mis-typed text and number flags read inside a function
+    /// body (docs/BUGS_FOUND.md #32).
+    flag_variables: HashMap<String, Type>,
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
     map_variables: HashSet<String>,
@@ -185,7 +189,7 @@ impl Analyzer {
             in_function_scope: false,
             block_depth: 0,
             global_variables: HashSet::new(),
-            flag_variables: HashSet::new(),
+            flag_variables: HashMap::new(),
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
             map_variables: HashSet::new(),

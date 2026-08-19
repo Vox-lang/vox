@@ -15,7 +15,7 @@ impl Analyzer {
     pub(crate) fn expr_uses_flag(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Identifier(name) => {
-                if self.flag_variables.contains(name) {
+                if self.flag_variables.contains_key(name) {
                     Some(name.clone())
                 } else {
                     None
@@ -25,7 +25,7 @@ impl Analyzer {
                 for part in parts {
                     match part {
                         FormatPart::Variable { name, .. } => {
-                            if self.flag_variables.contains(name) {
+                            if self.flag_variables.contains_key(name) {
                                 return Some(name.clone());
                             }
                         }

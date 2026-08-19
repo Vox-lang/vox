@@ -18,8 +18,12 @@ impl Analyzer {
             Some(Type::File)
         } else if self.timer_variables.contains(name) {
             Some(Type::Timer)
-        } else if self.flag_variables.contains(name) {
-            Some(Type::Boolean)
+        } else if let Some(t) = self.flag_variables.get(name) {
+            // A flag answers with the type it was DECLARED with. This used
+            // to hardcode Boolean, so `it is a text` / `it is a number`
+            // flags were mis-typed everywhere this path is consulted -
+            // which is every read inside a function body (#32).
+            Some(t.clone())
         } else {
             self.scalar_types.get(name).cloned()
         }
@@ -232,8 +236,8 @@ impl Analyzer {
                     Some(Type::List(Box::new(Type::Unknown)))
                 } else if self.is_map_variable(name) {
                     Some(Type::Map(Box::new(Type::Unknown)))
-                } else if self.flag_variables.contains(name) {
-                    Some(Type::Boolean)
+                } else if let Some(t) = self.flag_variables.get(name) {
+                    Some(t.clone())
                 } else {
                     None
                 }
