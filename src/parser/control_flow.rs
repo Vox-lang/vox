@@ -314,17 +314,22 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_while(&mut self) -> Result<Statement, Box<CompileError>> {
-        self.advance();
-        self.skip_noise();
-        
-        let condition = self.parse_condition()?;
-        self.skip_noise();
-        self.expect(&Token::Comma);
-        self.skip_noise();
-        
-        // Parse body: comma continues actions, period ends this while statement.
-        // Paragraph breaks are visual spacing and may appear after commas.
+    /// Parse the comma-separated body of a single-sentence loop — `While` or
+    /// `Repeat` — after the leading preamble (the condition, or
+    /// `count times,`) and its comma have been consumed. Comma continues to
+    /// the next action; a period ends the body unconditionally (LANGUAGE.md
+    /// termination rule 1); a paragraph break or EOF ends it; and — inside a
+    /// function body — a following `Return` ends it.
+    ///
+    /// `While` and `Repeat` are specified to terminate identically: rule 1
+    /// (LANGUAGE.md:135) names `repeat` in the clause list, and :150 says the
+    /// blank-line rule applies uniformly across `while`, `for each`, `repeat`,
+    /// and `on error`. Before this was shared, `parse_repeat` had its own body
+    /// loop that only broke on a period when a block terminator or paragraph
+    /// break followed — so a period never closed a `Repeat` body and the next
+    /// statement was silently absorbed (BUGS_FOUND #27). One body loop for
+    /// both keeps them from drifting apart again.
+    pub(crate) fn parse_loop_body(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut body = Vec::new();
         loop {
             if *self.current() == Token::EOF {
@@ -333,22 +338,24 @@ impl Parser {
             if !body.is_empty() && self.is_block_terminator() {
                 break;
             }
-            
+
             let stmt = self.parse_statement()?;
             body.push(stmt);
             self.skip_noise();
-            
-            // Consume separator and decide whether to continue
+
+            // Consume the separator and decide whether to continue.
             if *self.current() == Token::Comma {
-                // Comma continues to next action in same sentence
+                // A comma continues to the next action in the same sentence.
                 self.advance();
                 self.skip_noise();
-                // Skip paragraph breaks after comma (visual spacing within sentence)
+                // Paragraph breaks after a comma are visual spacing within
+                // the still-open sentence (rule 2's one exception).
                 while *self.current() == Token::ParagraphBreak {
                     self.advance();
                     self.skip_noise();
                 }
             } else if *self.current() == Token::Period {
+                // A period ends this loop's body, full stop (rule 1).
                 self.advance();
                 self.skip_noise();
                 break;
@@ -358,7 +365,22 @@ impl Parser {
                 break;
             }
         }
-        
+        Ok(body)
+    }
+
+    pub(crate) fn parse_while(&mut self) -> Result<Statement, Box<CompileError>> {
+        self.advance();
+        self.skip_noise();
+
+        let condition = self.parse_condition()?;
+        self.skip_noise();
+        self.expect(&Token::Comma);
+        self.skip_noise();
+
+        // Comma continues actions, a period ends this while statement, a
+        // paragraph break or EOF ends it. See `parse_loop_body`.
+        let body = self.parse_loop_body()?;
+
         Ok(Statement::While { condition, body })
     }
 
@@ -582,37 +604,20 @@ impl Parser {
     pub(crate) fn parse_repeat(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
         let count = self.parse_primary()?;
         self.skip_noise();
         self.expect(&Token::Times);
         self.skip_noise();
         self.expect(&Token::Comma);
         self.skip_noise();
-        
-        // Parse body - terminated by period followed by major keyword or paragraph break
-        let mut body = Vec::new();
-        loop {
-            if matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
-                break;
-            }
-            if !body.is_empty() && self.is_block_terminator() {
-                break;
-            }
-            
-            let stmt = self.parse_statement()?;
-            body.push(stmt);
-            self.skip_noise();
-            
-            if matches!(self.current(), Token::Period) {
-                self.advance();
-                self.skip_noise();
-                if self.is_block_terminator() || matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
-                    break;
-                }
-            }
-        }
-        
+
+        // `Repeat` terminates its body exactly as `While` does — a period
+        // closes the innermost open clause (rule 1 names `repeat`), a comma
+        // continues, a blank line closes (rule 2, applied uniformly at :150).
+        // Share `parse_loop_body` so the two cannot drift apart again.
+        let body = self.parse_loop_body()?;
+
         Ok(Statement::Repeat { count, body })
     }
 
@@ -1197,12 +1202,17 @@ impl Parser {
 
             let stmt = self.parse_statement()?;
             let is_on_error = matches!(stmt, Statement::OnError { .. });
-            // A self-terminating nested construct (If/While/For) consumes its
-            // own trailing period; see the note below for why we track this.
+            // A self-terminating nested construct (If/While/For/Repeat)
+            // consumes its own trailing period; see the note below for why we
+            // track this. `Repeat` now consumes its period the same way
+            // `While`/`For` do (BUGS_FOUND #27), so it belongs here too —
+            // without it, a `Repeat` that is not the last action in a branch
+            // would orphan the action following it.
             let is_self_terminated = matches!(
                 stmt,
                 Statement::If { .. } | Statement::While { .. }
                     | Statement::ForRange { .. } | Statement::ForEach { .. }
+                    | Statement::Repeat { .. }
             );
             statements.push(stmt);
 
@@ -1226,9 +1236,10 @@ impl Parser {
             }
 
             // A self-terminating nested construct — `If`, `While`, `For each`,
-            // `For ... to` — owns and consumes its own trailing period (see
-            // `parse_if`'s final period consume, and the body loops in
-            // `parse_while`/`parse_for`). When such a construct is an action in
+            // `For ... to`, `Repeat` — owns and consumes its own trailing period
+            // (see `parse_if`'s final period consume, and `parse_loop_body`,
+            // shared by `parse_while`/`parse_repeat`, plus the body loops in
+            // `parse_for`). When such a construct is an action in
             // a comma-separated branch, the next action therefore follows with
             // NO comma separator: the nested construct's period already served
             // as the separator. Without this, a complete nested `If ... then,

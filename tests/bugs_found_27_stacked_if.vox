@@ -1,0 +1,10 @@
+(Bug #27 regression: Repeat nested inside If, closed with two periods.
+ The first period closes the Repeat (the innermost clause), the second
+ closes the If, so "after" runs once. Before the fix the Repeat did not
+ consume its period and the second period had nothing to close, failing
+ with `Expected a statement, got Period`. Expected: r, r, after.)
+
+a number called n is 1.
+If n is equal to 1 then,
+    Repeat 2 times, Print "r"..
+Print "after".

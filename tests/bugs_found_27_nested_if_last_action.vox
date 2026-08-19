@@ -1,0 +1,11 @@
+(Bug #27 regression: a nested If as the last action of a Repeat. Per
+ LANGUAGE.md's termination rule 1, the If's own period closes the If
+ (the innermost clause), not the Repeat — so a second period is needed to
+ close the Repeat, and "after" then runs once, after the loop. Before the
+ fix the Repeat never consumed a period at all; the If consumed its
+ period and the second period was then swallowed by the Repeat's body
+ loop, so "after" was absorbed as a per-iteration action and the program
+ printed `x after x after`. Expected: x, x, after.)
+
+Repeat 2 times, If true then, Print "x"..
+Print "after".

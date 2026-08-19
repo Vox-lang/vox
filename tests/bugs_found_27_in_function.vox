@@ -1,0 +1,12 @@
+(Bug #27 regression: a Repeat inside a function body, followed by another
+ statement in the same body. Before the fix the period after "r" did not
+ close the Repeat, so "after" was absorbed as a per-iteration action and
+ the call printed `r after r after`. The fix makes the period end the
+ Repeat, so "after" is the function's second statement and runs once,
+ after the loop. Expected: r, r, after.)
+
+To twice.
+  Repeat 2 times, Print "r".
+  Print "after".
+
+twice.

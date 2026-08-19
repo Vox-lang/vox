@@ -1,0 +1,11 @@
+(Bug #27 regression: stacked periods close nested clauses one level each
+ (LANGUAGE.md, Closing more than one level). Repeat nested inside For
+ each: the first period closes the Repeat (the innermost clause), the
+ second closes the For each, so "after" runs once. Before the fix the
+ Repeat never consumed its period, so the second period had nothing to
+ close and the program failed with `Expected a statement, got Period`.
+ Expected: r, r, r, r, after.)
+
+For each n from 1 to 2,
+    Repeat 2 times, Print "r"..
+Print "after".

@@ -1,0 +1,8 @@
+(Bug #27 regression: a period must close a Repeat body. Before the fix
+ the period did not close it, so "after" was silently absorbed as a second
+ per-iteration action and printed `r after r after`. The fix makes a
+ period end the body unconditionally, the same as While, so "after" runs
+ once, after the loop. Expected: r, r, after.)
+
+Repeat 2 times, Print "r".
+Print "after".

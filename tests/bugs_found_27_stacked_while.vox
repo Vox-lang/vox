@@ -1,0 +1,12 @@
+(Bug #27 regression: Repeat nested inside While, closed with two periods.
+ The first period closes the Repeat, the second closes the While, so
+ "after" runs once. Before the fix the Repeat did not consume its period,
+ the second period had nothing to close, and the program failed with
+ `Expected a statement, got Period`. The While runs twice (n: 0 then 1),
+ each iteration prints r twice. Expected: r, r, r, r, after.)
+
+a number called n is 0.
+While n is less than 2,
+    the n is n add 1,
+    Repeat 2 times, Print "r"..
+Print "after".

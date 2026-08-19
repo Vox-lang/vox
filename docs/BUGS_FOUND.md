@@ -1222,10 +1222,11 @@ should set the error flag and yield empty text, catchable by
 
 ### 27. A period never closes a `Repeat` body — following statements are silently absorbed into the loop
 
-**Status:** **open**, found 2026-08-19 against released v0.4.5. Surfaced
-by a vox-fuzz worker hand-verifying loop syntax for plan 323; its own
-characterisation ("a `While` containing another loop cannot be closed")
-did not reproduce, and the real defect was localised by the master.
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against
+released v0.4.5. Surfaced by a vox-fuzz worker hand-verifying loop syntax
+for plan 323; its own characterisation ("a `While` containing another loop
+cannot be closed") did not reproduce, and the real defect was localised by
+the master.
 
 `Repeat` is the only loop construct whose body a period fails to close.
 The statement after it is silently pulled inside the loop and re-runs on
@@ -1273,6 +1274,20 @@ closes both levels, as [Closing more than one
 level](../LANGUAGE.md#closing-more-than-one-level) documents
 ("periods stack: write one period per level you want to close").
 
+**Second symptom, same root cause — a comma does not continue the body.**
+`parse_repeat`'s body loop had no `Token::Comma` branch at all, unlike
+`parse_while`/`parse_for`, so a multi-action `Repeat` was impossible:
+
+```vox
+Repeat 2 times, Print "a", Print "b".
+```
+→ `error: Expected a statement, got Comma`
+
+The comma that should separate two actions in the same `Repeat` sentence
+was instead rejected as the start of a statement. Both symptoms are the
+one missing structure: `parse_repeat`'s body loop did not match
+`parse_while`'s separator handling.
+
 **Why it matters more than it looks.** This is the family of bug #5 —
 silently required punctuation whose absence changes behaviour rather
 than raising an error. Any program that uses `Repeat` with a period and
@@ -1281,11 +1296,29 @@ reports nothing wrong. `Repeat` is also the construct a reader is least
 likely to suspect, because `While` and `For each` beside it behave
 exactly as documented.
 
-**Fix direction:** the parser site that ends a `Repeat` body should
-consume a period the way the `While`/`For each` sites do. Regression
-tests should cover the standalone case, the stacked-period case above,
-and `Repeat` nested inside each of `While`, `For each` and `If`, since
-only the blank-line path is exercised today.
+**Fix.** `parse_repeat`'s body loop now matches `parse_while`'s separator
+handling: comma continues, period breaks unconditionally, paragraph break
+breaks, EOF breaks. The two bodies are identical, so they were factored
+into one shared `parse_loop_body` that both `parse_while` and
+`parse_repeat` call — better than two copies drifting apart again.
+(`parse_for`'s three body loops were left alone: their top-of-loop
+terminator check is a paragraph break, not `Return`, a deliberate
+difference not in this bug's scope.) `Repeat` was also added to
+`parse_block`'s self-terminating-construct list alongside `If`/`While`/
+`For`, so a `Repeat` that is not the last action in a branch no longer
+orphaning the action that follows it — the same rule-1 promise, applied
+uniformly. Regression tests: `tests/bugs_found_27_period_closes.vox`,
+`tests/bugs_found_27_comma_continues.vox`,
+`tests/bugs_found_27_blank_line_closes.vox` (the one path that already
+worked — the regression guard),
+`tests/bugs_found_27_stacked_for_each.vox`,
+`tests/bugs_found_27_stacked_while.vox`,
+`tests/bugs_found_27_stacked_if.vox`,
+`tests/bugs_found_27_in_function.vox`,
+`tests/bugs_found_27_nested_if_last_action.vox`, and
+`tests/bugs_found_27_repeat_branch_no_comma.vox` (the self-termination
+case). Before the fix the suite ran 389 passed / 8 failed; after, 397
+passed / 0 failed — the eight fixed tests, no regressions.
 
 ---
 
