@@ -1,0 +1,5 @@
+(Bug #30 - buffer initialiser, the Set form. Set b to "hello" must copy the literal bytes, not the contents of a buffer named hello. Unfixed output: SURPRISE, the same silent substitution as the declaration form.)
+a buffer called hello is "SURPRISE".
+a buffer called b is "initial".
+Set b to "hello".
+Print b.
