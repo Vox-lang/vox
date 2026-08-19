@@ -1,0 +1,4 @@
+(Bug #29 - list slot tag, the segfault. A list-typed variable named hello is in scope, and the literal ["hello", "hello"] is assigned to a list L. Unfixed, each "hello" is mis-tagged as the list variable, so L is built from two wild pointers and printing it dereferences them - exit 139, segfault. Fixed, the literals are tagged as strings and L prints ["hello", "hello"]. This is the memory-safety row of the matrix.)
+a list called hello is [1, 2].
+a list called L is ["hello", "hello"].
+Print L.

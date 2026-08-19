@@ -1,0 +1,3 @@
+(Bug #29 - CONTROL row, and a trap. A text variable named hello is in scope, but this row prints ["hello"] both before and after the fix: a text-typed collision does not produce a wrong tag, so the row gives the right answer either way. It is the trap - a future fix validated against this row alone would prove nothing. Kept to pin the diagnosis alongside the no-collision control.)
+a text called hello is "hi".
+Print ["hello"].
