@@ -1591,6 +1591,57 @@ identically to a string literal.
 
 ---
 
+### 31. A `text` flag with no default segfaults when the flag is not supplied
+
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against `main`. Surfaced while
+rewriting vox-fuzz's CLI onto the flag schema — the hand-rolled parser it
+replaced had never exercised this path.
+
+```vox
+a flag called outdir is "-o" or "--out", it is a text.
+Parse flags.
+Print "got:{outdir}".
+```
+
+| Invocation | Result |
+|---|---|
+| no arguments | **segfault (139)** |
+| `--out hello` | `got:hello`, exit 0 |
+| declared `with default ""` instead | prints empty, exit 0 |
+| declared `with default "xyz"` | prints `xyz`, exit 0 |
+| a **number** flag with no default | fine |
+
+An undefaulted `text` flag that the user does not supply is left holding
+a null pointer; the first read dereferences it.
+
+**LANGUAGE.md makes the default optional.** The Command-Line Arguments
+section documents `with default ...` as one of two *optional* schema
+modifiers ("Flags may be marked as required and/or given defaults"), so
+a `text` flag without one is legal code — and it crashes.
+
+**Family.** This is bug **#16** — *a declared-but-uninitialised `text`
+variable segfaults on first read* — reappearing on a path that #16's fix
+did not cover. #16's cure was to point an uninitialised `text` at a
+shared empty string rather than leave it null; the flag-schema path
+never got that treatment. Compare `emit_type_default` in
+`src/codegen/vars.rs`, whose `Type::String` arm does exactly the right
+thing for ordinary declarations.
+
+**Severity: high.** It is a crash from a documented, legal declaration,
+on the very first read, in the code path most likely to run before a
+program does anything else. Any Vox CLI that declares an optional text
+flag and does not pass it dies immediately.
+
+**Fix direction:** give the flag schema's `text` slots the same default
+`emit_type_default` gives an ordinary `a text called x.` — the shared
+empty string — so an unsupplied flag reads as `""`. Check `buffer` and
+any other pointer-backed flag type for the same gap while there.
+Regression tests should cover every row of the table above, including
+the passing rows: the `number` and `with default` rows are what isolate
+the defect to undefaulted pointer types.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only

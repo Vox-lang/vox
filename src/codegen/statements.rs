@@ -654,7 +654,24 @@ impl CodeGenerator {
                 if let Some(expr) = default {
                     self.generate_expr(expr);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                } else if matches!(value_type, FlagValueType::Text) {
+                    // A text flag with no default that the user does not
+                    // supply must read as "" - not as a null pointer, which
+                    // the first read (print, interpolation, 's length, ...)
+                    // would dereference. LANGUAGE.md makes `with default`
+                    // optional, so this is legal code and must not crash.
+                    // This is bug #16's cure applied to the flag path, which
+                    // it never reached: see `emit_type_default`'s Type::String
+                    // arm in vars.rs, which points an uninitialised text at
+                    // the same shared empty string (docs/BUGS_FOUND.md #31).
+                    let label = self.get_empty_string_label();
+                    self.emit_indent(&format!(
+                        "lea rax, [rel {}]  ; empty text flag default", label));
+                    self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                    self.uses_strings = true;
                 } else {
+                    // boolean and number: zero is a meaningful default
+                    // (false / 0), not a pointer.
                     self.emit_indent(&format!("mov qword [rbp-{}], 0", offset));
                 }
 
