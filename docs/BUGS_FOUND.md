@@ -1222,7 +1222,7 @@ should set the error flag and yield empty text, catchable by
 
 ### 27. A period never closes a `Repeat` body — following statements are silently absorbed into the loop
 
-**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against
 released v0.4.5. Surfaced by a vox-fuzz worker hand-verifying loop syntax
 for plan 323; its own characterisation ("a `While` containing another loop
 cannot be closed") did not reproduce, and the real defect was localised by
@@ -1324,7 +1324,8 @@ passed / 0 failed — the eight fixed tests, no regressions.
 
 ### 28. A `buffer` declared on an untaken `If` branch, then redeclared at top level, segfaults on first read
 
-**Status:** **open**, found 2026-08-19 against `main` (post-#27). Surfaced
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`
+(post-#27). Surfaced
 by a vox-fuzz generator worker whose generated program hit it through a
 name collision; hand-reduced by that worker to a form with nothing
 fuzzer-specific left, then independently reproduced and characterised by
@@ -1436,7 +1437,8 @@ diagnosis.
 
 ### 29. A string literal inside a list literal is resolved as a variable name — silent wrong data, or a segfault
 
-**Status:** **open**, found 2026-08-19 against `main` (post-#27/#28).
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`
+(post-#27/#28).
 Found by the vox-fuzz generator red team; reproduced and characterised
 by the master. **This is [#19](#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision)'s
 family, and #19 is marked fixed in v0.4.4 — the list-literal path was
@@ -1536,7 +1538,8 @@ demonstrated bug-finding shape and costs almost nothing to add.
 
 ### 30. A buffer initialised from a string literal copies a same-named buffer instead — silently
 
-**Status:** **open**, found 2026-08-19 against `main`. Found by the
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`.
+Found by the
 master while locating #29's code site; same family as #19/#29.
 
 ```vox
@@ -1593,7 +1596,7 @@ identically to a string literal.
 
 ### 31. A `text` flag with no default segfaults when the flag is not supplied
 
-**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against `main`. Surfaced while
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`. Surfaced while
 rewriting vox-fuzz's CLI onto the flag schema — the hand-rolled parser it
 replaced had never exercised this path.
 
@@ -1644,7 +1647,7 @@ the defect to undefaulted pointer types.
 
 ### 32. A flag read inside a function body is typed `boolean`, whatever it was declared as
 
-**Status:** **fixed on `main` (Unreleased).** Found 2026-08-19 against
+**Status:** **fixed in v0.4.6.** Found 2026-08-19 against
 `main`, immediately after #31, while rewriting vox-fuzz's CLI onto the
 flag schema.
 
@@ -1715,3 +1718,62 @@ the unfixed compiler with the exact error above.
   another file `see`s it. This was my own leftover code from an earlier edit,
   not a language bug — but a friendlier duplicate-definition diagnostic at the
   Vox level would have caught it immediately instead of several edits later.
+
+### 33. `is empty` on a `text` is always false — it tests the pointer, not the contents
+
+**Status:** **fixed in v0.4.6.** Found 2026-08-20 while verifying the
+documentation line #31's fix earned ("an unsupplied `text` flag … can be
+tested with `is empty`") — the claim was written, then proven false
+before it shipped.
+
+```vox
+a text called blank is "".
+If blank is empty then, Print "IS empty". Otherwise, Print "NOT empty".
+```
+→ prints `NOT empty`
+
+**It is specific to `text`.** The controls isolate it exactly:
+
+| Case | Result |
+|---|---|
+| `[]` list `is empty` | correct (IS) |
+| `[1]` list `is empty` | correct (NOT) |
+| empty buffer `is empty` | correct (IS) |
+| `"x"` buffer `is empty` | correct (NOT) |
+| `""` text `is empty` | **wrong (NOT)** |
+| unsupplied `text` flag `is empty` | **wrong (NOT)** |
+| `""` text `is ""` equality | correct — the value really is `""` |
+
+The spec promises the predicate on a text: LANGUAGE.md's own worked
+example (`if 'output file' is empty then,` — a text filename) and the
+flags section both use it.
+
+**Root cause**, localised to two twin sites. `Property::Empty` in
+`src/codegen/expr.rs` (~746, expression form) and
+`src/codegen/statements.rs` (~2765, branch form) special-case buffers
+and lists — read the size field at `[rax+8]` — and for every other type
+fall through to `test rax, rax`. A text's value is a pointer to its
+NUL-terminated bytes; the pointer is never null, so the predicate
+compiles to "is this pointer null" and always answers false. `""` is a
+real allocation whose first byte is NUL — the pointer test cannot see
+that.
+
+**Fix:** at both sites, a text operand now tests its first byte — with
+a null pointer defensively redirected at the shared empty string rather
+than dereferenced (`cmovz` on `get_empty_string_label`, no branch
+needed). Buffers, lists, numbers and booleans are untouched. Both sites
+also carried the `Expr::StringLit(s) | Expr::Identifier(s)` pattern —
+the #19/#29 family, on plan 322's audit list — and lose it here: a
+string literal is data, always takes the text path, and no longer
+consults `variable_types` at all.
+
+**Regression test:** `tests/bugs_found_33_text_is_empty.vox` — the full
+matrix above plus a `While ... is empty` loop-condition case. Proven to
+fail on the unfixed compiler on exactly the three text rows, every
+control passing on both sides.
+
+**Family:** #31/#32 — the flag schema's first real user (vox-fuzz's CLI
+rewrite) keeps finding defects on the documented path nothing had
+exercised.
+
+---

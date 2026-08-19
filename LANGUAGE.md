@@ -4252,6 +4252,10 @@ a flag called retries is "-r" or "--retries", it is a number and is required.
 
 - `with default ...` initializes the flag value if the flag is not passed.
 - `and is required` requires the flag to be present at runtime.
+- A flag with no `with default` that is not passed holds its type's empty
+  value: `""` for a `text`, `0` for a `number`, and false for a `boolean`.
+  An unsupplied `text` flag is therefore safe to read, and can be tested
+  with `is empty`.
 
 #### 3) Parse point: explicit or automatic
 
