@@ -1220,6 +1220,75 @@ should set the error flag and yield empty text, catchable by
 
 ---
 
+### 27. A period never closes a `Repeat` body — following statements are silently absorbed into the loop
+
+**Status:** **open**, found 2026-08-19 against released v0.4.5. Surfaced
+by a vox-fuzz worker hand-verifying loop syntax for plan 323; its own
+characterisation ("a `While` containing another loop cannot be closed")
+did not reproduce, and the real defect was localised by the master.
+
+`Repeat` is the only loop construct whose body a period fails to close.
+The statement after it is silently pulled inside the loop and re-runs on
+every iteration. There is no error — just wrong output.
+
+```vox
+Repeat 2 times, Print "r".
+Print "after".
+```
+
+**Expected** (LANGUAGE.md rule 1, line 135): the period closes the
+innermost open clause. The clause list is given explicitly as
+``(`if`, `on error`, `for`, `while`, `repeat`)`` — `repeat` is named.
+So this should print `r`, `r`, `after`.
+
+**Actual:** `r after r after`. The period does not close the `Repeat`;
+`Print "after"` becomes the loop's second action.
+
+A blank line **does** close it (`r r after`), which is rule 2 working
+correctly and is the only reason the construct is usable at all today.
+
+**The controls both behave correctly**, which is what isolates this to
+`Repeat` rather than to the termination rule:
+
+| Source | Output | |
+|---|---|---|
+| `Repeat 2 times, Print "r".` + `Print "after".` | `r after r after` | ✗ |
+| same with a blank line instead | `r r after` | ✓ |
+| `While n is less than 2, Set n to n add 1.` + `Print "after".` | `after` | ✓ |
+| `For each n from 1 to 2, Print n.` + `Print "after".` | `1 2 after` | ✓ |
+
+**Secondary symptom, same root cause.** Because the `Repeat` never
+consumes a period, a stacked period intended to close it errors instead:
+
+```vox
+For each n from 1 to 2,
+    Repeat 2 times, Print "r"..
+Print "after".
+```
+→ `error: Expected a statement, got Period`
+
+The second period has nothing left to close, so it is rejected — while
+the identical shape with `For each` or `If` nested inside compiles and
+closes both levels, as [Closing more than one
+level](../LANGUAGE.md#closing-more-than-one-level) documents
+("periods stack: write one period per level you want to close").
+
+**Why it matters more than it looks.** This is the family of bug #5 —
+silently required punctuation whose absence changes behaviour rather
+than raising an error. Any program that uses `Repeat` with a period and
+continues afterwards re-runs the continuation once per iteration and
+reports nothing wrong. `Repeat` is also the construct a reader is least
+likely to suspect, because `While` and `For each` beside it behave
+exactly as documented.
+
+**Fix direction:** the parser site that ends a `Repeat` body should
+consume a period the way the `While`/`For each` sites do. Regression
+tests should cover the standalone case, the stacked-period case above,
+and `Repeat` nested inside each of `While`, `For each` and `If`, since
+only the blank-line path is exercised today.
+
+---
+
 ## Not bugs — my own mistakes, worth knowing about anyway
 
 - **Comma vs. period inside a loop/if is unforgiving.** A period closes only
