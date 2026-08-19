@@ -309,7 +309,6 @@ impl CodeGenerator {
                     self.variables.insert(name.clone(), self.stack_offset);
                     VarTarget::Local(self.stack_offset)
                 };
-                let is_fresh_local = matches!(target, VarTarget::Local(_)) && !had_existing_slot;
 
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
@@ -528,15 +527,48 @@ impl CodeGenerator {
                                 self.initialized_globals.insert(name.clone());
                             }
                         } else {
-                            let is_fresh_global_buffer = target.global_label().is_some()
-                                && !self.initialized_globals.contains(name);
-                            if is_fresh_local || is_fresh_global_buffer {
+                            // A *declaration* (`a buffer called b is ...`,
+                            // which arrives with `var_type = Some(Buffer)`)
+                            // allocates a fresh buffer struct here. A bare
+                            // assignment (`Set b to ...` / `the b is ...`,
+                            // `var_type = None` but the existing variable is
+                            // already a buffer) must NOT re-allocate: it would
+                            // replace a fixed-size, bounds-checked buffer with
+                            // a dynamic auto-growing one and silently disable
+                            // overflow detection (test 067). Assignments skip
+                            // the alloc and reuse the existing buffer struct.
+                            //
+                            // A declaration allocates *unconditionally*, even
+                            // when the name is already bound to a slot — the
+                            // #28 fix. A buffer declared on a conditional path
+                            // (an untaken If branch, or a While/for-each/Repeat
+                            // body that never runs) claims its stack slot at
+                            // codegen time but never initialises it at runtime,
+                            // so the slot holds a null pointer. A later
+                            // same-name declaration that reused the slot used
+                            // to skip allocation and go straight to
+                            // _buffer_clear on null, segfaulting. Allocating on
+                            // every declaration guarantees a valid buffer
+                            // before any clear/append.
+                            //
+                            // Sizedness is preserved exactly as the sized
+                            // `BufferDecl` path already preserves it: a sized
+                            // declaration (`is N bytes in size`) routes through
+                            // BufferDecl, which branches on is_sized and emits
+                            // `_alloc_buffer_sized`. This arm only ever sees
+                            // *unsized* declarations (string/format/buffer-
+                            // source initialisers), so it emits the dynamic
+                            // `_alloc_buffer`; and an assignment does not
+                            // allocate at all, so a previously sized buffer
+                            // keeps its bounds and its overflow detection.
+                            let is_declaration = matches!(var_type, Some(Type::Buffer));
+                            if is_declaration {
                                 self.emit_indent("mov rdi, 1024  ; default buffer size");
                                 self.emit_indent("call _alloc_buffer");
                                 self.emit_store_rax_to_target(
                                     &target, &format!("buffer {}", name));
                                 self.uses_buffers = true;
-                                if is_fresh_global_buffer {
+                                if target.global_label().is_some() {
                                     self.initialized_globals.insert(name.clone());
                                 }
                             }
