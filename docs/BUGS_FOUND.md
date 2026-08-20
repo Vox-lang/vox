@@ -675,7 +675,7 @@ other type was found holding a null pointer through this path.
 
 ### 17. Appending a format string to a list stores a corrupt element — printing or reading it back segfaults or leaks a raw pointer
 
-**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while building a
+**Status: fixed in v0.4.0.** Found 2026-08-16 while building a
 text-utilities shared library (`textkit`) against `main` post-v0.3.6. Not
 library-specific — the minimal repro is a four-line standalone executable.
 
@@ -761,7 +761,7 @@ format-string append now works.
 
 ### 18. The `.lib` list-element-type inference credits fewer shapes than the runtime element tagger — provably-`text` elements ship as plain `list`
 
-**Status: fixed on `main` (Unreleased).** Same session as #17; mild, no
+**Status: fixed in v0.4.0.** Same session as #17; mild, no
 crash. LANGUAGE.md ("The `.lib` file") says a `--shared` build scans the
 exported function's body and writes `list of <type>` "when every
 appended/returned element provably agrees on one type". Before this fix the
@@ -814,7 +814,7 @@ guard still passes unchanged).
 
 ### 19. A string literal's content resolved against known variable names at codegen time — crash on self-name collision, silent wrong data on any other collision
 
-**Status: fixed on `main` (Unreleased).** Found 2026-08-16 while isolating
+**Status: fixed in v0.4.0.** Found 2026-08-16 while isolating
 bug #17: the plan's own Phase 1 repro used a variable named `x` initialized
 to the string `"x"`, and segfaulted for a *second*, unrelated reason once
 #17's actual defect (wrong element type tag on an appended format string)
@@ -917,7 +917,7 @@ non-stringy operand as a string pointer (#20's own defect, not this one).
 
 ### 20. Equality dispatch treats a non-stringy operand as a string pointer and dereferences it
 
-**Status: fixed on `main` (Unreleased).** Found 2026-08-16 by a red team
+**Status: fixed in v0.4.0.** Found 2026-08-16 by a red team
 pass on the #19 fix. **Pre-existing** — reproduces with #19 reverted too —
 but #19 made it commonly reachable: before #19, a string literal whose text
 matched a `float` variable's name was (wrongly) inferred as `Float`, so
@@ -1780,7 +1780,7 @@ exercised.
 
 ### 34. A float outside ±2^63 prints as `9223372036854775808.372036854775808`, and one below ~1e-8 prints as `0.0`
 
-**Status:** **fixed on `main` (Unreleased)** — the large-magnitude half
+**Status:** **fixed in v0.4.7** — the large-magnitude half
 only: a float at or beyond 2^63 now prints its own exact decimal digits
 instead of the saturated `9223372036854775808...` constant. This was
 the wrong-DATA half of the bug. The small-magnitude half (a nonzero
@@ -1886,7 +1886,7 @@ must stay passing.
 
 ### 35. `as a number` wraps silently on overflow — a positive numeral parses to a negative number
 
-**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 against
+**Status:** **fixed in v0.4.7.** Found 2026-08-20 against
 released v0.4.6, while probing the base-conversion surface before
 teaching vox-fuzz to emit it — a surface no test and no example had
 ever exercised. **Regression test:**
@@ -1951,7 +1951,7 @@ promises neither raises.
 
 ### 36. A width specifier in a format string reinterprets a float's bits, and leaks a text's address
 
-**Status:** **fixed on `main` (Unreleased)** — the harm half: a width no
+**Status:** **fixed in v0.4.7** — the harm half: a width no
 longer changes what a value IS. The width is not yet *applied* to
 floats/texts (no padding primitive exists in coreasm for them), matching
 the `value` path's behaviour; that residue is a cosmetic gap, tracked in
@@ -2043,7 +2043,7 @@ one that makes the diagnosis unambiguous.
 
 ### 37. A file's `readable` property is always true, whatever mode the file was opened in
 
-**Status:** **fixed on `main` (Unreleased).** Regression test:
+**Status:** **fixed in v0.4.7.** Regression test:
 `tests/bugs_found_37_file_readable_mode.vox` — opens the same file for
 writing, appending, and reading in turn and prints `readable`,
 `writable`, and `permissions` for each. Proven to fail unfixed on
@@ -2166,7 +2166,7 @@ question nobody asks.
 
 ### 39. A format string as the FIRST element of an inline collection makes every element print as a raw pointer
 
-**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 by an Opus
+**Status:** **fixed in v0.4.7.** Found 2026-08-20 by an Opus
 worker hand-verifying every format-string shape before writing an emitter
 for it. Reproduced independently by the master, including the ASLR proof
 below.

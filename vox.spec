@@ -1,5 +1,5 @@
 Name:           vox
-Version:        0.4.6
+Version:        0.4.7
 Release:        1%{?dist}
 Summary:        A systems level compiler for Vox (sentence based code)
 
