@@ -4146,19 +4146,25 @@ Print the 'job timer''s end time.
 
 #### Formatted Time Output
 
-Combine time properties with padded casting for formatted output:
+Combine time properties with the zero-pad format specifier (see
+[Formatted Output](#formatted-output)) for formatted output. A time
+property can be read directly inside a format slot:
 
 ```
 Get current time into now.
-a text called h is now's hour as text padded to 2.
-a text called m is now's minute as text padded to 2.
-a text called s is now's second as text padded to 2.
+Print "{now's hour:02}:{now's minute:02}:{now's second:02}".
+(Prints: 09:05:03)
+```
 
-Print the h.
-Print ":".
-Print the m.
-Print ":".
-Print the s.
+Or, if you want the parts as named values first:
+
+```
+Get current time into now.
+a text called h is "{now's hour:02}".
+a text called m is "{now's minute:02}".
+a text called s is "{now's second:02}".
+
+Print "{h}:{m}:{s}".
 (Prints: 09:05:03)
 ```
 

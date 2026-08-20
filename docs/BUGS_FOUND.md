@@ -2115,3 +2115,66 @@ honest than making the table true by adding a property that answers a
 question nobody asks.
 
 ---
+
+### 39. A format string as the FIRST element of an inline collection makes every element print as a raw pointer
+
+**Status:** **open**, found 2026-08-20 by an Opus worker hand-verifying
+every format-string shape before writing an emitter for it. Reproduced
+independently by the master, including the ASLR proof below.
+
+```vox
+a text called base is "core".
+print each item from ["{base}", "plain"].
+```
+→ prints two integers, e.g. `139924308365336` and `4210945`
+
+**Two independent facts, both from the control table:**
+
+| Collection | Format string at | Clause | Output |
+|---|---|---|---|
+| literal `["{base}", "plain"]` | 1st | `print each` | ✗ two integers |
+| literal `["plain", "{base}"]` | 2nd | `print each` | ✓ `plain` / `core` |
+| literal `["{base}", "plain"]` | 1st | `For each ... in` | ✗ two integers |
+| literal `["{{lit}}", "plain"]` | escaped braces, no slot | `print each` | ✓ `{lit}` / `plain` |
+| named `src`, same literal | 1st | `print each` | ✓ `core` / `plain` |
+| named `src`, same literal | 1st | `print each ... treating` | ✗ two integers |
+| named `src`, format 2nd | 2nd | `print each ... treating` | ✓ `plain` / `core` |
+| named `src`, same literal | 1st | `element 1 of src` | ✓ `core` |
+| literal `["alpha", "beta"]` | no format string | `treating` | ✓ `alpha` / `beta` |
+
+1. The **first** element decides the rendering for the **whole**
+   collection — put the format string second and both print correctly.
+2. It is the **statically inferred** element type that is wrong. A named
+   list under a plain `print each` is correct, so the runtime tag is
+   right; attaching a `treating` clause to that *same* list breaks it,
+   as does writing the list inline.
+
+**Proof the integers are addresses.** The first number changes on every
+run of the *same binary* — `139924308365336`, then `140253455810584` —
+while the second is stable (`4210945`, static rodata). That is ASLR
+moving a heap allocation. No value-based explanation survives it. So
+this is silent wrong data **and** an information leak, the same class as
+#36's `text` half.
+
+**What it contradicts.** LANGUAGE.md §"Format Strings as Values"
+(~3051): a format string "materializes into a fresh NUL-terminated
+string … and survives being carried through lists". §"Format Strings
+Everywhere" (~3076): "Every statement that takes a string value accepts
+a format string … `treating` clauses. All sinks share one name
+resolver." The two sinks named there are exactly the two broken rows.
+
+**Family:** #17 and #18 — a format string's *type tag*, not its payload,
+being got wrong. #17 was fixed by giving `Expr::FormatString` an
+explicit `TAG_STRING` / `VarType::String` arm in `prescan_expr_tag` and
+`infer_expr_type`. The list-literal and `treating` element-type
+inference paths evidently consult a third inference that still lacks
+that arm and falls through to integer — which is also what #18
+describes. Likely the same missing arm in a third place.
+
+**Fix direction:** find the element-type inference used by list literals
+and by `treating`, and give it the same `FormatString → String` arm.
+Regression test should cover all nine rows; the first-vs-second-position
+pair and the named-list-with-and-without-`treating` pair are the two
+that make the diagnosis unambiguous.
+
+---
