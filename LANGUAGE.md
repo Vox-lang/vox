@@ -3163,7 +3163,7 @@ a buffer called large is 8192 bytes in size.
 
 **Features:**
 - Allocates exactly the specified capacity
-- Does NOT grow - reads/writes are silently truncated at capacity
+- Does NOT grow - a read or write past capacity is truncated at capacity and sets the error flag
 - Useful when you need predictable memory usage
 - User programs can check buffer length to detect truncation
 - Automatically freed on program exit
@@ -3281,6 +3281,15 @@ Print msg.  (prints "Jello")
 - Out-of-bounds access sets an error flag and returns 0
 - Errors can be caught with `On error`
 - Buffer overflow is impossible - the compiler enforces bounds
+
+What "in bounds" means differs for a write and a read, and the worked
+example below depends on it. A **write** (`Set byte N of buf to ...`)
+accepts any position from 1 up to the buffer's *capacity*: writing past
+the current size extends `size` to that position, zero-filling any gap
+(a dynamic buffer grows its capacity as needed). A **read**
+(`byte N of buf`) accepts positions from 1 up to the current *size* only
+- a byte that has never been written or appended is out of bounds even
+when the capacity has room for it. Position 0 is out of bounds for both.
 
 #### Buffer Append and Copy
 

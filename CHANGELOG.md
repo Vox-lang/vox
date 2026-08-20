@@ -4,6 +4,35 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A buffer's `type` property reports `Buffer (static)` however it was
+  declared** ([#42](docs/BUGS_FOUND.md)) — `a buffer called b is 16
+  bytes in size`, `is 16 bytes`, `Create a buffer called b with size 16`,
+  and the bare dynamic `a buffer called b.` all printed `Text (dynamic)`
+  from `b's type`, against LANGUAGE.md's explicit listing of `buffer`
+  among the statically-typed kinds; only the string-initialised `is
+  "seed"` form was right. Every sized and dynamic spelling routes through
+  `BufferDecl`, which registered the variable's runtime kind but never
+  its declared type, so the property's lookup missed and fell through to
+  the runtime-tag dispatch, where a buffer pointer reads as a string tag.
+  The declaration now registers the declared type; the same omission on
+  `Get the current time into` is closed alongside it so a `time` reports
+  `Time (static)`. Found by the vox-fuzz buffer claim ledger (discrepancy
+  D2) and adjudicated by the language lawyer.
+
+### Changed
+
+- **LANGUAGE.md defines buffer bounds** — writes accept positions 1..capacity
+  and extend `size` (zero-filling any gap); reads accept 1..size; position
+  0 is out of bounds for both. The compiler has always behaved this way and
+  the manual's own worked example relied on it, but the Bounds Checking
+  paragraph never said so (buffer ledger discrepancy D3). The fixed-buffer
+  feature list no longer says truncation is "silent": it sets the error
+  flag, as the Reading section already stated.
+
 ## [0.4.7] - 2026-08-20
 
 ### Fixed
