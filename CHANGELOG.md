@@ -76,6 +76,21 @@ adheres to [Semantic Versioning](https://semver.org/).
   integer and boolean width rows kept as controls that pass on both
   sides. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #36.
 
+- **A file's `readable` property now reflects its actual open mode**
+  ([#37](docs/BUGS_FOUND.md)) — `readable` tested `fd >= 0`, which is
+  true for any successfully opened handle, so a file opened `for
+  writing` or `for appending` still reported `readable` as `1`. The
+  obvious defensive idiom, `If f's readable then,` before a read, passed
+  on a write-only handle and the read that followed failed at the OS
+  level. `writable` already derived its answer correctly from the
+  handle's recorded open mode; `readable` now shares that same source of
+  truth instead of being a constant. Regression test opens one file for
+  writing, appending, and reading in turn and checks `readable`,
+  `writable`, and `permissions` in each mode; proven to fail on the
+  unfixed compiler on exactly the writing/appending `readable` rows,
+  with the `writable` rows and the constant `permissions` value kept as
+  controls. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #37.
+
 ## [0.4.6] - 2026-08-20
 
 ### Fixed

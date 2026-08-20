@@ -2043,11 +2043,17 @@ one that makes the diagnosis unambiguous.
 
 ### 37. A file's `readable` property is always true, whatever mode the file was opened in
 
-**Status:** **open**, found 2026-08-20 against released v0.4.6 by the
-same red-team agent that found #36, after being steered off format
-strings onto the file-property surface. Reproduced independently by the
-master, whose controls narrowed the claim: it is `readable` alone, not
-the property pair.
+**Status:** **fixed on `main` (Unreleased).** Regression test:
+`tests/bugs_found_37_file_readable_mode.vox` — opens the same file for
+writing, appending, and reading in turn and prints `readable`,
+`writable`, and `permissions` for each. Proven to fail unfixed on
+exactly the writing/appending `readable` rows (both wrongly printed 1);
+the `writable` rows on both sides of the fix, and the constant
+`permissions` value across all three rows, are the controls. Found
+2026-08-20 against released v0.4.6 by the same red-team agent that found
+#36, after being steered off format strings onto the file-property
+surface. Reproduced independently by the master, whose controls
+narrowed the claim: it is `readable` alone, not the property pair.
 
 ```vox
 open a file for writing called w at "/tmp/out.txt".

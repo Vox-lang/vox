@@ -1091,12 +1091,12 @@ impl CodeGenerator {
                 // function's partition on top of the outer (global) state, first
                 // dropping any names this function redeclares as locals so a
                 // local shadowing a global takes its own verdict. `list_element_types`
-                // and `file_writable` are maps overwritten per-VarDecl during
+                // and `file_mode` are maps overwritten per-VarDecl during
                 // body codegen, so a plain save/restore is enough for them.
                 let saved_mixed_lists = self.mixed_lists.clone();
                 let saved_unprovable_scalars = self.unprovable_scalars.clone();
                 let saved_list_element_types = self.list_element_types.clone();
-                let saved_file_writable = self.file_writable.clone();
+                let saved_file_mode = self.file_mode.clone();
                 if let Some(locals) = self.local_names.get(&func_label).cloned() {
                     for n in &locals {
                         self.mixed_lists.remove(n);
@@ -1341,7 +1341,7 @@ impl CodeGenerator {
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
                 self.list_element_types = saved_list_element_types;
-                self.file_writable = saved_file_writable;
+                self.file_mode = saved_file_mode;
 
                 // Append to functions section
                 self.functions_section.push_str(&format!("; Function: {}\n", name));
@@ -1966,9 +1966,10 @@ impl CodeGenerator {
                 self.declared_types.insert(name.clone(), Type::File);
                 let path_is_fd = self.is_fd_path_expr(path);
                 
-                // Track if file is writable based on mode
-                let is_writable = matches!(mode, FileMode::Writing | FileMode::Appending);
-                self.file_writable.insert(name.clone(), is_writable);
+                // Record the handle's open mode - the single source of truth
+                // `readable` and `writable` both read from at the point they
+                // are queried (see ObjectProperty::Readable/Writable in expr.rs).
+                self.file_mode.insert(name.clone(), mode.clone());
 
                 // Reuse the existing slot when the handle name is already
                 // known, exactly like VarDecl reassignment. Two Opens of the

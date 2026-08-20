@@ -1149,14 +1149,23 @@ impl CodeGenerator {
                             self.emit_indent("call _file_permissions");
                         }
                         ObjectProperty::Readable => {
-                            // Check if fd >= 0 (valid for reading)
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setns al");
-                            self.emit_indent("movzx rax, al  ; 1 if readable, 0 otherwise");
+                            // Report the handle's recorded open mode, the same
+                            // source of truth Writable uses below - not fd >= 0,
+                            // which is true for every open handle regardless of
+                            // mode (bug #37).
+                            let is_readable = matches!(self.file_mode.get(object), Some(FileMode::Reading));
+                            if is_readable {
+                                self.emit_indent("mov rax, 1  ; file opened for reading");
+                            } else {
+                                self.emit_indent("xor rax, rax  ; file opened for writing/appending only");
+                            }
                         }
                         ObjectProperty::Writable => {
                             // Check if file was opened for writing/appending
-                            let is_writable = self.file_writable.get(object).copied().unwrap_or(false);
+                            let is_writable = matches!(
+                                self.file_mode.get(object),
+                                Some(FileMode::Writing) | Some(FileMode::Appending)
+                            );
                             if is_writable {
                                 self.emit_indent("mov rax, 1  ; file opened for writing");
                             } else {
