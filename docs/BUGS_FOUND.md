@@ -1777,3 +1777,73 @@ rewrite) keeps finding defects on the documented path nothing had
 exercised.
 
 ---
+
+### 34. A float outside ±2^63 prints as `9223372036854775808.372036854775808`, and one below ~1e-8 prints as `0.0`
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6. Found
+while probing which literal magnitudes are legal before teaching
+vox-fuzz to emit aggressive ones (Josj: *"I wanna see
+1243626351836374761.1224435542121323 ... I wanna make the compiler AND
+the runtime cry"*). The first extreme value tried reproduced it.
+
+```vox
+a float called over is 10000000000000000000.0.
+Print over.                      (9223372036854775808.372036854775808)
+a float called half is over divide 2.0.
+Print half.                      (5000000000000000000.0 - CORRECT)
+```
+
+**The stored value is correct; only the output path is wrong.** That is
+what `half` proves: dividing the "broken" value by two yields exactly
+5e18, so `over` really does hold 1e19. The defect is in float
+formatting, not in the lexer, the parser, or arithmetic.
+
+**It is not the literal.** `1000000000000000000.0 multiply 10.0`,
+computed at runtime with no large literal anywhere in the source,
+prints the same string.
+
+**All three output paths share it** — `Print x`, `"{x}"` interpolation,
+and `x as text` — which is expected if they funnel into one formatter.
+
+| Value | Printed | Correct |
+|---|---|---|
+| `1000000000000000000.0` (1e18) | `1000000000000000000.0` | ✓ |
+| `10000000000000000000.0` (1e19) | `9223372036854775808.372036854775808` | ✗ |
+| `1e19 divide 2.0` (5e18) | `5000000000000000000.0` | ✓ |
+| `0.0 subtract 1e19` | `-9223372036854775808.372036854775808` | ✗ |
+| `0.1`, `0.0000001` | correct | ✓ |
+| `0.000000000000000000001` (1e-21) | `0.0` | ✗ (see below) |
+
+**The magic number is the tell.** 9223372036854775808 is exactly 2^63 —
+`i64::MAX + 1`. The formatter converts the double's integer part
+through a signed 64-bit integer, which saturates for any magnitude at
+or beyond 2^63; the trailing `.372036854775808` is the fractional
+remainder computed from the already-saturated value, which is why the
+same digits appear after the point for every input.
+
+**Second face, same formatter: small magnitudes vanish.** `1e-21`
+prints `0.0` — but the value is not zero, as `is positive` confirms
+(true for every exponent tested down to 1e-23). The formatter appears
+to emit a fixed number of decimal places rather than choosing a
+representation, so anything below its precision floor renders as `0.0`.
+Lossy and silent, the same shape of defect as the high end.
+
+LANGUAGE.md documents `float` as a 64-bit IEEE 754 double, whose range
+is roughly ±1.8e308 with subnormals to ~5e-324. Both 1e19 and 1e-21 are
+comfortably inside that and 1e19 is *exactly* representable, so this is
+the implementation failing the documented type, not a limit of it.
+
+**Fix direction:** find the float→text routine (shared by `Print`,
+interpolation, and `as text`) and stop routing the integer part through
+an i64. Print the double's own decimal representation — shortest
+round-trip formatting if practical, otherwise at minimum a path that
+does not saturate and does not silently flush small values to zero.
+Regression tests must cover both ends and keep the correct rows above
+as controls.
+
+**Note on scope:** correct IEEE rounding is NOT this bug.
+`1243626351836374761.1224435542121323` printing as
+`1243626351836374784.0` is a double holding what a double can hold, and
+must stay passing.
+
+---
