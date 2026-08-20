@@ -384,6 +384,10 @@ impl CodeGenerator {
                         else if let Some(first) = elements.first() {
                             let elem_type = match first {
                                 Expr::StringLit(_) => VarType::String,
+                                // A format string always materializes text
+                                // (bug #17); this named-list element-type
+                                // inference never carried that arm (bug #39).
+                                Expr::FormatString { .. } => VarType::String,
                                 Expr::IntegerLit(_) => VarType::Integer,
                                 Expr::FloatLit(_) => VarType::Float,
                                 Expr::BoolLit(_) => VarType::Boolean,
@@ -1453,6 +1457,11 @@ impl CodeGenerator {
                         let _ = any_unknown;
                         match first {
                             Expr::StringLit(_) => VarType::String,
+                            // A format string always materializes text
+                            // (bug #17); this inline-literal `For each`/
+                            // `print each` element-type inference never
+                            // carried that arm (bug #39).
+                            Expr::FormatString { .. } => VarType::String,
                             Expr::IntegerLit(_) => VarType::Integer,
                             Expr::BoolLit(_) => VarType::Boolean,
                             Expr::FloatLit(_) => VarType::Float,

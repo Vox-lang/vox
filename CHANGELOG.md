@@ -91,6 +91,34 @@ adheres to [Semantic Versioning](https://semver.org/).
   with the `writable` rows and the constant `permissions` value kept as
   controls. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #37.
 
+- **A format string in a collection prints as text at every position, not
+  just the second** ([#39](docs/BUGS_FOUND.md)) — `["{base}", "plain"]`
+  printed two raw pointers (a heap address that moved under ASLR between
+  runs, plus a stable rodata address) instead of `core`/`plain`; moving the
+  format string to the second slot made both elements print correctly,
+  which was the tell that this was a static element-type inference bug,
+  not a runtime-tag bug — a named list under a plain `print each` already
+  worked, but attaching a `treating` clause to that *same* list broke it
+  again. `Expr::FormatString` had no arm in the three places that classify
+  a list's element type from its literal shape — the `for each`/`print
+  each` inline-literal inference, the named-list-declaration inference
+  that feeds `treating`, and `element N of <literal>` — so each fell
+  through to its generic default (`Unknown`, which for a literal is not
+  the same safe fallback `Unknown` is for a named list, since a named
+  list's `Unknown` widens to `Mixed` and dispatches on the still-correct
+  runtime tag, while a literal's `Unknown` fed nothing and defaulted to
+  `PRINT_INT`). Bug #17 fixed this same missing arm in the two functions
+  that back append and general expression typing; these three siblings
+  were never given it. Fixed by adding `Expr::FormatString => VarType::
+  String`/`Some(VarType::String)` to all three. Regression test covers all
+  nine control rows (first vs. second position in an inline literal, a
+  named list with and without `treating`, `element N of`, a plain `For
+  each`, escaped-braces-only, and a no-format-string `treating` list);
+  proven to fail on the unfixed compiler on exactly the format-first
+  inline-literal, `For each`-over-literal, and named-list-with-`treating`
+  rows, with the rest passing on both sides as controls. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #39.
+
 ## [0.4.6] - 2026-08-20
 
 ### Fixed

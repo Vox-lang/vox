@@ -2166,9 +2166,10 @@ question nobody asks.
 
 ### 39. A format string as the FIRST element of an inline collection makes every element print as a raw pointer
 
-**Status:** **open**, found 2026-08-20 by an Opus worker hand-verifying
-every format-string shape before writing an emitter for it. Reproduced
-independently by the master, including the ASLR proof below.
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 by an Opus
+worker hand-verifying every format-string shape before writing an emitter
+for it. Reproduced independently by the master, including the ASLR proof
+below.
 
 ```vox
 a text called base is "core".
@@ -2224,5 +2225,52 @@ and by `treating`, and give it the same `FormatString → String` arm.
 Regression test should cover all nine rows; the first-vs-second-position
 pair and the named-list-with-and-without-`treating` pair are the two
 that make the diagnosis unambiguous.
+
+**Root cause, confirmed.** Three separate "classify by first element"
+matches — none of them the two functions bug #17 fixed — all lacked a
+`FormatString` arm: the `For each`/`print each` inline-literal element-type
+inference (`src/codegen/statements.rs`, in `Statement::ForEach`'s
+`Expr::ListLit` branch), the named-list-declaration inference that records
+`list_element_types` for a `treating` clause to later consult
+(`src/codegen/statements.rs`, in `Statement::VarDecl`'s `Expr::ListLit`
+branch), and `element N of <literal>` (`src/codegen/print.rs`, in
+`Expr::ElementAccess`'s `Expr::ListLit` branch). Each fell through to a
+generic `_ => VarType::Unknown`/`None` default.
+
+The named-list case was a coincidence, not a working path: `Unknown` for a
+*named* list widens the loop variable to `Mixed`, which dispatches on the
+still-correct runtime tag — so a plain `print each` over a named list with
+a format-string element happened to print right. Attaching a `treating`
+clause wraps that same loop variable in `Expr::TreatingAs`, and the
+runtime-tag lookup (`mixed_element_tag_slot`/`expr_leaves_tag_in_r11`) only
+matches a bare `Identifier`/`StringLit`, not `TreatingAs` — so the accidental
+safety net doesn't reach through the wrapper, and it falls back to
+`infer_expr_type`, which reports `Mixed` (untyped) and prints as an integer.
+Once the named-list inference itself credits `FormatString → String`, the
+loop variable is typed `String` (not `Mixed`) and both the plain and
+`treating` spellings render correctly the same way — no `TreatingAs` unwrap
+was needed.
+
+For an inline literal, there is no named-list detour and no runtime-tag
+fallback to coincidentally save it: `Unknown` there was just wrong, and
+always rendered as `PRINT_INT`, regardless of position.
+
+Fixed by adding `Expr::FormatString => VarType::String` (or
+`Some(VarType::String)`) to all three matches — a format string always
+materializes text, as established by bug #17. Position is irrelevant to
+the fix: it types whichever element is first, format string or not, so a
+format string second (already correct) and a format string first (now
+fixed) go through the exact same arm.
+
+**Regression test:** nine `.vox`/`.expected` pairs under
+`tests/bugs_found_39_*` reproducing every row of the control table above.
+Proven to fail on the unfixed compiler (`git stash` the fix, rebuild, run)
+on exactly `bugs_found_39_literal_fmt_first`,
+`bugs_found_39_for_each_fmt_first`, and `bugs_found_39_named_treating` —
+each printed two raw addresses instead of `core`/`plain` (or `core`/
+`PLAIN`) — with the other six rows (`literal_fmt_second`,
+`escaped_braces_only`, `named_plain`, `named_treating_fmt_second`,
+`element_access`, `no_format_treating`) passing on both the unfixed and
+fixed compiler as controls.
 
 ---
