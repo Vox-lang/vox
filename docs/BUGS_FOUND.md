@@ -2274,3 +2274,64 @@ each printed two raw addresses instead of `core`/`plain` (or `core`/
 fixed compiler as controls.
 
 ---
+
+### 40. `Write` of any scalar to a file segfaults — number, float, and boolean alike
+
+**Status:** **open**, found 2026-08-20 while building vox-fuzz's stdin
+input generation — the generator needed to write bytes to a file and
+tried the obvious thing.
+
+```vox
+open a file for writing called out at "/tmp/f.txt".
+a number called n is 72.
+Write n to out.
+```
+→ **segfault (139)**
+
+Five lines, no dependencies, crashes every time.
+
+**Every operand type, tested — it is not specific to `number`:**
+
+| Written | Result |
+|---|---|
+| a `text` | ✓ writes the text |
+| a `buffer` | ✓ writes its bytes |
+| a format string `"{n}"` | ✓ writes the rendered number |
+| a **`number`** | ✗ **segfault (139)** |
+| a **`float`** | ✗ **segfault (139)** |
+| a **`boolean`** | ✗ **segfault (139)** |
+
+So the two pointer-backed types work and **all three scalars crash**,
+which points at `Write` dereferencing its operand as a pointer
+unconditionally: a text or buffer holds one, a scalar holds a value, and
+the value gets used as an address.
+
+**What the spec says.** LANGUAGE.md's file section documents `Write` for
+text and buffer sources; it does not say a number is permitted. So the
+defensible reading is that a number is simply not a valid `Write`
+operand.
+
+**That reading does not rescue this.** An unsupported operand should be
+a compile-time error naming the problem — which is exactly what the
+compiler does elsewhere, and generously: `append` rejects a number
+source with "Buffer append requires a buffer source or format/literal
+text", a clear diagnostic pointing at the fix. `Write` takes the same
+category of mistake and crashes the generated program at runtime
+instead.
+
+So this is a diagnostics defect at minimum and a codegen defect at
+worst: either reject it like `append` does, or define it and implement
+it. A segfault is the one outcome that cannot be correct.
+
+**Fix direction:** find `append`'s operand check in the analyzer — it
+already knows how to phrase this — and give `Write` the equivalent. If
+writing a number is meant to be supported, it needs to render like
+`"{n}"` does rather than dereferencing the value as a pointer, which
+the crash suggests is what happens now.
+
+**Note on how it was found:** by a human writing ordinary Vox, not by
+the fuzzer. The generator cannot currently reach this shape because it
+never writes to files — which is exactly the coverage plan 327 Part B is
+adding, and `Write` of a non-text operand is now worth adding to it.
+
+---
