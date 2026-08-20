@@ -1,0 +1,2 @@
+Loop collection must be a list: scores
+iterate `scores's keys` or `scores's values`

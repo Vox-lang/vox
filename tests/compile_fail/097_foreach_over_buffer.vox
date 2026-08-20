@@ -1,0 +1,9 @@
+(Bug #49: a buffer has a header of its own, so iterating it read that
+ header as a list's and walked the buffer's payload as elements - silently,
+ with no crash and no flag. Before the fix this compiled and printed
+ [6513249, 0, 0]: 6513249 is 0x636261, the bytes "abc" read as a qword.)
+
+a buffer called sink is "abc".
+a list called out is [].
+append each part from sink to out.
+print out.

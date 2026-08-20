@@ -1,0 +1,10 @@
+(Bug #50: LANGUAGE.md documents a bare `otherwise` clause on a `but if`
+ chain over any base action, but the chain-continuation guard only accepted
+ `but`, a comma and `and`, so `otherwise` after a `print` base was a parse
+ error - "Expected a statement, got Otherwise". The `but otherwise`
+ spelling always worked; both must, and both must pick the same branch.)
+
+a number called gauge is 8.
+print gauge, but if gauge is greater than 50 print "high", otherwise print "low".
+print gauge, but if gauge is greater than 50 print "high", but otherwise print "low".
+print gauge, but if gauge is greater than 5 print "high", otherwise print "low".

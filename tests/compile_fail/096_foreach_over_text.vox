@@ -1,0 +1,6 @@
+(Bug #49: text is not one of the supported collections, and iterating it
+ read the text pointer as a list header.)
+
+a text called word is "hello".
+For each letter in word,
+    print letter.

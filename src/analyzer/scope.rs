@@ -453,6 +453,110 @@ impl Analyzer {
         self.map_variables.contains(name)
     }
 
+    /// The English name of a `for each` collection's kind when the analyzer
+    /// can PROVE that kind cannot be walked as a list, `None` otherwise.
+    ///
+    /// A loop expansion lowers to a list-header read - codegen takes the
+    /// collection's value as a pointer and loads `[ptr + 8]` as the element
+    /// count. Hand it a number and the number itself is dereferenced
+    /// (segfault); hand it a map or a buffer and that object's own header is
+    /// misread as a list's, so the loop runs a garbage number of iterations
+    /// over garbage elements, silently (bug #49).
+    ///
+    /// This is deliberately a known-scalar rejection and NOT a
+    /// list-whitelist: Vox is dynamically typed and this pass cannot see the
+    /// shape of an untyped parameter, a `value`, a function result or a
+    /// property read, all of which iterate correctly today. Only a name this
+    /// pass has positively categorised as a scalar/map/buffer - or a literal
+    /// scalar written straight into the clause - is refused.
+    pub(crate) fn non_collection_kind(&self, collection: &Expr) -> Option<&'static str> {
+        match collection {
+            Expr::IntegerLit(_) => Some("number"),
+            Expr::FloatLit(_) => Some("float"),
+            Expr::BoolLit(_) => Some("boolean"),
+            // `For each x from/in <expr>` rewrites a quoted name into an
+            // `Identifier` while parsing, so a `StringLit` surviving to here
+            // is a real text literal from a loop-expansion clause
+            // (`print each part from "abc".`), never a variable reference.
+            Expr::StringLit(_) | Expr::FormatString { .. } => Some("text"),
+            // A map literal written straight into the clause is the same
+            // defect as a map variable: its header is not a list's.
+            Expr::MapLit { .. } => Some("map"),
+            Expr::Identifier(name) => {
+                // An undeclared name is already reported as an unknown
+                // variable; a second error about its kind would only be
+                // noise, and its kind is unknowable anyway.
+                if !self.is_variable_available(name) {
+                    return None;
+                }
+                if self.is_buffer_variable(name) {
+                    return Some("buffer");
+                }
+                if self.is_map_variable(name) {
+                    return Some("map");
+                }
+                // A list, or a name whose runtime shape is chosen elsewhere,
+                // keeps working untouched.
+                if self.is_list_variable(name) || self.value_typed_names.contains(name) {
+                    return None;
+                }
+                match self.scalar_types.get(name) {
+                    Some(Type::Integer) => Some("number"),
+                    Some(Type::Float) => Some("float"),
+                    Some(Type::Boolean) => Some("boolean"),
+                    Some(Type::String) => Some("text"),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Reject a `for each` collection `non_collection_kind` can prove is not
+    /// one, naming the kind and - for a map - the accessor that does work.
+    /// LANGUAGE.md's supported collections are a list, a range, and
+    /// `arguments's all`; a map is iterated through `'s keys` or `'s values`.
+    pub(crate) fn check_loop_collection(&mut self, variable: &str, collection: &Expr) {
+        let Some(kind) = self.non_collection_kind(collection) else {
+            return;
+        };
+        // `text` takes no article, exactly as `typed_phrase` spells it for
+        // the type-lock diagnostics.
+        let phrase = if kind == "text" {
+            "text".to_string()
+        } else {
+            format!("a {}", kind)
+        };
+        // A literal has no name to quote back, so the message names the kind
+        // that was written instead, and the error points at the loop variable
+        // - the one name on that line the source search can find.
+        let name = match collection {
+            Expr::Identifier(name) => Some(name.clone()),
+            _ => None,
+        };
+        let subject = name.clone().unwrap_or_else(|| phrase.clone());
+        let symbol = name.clone().unwrap_or_else(|| variable.to_string());
+        let hint = match (kind, &name) {
+            ("map", Some(name)) => format!(
+                "{} is a map - iterate `{}'s keys` or `{}'s values`",
+                subject, name, name
+            ),
+            ("map", None) => "a map is iterated through its `'s keys` or `'s values`".to_string(),
+            (_, Some(_)) => format!(
+                "{} is {} - `each ... from` walks a list, a range, or `arguments's all`",
+                subject, phrase
+            ),
+            // The message already named the literal's kind; repeating it
+            // here would say the same thing twice.
+            (_, None) => "`each ... from` walks a list, a range, or `arguments's all`".to_string(),
+        };
+        self.push_error_with_hint(
+            format!("Loop collection must be a list: {}", subject),
+            Some(&symbol),
+            Some(&hint),
+        );
+    }
+
     /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
     /// flag, or a unix timestamp) rather than a pointer or handle. Number
     /// and time properties read the raw slot, so applying them to a

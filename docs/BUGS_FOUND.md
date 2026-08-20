@@ -3052,3 +3052,160 @@ already carries exclusion machinery (a declaration line to avoid, a
 the three lines above.
 
 ---
+
+### 49. `For each` over a scalar segfaults; over a map or a buffer it silently iterates garbage
+
+**Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
+collections-b claim ledger discrepancies D3 + D4 — the mapper hand-ran
+every collection kind against LANGUAGE.md's supported-collections list and
+two of them were neither refused nor handled; adjudicated by the language
+lawyer as one compiler bug, **memory safety, certain**, before anything was
+filed.
+
+The whole program is two tokens long:
+
+```vox
+print each part from 4.          (segmentation fault, exit 139)
+```
+
+Deterministic across runs, and it is not the literal that matters:
+
+```vox
+a number called gauge is 4.
+print each part from gauge.      (segfault)
+
+For each part in gauge,          (segfault)
+    print part.
+
+a list called out is [].
+append each part from 4 to out.  (segfault)
+
+a text called word is "hello".
+print each part from word.       (segfault)
+```
+
+The quiet half is worse. Nothing crashes, nothing is flagged, and the
+answers are garbage:
+
+```vox
+a map called scores is {"a": 1, "b": 2, "c": 3}.
+print each entry from scores.    (prints 0, 0, 3)
+
+a buffer called sink is "abc".
+print each part from sink.       (prints 6513249, 0, 0)
+```
+
+`6513249` is `0x636261` — the bytes `abc` read as a qword.
+
+**What the spec says.** LANGUAGE.md's "Supported collections" list (2803–
+2806) names exactly three: a list, a range, and `arguments's all`. A
+number, a text, a buffer and a map are none of them, and the manual
+documents map iteration only through `'s keys` and `'s values`. There is no
+reading under which the segfault is correct — Vox's standing promise is
+that no program, however silly, violates memory safety.
+
+**Mechanism.** A `Statement::ForEach` got no collection-kind check at all.
+The analyzer arm (`src/analyzer/statements.rs`) only called
+`analyze_expr(collection)`, which checks that the name is *defined* and
+nothing about its shape. Codegen (`src/codegen/statements.rs`) then treats
+the collection's value as a list pointer and unconditionally emits `mov
+rax, [rax + 8]` to read the element count out of the list header. For a
+number that dereferences the number itself — address `4` — hence the
+crash. For a map or a buffer the pointer is real, so the load succeeds and
+reads whatever that object keeps at offset 8 as an element count: the
+3-entry map iterated 3 times, and the buffer's payload came back as an
+integer. The analyzer already rejects the neighbouring mistake — `element 1
+of <a number>` is a clean compile error from
+`analyzer/expressions.rs` — so the machinery existed and was simply never
+applied to the `each` clause.
+
+**Fix.** A new `non_collection_kind` predicate (`src/analyzer/scope.rs`)
+names the kind of a collection the analyzer can PROVE is not walkable, and
+the `ForEach` arm rejects it with `Loop collection must be a list: <name>`
+plus a hint — for a map, the hint names `'s keys` and `'s values`.
+
+It is deliberately a **known-scalar rejection, not a list whitelist**. Vox
+is dynamically typed and this pass cannot see the shape of an untyped
+parameter, a `value`, a function result or a property read, all of which
+iterate correctly today and all of which a whitelist would have broken. It
+refuses only a literal number/float/flag/text/map, or a name it has
+positively categorised as a number, float, flag, text, buffer or map.
+
+**Tests.** Compile-fail fixtures
+`tests/compile_fail/095_foreach_over_number.vox`,
+`096_foreach_over_text.vox`, `097_foreach_over_buffer.vox` and
+`098_foreach_over_map.vox` (the last pinning the `'s keys` hint), and the
+passing control `tests/355_foreach_supported_collections.vox`, which
+iterates a list two ways, an inline range, `arguments's all`, and an
+`append each ... to` sink.
+
+**Not closed by this fix:** a file and a timer are heap/handle kinds the
+same clause will still walk without complaint. They are outside the
+ledger's finding and outside this branch; the predicate has an obvious
+place to grow when someone maps them.
+
+---
+
+### 50. A bare `otherwise` is rejected after any base action except `append`
+
+**Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
+collections-b claim ledger discrepancy D2 — the mapper found the generator
+already carried a comment recording that bare `otherwise` "does not work
+after print" and had shaped its coverage around it; adjudicated by the
+language lawyer as a compiler bug, **high**, rather than a manual
+tightening.
+
+```vox
+a number called gauge is 8.
+print gauge, but if gauge is greater than 50 print "high", otherwise print "low".
+```
+```
+error: Expected a statement, got Otherwise
+```
+
+The three neighbouring spellings all compile and run:
+
+| sentence | result |
+|---|---|
+| `print gauge, but if … print "high", but otherwise print "low".` | `low` |
+| `append 1 to kept, but if … append 7, otherwise append 9.` | `[9]` |
+| `append 1 to kept, but if … append 7, but otherwise append 9.` | `[9]` |
+
+It was never print-specific — `increment n, otherwise increment n` failed
+identically. `append` was the outlier that worked.
+
+**What the spec says.** LANGUAGE.md:2960 ("An optional `otherwise` clause
+provides a final alternative") and :2966 ("`otherwise` provides a catch-all
+alternative") name the clause without qualification, in a section that
+states at :2937 that `but if` works "over any base action". :393 and :399
+document the bare clause again. The manual never spells it `but otherwise`.
+
+**Mechanism.** `parse_conditional_suffix`'s chain-continuation guard
+(`src/parser/control_flow.rs`) accepted only `Token::But | Token::Comma |
+Token::And` and broke out of the loop on anything else — including the
+`Otherwise` it was about to need. The branch parser reaches that guard by
+two different routes. Every non-`append` branch goes through `parse_block`,
+whose trailing-comma arm deliberately consumes the comma and stops **on**
+`Otherwise`, leaving the guard to see a token it did not accept. The terse
+`append` branch (`parse_terse_append_branch`) leaves the comma in place, so
+the guard saw a `Comma`, consumed it, and reached the `Else | Otherwise`
+arm that had been sitting there working all along. Hence one base action
+that worked and every other one that did not.
+
+**Fix.** `Token::Else | Token::Otherwise` join the guard. Because
+`parse_block` already ate the separator in that case, the loop body must
+not advance over the keyword as though it were one — a bare alternative is
+the clause keyword itself, not a separator standing in front of one — so
+the separator consume is now skipped when the loop is already sitting on
+`Else`/`Otherwise`. Widening the guard alone would have skipped the keyword
+and left the branch's own action current, trading the parse error for a
+wrong parse.
+
+**Tests.** `tests/356_bare_otherwise_after_print.vox` (both spellings, plus
+a chain whose condition holds, so the test says *which* branch ran),
+`tests/357_bare_otherwise_after_increment.vox` (each branch counting into
+its own tally), and the control
+`tests/358_bare_otherwise_after_append.vox`, which pins that the route that
+already worked still produces `[9, 9, 7]`.
+
+---

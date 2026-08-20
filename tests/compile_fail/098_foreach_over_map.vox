@@ -1,0 +1,6 @@
+(Bug #49: a map iterated directly ran its entry count of iterations over
+ garbage. A map is iterated through its keys or its values, which the
+ diagnostic's hint names.)
+
+a map called scores is {"a": 1, "b": 2, "c": 3}.
+print each entry from scores.

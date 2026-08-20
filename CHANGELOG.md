@@ -4,6 +4,41 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`For each` over a scalar, a map or a buffer is now a compile error
+  instead of a crash or garbage** ([#49](docs/BUGS_FOUND.md)) — `print
+  each part from 4.`, a two-token program, segfaulted; so did `For each
+  part in n,` and `append each part from 4 to out.` over a number or a
+  text. A map or a buffer instead iterated silently over nonsense (a
+  3-entry map ran 3 iterations printing `0, 0, 3`; the buffer `"abc"`
+  printed `6513249`, its own bytes read as a qword). The analyzer checked
+  only that the collection name was defined, and codegen unconditionally
+  read `[ptr + 8]` as a list header's element count — so a number was
+  dereferenced as an address and a map's or buffer's own header was
+  misread as a list's. LANGUAGE.md's supported collections are a list, a
+  range and `arguments's all`; the analyzer now refuses what it can prove
+  is none of them, suggesting `'s keys` or `'s values` for a map. It is a
+  known-scalar rejection, not a whitelist: an untyped parameter, a
+  `value`, a function result and a property read all keep iterating.
+  Found by the vox-fuzz collections-b claim ledger (discrepancies D3 and
+  D4) and adjudicated by the language lawyer as one memory-safety bug.
+
+- **A bare `otherwise` is accepted after any base action, not just
+  `append`** ([#50](docs/BUGS_FOUND.md)) — `print gauge, but if gauge is
+  greater than 50 print "high", otherwise print "low".` was rejected with
+  `Expected a statement, got Otherwise`, and `increment n, otherwise
+  increment n` failed identically, though LANGUAGE.md documents the bare
+  clause at :393, :399, :2960 and :2966 and says `but if` works over any
+  base action. The chain-continuation guard in `parse_conditional_suffix`
+  omitted `Else` and `Otherwise`; only the terse `append` branch left a
+  comma behind for the guard to consume, which is why that one spelling
+  worked. The guard now accepts both keywords and no longer consumes them
+  as separators. Found by the vox-fuzz collections-b claim ledger
+  (discrepancy D2) and adjudicated by the language lawyer.
+
 ## [0.4.8] - 2026-08-20
 
 ### Fixed

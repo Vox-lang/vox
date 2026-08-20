@@ -1,0 +1,9 @@
+(The control for bug #50: `append`'s terse branch reached the
+ `otherwise` arm by its own route and already accepted both spellings.
+ Widening the guard must not change what it does.)
+
+a list called kept is [].
+append 1 to kept, but if 3 is greater than 50 append 7, otherwise append 9.
+append 1 to kept, but if 3 is greater than 50 append 7, but otherwise append 9.
+append 1 to kept, but if 3 is greater than 2 append 7, otherwise append 9.
+print kept.
