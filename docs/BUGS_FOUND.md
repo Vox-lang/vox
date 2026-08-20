@@ -2412,3 +2412,68 @@ from *writing an ordinary program in Vox*, not from fuzzing — the third
 such find today, after #40 and the format-string bugs.
 
 ---
+
+### 42. A buffer declared with a byte count reports `Text (dynamic)` from its `type` property
+
+**Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
+buffer claim ledger — the mapper hand-ran every property in the manual's
+table and this one disagreed; adjudicated by the language lawyer as a
+compiler bug before anything was filed.
+
+```vox
+a number called n is 3.
+a buffer called buf1 is 16 bytes in size.
+a buffer called buf2 is "seed".
+Create a buffer called buf3 with size 16.
+a buffer called buf4 is 16 bytes.
+a buffer called buf5.
+print n's type.      (Number (static))
+print buf1's type.   (Text (dynamic)   — wrong)
+print buf2's type.   (Buffer (static)  — right)
+print buf3's type.   (Text (dynamic)   — wrong)
+print buf4's type.   (Text (dynamic)   — wrong)
+print buf5's type.   (Text (dynamic)   — wrong)
+```
+
+Repo build and installed 0.4.7 agree. Only the string-initialised form is
+right; every sized spelling and the bare dynamic form are wrong, and they
+are wrong in the *same* way, which is the tell.
+
+**What the spec says.** LANGUAGE.md's `type` table: "Declared type name
+plus `(static)` or `(dynamic)`", and the paragraph under it lists
+`buffer` by name among the statically-typed kinds that "report their type
+with `(static)` because the compiler knows the type from the
+declaration". The manual then recommends the `is a <type>` predicate over
+comparing the display string — but `If buf1 is a buffer then` is rejected
+by the parser ("Expected a type noun (number, text, decimal, boolean,
+list, or map) after 'is a'"), so for buffers the display string was the
+only type test there was, and it lied.
+
+**The strongest reading in the compiler's favour** — buffers are
+heap-backed string-like objects, so `Text (dynamic)` is "honest about the
+runtime tag" — fails on three counts: the table says *declared* type;
+the paragraph names `buffer` explicitly; and the compiler gives two
+different answers for two spellings of one declaration.
+
+**Mechanism.** `emit_type_property` (`src/codegen/expr.rs`) keys off
+`declared_types`. Every sized and dynamic spelling routes through
+`Statement::BufferDecl` (`src/codegen/statements.rs`), which registered
+the variable's runtime kind in `variable_types` but never inserted into
+`declared_types`; the lookup missed, control fell through to the
+runtime-tag dispatch, and a buffer pointer reads as a string tag. `is
+"seed"` takes the `VarDecl` path, which already inserts — hence right.
+
+**Fix.** `BufferDecl` now registers `Type::Buffer` in `declared_types`,
+so all five spellings print `Buffer (static)`. The same omission on
+`Get the current time into` is closed alongside it — a `time` now
+reports `Time (static)`, as the :3202 table lists it. Regression test
+`tests/buffer_type_property.vox` covers the five spellings, the
+string-initialised control, and a `value` holding text (which must stay
+`Text (dynamic)`).
+
+**Still open from the same probe, for a human to decide:** there is no
+correct buffer type *test* at all — `is a buffer` does not parse — so the
+manual's own advice at :3208 cannot be followed for buffers. Either the
+predicate grows a `buffer` noun or the manual stops recommending it here.
+
+---

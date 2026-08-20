@@ -1570,6 +1570,16 @@ impl CodeGenerator {
                     self.stack_offset
                 };
                 self.variable_types.insert(name.clone(), VarType::Buffer);
+                // Register the declared type so the `type` property reports
+                // `Buffer (static)` (LANGUAGE.md:3202), not the runtime tag.
+                // Every buffer spelling routes here — `is N bytes`, `with/of
+                // size N`, and the bare dynamic form — so this one insert
+                // covers them all; only `is "seed"` (an initializer) takes the
+                // VarDecl path, which already inserts. Without this the lookup
+                // in `emit_type_property` misses, control falls through to the
+                // runtime-tag dispatch, and the buffer pointer reads as a
+                // string tag and prints `Text (dynamic)` (bug #42).
+                self.declared_types.insert(name.clone(), Type::Buffer);
 
                 // Check if size is specified (non-zero)
                 let is_sized = match size {
@@ -2740,6 +2750,14 @@ impl CodeGenerator {
                 // Get current unix time and store in variable
                 let offset = self.alloc_var(into);
                 self.variable_types.insert(into.clone(), VarType::Integer);
+                // LANGUAGE.md:4005 calls this "a `time` value" and the :3202
+                // table lists `time` among the statically-typed kinds, so the
+                // `type` property must report `Time (static)`. The slot stores
+                // a raw integer, but the declared type is what `type` reads
+                // (same shape as the BufferDecl fix, bug #42/#43); without
+                // this insert the lookup misses and the runtime tag reads as
+                // `Number (dynamic)`.
+                self.declared_types.insert(into.clone(), Type::Time);
                 self.emit_indent(&format!("; Get current time into: {}", into));
                 self.emit_indent("TIME_GET");
                 self.emit_indent(&format!("mov [rbp - {}], rax", offset));
