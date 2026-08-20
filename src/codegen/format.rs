@@ -251,6 +251,49 @@ impl CodeGenerator {
             return;
         }
         
+        // A width must never change what a value IS (docs/BUGS_FOUND.md #36).
+        //
+        // The integer paths further down reinterpret rdi as a signed 64-bit
+        // integer, which is right for a `number` and catastrophic for anything
+        // else: a `float` printed its raw IEEE-754 bits, and a `text` printed
+        // the string's ADDRESS - silent wrong data, and an information leak in
+        // the text case. This dispatch used to be gated on `fmt.width.is_none()`,
+        // so writing a width skipped the type check entirely, precisely when
+        // the compiler knows the type best.
+        //
+        // Non-integer types are therefore rendered by type whether or not a
+        // width was given. The width itself is not yet APPLIED to them - there
+        // is no string/float padding primitive in coreasm, only the integer and
+        // hex ones - so a width on a float or text is currently ignored rather
+        // than honoured. That matches what the runtime-tagged `value` path
+        // already does, so both paths now agree, and it turns the worst class
+        // of defect (a wrong value) into the mildest (a cosmetic gap).
+        if matches!(fmt.base, IntegerBase::Decimal) {
+            match value_type {
+                Some(VarType::Float) => {
+                    self.emit_indent("movq xmm0, rdi");
+                    self.emit_indent("PRINT_FLOAT");
+                    self.uses_floats = true;
+                    return;
+                }
+                Some(VarType::String) => {
+                    self.emit_indent("PRINT_CSTR rdi");
+                    return;
+                }
+                Some(VarType::Buffer) if fmt.width.is_some() => {
+                    // With a spec present, print.rs has already advanced rdi to
+                    // the buffer's DATA area, so the struct-pointer macro
+                    // PRINT_BUF would read the header as bytes. The data area is
+                    // NUL-terminated, so print it as a C string. The no-width
+                    // case below still receives the struct pointer and still
+                    // uses PRINT_BUF - the two callers differ, deliberately.
+                    self.emit_indent("PRINT_CSTR rdi");
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // If no specific format (default case), handle by type
         if fmt.width.is_none() && matches!(fmt.base, IntegerBase::Decimal) {
             match value_type {

@@ -34,7 +34,11 @@ pub struct CodeGenerator {
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
-    file_writable: HashMap<String, bool>,
+    // The single source of truth for a file handle's open mode. `readable`
+    // and `writable` are both derived from this at the point they are read,
+    // instead of one being derived (writable) and the other left as a
+    // constant true (readable) - see bug #37.
+    file_mode: HashMap<String, FileMode>,
     // Per-function partitions of `mixed_lists`/`unprovable_scalars`, keyed by
     // the function's assembly label. The pre-scan walks each function body on
     // a SNAPSHOT of the global env so a function's own locals never leak into
@@ -371,7 +375,7 @@ impl CodeGenerator {
             mixed_lists: std::collections::HashSet::new(),
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
-            file_writable: HashMap::new(),
+            file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
             local_unprovable_scalars: HashMap::new(),
             local_names: HashMap::new(),

@@ -8,6 +8,15 @@
 ; included after float.asm, so this define is visible.
 %define __FLOAT_ASM_INCLUDED__
 
+; 2^63 exactly, as an f64 bit pattern. The dividing line above which
+; cvttsd2si's truncating float-to-int64 conversion saturates instead of
+; truncating (docs/BUGS_FOUND.md #34) - _print_float and
+; _buffer_append_float compare a value's magnitude against this before
+; deciding which integer-part routine to use.
+section .data
+align 8
+_float_int64_boundary: dq 9223372036854775808.0
+
 section .text
 
 ; Float arithmetic - operates on xmm0 and xmm1, result in xmm0
@@ -178,7 +187,9 @@ section .text
 _print_float:
     push rbp
     mov rbp, rsp
-    sub rsp, 80
+    sub rsp, 512               ; extra room below rbp-112 for the exact
+                                ; large-magnitude digit buffer (see
+                                ; _pf_not_neg below)
     push rbx
     push r12
     push r13
@@ -209,10 +220,50 @@ _print_float:
     movsd [rbp-8], xmm0
     
 _pf_not_neg:
+    movsd xmm0, [rbp-8]
+
+    ; A magnitude at or beyond 2^63 makes cvttsd2si's float-to-int64
+    ; truncation saturate to the "integer indefinite" value instead of
+    ; truncating - the origin of the 9223372036854775808.372036854775808
+    ; saturation bug (docs/BUGS_FOUND.md #34). 2^63 is already far past
+    ; 2^52, the point beyond which a double's 52-bit mantissa has no
+    ; room left for a fractional bit, so nothing in this range has a
+    ; fraction to print - only an exact integer, produced by
+    ; _float_big_int_digits instead of cvttsd2si.
+    movsd xmm1, [rel _float_int64_boundary]
+    ucomisd xmm0, xmm1
+    jb _pf_normal_range
+
+    movq rdi, xmm0
+    lea rsi, [rbp-112]         ; end (exclusive) of the 400-byte scratch
+                                ; buffer at [rbp-512 .. rbp-112]
+    call _float_big_int_digits ; rax = digit ptr, rdx = digit count
+    mov rsi, rax
+    mov rax, 1
+    mov rdi, 1
+    syscall
+
+    mov byte [rbp-48], '.'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [rbp-48]
+    mov rdx, 1
+    syscall
+
+    mov byte [rbp-48], '0'
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [rbp-48]
+    mov rdx, 1
+    syscall
+
+    jmp _pf_done
+
+_pf_normal_range:
     ; Get integer part
     movsd xmm0, [rbp-8]
     cvttsd2si r12, xmm0       ; r12 = integer part
-    
+
     ; Print integer part
     mov rax, r12
     lea rdi, [rbp-32]         ; buffer for digits (use middle of buffer)
@@ -313,7 +364,8 @@ _pf_print_frac:
     mov rax, 1
     mov rdi, 1
     syscall
-    
+
+_pf_done:
     pop r15
     pop r14
     pop r13
@@ -578,7 +630,9 @@ global _buffer_append_float
 _buffer_append_float:
     push rbp
     mov rbp, rsp
-    sub rsp, 128
+    sub rsp, 528               ; extra room below rbp-128 for the exact
+                                ; large-magnitude digit buffer (see
+                                ; .baf_not_neg below)
     push rbx
     push r12
     push r13
@@ -605,6 +659,42 @@ _buffer_append_float:
     xorpd xmm0, xmm1
 
 .baf_not_neg:
+    ; A magnitude at or beyond 2^63 makes cvttsd2si's float-to-int64
+    ; truncation saturate instead of truncating - see _print_float's
+    ; identical check for the full explanation (docs/BUGS_FOUND.md #34).
+    movsd xmm1, [rel _float_int64_boundary]
+    ucomisd xmm0, xmm1
+    jb .baf_normal_range
+
+    movq rdi, xmm0
+    lea rsi, [rbp-128]         ; end (exclusive) of the 400-byte scratch
+                                ; buffer at [rbp-528 .. rbp-128]
+    call _float_big_int_digits ; rax = digit ptr, rdx = digit count
+    mov r14, rax
+    mov r15, rdx
+    mov rdi, r12
+    mov rsi, r14
+    mov rdx, r15
+    call _buffer_append_bytes
+    mov r12, rax
+
+    mov byte [rbp-1], '.'
+    lea rsi, [rbp-1]
+    mov rdi, r12
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+
+    mov byte [rbp-1], '0'
+    lea rsi, [rbp-1]
+    mov rdi, r12
+    mov rdx, 1
+    call _buffer_append_bytes
+    mov r12, rax
+
+    jmp .baf_done
+
+.baf_normal_range:
     ; Append the integer part.
     cvttsd2si r13, xmm0
     mov rax, r13
@@ -712,4 +802,120 @@ _buffer_append_float:
     pop rbx
     mov rsp, rbp
     pop rbp
+    ret
+
+; Produce the exact decimal digits of a double whose magnitude is at or
+; beyond 2^63 (docs/BUGS_FOUND.md #34). Above 2^63 there is no room left
+; in a 52-bit mantissa for a fractional bit, so the value is exactly
+; mantissa * 2^k for some k >= 11 - an exact integer. cvttsd2si cannot be
+; used to get at it (it saturates past 2^63, the original bug), so this
+; extracts the raw 53-bit mantissa and exponent instead and produces the
+; exact decimal string by schoolbook binary-to-decimal: write the
+; mantissa's decimal digits, then double the decimal digit array k
+; times. Doubling a decimal string is exact - no floating point is
+; involved past reading the raw bits - so this reproduces the double's
+; true value digit for digit, with no saturation and no rounding.
+;
+; Args: rdi = raw f64 bits (sign bit must already be 0; callers print
+;             any minus sign themselves, same as the cvttsd2si path).
+;       rsi = pointer to one-past-the-end of a caller-owned scratch
+;             buffer of at least 400 bytes (comfortably covers the
+;             longest possible double magnitude, ~309 decimal digits,
+;             since k maxes out at 971 for the largest finite double).
+; Returns: rax = pointer to the first digit, rdx = digit count. Digits
+;          are written into the caller's buffer, growing downward from
+;          rsi. Every register this routine touches is restored before
+;          return, so callers keep whatever they had in rbx/rcx/r8-r12
+;          across the call.
+global _float_big_int_digits
+_float_big_int_digits:
+    push rbx
+    push rcx
+    push rsi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+
+    mov r10, rsi                   ; end (exclusive), fixed for this call
+
+    mov r8, rdi
+    shr r8, 52
+    and r8, 0x7FF                  ; r8 = biased exponent
+
+    mov r9, rdi
+    mov rax, 0xFFFFFFFFFFFFF
+    and r9, rax                    ; r9 = 52-bit fraction bits
+    mov rax, 1
+    shl rax, 52
+    or r9, rax                     ; r9 = 53-bit mantissa (implicit bit set)
+
+    mov rcx, r8
+    sub rcx, 1023
+    sub rcx, 52                    ; rcx = k, doublings needed (>= 11 here,
+                                    ; since the caller only calls this for
+                                    ; magnitudes at or beyond 2^63)
+
+    ; Write the mantissa's decimal digits right-aligned at the buffer end.
+    mov rdi, r10
+    mov rax, r9
+.init_loop:
+    xor rdx, rdx
+    mov rbx, 10
+    div rbx
+    add dl, '0'
+    dec rdi
+    mov [rdi], dl
+    test rax, rax
+    jnz .init_loop
+    mov r11, rdi                   ; r11 = start (leftmost digit so far)
+
+    test rcx, rcx
+    jz .done
+
+.double_loop:
+    lea rsi, [r10 - 1]              ; least-significant digit position
+    xor r12, r12                    ; carry
+.double_digit:
+    movzx rax, byte [rsi]
+    sub rax, '0'
+    add rax, rax                    ; * 2
+    add rax, r12
+    xor r12, r12
+    cmp rax, 10
+    jl .no_carry
+    sub rax, 10
+    mov r12, 1                      ; doubling a decimal digit (0-9) plus
+                                     ; a carry of 0 or 1 never exceeds 19,
+                                     ; so the carry out is always 0 or 1
+.no_carry:
+    add al, '0'
+    mov [rsi], al
+    cmp rsi, r11
+    je .digit_pass_done
+    dec rsi
+    jmp .double_digit
+.digit_pass_done:
+    test r12, r12
+    jz .no_new_digit
+    dec r11
+    mov byte [r11], '1'
+.no_new_digit:
+    dec rcx
+    jnz .double_loop
+
+.done:
+    mov rax, r11
+    mov rdx, r10
+    sub rdx, r11                    ; digit count
+
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rcx
+    pop rbx
     ret

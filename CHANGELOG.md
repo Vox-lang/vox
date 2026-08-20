@@ -4,6 +4,121 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A float at or beyond 2^63 no longer saturates when printed**
+  ([#34](docs/BUGS_FOUND.md)) — `Print`, `"{x}"` interpolation, and
+  `x as text` all printed `9223372036854775808.372036854775808` for
+  *every* value at or past 2^63 (10000000000000000000.0 included),
+  because the formatter's integer part went through `cvttsd2si`, which
+  saturates to `i64::MIN`'s bit pattern past `i64::MAX` — the trailing
+  digits were the fractional part of that same wrong, constant value,
+  which is why they never changed. The stored double was always
+  correct; only the print path was wrong. 2^63 is already far past
+  2^52, the point beyond which a double's 52-bit mantissa has no room
+  left for a fractional bit, so every affected value is an exact
+  integer — `_print_float` and `_buffer_append_float` now detect the
+  magnitude and, for that range only, extract the raw mantissa and
+  exponent and produce the exact decimal digits by schoolbook
+  binary-to-decimal (double the mantissa's decimal digit string once
+  per bit of exponent past 52), which is exact because no floating
+  point is involved past reading the bits. Values below 2^63 are
+  untouched and still use the original, already-correct path.
+  Deliberately **not** fixed in this pass: a nonzero float below the
+  formatter's fixed 15-digit fractional precision still prints `0.0` —
+  a lost-precision problem in a different part of the same routine, not
+  a saturation, tracked as still-open in the register entry. Regression
+  test proven to fail on the unfixed compiler on exactly the
+  large-magnitude rows, with the sub-2^63, division-derived, and
+  IEEE-754-rounding rows kept as controls that pass on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #34.
+- **`as a number` no longer wraps silently past i64's range**
+  ([#35](docs/BUGS_FOUND.md)) — `"9223372036854775808" as a number` (one
+  past `i64::MAX`) returned `-9223372036854775808` with the error flag
+  never set, so `On error` could not catch it and the wrapped value was
+  indistinguishable from a real one; applied to every base
+  (`"ffffffffffffffffff" as a hex number` gave `-1`). Every digit in
+  these inputs is valid for its base, so the documented "stops at the
+  first invalid character" rule never engaged — the whole string parsed
+  and the accumulator wrapped. `_parse_i64`, `_parse_int_radix`, and
+  their length-bounded buffer variants in `coreasm/x86_64/int.asm` now
+  accumulate the magnitude with an unsigned `mul` (which reports a
+  truncated product instead of silently wrapping) and range-check the
+  result against the sign at the end: a positive numeral must fit under
+  `i64::MAX`, a negative one may reach `i64::MIN`'s magnitude (`2^63`) —
+  the two are different bounds, so a naive "digits > i64::MAX" check
+  would have wrongly flagged legitimate `i64::MIN` input, which is kept
+  as a control. Either check failing sets the same error flag `On error`
+  already reads for a wholly-invalid string. The returned value on
+  overflow is not defined (0 or a wrapped magnitude); the flag is the
+  fix. Regression test proven to fail on the unfixed compiler on exactly
+  the three overflow cases, with `i64::MAX`, `i64::MIN`, a valid hex
+  value, and the pre-existing `"abc" as a base5 number` raise kept as
+  controls that pass unchanged on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #35.
+
+- **A width specifier no longer changes what a value is**
+  ([#36](docs/BUGS_FOUND.md)) — `"{f:06}"` on a float printed its raw
+  IEEE-754 bit pattern (`4615063718147915776` for 3.5), and on a `text`
+  printed the string's **address** — silent wrong data and an
+  information leak, proven by two same-content texts printing different
+  numbers. The type-aware dispatch in `emit_formatted_value` was gated
+  on there being *no* width, so writing one skipped the type check
+  precisely when the compiler knew the type best. Non-integer types are
+  now rendered by type whether or not a width is present. The width is
+  not yet *applied* to floats/texts — coreasm has padding primitives
+  only for integers and hex — so a width there is ignored rather than
+  honoured, matching the runtime-tagged `value` path; that cosmetic
+  residue is recorded in the register. Regression test proven to fail
+  on the unfixed compiler on exactly the float/text/buffer rows, with
+  integer and boolean width rows kept as controls that pass on both
+  sides. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #36.
+
+- **A file's `readable` property now reflects its actual open mode**
+  ([#37](docs/BUGS_FOUND.md)) — `readable` tested `fd >= 0`, which is
+  true for any successfully opened handle, so a file opened `for
+  writing` or `for appending` still reported `readable` as `1`. The
+  obvious defensive idiom, `If f's readable then,` before a read, passed
+  on a write-only handle and the read that followed failed at the OS
+  level. `writable` already derived its answer correctly from the
+  handle's recorded open mode; `readable` now shares that same source of
+  truth instead of being a constant. Regression test opens one file for
+  writing, appending, and reading in turn and checks `readable`,
+  `writable`, and `permissions` in each mode; proven to fail on the
+  unfixed compiler on exactly the writing/appending `readable` rows,
+  with the `writable` rows and the constant `permissions` value kept as
+  controls. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #37.
+
+- **A format string in a collection prints as text at every position, not
+  just the second** ([#39](docs/BUGS_FOUND.md)) — `["{base}", "plain"]`
+  printed two raw pointers (a heap address that moved under ASLR between
+  runs, plus a stable rodata address) instead of `core`/`plain`; moving the
+  format string to the second slot made both elements print correctly,
+  which was the tell that this was a static element-type inference bug,
+  not a runtime-tag bug — a named list under a plain `print each` already
+  worked, but attaching a `treating` clause to that *same* list broke it
+  again. `Expr::FormatString` had no arm in the three places that classify
+  a list's element type from its literal shape — the `for each`/`print
+  each` inline-literal inference, the named-list-declaration inference
+  that feeds `treating`, and `element N of <literal>` — so each fell
+  through to its generic default (`Unknown`, which for a literal is not
+  the same safe fallback `Unknown` is for a named list, since a named
+  list's `Unknown` widens to `Mixed` and dispatches on the still-correct
+  runtime tag, while a literal's `Unknown` fed nothing and defaulted to
+  `PRINT_INT`). Bug #17 fixed this same missing arm in the two functions
+  that back append and general expression typing; these three siblings
+  were never given it. Fixed by adding `Expr::FormatString => VarType::
+  String`/`Some(VarType::String)` to all three. Regression test covers all
+  nine control rows (first vs. second position in an inline literal, a
+  named list with and without `treating`, `element N of`, a plain `For
+  each`, escaped-braces-only, and a no-format-string `treating` list);
+  proven to fail on the unfixed compiler on exactly the format-first
+  inline-literal, `For each`-over-literal, and named-list-with-`treating`
+  rows, with the rest passing on both sides as controls. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #39.
+
 ## [0.4.6] - 2026-08-20
 
 ### Fixed

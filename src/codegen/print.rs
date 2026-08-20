@@ -283,6 +283,10 @@ impl CodeGenerator {
                             Expr::IntegerLit(_) => Some(VarType::Integer),
                             Expr::FloatLit(_) => Some(VarType::Float),
                             Expr::StringLit(_) => Some(VarType::String),
+                            // A format string always materializes text
+                            // (bug #17); `element N of <literal>` on a list
+                            // literal never carried that arm (bug #39).
+                            Expr::FormatString { .. } => Some(VarType::String),
                             Expr::BoolLit(_) => Some(VarType::Boolean),
                             Expr::ListLit { .. } => Some(VarType::List),
                             Expr::MapLit { .. } => Some(VarType::Map),

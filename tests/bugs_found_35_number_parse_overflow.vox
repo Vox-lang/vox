@@ -1,0 +1,45 @@
+(Bug #35 - "as a number" wrapped silently past i64's range: a positive
+ numeral one past i64::MAX came back as i64::MIN, with the error flag
+ never set, so `On error` could not catch it and the wrapped value was
+ indistinguishable from a real one. Every digit involved is valid for
+ its base, so the documented "stops at the first invalid character"
+ rule never applied - the accumulator just wrapped in silence.
+
+ i64::MAX and i64::MIN are the controls that pin the exact boundary: both
+ must still parse correctly and raise nothing, on both sides of the fix.
+ i64::MIN in particular is the trap a naive fix falls into - its digit
+ string is "9223372036854775808", the exact value that overflows as a
+ POSITIVE numeral, so a fix that only checks "digits > i64::MAX" would
+ wrongly flag legitimate i64::MIN input as an error. The base5 "abc"
+ control is the pre-existing zero-digits-parsed raise, proving this fix
+ didn't touch that unrelated path.)
+A text called maxstr is "9223372036854775807".
+A number called maxn is maxstr as a number.
+Print maxn.
+On error print "max raised (control failed)".
+
+A text called minstr is "-9223372036854775808".
+A number called minn is minstr as a number.
+Print minn.
+On error print "min raised (control failed)".
+
+A text called overstr is "9223372036854775808".
+A number called overn is overstr as a number.
+On error print "decimal overflow raised".
+
+A text called bigstr is "99999999999999999999".
+A number called bign is bigstr as a number.
+On error print "long decimal overflow raised".
+
+A text called hexstr is "ffffffffffffffffff".
+A number called hexn is hexstr as a hex number.
+On error print "hex overflow raised".
+
+A text called hexokstr is "ff".
+A number called hexokn is hexokstr as a hex number.
+Print hexokn.
+On error print "hexok raised (control failed)".
+
+A text called badstr is "abc".
+A number called badn is badstr as a base5 number.
+On error print "base5 abc raised (unaffected pre-existing behaviour)".

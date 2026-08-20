@@ -1,0 +1,20 @@
+A literal 1st:
+core
+plain
+B literal 2nd:
+plain
+core
+C named plain:
+core
+plain
+D named treating:
+core
+plain
+E element 1:
+core
+F escaped only:
+{lit}
+plain
+G no format:
+alpha
+beta

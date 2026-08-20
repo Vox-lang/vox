@@ -1777,3 +1777,500 @@ rewrite) keeps finding defects on the documented path nothing had
 exercised.
 
 ---
+
+### 34. A float outside ±2^63 prints as `9223372036854775808.372036854775808`, and one below ~1e-8 prints as `0.0`
+
+**Status:** **fixed on `main` (Unreleased)** — the large-magnitude half
+only: a float at or beyond 2^63 now prints its own exact decimal digits
+instead of the saturated `9223372036854775808...` constant. This was
+the wrong-DATA half of the bug. The small-magnitude half (a nonzero
+value below the formatter's fixed 15-digit fractional precision still
+prints `0.0`) is **not fixed** — it is a lost-precision problem in a
+different part of the same routine, not a saturation, and needs a
+variable-precision fractional path rather than the fixed-point exact
+technique that fixed the large end; see the note after "Fix direction"
+below. **Regression test:**
+`tests/bugs_found_34_float_magnitude.vox` — proven to fail on the
+unfixed compiler on exactly the large-magnitude rows (`over`, `negover`,
+`atboundary`, and the same values through `"{x}"` interpolation and
+`x as text`), with `belowboundary`, `one18`, `half`, and the IEEE-
+rounding control (`roundctrl`) kept passing on both sides of the fix.
+Found 2026-08-20 against released v0.4.6. Found
+while probing which literal magnitudes are legal before teaching
+vox-fuzz to emit aggressive ones (Josj: *"I wanna see
+1243626351836374761.1224435542121323 ... I wanna make the compiler AND
+the runtime cry"*). The first extreme value tried reproduced it.
+
+```vox
+a float called over is 10000000000000000000.0.
+Print over.                      (9223372036854775808.372036854775808)
+a float called half is over divide 2.0.
+Print half.                      (5000000000000000000.0 - CORRECT)
+```
+
+**The stored value is correct; only the output path is wrong.** That is
+what `half` proves: dividing the "broken" value by two yields exactly
+5e18, so `over` really does hold 1e19. The defect is in float
+formatting, not in the lexer, the parser, or arithmetic.
+
+**It is not the literal.** `1000000000000000000.0 multiply 10.0`,
+computed at runtime with no large literal anywhere in the source,
+prints the same string.
+
+**All three output paths share it** — `Print x`, `"{x}"` interpolation,
+and `x as text` — which is expected if they funnel into one formatter.
+
+| Value | Printed | Correct |
+|---|---|---|
+| `1000000000000000000.0` (1e18) | `1000000000000000000.0` | ✓ |
+| `10000000000000000000.0` (1e19) | `9223372036854775808.372036854775808` | ✗ |
+| `1e19 divide 2.0` (5e18) | `5000000000000000000.0` | ✓ |
+| `0.0 subtract 1e19` | `-9223372036854775808.372036854775808` | ✗ |
+| `0.1`, `0.0000001` | correct | ✓ |
+| `0.000000000000000000001` (1e-21) | `0.0` | ✗ (see below) |
+
+**The magic number is the tell.** 9223372036854775808 is exactly 2^63 —
+`i64::MAX + 1`. The formatter converts the double's integer part
+through a signed 64-bit integer, which saturates for any magnitude at
+or beyond 2^63; the trailing `.372036854775808` is the fractional
+remainder computed from the already-saturated value, which is why the
+same digits appear after the point for every input.
+
+**Second face, same formatter: small magnitudes vanish.** `1e-21`
+prints `0.0` — but the value is not zero, as `is positive` confirms
+(true for every exponent tested down to 1e-23). The formatter appears
+to emit a fixed number of decimal places rather than choosing a
+representation, so anything below its precision floor renders as `0.0`.
+Lossy and silent, the same shape of defect as the high end.
+
+LANGUAGE.md documents `float` as a 64-bit IEEE 754 double, whose range
+is roughly ±1.8e308 with subnormals to ~5e-324. Both 1e19 and 1e-21 are
+comfortably inside that and 1e19 is *exactly* representable, so this is
+the implementation failing the documented type, not a limit of it.
+
+**Fix direction:** find the float→text routine (shared by `Print`,
+interpolation, and `as text`) and stop routing the integer part through
+an i64. Print the double's own decimal representation — shortest
+round-trip formatting if practical, otherwise at minimum a path that
+does not saturate and does not silently flush small values to zero.
+Regression tests must cover both ends and keep the correct rows above
+as controls.
+
+**What actually shipped, and what did not.** Only the large end was
+fixed. At or beyond 2^63 the double is already far past 2^52, the point
+beyond which a 52-bit mantissa has no room left for a fractional bit —
+so every such value is an exact integer, computable from the raw
+mantissa and exponent bits by schoolbook binary-to-decimal (write the
+mantissa's decimal digits, then double the decimal digit array once per
+bit of exponent past 52). That is exact — no floating point is involved
+past reading the bits — and it only had to replace the one saturating
+`cvttsd2si` used for magnitudes cvttsd2si can no longer represent; values
+below 2^63 are untouched and still go through the original, already-
+correct path. The small end is a different shape of problem: it is not
+that a conversion saturates, it's that the fractional part is generated
+at a fixed 15 decimal digits (`* 10^15`, `roundsd`), so any value whose
+first significant digit falls past that point rounds to zero. Fixing it
+needs the formatter to pick its fractional precision from the value's
+own binary exponent (mirroring the large-end technique's mantissa/2^k
+extraction, but multiplying by 5 instead of 2 and placing the decimal
+point on the left) rather than swap one conversion instruction, and was
+judged out of scope for this pass. It is filed as an open follow-up, not
+closed by this entry.
+
+**Note on scope:** correct IEEE rounding is NOT this bug.
+`1243626351836374761.1224435542121323` printing as
+`1243626351836374784.0` is a double holding what a double can hold, and
+must stay passing.
+
+---
+
+### 35. `as a number` wraps silently on overflow — a positive numeral parses to a negative number
+
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 against
+released v0.4.6, while probing the base-conversion surface before
+teaching vox-fuzz to emit it — a surface no test and no example had
+ever exercised. **Regression test:**
+`tests/bugs_found_35_number_parse_overflow.vox` — proven to fail
+unfixed (the three overflow-raise lines are silently missing from the
+output), with i64::MAX, i64::MIN, a valid hex value, and the pre-existing
+`"abc" as a base5 number` raise kept as controls that pass unchanged on
+both sides of the fix.
+
+```vox
+a number called n is "9223372036854775808" as a number.
+On error print "raised".      (never prints)
+Print n.                       (-9223372036854775808)
+```
+
+**The boundary is exact, and the wrap is silent:**
+
+| Input | Result | |
+|---|---|---|
+| `"9223372036854775807"` (i64::MAX) | `9223372036854775807` | ✓ correct |
+| `"9223372036854775808"` (MAX+1) | `-9223372036854775808` | ✗ wraps to i64::MIN |
+| `"99999999999999999999"` | `7766279631452241919` | ✗ arbitrary |
+| `"ffffffffffffffffff"` as a hex number | `-1` | ✗ |
+
+Every digit in these inputs is valid for its base, so the documented
+"stops at the first character invalid for that base" rule does not
+apply — parsing consumes the whole string and the accumulator wraps.
+
+**Why this is worse than a wrong number.** The error flag is never
+set, so `On error` cannot catch it, and the result is
+indistinguishable from a real value: a program asking `is negative`
+about a user-supplied numeral gets `true` for an input that was
+positive. Compare the neighbouring cases, which the language *does*
+signal: `"abc" as a base5 number` returns 0 **and raises**. So the
+implementation already has a way to say "that did not parse" — it
+simply is not used for the one malformed input that produces a
+plausible-looking answer.
+
+LANGUAGE.md §"Text to number" documents the invalid-character rule and
+the supported bases but says nothing about magnitude, so there is no
+documented licence for wraparound. `number` is a 64-bit signed integer,
+and the conversion is the boundary where untrusted text becomes one —
+exactly where a silent wrap is least acceptable.
+
+**Fix direction:** detect accumulator overflow during conversion and
+set the error flag (returning 0, or the saturated value, but the flag
+is the point), so `On error` can catch it as it already can for a
+wholly-invalid string. Regression tests must pin i64::MAX as a passing
+control on both sides of the fix, plus MAX+1, a long decimal, and a
+long hex string.
+
+**Related, filed as an observation rather than a defect:**
+`"12g5" as a hex number` gives 18 and raises nothing (matching the
+spec exactly), while `"abc" as a base5 number` gives 0 and DOES raise.
+Both are "invalid characters encountered", and LANGUAGE.md describes
+them in one breath as not raising. The asymmetry is defensible — 0 is
+ambiguous where a partial parse is not, so flagging it carries real
+information — but the documentation should say so, since as written it
+promises neither raises.
+
+---
+
+### 36. A width specifier in a format string reinterprets a float's bits, and leaks a text's address
+
+**Status:** **fixed on `main` (Unreleased)** — the harm half: a width no
+longer changes what a value IS. The width is not yet *applied* to
+floats/texts (no padding primitive exists in coreasm for them), matching
+the `value` path's behaviour; that residue is a cosmetic gap, tracked in
+the entry below. Regression test:
+`tests/bugs_found_36_format_width_type.vox` — proven to fail unfixed on
+exactly the float/text/buffer rows, with the two-texts control printing
+two different addresses (4210950/4210953). Found 2026-08-20 against
+released v0.4.6. The
+float half was found by a red-team agent attacking documented-but-
+unexercised surfaces; the master reproduced it independently and the
+controls below widened it to `text`, which is the worse half.
+
+```vox
+a float called f is 3.5.
+Print "{f:06}".              (4615063718147915776 — the f64 bit pattern)
+
+a text called t is "hi".
+Print "{t:06}".              (4210942 — a POINTER)
+```
+
+**It is the WIDTH specifier, not padding in general, and not precision:**
+
+| Expression | Printed | |
+|---|---|---|
+| `"{n:06}"`, n = 42 | `000042` | ✓ correct |
+| `"{ready:06}"`, boolean true | `000001` | ✓ correct (booleans print 1/0, LANGUAGE.md:2229) |
+| `"{f:.2}"`, f = 3.5 | `3.50` | ✓ precision alone is correct |
+| `"{f:06}"` | `4615063718147915776` | ✗ the IEEE-754 bits of 3.5 |
+| `"{f:8.2}"` | `4615063718147915776` | ✗ adding a width breaks the working precision case |
+| `"{t:06}"`, t = "hi" | `4210942` | ✗ a pointer |
+| `"{t:3}"` | `4210942` | ✗ same pointer, any width |
+| `"{f}"` / `Print f` | `3.5` | ✓ unformatted is correct |
+| `"{b:06}"`, buffer "hi" | `139755576881176` | ✗ a heap pointer |
+| `"{v:06}"`, **`value`** holding 3.5 | `3.5` | ✓ right value (width ignored, not padded) |
+| `"{w:06}"`, **`value`** holding "words" | `words` | ✓ right value (width ignored, not padded) |
+| `"{l:06}"`, list `[1,2]` | `[1, 2]` | ✓ correct |
+
+**Proof that the text case prints an address, not a value.** Two
+distinct `text` variables holding the *same* content print *different*
+numbers:
+
+```vox
+a text called t is "hi".
+a text called u is "hi".
+Print "{t:06}".              (4210942)
+Print "{u:06}".              (4210945)
+```
+
+Same bytes, different addresses, different output. No value-based
+explanation survives that.
+
+**Why this is the worst class.** It is silent wrong data — no crash, no
+diagnostic, no error flag — and for a `text` it prints a raw memory
+address into program output, which is an information leak as well as a
+wrong answer. A program formatting a table with `"{name:20}"`, the
+obvious reason to use a width at all, emits pointers where it meant
+words.
+
+**Family:** #34. That bug is a float formatter routing the integer part
+through an i64; this is the width path treating a non-integer slot as
+an integer outright. Both live in the float/format layer, both are
+silent, and both were found within a day of anyone actually exercising
+formatting. They should be fixed together and their regression tests
+kept adjacent.
+
+**The working implementation is already in the compiler.** The
+runtime-tagged `value` type formats correctly under a width — a `value`
+holding 3.5 prints `3.5`, one holding `"words"` prints `words` — and so
+do lists. To be exact, the dynamic path *ignores* the width rather than
+applying it, so it has a cosmetic gap of its own; but it yields the
+right value, which is the difference between a cosmetic gap and silent
+wrong data. Only the *statically typed* slots (`float`, `text`, `buffer`)
+are wrong. So the width path has a correct, type-aware rendering route
+and simply does not take it when the type is known at compile time,
+which is the one case where it has the most information. That is a
+strong hint about where the fix goes and a ready-made oracle for it.
+
+**Fix direction:** the width path appears to dispatch on the slot's raw
+64 bits with no consultation of the value's type, while the precision
+path clearly does consult it (`"{f:.2}"` is correct) and the tagged
+`value` path clearly does too. Make width honour the same type dispatch
+those already use: pad the value's rendered text, never its raw
+representation. Regression tests must cover width
+on number/float/text/boolean, precision alone, width+precision
+together, and the two-texts-same-content control above, which is the
+one that makes the diagnosis unambiguous.
+
+---
+
+### 37. A file's `readable` property is always true, whatever mode the file was opened in
+
+**Status:** **fixed on `main` (Unreleased).** Regression test:
+`tests/bugs_found_37_file_readable_mode.vox` — opens the same file for
+writing, appending, and reading in turn and prints `readable`,
+`writable`, and `permissions` for each. Proven to fail unfixed on
+exactly the writing/appending `readable` rows (both wrongly printed 1);
+the `writable` rows on both sides of the fix, and the constant
+`permissions` value across all three rows, are the controls. Found
+2026-08-20 against released v0.4.6 by the same red-team agent that found
+#36, after being steered off format strings onto the file-property
+surface. Reproduced independently by the master, whose controls
+narrowed the claim: it is `readable` alone, not the property pair.
+
+```vox
+open a file for writing called w at "/tmp/out.txt".
+Print w's readable.        (1 — but the handle is write-only)
+```
+
+**`writable` is correct in every mode. Only `readable` is stuck:**
+
+| Opened for | `readable` | `writable` | |
+|---|---|---|---|
+| reading | 1 | 0 | ✓ both correct |
+| writing | **1** | 1 | ✗ `readable` wrong |
+| appending | **1** | 1 | ✗ `readable` wrong |
+
+`writable` distinguishes the modes correctly, which is the control that
+matters: the mechanism for reporting a handle's mode exists and works,
+so `readable` is not an unimplemented feature but a broken one.
+
+**Why nothing caught it, stated exactly.** The pair has precisely one
+test in the whole suite — `tests/044_file_io.vox:25-27` — and it reads
+both properties on a file opened **for reading**, which is the single
+mode in which this bug is invisible. The test is not wrong; it is just
+the one row of the matrix that cannot fail. That is this register's
+recurring lesson in its sharpest form yet: coverage of a *name* is not
+coverage of its *behaviour*.
+
+**The "it means the file's permission bits" reading is dead twice
+over.** First, LANGUAGE.md:3332 defines it as *"Whether file is open
+for reading"* — the handle's mode, in as many words. Second, the same
+table carries a **separate** `permissions` property for the bits
+(LANGUAGE.md:3336), and it works: the same handle reports `420`, which
+is 0644 in decimal. A property that already exists elsewhere is not the
+meaning of this one.
+
+**Consequence.** The obvious defensive idiom — `If f's readable then,`
+before reading — is exactly what this defeats: it passes on a
+write-only handle and the read that follows fails at the OS level. A
+guard that always says yes is worse than no guard, because code is
+written to trust it.
+
+**Fix direction:** report `readable` from the handle's recorded open
+mode, the way `writable` already does — the two should share one source
+of truth rather than one being derived and the other constant.
+Regression tests must cover all three modes for BOTH properties, since
+the `writable` rows are what pin the diagnosis, plus a `permissions`
+row so the two concepts stay distinguished.
+
+**Note for whoever fixes it:** check whether a file opened for reading
+and writing (if the language offers such a mode) is expressible — the
+matrix above only covers the three modes LANGUAGE.md documents.
+
+---
+
+### 38. The documented file property `exists` is a parse error
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6 by the
+red-team agent on the file-property surface, alongside #37. Reproduced
+by the master, who tested the whole table rather than the one property.
+
+```vox
+open a file for reading called h at "/tmp/f.txt".
+Print h's exists.
+```
+→ `error: Expected property name, got Exists`
+
+**Seven of the eight documented file properties work. `exists` alone is
+rejected:**
+
+| Property | LANGUAGE.md | Result |
+|---|---|---|
+| `size` | 3330 | ✓ `3` |
+| `descriptor` | 3331 | ✓ `3` |
+| `readable` | 3332 | ✓ parses (but always true — see #37) |
+| `writable` | 3333 | ✓ `0` |
+| `modified` | 3334 | ✓ `1787209736` |
+| `accessed` | 3335 | ✓ `1787209711` |
+| `permissions` | 3336 | ✓ `420` (0644) |
+| **`exists`** | **3337** | ✗ **parse error** |
+
+LANGUAGE.md:3337 lists it in the File Properties table as *"Whether the
+file exists | Boolean"*, with no note marking it unimplemented, unlike
+other Not-Yet features which the document does flag.
+
+**This is the mildest class of defect and should be recorded as such.**
+It fails loudly at compile time, so no program can silently do the
+wrong thing — the opposite of #36 and #37, which is why it is filed
+below them. The cost is a documented feature nobody can use and a spec
+that promises something the compiler does not provide.
+
+**A design question the fix must answer first.** `exists` is odd among
+these: the other seven describe an *open handle*, but a file that does
+not exist cannot be opened, so `h's exists` on a successfully opened
+handle is trivially true. The useful form is a question about a
+**path**, asked before opening. So the fix is not simply "add the
+missing property" — it needs a decision about what the construct means.
+Three options, for whoever picks this up:
+
+1. Implement it on the handle, where it is nearly always `true` and
+   therefore nearly useless, but matches the table as written.
+2. Provide it on a path instead (some `"/tmp/f.txt"'s exists` form),
+   which is what a program actually wants, and correct the table.
+3. Remove the row and document the existing idiom — opening inside an
+   `On error` handler already answers the question.
+
+Option 2 or 3, with the documentation corrected to match, is more
+honest than making the table true by adding a property that answers a
+question nobody asks.
+
+---
+
+### 39. A format string as the FIRST element of an inline collection makes every element print as a raw pointer
+
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 by an Opus
+worker hand-verifying every format-string shape before writing an emitter
+for it. Reproduced independently by the master, including the ASLR proof
+below.
+
+```vox
+a text called base is "core".
+print each item from ["{base}", "plain"].
+```
+→ prints two integers, e.g. `139924308365336` and `4210945`
+
+**Two independent facts, both from the control table:**
+
+| Collection | Format string at | Clause | Output |
+|---|---|---|---|
+| literal `["{base}", "plain"]` | 1st | `print each` | ✗ two integers |
+| literal `["plain", "{base}"]` | 2nd | `print each` | ✓ `plain` / `core` |
+| literal `["{base}", "plain"]` | 1st | `For each ... in` | ✗ two integers |
+| literal `["{{lit}}", "plain"]` | escaped braces, no slot | `print each` | ✓ `{lit}` / `plain` |
+| named `src`, same literal | 1st | `print each` | ✓ `core` / `plain` |
+| named `src`, same literal | 1st | `print each ... treating` | ✗ two integers |
+| named `src`, format 2nd | 2nd | `print each ... treating` | ✓ `plain` / `core` |
+| named `src`, same literal | 1st | `element 1 of src` | ✓ `core` |
+| literal `["alpha", "beta"]` | no format string | `treating` | ✓ `alpha` / `beta` |
+
+1. The **first** element decides the rendering for the **whole**
+   collection — put the format string second and both print correctly.
+2. It is the **statically inferred** element type that is wrong. A named
+   list under a plain `print each` is correct, so the runtime tag is
+   right; attaching a `treating` clause to that *same* list breaks it,
+   as does writing the list inline.
+
+**Proof the integers are addresses.** The first number changes on every
+run of the *same binary* — `139924308365336`, then `140253455810584` —
+while the second is stable (`4210945`, static rodata). That is ASLR
+moving a heap allocation. No value-based explanation survives it. So
+this is silent wrong data **and** an information leak, the same class as
+#36's `text` half.
+
+**What it contradicts.** LANGUAGE.md §"Format Strings as Values"
+(~3051): a format string "materializes into a fresh NUL-terminated
+string … and survives being carried through lists". §"Format Strings
+Everywhere" (~3076): "Every statement that takes a string value accepts
+a format string … `treating` clauses. All sinks share one name
+resolver." The two sinks named there are exactly the two broken rows.
+
+**Family:** #17 and #18 — a format string's *type tag*, not its payload,
+being got wrong. #17 was fixed by giving `Expr::FormatString` an
+explicit `TAG_STRING` / `VarType::String` arm in `prescan_expr_tag` and
+`infer_expr_type`. The list-literal and `treating` element-type
+inference paths evidently consult a third inference that still lacks
+that arm and falls through to integer — which is also what #18
+describes. Likely the same missing arm in a third place.
+
+**Fix direction:** find the element-type inference used by list literals
+and by `treating`, and give it the same `FormatString → String` arm.
+Regression test should cover all nine rows; the first-vs-second-position
+pair and the named-list-with-and-without-`treating` pair are the two
+that make the diagnosis unambiguous.
+
+**Root cause, confirmed.** Three separate "classify by first element"
+matches — none of them the two functions bug #17 fixed — all lacked a
+`FormatString` arm: the `For each`/`print each` inline-literal element-type
+inference (`src/codegen/statements.rs`, in `Statement::ForEach`'s
+`Expr::ListLit` branch), the named-list-declaration inference that records
+`list_element_types` for a `treating` clause to later consult
+(`src/codegen/statements.rs`, in `Statement::VarDecl`'s `Expr::ListLit`
+branch), and `element N of <literal>` (`src/codegen/print.rs`, in
+`Expr::ElementAccess`'s `Expr::ListLit` branch). Each fell through to a
+generic `_ => VarType::Unknown`/`None` default.
+
+The named-list case was a coincidence, not a working path: `Unknown` for a
+*named* list widens the loop variable to `Mixed`, which dispatches on the
+still-correct runtime tag — so a plain `print each` over a named list with
+a format-string element happened to print right. Attaching a `treating`
+clause wraps that same loop variable in `Expr::TreatingAs`, and the
+runtime-tag lookup (`mixed_element_tag_slot`/`expr_leaves_tag_in_r11`) only
+matches a bare `Identifier`/`StringLit`, not `TreatingAs` — so the accidental
+safety net doesn't reach through the wrapper, and it falls back to
+`infer_expr_type`, which reports `Mixed` (untyped) and prints as an integer.
+Once the named-list inference itself credits `FormatString → String`, the
+loop variable is typed `String` (not `Mixed`) and both the plain and
+`treating` spellings render correctly the same way — no `TreatingAs` unwrap
+was needed.
+
+For an inline literal, there is no named-list detour and no runtime-tag
+fallback to coincidentally save it: `Unknown` there was just wrong, and
+always rendered as `PRINT_INT`, regardless of position.
+
+Fixed by adding `Expr::FormatString => VarType::String` (or
+`Some(VarType::String)`) to all three matches — a format string always
+materializes text, as established by bug #17. Position is irrelevant to
+the fix: it types whichever element is first, format string or not, so a
+format string second (already correct) and a format string first (now
+fixed) go through the exact same arm.
+
+**Regression test:** nine `.vox`/`.expected` pairs under
+`tests/bugs_found_39_*` reproducing every row of the control table above.
+Proven to fail on the unfixed compiler (`git stash` the fix, rebuild, run)
+on exactly `bugs_found_39_literal_fmt_first`,
+`bugs_found_39_for_each_fmt_first`, and `bugs_found_39_named_treating` —
+each printed two raw addresses instead of `core`/`plain` (or `core`/
+`PLAIN`) — with the other six rows (`literal_fmt_second`,
+`escaped_braces_only`, `named_plain`, `named_treating_fmt_second`,
+`element_access`, `no_format_treating`) passing on both the unfixed and
+fixed compiler as controls.
+
+---

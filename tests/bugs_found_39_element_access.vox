@@ -1,0 +1,35 @@
+(Bug #39 - a format string as the FIRST element of an inline collection
+ made EVERY element of that collection print as a raw pointer. The
+ integers were heap addresses: the first changed on every run of the
+ same binary under ASLR while the second was stable rodata.
+
+ This test is the register entry's full control table, because the
+ diagnosis needs every row to be unambiguous:
+
+   A vs B  - position was the tell. The format string FIRST broke the
+             whole collection; second, everything rendered. A fix that
+             only repairs position 1 has treated a symptom.
+   C vs D  - the runtime tag was always right (C was correct before the
+             fix); attaching a `treating` clause to the SAME named list
+             broke it, which is what proves the defect was in STATIC
+             element-type inference.
+   E, F, G - always correct, kept as controls. They must pass on both
+             sides of the fix; F in particular uses escaped braces and
+             so contains no slot at all.)
+a text called base is "core".
+a list called src is ["{base}", "plain"].
+
+Print "A literal 1st:".
+print each item from ["{base}", "plain"].
+Print "B literal 2nd:".
+print each other from ["plain", "{base}"].
+Print "C named plain:".
+print each thing from src.
+Print "D named treating:".
+print each part from src treating "" as "EMPTY".
+Print "E element 1:".
+Print element 1 of src.
+Print "F escaped only:".
+print each lit from ["{{lit}}", "plain"].
+Print "G no format:".
+print each word from ["alpha", "beta"].
