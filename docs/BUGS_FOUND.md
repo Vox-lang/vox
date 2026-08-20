@@ -1909,7 +1909,15 @@ promises neither raises.
 
 ### 36. A width specifier in a format string reinterprets a float's bits, and leaks a text's address
 
-**Status:** **open**, found 2026-08-20 against released v0.4.6. The
+**Status:** **fixed on `main` (Unreleased)** — the harm half: a width no
+longer changes what a value IS. The width is not yet *applied* to
+floats/texts (no padding primitive exists in coreasm for them), matching
+the `value` path's behaviour; that residue is a cosmetic gap, tracked in
+the entry below. Regression test:
+`tests/bugs_found_36_format_width_type.vox` — proven to fail unfixed on
+exactly the float/text/buffer rows, with the two-texts control printing
+two different addresses (4210950/4210953). Found 2026-08-20 against
+released v0.4.6. The
 float half was found by a red-team agent attacking documented-but-
 unexercised surfaces; the master reproduced it independently and the
 controls below widened it to `text`, which is the worse half.

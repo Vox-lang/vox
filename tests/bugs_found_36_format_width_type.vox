@@ -1,0 +1,32 @@
+(Bug #36 - a width specifier used to reinterpret a value's raw 64 bits as
+ an integer: a float printed its IEEE-754 bit pattern and a text printed
+ the string's ADDRESS. The type-aware dispatch was gated on there being
+ no width, so writing a width skipped it entirely.
+
+ The two same-content texts are the control that makes the diagnosis
+ unambiguous: before the fix they printed DIFFERENT numbers, which no
+ value-based explanation survives. They must print the same thing now.
+
+ The number and boolean rows pass on both sides of the fix and are kept
+ deliberately - they are what prove the integer width path still works
+ and was not thrown out with the bug.
+
+ Note the width is not APPLIED to a float or text: there is no
+ string/float padding primitive in coreasm. The value is correct and
+ unpadded, matching what the runtime-tagged `value` path already does.)
+a float called f is 3.5.
+a text called t is "hi".
+a text called u is "hi".
+a buffer called b is "buf".
+a number called n is 42.
+a boolean called ready is true.
+
+Print "{f:06}".
+Print "{f}".
+Print "{f:.2}".
+Print "{t:06}".
+Print "{u:06}".
+Print "{b:06}".
+Print "{n:06}".
+Print "{n:6}".
+Print "{ready:06}".

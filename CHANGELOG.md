@@ -4,6 +4,27 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A width specifier no longer changes what a value is**
+  ([#36](docs/BUGS_FOUND.md)) — `"{f:06}"` on a float printed its raw
+  IEEE-754 bit pattern (`4615063718147915776` for 3.5), and on a `text`
+  printed the string's **address** — silent wrong data and an
+  information leak, proven by two same-content texts printing different
+  numbers. The type-aware dispatch in `emit_formatted_value` was gated
+  on there being *no* width, so writing one skipped the type check
+  precisely when the compiler knew the type best. Non-integer types are
+  now rendered by type whether or not a width is present. The width is
+  not yet *applied* to floats/texts — coreasm has padding primitives
+  only for integers and hex — so a width there is ignored rather than
+  honoured, matching the runtime-tagged `value` path; that cosmetic
+  residue is recorded in the register. Regression test proven to fail
+  on the unfixed compiler on exactly the float/text/buffer rows, with
+  integer and boolean width rows kept as controls that pass on both
+  sides. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #36.
+
 ## [0.4.6] - 2026-08-20
 
 ### Fixed
