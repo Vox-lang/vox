@@ -238,6 +238,35 @@
     pop rbx
 %endmacro
 
+; Record the outcome of a write(2) in _last_error, so `On error` can see a
+; write that did not happen. Before this the three write macros issued the
+; syscall and never looked at rax, which made a failed write indistinguishable
+; from a successful one from inside Vox (bug #48).
+; Expects: rax = the syscall's return value
+;          rdx = the byte count that was asked for (syscall preserves rdx;
+;                only rax, rcx and r11 are clobbered)
+; Leaves rax untouched, the way FORK does, so a caller that wants the count
+; still has it.
+; A short write is a failure too: Vox does not retry, so the missing bytes are
+; simply lost. The kernel gives no errno for one, so it is recorded as EIO (5).
+%macro RECORD_WRITE_RESULT 0
+    test rax, rax
+    js %%write_failed
+    cmp rax, rdx
+    jl %%write_short
+    mov qword [rel _last_error], 0
+    jmp %%write_done
+%%write_failed:
+    push rax
+    neg rax                         ; -errno -> errno
+    mov [rel _last_error], rax
+    pop rax
+    jmp %%write_done
+%%write_short:
+    mov qword [rel _last_error], 5  ; EIO - fewer bytes written than asked for
+%%write_done:
+%endmacro
+
 ; Write null-terminated string to file descriptor
 ; Args: fd, string_ptr
 %macro FILE_WRITE_STR 2
@@ -269,7 +298,8 @@
     mov rsi, r13                    ; buffer (saved earlier)
     mov rdx, rcx                    ; count = strlen
     syscall
-    
+    RECORD_WRITE_RESULT
+
     pop r13
     pop r12
     pop rdi
@@ -295,7 +325,8 @@
     mov rdx, [rsi + 8]              ; length from struct offset 8
     add rsi, BUF_DATA               ; data starts at BUF_DATA
     syscall
-    
+    RECORD_WRITE_RESULT
+
     pop rdi
     pop rsi
     pop rdx
@@ -320,7 +351,8 @@
     mov rsi, rsp                    ; buffer = stack (newline char)
     mov rdx, 1                      ; count = 1
     syscall
-    
+    RECORD_WRITE_RESULT
+
     add rsp, 8                      ; clean up stack
     
     pop rdi

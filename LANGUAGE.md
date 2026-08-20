@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.4.7**
+**Version 0.4.8**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -1915,6 +1915,15 @@ Convert values between types using the `as` or `in` keywords.
 | number | boolean | `42 as a boolean` | `true` |
 | boolean | text | `true as text` | `"true"` |
 | text | boolean | `"true" as a boolean` | `true` |
+| buffer | text | `data as text` | a copy of the buffer's bytes |
+
+A text made from a buffer is an **independent copy**, not a window onto
+the buffer. `a text called line is data as text.` reads the buffer's
+current bytes once and keeps its own copy, so clearing, refilling, or
+resizing `data` afterwards leaves `line` exactly as it was — the same
+promise format strings make (see "Format Strings as Values"). This
+matters because resizing frees the buffer's old allocation: without the
+copy, reading such a text would be reading freed memory.
 
 **Radix (Base) Conversions:**
 
@@ -2231,13 +2240,19 @@ Booleans print as `1`/`0`, matching homogeneous boolean lists.
 The compiler earns the homogeneous fast path by **proof**, not assumption.
 A value whose type it cannot statically prove — for example the result of a
 function with an undeclared return type, or any other opaque expression —
-widens the list to mixed, so the element is always read back as what it
-is rather than silently reinterpreted:
+widens the list to mixed, so reads dispatch on each slot's runtime tag
+rather than on one assumed type. What that tag *says* is only as good as
+what the compiler could prove at the write: for a genuinely opaque value
+it is a conservative `number` guess (see the limitation below), so an
+opaque value that is **not** a number is still reinterpreted — an
+undeclared-return-type function returning a text lands in the slot tagged
+as a number and reads back as a raw address rather than as its text.
+Declare the return type and the slot carries the right tag:
 
 ```
 To five with a number called x. Return x add 1.
 a list called items is [].
-append hello to items.
+append "hello" to items.
 append five of 4 to items.
 print element 1 of items.   (prints: hello)
 print element 2 of items.   (prints: 5)
@@ -2300,7 +2315,9 @@ unwinds safely instead of overflowing the stack. Use `on error` to react:
 a list called x is [].
 append x to x.
 print x.
-on error print "cyclic".    (prints: [[...]] then cyclic)
+on error print "cyclic".
+(prints: [[...]] then cyclic — abbreviated: 64 opening brackets, then
+ `...`, then 64 closing brackets, then `cyclic`)
 ```
 
 Two limitations remain for this stage. Extracting a child with `element N
@@ -2379,8 +2396,22 @@ its tag (5) alongside the payload, so it round-trips through functions
 intact.
 
 A map may also be an element of a list (`[{"a": 1}, {"b": 2}]`) — the
-slot carries the map tag (5) and a `For each` over such a list types the
-loop variable as a map. Two limitations remain for this stage: keys are
+slot carries the map tag (5), so `is a map` fires on a `For each` loop
+variable over such a list. The loop variable itself is deliberately
+untyped, though, and reading a key with `'s "key"` is a *static* check,
+so `entry's "tag"` inside the loop is a compile error ("Map access target
+must be a map"). To read a key, loop over the positions and declare the
+element:
+
+```
+a list called holder is [{"tag": 1}, {"tag": 2}].
+For each position from 1 to holder's length,
+  a map called entry is element position of holder,
+  print entry's "tag".
+(prints: 1, then 2)
+```
+
+Two limitations remain for this stage: keys are
 text only (a non-text key is rejected with "Map keys must be text"), and
 there is no entry deletion. See `docs/COLLECTIONS_ROADMAP.md`.
 
@@ -2416,12 +2447,32 @@ time — `if x is a number` for a declared `a number called x` costs
 nothing and is always true — so the sentence is legal on any value, not
 just mixed ones.
 
-This is the guard idiom that makes mixed lists programmable: arithmetic on
-a mixed element still dispatches statically, so guard it yourself before
-operating — `if item is a number, … item add 1 …`. (Automatic guarding is
-a later decision; see the roadmap.) To *convert* a value rather than test
-it, use the cast expression `<value> as a <type>` — e.g. `item as a number`
-or `item as a float` (see Type Casting).
+This is the guard idiom that makes mixed lists programmable — with one
+constraint worth stating plainly. The predicate reads the runtime tag; it
+does **not** narrow the static type. Arithmetic still dispatches
+statically, so operating on the tested value itself is refused inside the
+guard exactly as it is outside it ("Cannot use a value item in
+arithmetic"). Guarding therefore means getting the element into a
+*declared* variable, which a `For each` loop variable can never be — loop
+over the positions instead:
+
+```
+a list called mixedbag is [1, "two", 3.5].
+For each position from 1 to mixedbag's length,
+  if element position of mixedbag is a number,
+    a number called got is element position of mixedbag,
+    print got add 1.
+  otherwise print "guarded away".
+(prints: 2, then guarded away, then guarded away — 3.5 is a decimal,
+ not a number, so `is a number` is false for it)
+```
+
+(Automatic guarding is a later decision; see the roadmap.) The cast
+expression is *not* a way round this: `item as a number` on a
+dynamically-tagged element is rejected for the same reason ("casting a
+dynamically-tagged value is not currently supported by the compiler — a
+known gap"). `<value> as a <type>` converts a **statically**-typed value;
+see [Type Casting](#type-casting). Use the idiom above instead.
 
 A predicate result is itself a boolean value, so you can store one in a
 list — `append item is a number to flags` — and each stored slot carries
@@ -2518,6 +2569,11 @@ numstr is a number.
 print numstr add 1.           (prints: 358)
 ```
 
+The explicit `as` cast is not an alternative here: `numstr as number` is a
+compile error on a `value`, because a cast needs its source type at compile
+time and a `value` only knows its type at runtime — the in-place retype is
+how a `value` is converted.
+
 The same phrase in **condition** position keeps its old meaning: `If numstr
 is a number then, ...` is still a type predicate that tests the runtime
 tag and returns a boolean. Position — statement versus condition — is what
@@ -2567,15 +2623,36 @@ through every frame, so a recursive walker over mixed data classifies
 correctly at any depth. `value` parameters compose: a `value` passed
 straight to another `value` function round-trips its tag.
 
-**One limitation to know.** A *conditional* `value` return — using the
-*factorial pattern* (`If ... return a value, <expr>. Otherwise ...`) inside
-a function whose `To` line has no `Return` — does not track the return
-type, so the value would print as a number. Use the single-expression
-`Return a value, <expr>.` form on the `To` line for `value` returns.
-Conditional `value` *parameters* (the factorial pattern with a void return)
-work fine. The internal ABI that carries the tag is documented in
-`docs/abi_value.md`; the roadmap context is in
-`docs/COLLECTIONS_ROADMAP.md` (stage 1d).
+**Conditional `value` returns work.** A function whose only returns sit
+inside an `If`/`Otherwise` — the *factorial pattern*, with no `Return` on
+the `To` line — carries its declared return type just as the
+single-expression form does, and each branch hands back its own runtime
+tag:
+
+```
+To score with a value called v.
+  If v is a number, return a value, v.
+  Otherwise, return a value, 99.
+
+print score of 7.          (prints: 7)
+print score of "hello".    (prints: 99)
+```
+
+The same is true of a conditional return of any declared type: `Return a
+text, "big".` inside a branch makes the function a text-returning one. If
+no branch fires and the function falls off its end, it hands back the
+empty value of its declared type — empty text, zero, or a `value` tagged
+as the number `0`.
+
+**One limitation to know.** A function whose branches declare *different*
+types — `Return a text` in one and `Return a number` in the other — has no
+single type for its `To` line to promise, so it declares none and the
+caller reads the result as a number. Declare the same type in every
+branch, or return a `value`, which is exactly the type for a result whose
+shape depends on the branch taken. Conditional `value` *parameters* (the
+factorial pattern with a void return) work as they always have. The
+internal ABI that carries the tag is documented in `docs/abi_value.md`;
+the roadmap context is in `docs/COLLECTIONS_ROADMAP.md` (stage 1d).
 
 ### Nothing (the absent value)
 
@@ -3245,6 +3322,8 @@ resize buf to 128.
 - Data is preserved up to min(old_length, new_capacity)
 - If shrinking below current data length, data is truncated
 - New buffer is allocated and old buffer is freed
+- Texts already made from the buffer with `as text` are independent
+  copies, so resizing never disturbs them
 
 #### Buffer Byte Access
 
@@ -3477,7 +3556,9 @@ open a file at "./log.txt" called log for appending.
 - Use **`Read line from ... into ...`** when you want one logical line at a time.
 
 High-level behavior:
-- `Read` appends incoming data to the buffer and is best for bulk/stream processing.
+- `Read` replaces the buffer's contents with the bytes read; each `Read`
+  continues from the file's current position, so it is best for bulk/stream
+  processing.
 - `Read line` replaces the buffer with the next line and is best for line-by-line loops.
 - Both can read from files or standard input.
 
@@ -3515,7 +3596,11 @@ Seek source to bytes 128.
 - Positions are **1-indexed** (`line 1` = start of file, `byte 1` = file offset 0)
 - `Seek ... to line N` moves to the first byte of line `N`
 - `Seek ... to byte N`/`bytes N` moves to byte position `N`
-- Invalid targets (e.g. line past EOF, position < 1, invalid fd) set the error flag
+- Invalid targets (e.g. line past EOF, position < 1, invalid fd) set the error
+  flag, which `On error` catches
+- Line `N` exists when the file holds at least `N-1` newlines before it, so a
+  file that ends in a newline has one empty last line to seek to; anything
+  beyond that is past EOF and sets the flag
 
 ### Writing
 
@@ -3525,6 +3610,36 @@ Write strings, buffers, or special values to files:
 Write "Hello, World!" to output.
 Write buf to output.
 Write a newline to output.
+```
+
+`Write` takes a text, a buffer, or a format string; a bare number, float,
+or boolean is a compile error, because a scalar holds a value where
+`Write` needs the address of some bytes. Render it with a format string
+instead:
+
+```
+a number called n is 72.
+Write "{n}" to output.
+```
+
+A `value` is refused for the same reason — its type is only known at
+runtime, so the compiler cannot tell a text it could write from a number
+it could not. Copy it into a typed variable and write that:
+
+```
+a value called anything is "dynamic".
+a text called settled is anything.
+Write settled to output.
+```
+
+**Writing rules:**
+- A failed `Write` sets the error flag and is catchable with `On error` — a
+  write the system refused (no space, a handle opened for reading, a closed or
+  never-opened handle) or one that transferred fewer bytes than asked for:
+
+```
+Write buf to output.
+On error print "Write failed!", exit 1.
 ```
 
 ### Closing Files
@@ -3580,7 +3695,9 @@ On error print "Read failed or buffer overflow!".
 **Catchable Errors:**
 - Out-of-bounds list/buffer access
 - Fixed buffer overflow (data exceeds capacity)
-- File operation failures
+- File operation failures — opening, seeking, reading, writing and deleting
+  alike. A failed `Write` sets the flag, and so does a `Read from`, a `Read
+  line from` or a `Write` on a handle whose own `open` failed.
 
 **Error Handling Patterns:**
 

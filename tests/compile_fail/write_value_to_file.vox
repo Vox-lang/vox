@@ -1,0 +1,11 @@
+(Compile-fail: bug #40, master review - a `value` operand reaches the same
+ unconditional pointer read as a bare scalar. Holding nothing it wrote
+ address 0 and segfaulted; holding a number it wrote that number as an
+ address and segfaulted; holding text it happened to work. The compiler
+ cannot tell those apart - the type is a runtime tag - so the category is
+ refused whole, the way arithmetic refuses it.)
+
+open a file for writing called out at "/tmp/vox_write_value.txt".
+a value called gap is nothing.
+Write gap to out.
+close out.

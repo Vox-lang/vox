@@ -196,6 +196,69 @@ impl Analyzer {
         self.push_error(msg, None);
     }
 
+    /// Bug #40: `Write` hands its operand to FILE_WRITE_STR, which reads it as
+    /// a pointer to text. A text or a buffer holds one, so both write their
+    /// contents; a number, float, or boolean holds a value, and that value
+    /// gets used as an address - `Write n to out` with n = 72 reads address
+    /// 72 and segfaults the generated program. LANGUAGE.md documents `Write`
+    /// for text, buffers, and format strings, so a bare scalar is refused
+    /// here instead, the way `append` refuses a number source. Rendering a
+    /// scalar directly is a language decision that has not been taken; the
+    /// message names the spelling that works today, `Write "{n}" to out`.
+    ///
+    /// Only a named operand is judged. The parser admits a string literal, a
+    /// format string, an identifier, or a `treating ... as ...` wrapper round
+    /// one - the first two are text by construction. A name it cannot resolve
+    /// answers None and is allowed through, the same "can't prove it, allow
+    /// it" policy `check_arithmetic_operand` follows.
+    pub(crate) fn check_file_write_operand(&mut self, file: &str, value: &Expr) {
+        let operand = match value {
+            Expr::TreatingAs { value, .. } => value.as_ref(),
+            other => other,
+        };
+        let Expr::Identifier(name) = operand else {
+            return;
+        };
+        // A `value` name answers through `value_typed_names`, the same
+        // precedence `arithmetic_operand_type` uses: a concrete type recorded
+        // for the name wins (a retyped value is judged as what it was retyped
+        // to), and only an otherwise-unresolved dynamic name reads as Value.
+        let ty = match self.named_value_type(name) {
+            Some(Type::Value) | None if self.value_typed_names.contains(name) => Type::Value,
+            Some(t) => t,
+            None => return,
+        };
+        let message = match ty {
+            Type::Integer | Type::Float | Type::Boolean => format!(
+                "Cannot write {} {} to a file; Write takes text, a buffer, or a \
+                 format string. Render it as text: Write \"{{{}}}\" to {}.",
+                self.type_name(&ty),
+                name,
+                name,
+                file,
+            ),
+            // A value crashes the same way when it holds a number or nothing,
+            // and writes correctly when it holds text - which the compiler
+            // cannot tell apart, so the whole category goes, as it does in
+            // arithmetic. Deliberately NOT suggesting `Write "{v}"` here: on
+            // the file-write path that format renders a value's raw payload,
+            // so a text-holding value writes its pointer as a decimal number
+            // and `nothing` writes 0 (the print path renders both correctly -
+            // a separate defect, noted under #40 in the register). Copying
+            // into a typed variable is verified to work for both.
+            Type::Value => format!(
+                "Cannot write value {} to a file; a value's type is only known at \
+                 runtime, and Write must know whether it holds text (which it \
+                 writes) or a number (whose value it would use as an address). \
+                 Copy it into a typed variable first - 'a text called plain is \
+                 {}.' - and write that.",
+                name, name,
+            ),
+            _ => return,
+        };
+        self.push_error(message, Some(name));
+    }
+
     /// Arithmetic/bitwise operators require numeric operands. Comparisons and
     /// logical and/or are excluded (they are valid across types and handled
     /// elsewhere).

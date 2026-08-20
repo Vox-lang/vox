@@ -1209,6 +1209,40 @@ impl CodeGenerator {
                             "mov rax, [rbp-{}]  ; the caller's destination",
                             slot
                         ));
+                    } else {
+                        // BUGS_FOUND #43: a function whose returns all sit
+                        // inside branches now carries its declared return type
+                        // (see the parser), so this path — reached when no
+                        // branch fired — hands the caller whatever rax happens
+                        // to hold, and the caller reads it AS that type. For a
+                        // `text` return that means dereferencing a stray
+                        // integer. Hand back the type's empty value instead, so
+                        // falling off the end is merely uninformative rather
+                        // than unsafe. A `value` also needs its tag, because r11
+                        // is just as stale as rax here.
+                        match self.current_function_return_type {
+                            Some(Type::String) => {
+                                let empty = self.add_string("");
+                                self.emit_indent(&format!(
+                                    "lea rax, [rel {}]  ; fell off the end: empty text",
+                                    empty
+                                ));
+                            }
+                            Some(Type::Value) => {
+                                self.emit_indent("xor rax, rax  ; fell off the end: no value");
+                                self.emit_indent(&format!(
+                                    "mov r11, {}  ; ...tagged as the number it is",
+                                    TAG_INTEGER
+                                ));
+                            }
+                            Some(Type::Integer) | Some(Type::Float) | Some(Type::Boolean) => {
+                                self.emit_indent("xor rax, rax  ; fell off the end: zero");
+                            }
+                            // A list, buffer or thing return has no cheap empty
+                            // to hand back, and a null would only move the
+                            // crash. Left as it was.
+                            _ => {}
+                        }
                     }
                     self.emit_indent("call _dec_call_depth");
                     self.emit_indent("FUNC_EPILOGUE");
@@ -2091,6 +2125,7 @@ impl CodeGenerator {
                 };
 
                 let skip_label = self.new_label("skip_fd");
+                let done_label = self.new_label("read_done");
                 self.emit_indent(&format!("mov rdi, {}", source_fd));
                 // Skip read if fd is invalid (negative)
                 self.emit_indent("test rdi, rdi");
@@ -2103,7 +2138,13 @@ impl CodeGenerator {
                     // Update buffer pointer (may have changed if grown)
                     self.emit_store_back_after_realloc(buffer, "rsi");
                 }
+                self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
+                // Invalid fd is an error - make On error fire. `Read line`
+                // has always done this; `Read from` reported a silent 0-byte
+                // read on the identical handle (bug #48).
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit(&format!("{}:", done_label));
             }
 
             Statement::FileReadLine { source, buffer } => {
@@ -2205,6 +2246,7 @@ impl CodeGenerator {
                 };
                 
                 let skip_label = self.new_label("skip_fd");
+                let done_label = self.new_label("write_done");
                 self.emit_indent(&format!("mov rdi, {}", file_fd));
                 // Skip write if fd is invalid (negative)
                 self.emit_indent("test rdi, rdi");
@@ -2309,7 +2351,13 @@ impl CodeGenerator {
                         self.emit_indent("FILE_WRITE_STR rdi, rax");
                     }
                 }
+                // Every write macro records its syscall's outcome in
+                // _last_error. A write that never happened because the handle
+                // is dead must be just as visible (bug #48).
+                self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit(&format!("{}:", done_label));
             }
             
             Statement::FileWriteNewline { file } => {
@@ -2319,12 +2367,16 @@ impl CodeGenerator {
                     "1".to_string()
                 };
                 let skip_label = self.new_label("skip_fd");
+                let done_label = self.new_label("write_newline_done");
                 self.emit_indent(&format!("mov rdi, {}", file_fd));
                 // Skip write if fd is invalid (negative)
                 self.emit_indent("test rdi, rdi");
                 self.emit_indent(&format!("js {}  ; skip if invalid fd", skip_label));
                 self.emit_indent("FILE_WRITE_NEWLINE rdi");
+                self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
+                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit(&format!("{}:", done_label));
             }
             
             Statement::FileClose { file } => {

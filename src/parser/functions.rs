@@ -699,6 +699,34 @@ impl Parser {
             self.reject_member_returning_another_type(member, def_pos)?;
         }
 
+        // BUGS_FOUND #43: Gate B above only sees a `Return` that is a
+        // TOP-LEVEL body statement. A function whose only returns sit inside
+        // an `If`/`Otherwise` keeps them in the conditional's own body vector,
+        // so its declared type never reached the signature and `return_type`
+        // stayed `Type::Void` — the caller then read the result as an integer.
+        // For `Return a text` that printed a pointer as a number; for `Return
+        // a value` it was worse, because codegen skips the r11 tag load for a
+        // non-`Value` return type and the caller stored a stale r11 over the
+        // payload (the segfault this bug is named for).
+        //
+        // `typed_returns` already collects EVERY typed `Return` line in this
+        // body, nested ones included (that is what the member rule reports
+        // against), and it was cleared before the body was parsed — so it is
+        // exactly the set of declarations the author wrote. Adopt it only when
+        // the body declared no top-level return type, and only when every
+        // declaration agrees: branches that disagree (`Return a text` in one,
+        // `Return a number` in the other) have no single signature to adopt,
+        // and picking one would tag the other branch's payload wrongly. Those
+        // keep the old `Void` reading — memory-safe, and no policy invented
+        // here about which branch wins.
+        if return_type == Type::Void {
+            if let Some((_, first)) = self.typed_returns.first() {
+                if self.typed_returns.iter().all(|(_, t)| t == first) {
+                    return_type = first.clone();
+                }
+            }
+        }
+
         self.record_thing_returning_function(&name, &return_type);
 
         Ok(Statement::FunctionDef {

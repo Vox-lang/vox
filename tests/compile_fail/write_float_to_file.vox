@@ -1,0 +1,7 @@
+(Compile-fail: bug #40 - a float operand crashes the same way a number does;
+ its bits are read as an address. Rendering it needs a format string.)
+
+open a file for writing called report at "/tmp/vox_write_float.txt".
+a float called humidity is 36.6.
+Write humidity to report.
+close report.

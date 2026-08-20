@@ -1,0 +1,10 @@
+(Compile-fail: bug #40 - `Write` hands its operand to FILE_WRITE_STR, which
+ reads it as a pointer to text. A number holds a value, not an address, so
+ writing one used 72 as an address and segfaulted the generated program.
+ `Write` takes text, a buffer, or a format string; a scalar is refused here,
+ the way `append` refuses one.)
+
+open a file for writing called report at "/tmp/vox_write_number.txt".
+a number called temperature is 72.
+Write temperature to report.
+close report.

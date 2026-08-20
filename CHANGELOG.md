@@ -4,9 +4,45 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.8] - 2026-08-20
 
 ### Fixed
+
+- **`Write` of a number, float, boolean, or `value` is a compile error,
+  not a segfault** ([#40](docs/BUGS_FOUND.md)) — `Write n to out`
+  compiled and then crashed the generated program (exit 139) for all
+  three scalars, while text, buffers, and format strings wrote
+  correctly: `Write` hands its operand to `FILE_WRITE_STR`, which reads
+  it as a pointer to text, so a scalar's *value* was used as an address
+  (n = 72 read address 72). LANGUAGE.md documents `Write` for text,
+  buffers, and format strings, so the analyzer now refuses a bare scalar
+  operand the way `append` refuses a number source, naming the operand,
+  its type, and the spelling that works: `Write "{n}" to out.` A `value`
+  operand is refused with it — it crashed the same way when it held a
+  number or `nothing`, and the compiler cannot tell that from the
+  text-holding case that worked — and its message names the fix verified
+  for every case a value can hold: copy it into a typed variable and
+  write that. Rendering a scalar directly remains an open design option;
+  this pass fixes the diagnostic, not the language. Found by a human
+  writing ordinary Vox while building vox-fuzz's stdin input
+  generation.
+
+- **`buffer as text` now copies the buffer instead of aliasing it**
+  ([#41](docs/BUGS_FOUND.md)) — the cast returned a pointer into the
+  buffer's data area, so a text made from a buffer was a window onto it,
+  not a value. Clearing and refilling the buffer silently rewrote every
+  text taken from it, with no diagnostic; and because resizing a buffer
+  frees its old allocation, as the manual's Buffer Resizing section says
+  it does, reading such a text after a resize was a use-after-free —
+  both directions segfaulted from eight lines of ordinary code, in a
+  language whose headline promise is memory safety. `as text` now copies
+  the buffer's bytes into a fresh dynamic buffer, the same allocation
+  format strings and the other text-producing casts use, so exit cleanup
+  tracks it identically. Regression test
+  `tests/buffer_as_text_copies.vox`; LANGUAGE.md's conversion table and
+  Buffer Resizing notes now state that the text is an independent copy.
+  Found while writing an ordinary Vox program that read lines from a
+  file into a list.
 
 - **A buffer's `type` property reports `Buffer (static)` however it was
   declared** ([#42](docs/BUGS_FOUND.md)) — `a buffer called b is 16
@@ -23,6 +59,67 @@ adheres to [Semantic Versioning](https://semver.org/).
   `Time (static)`. Found by the vox-fuzz buffer claim ledger (discrepancy
   D2) and adjudicated by the language lawyer.
 
+- **A conditional `value` return no longer segfaults the caller**
+  ([#43](docs/BUGS_FOUND.md)) — a function whose only `Return` sat
+  inside an `If`/`Otherwise` (`To label with a value called v. If v is a
+  number, return a value, v. Otherwise, return a value, 99.`) crashed
+  its caller with SIGSEGV, deterministically: the integer `99` was
+  dereferenced as a `char*` inside `_print_cstr_impl`. The parser's Gate
+  B fed a `Return`'s declared type into the function's signature only
+  for **top-level** body statements, so a branch-nested `Return` left
+  `return_type` at `Void`; codegen then skipped the `value` return's r11
+  tag load, and the caller stored r11 into the variable's tag slot
+  anyway — r11 still holding the callee's **parameter** tag (text) from
+  the `is a number` predicate, which labelled an integer payload as
+  text. Three changes: `emit_load_value_tag`'s no-tag arm now defaults
+  to the integer tag unless `expr_leaves_tag_in_r11` confirms a tag was
+  left there, which makes this class of mislabelling impossible
+  whatever else is wrong; the parser now adopts a branch-nested
+  `Return`'s declared type as the signature when the body declared no
+  top-level one and every declaration agrees, which is the actual cause;
+  and a function that falls off its end now returns its declared type's
+  empty value (empty text, zero, or a `value` tagged as the number `0`)
+  rather than whatever rax held, since a typed function could not
+  previously reach that path at all. The same missing signature made the
+  plain-type family silently wrong rather than unsafe — `Return a text`
+  inside a branch printed the text's address as a number — and that is
+  fixed by the same change. A function whose branches declare
+  *different* types still has no signature to adopt and is unchanged
+  (memory-safe, silently wrong); making that a compile error is a
+  language decision, noted in the register. Regression test proven to
+  segfault on the unfixed compiler and to pass after, with the
+  single-expression `Return a value, <expr>.` form kept as the control.
+  LANGUAGE.md's "One limitation to know" paragraph is rewritten: the
+  factorial pattern now works for `value` returns. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #43.
+
+- **`Seek ... to line N` reaches line N** ([#47](docs/BUGS_FOUND.md)) — every
+  target of 2 or more landed at the start of line 2, whatever N was, and a
+  line past the end of the file never set the error flag. `_seek_fd_line`
+  kept its line counter in `rcx` across the read syscall, and `syscall`
+  clobbers rcx with the return address, so the counter became a code address
+  on the very first byte read: the compare against the target failed
+  immediately, the scan fell out at the first newline, and the past-EOF branch
+  was unreachable. The counter now lives in `rbx`, which is callee-saved and
+  already pushed. `Seek ... to byte N` was a bare `lseek` and was never
+  affected; `_seek_fd_line` exists only in the x86_64 runtime. Found by the
+  vox-fuzz files claim ledger (discrepancy D3) and adjudicated by the language
+  lawyer.
+
+- **A failed `Write` sets the error flag, and both read forms agree about a
+  dead handle** ([#48](docs/BUGS_FOUND.md)) — a `Write` to a full device, to a
+  handle opened for reading, to a closed handle or to a handle whose `open`
+  failed all succeeded silently as far as Vox could tell, so a write that did
+  not happen was indistinguishable from one that did; and `Read from` a
+  failed-open handle reported a zero-byte read where `Read line from` the
+  identical handle set the flag. The three write macros issued their `write(2)`
+  and popped straight past rax without inspecting it, and `FileWrite` never
+  touched `_last_error` at all. Writes now record their syscall's outcome —
+  the errno for a failure, `EIO` for a short write, zero on success — and
+  `Write`, `Write a newline` and `Read from` set the flag on a dead handle
+  exactly as `Read line from` already did. Found by the vox-fuzz files claim
+  ledger (discrepancies D4 and D5) and adjudicated by the language lawyer.
+
 ### Changed
 
 - **LANGUAGE.md defines buffer bounds** — writes accept positions 1..capacity
@@ -32,6 +129,44 @@ adheres to [Semantic Versioning](https://semver.org/).
   paragraph never said so (buffer ledger discrepancy D3). The fixed-buffer
   feature list no longer says truncation is "silent": it sets the error
   flag, as the Reading section already stated.
+
+- **LANGUAGE.md no longer says `Read` appends** — the Reading section's
+  high-level bullet claimed `Read` "appends incoming data to the buffer", as
+  the explicit contrast against `Read line`'s "replaces". The compiler
+  deliberately replaces (`codegen/statements.rs`: "read replaces, not
+  appends"), `tests/runtime/b340_pipe_exact_fit.asm` asserts it, and no other
+  sentence in the manual depends on append. The bullet now says `Read`
+  replaces the buffer's contents and continues from the file's current
+  position — which is the real contrast with `Read line` (files ledger
+  discrepancy D2). The Seeking, Writing and Error Handling sections now also
+  state that a failed `Write`, and a read on a handle whose open failed, set
+  the error flag and are catchable.
+
+- **LANGUAGE.md collections section: five examples corrected, one
+  annotated** — from the vox-fuzz collections-a claim ledger
+  (discrepancies D1-D6), each adjudicated by the language lawyer and each
+  recompiled against this tree. The mixed-list widening example's `append
+  hello to items` is now `append "hello" to items`: a bare word is an
+  identifier (LANGUAGE.md:645-668), so the example as printed did not
+  compile (D1). The list-of-maps paragraph no longer claims a `For each`
+  "types the loop variable as a map" — the loop variable is deliberately
+  untyped and map access is a static check, so reading a key off it is a
+  compile error; the section now shows the index-loop idiom that works
+  (D2). The mixed-list guard idiom is replaced for the same reason: a
+  predicate reads the runtime tag but does not narrow the static type, so
+  the guarded element has to be extracted into a declared variable (D3),
+  and the `item as a number` cast the same paragraph offered as the
+  alternative is dropped, since casting a dynamically-tagged value is a
+  known gap and is rejected (D4). The promise that an unprovable value in
+  a list "is always read back as what it is rather than silently
+  reinterpreted" is hedged to match the limitation paragraph twenty lines
+  below it, which always conceded the conservative `number` tag guess
+  (D5). And the cyclic-list example's `(prints: [[...]] then cyclic)` is
+  marked as the abbreviation it is — 64 brackets each side of the `...`
+  (D6). Filed unfixed alongside these: [#44](docs/BUGS_FOUND.md)
+  (collections render as a raw address outside `Print`),
+  [#45](docs/BUGS_FOUND.md) (D5's compiler half) and
+  [#46](docs/BUGS_FOUND.md) (a diagnostic caret landing in a comment).
 
 ## [0.4.7] - 2026-08-20
 
