@@ -412,10 +412,13 @@ impl CodeGenerator {
     ///    `Mixed` *identifier* — a value parameter, a for-each variable over a
     ///    mixed list, or a declared `value` local — keeps its tag in a shadow
     ///    stack slot → `movzx r11, byte [rbp-<off>]`.
-    /// 3. **Already in r11** (both return `None`): a freshly-read mixed-list
-    ///    element (ElementAccess/First/Last leaves the slot's tag in r11) and a
-    ///    value-returning function call (the callee leaves r11=tag; `call` and
-    ///    `FUNC_EPILOGUE`/`_dec_call_depth` do not clobber r11). No emit needed.
+    /// 3. **Already in r11** (both return `None`, and `expr_leaves_tag_in_r11`
+    ///    agrees): a freshly-read mixed-list element (ElementAccess/First/Last
+    ///    leaves the slot's tag in r11) and a value-returning function call (the
+    ///    callee leaves r11=tag; `call` and `FUNC_EPILOGUE`/`_dec_call_depth` do
+    ///    not clobber r11). No emit needed.
+    /// 4. **Nothing holds the tag**: r11 is unrelated garbage, so fall back to
+    ///    `TAG_INTEGER` rather than write that garbage into a tag slot.
     ///
     /// Register discipline: callers consume r11 immediately — between this
     /// load and the consumer there must be no `call`/syscall that clobbers r11.
@@ -431,8 +434,25 @@ impl CodeGenerator {
                     loc.operand()
                 )),
                 None => {
-                    // r11 already holds the tag: a fresh mixed element read or a
-                    // value-returning function call left it there. Nothing to do.
+                    // r11 already holds the tag — but ONLY for the expressions
+                    // `expr_leaves_tag_in_r11` names (a fresh mixed element or
+                    // map read, a value-returning call). For anything else that
+                    // reaches here, r11 holds whatever the last unrelated
+                    // instruction left in it, and writing that byte into a
+                    // value's tag slot mislabels the payload. BUGS_FOUND #43:
+                    // a function whose only `Return a value` sat inside an `If`
+                    // never got `Type::Value` as its return type, so the callee
+                    // never set r11 and the caller stored the callee's stale
+                    // PARAMETER tag (text) over an integer payload — the caller
+                    // then printed 99 as a `char*` and the program segfaulted.
+                    // The integer tag is the safe default: it makes the payload
+                    // print as the number it is instead of being dereferenced.
+                    if !self.expr_leaves_tag_in_r11(expr) {
+                        self.emit_indent(&format!(
+                            "mov r11, {}  ; value tag (integer default: no tag in r11)",
+                            TAG_INTEGER
+                        ));
+                    }
                 }
             },
         }

@@ -1,0 +1,67 @@
+(Regression: `<buffer> as text` yields an independent copy of the
+buffer's bytes — bug #41. The cast used to return a pointer into the
+buffer's data area, which was wrong twice over. Rewriting the buffer
+silently rewrote every text taken from it — the aliasing half, a
+correctness bug on its own with no diagnostic. And resizing the buffer
+frees the old allocation, as LANGUAGE.md's "Buffer Resizing" says it
+does, so reading such a text afterwards was a use-after-free: both
+resize directions segfaulted. Copying at the cast fixes both halves.
+
+Each case below reads the text AFTER the buffer it came from has been
+rewritten, shrunk, or grown. On the unfixed compiler the aliasing case
+printed `SECOND` and every resize case crashed.)
+
+(The aliasing half: clearing and refilling the buffer must not touch a
+text already taken from it, and the buffer itself must still change.)
+a buffer called 'the line buffer' is 64 bytes in size.
+append "first" to 'the line buffer'.
+a text called 'the first line' is 'the line buffer' as text.
+Print 'the first line'.
+clear 'the line buffer'.
+append "SECOND" to 'the line buffer'.
+Print 'the first line'.
+Print 'the line buffer' as text.
+
+(Shrinking the source frees its old allocation; the copy is untouched.)
+a buffer called 'the sentence buffer' is 512 bytes in size.
+append "the quick brown fox jumps over the lazy dog" to 'the sentence buffer'.
+a text called 'the saved sentence' is 'the sentence buffer' as text.
+resize 'the sentence buffer' to 4 bytes.
+Print 'the saved sentence'.
+
+(Growing it reallocates just the same, so the copy must survive that too.)
+a buffer called 'the greeting buffer' is 16 bytes in size.
+append "hello" to 'the greeting buffer'.
+a text called 'the saved greeting' is 'the greeting buffer' as text.
+resize 'the greeting buffer' to 4096 bytes.
+Print 'the saved greeting'.
+
+(Two texts from one buffer are two separate copies, not two aliases.)
+a buffer called 'the shared buffer' is 128 bytes in size.
+append "alpha" to 'the shared buffer'.
+a text called 'the first copy' is 'the shared buffer' as text.
+a text called 'the second copy' is 'the shared buffer' as text.
+resize 'the shared buffer' to 8 bytes.
+Print 'the first copy'.
+Print 'the second copy'.
+
+(A copy longer than the initial capacity of a fresh buffer has to grow
+during the copy, which moves the destination — the cast must return the
+pointer it got back, not the one it started with.)
+a buffer called 'the long buffer' is 8192 bytes in size.
+a number called 'chunks written' is 0.
+While 'chunks written' is less than 500,
+    append "0123456789" to 'the long buffer',
+    Set 'chunks written' to 'chunks written' add 1.
+a text called 'the long copy' is 'the long buffer' as text.
+resize 'the long buffer' to 4 bytes.
+a buffer called 'the length probe' is 8192 bytes in size.
+append 'the long copy' to 'the length probe'.
+Print 'the length probe's length.
+
+(An empty buffer converts to empty text, not to a stray byte.)
+a buffer called 'the empty buffer' is 16 bytes in size.
+a text called 'the empty text' is 'the empty buffer' as text.
+Print "empty text follows".
+Print 'the empty text'.
+Print "empty text above".

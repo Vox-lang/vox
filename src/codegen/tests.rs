@@ -1977,6 +1977,7 @@ Otherwise, a number called s is 1, append s to out.\n";
         let float_asm = include_str!("../../coreasm/x86_64/float.asm");
         let list_asm = include_str!("../../coreasm/x86_64/list.asm");
         let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        let file_asm = include_str!("../../coreasm/x86_64/file.asm");
 
         fn function_body_has_clear(asm: &str, name: &str) -> bool {
             let label = format!("{}:", name);
@@ -2053,6 +2054,42 @@ Otherwise, a number called s is 1, append s to out.\n";
             function_body_has_clear(map_asm, "_map_print"),
             "_map_print must clear _last_error on its normal return path"
         );
+
+        assert!(
+            macro_body_has_clear(file_asm, "RECORD_WRITE_RESULT"),
+            "RECORD_WRITE_RESULT must clear _last_error on a complete write"
+        );
+    }
+
+    /// Bug #48: the three write macros issued their write(2) and never looked
+    /// at rax, so a write that did not happen was indistinguishable from one
+    /// that did. Every one of them must record its syscall's outcome. Checked
+    /// at the asm source level so a regression needs no assembler.
+    #[test]
+    fn write_macros_record_their_syscall_result() {
+        let file_asm = include_str!("../../coreasm/x86_64/file.asm");
+
+        for name in ["FILE_WRITE_STR", "FILE_WRITE_BUF", "FILE_WRITE_NEWLINE"] {
+            let open = format!("%macro {} ", name);
+            let start = file_asm
+                .find(&open)
+                .unwrap_or_else(|| panic!("%macro {} not found", name));
+            let rest = &file_asm[start..];
+            let end = rest
+                .find("%endmacro")
+                .unwrap_or_else(|| panic!("%endmacro for {} not found", name));
+            let body = &rest[..end];
+            assert!(
+                body.contains("syscall"),
+                "{} must issue a write syscall",
+                name
+            );
+            assert!(
+                body.contains("RECORD_WRITE_RESULT"),
+                "{} must record its write syscall's result in _last_error",
+                name
+            );
+        }
     }
 
     /// Plan 310 §7: printing a whole thing is written out by the compiler.

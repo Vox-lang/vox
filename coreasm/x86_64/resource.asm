@@ -573,8 +573,16 @@ _seek_fd_line:
     cmp r13, 1
     je .seek_line_done_offset    ; already at line 1
 
-    ; Need to cross (target_line - 1) newlines
-    mov rcx, 1                   ; current line index
+    ; Need to cross (target_line - 1) newlines.
+    ; The counter must live somewhere the kernel will not touch: `syscall`
+    ; overwrites rcx (and r11) with the return address, so a counter kept in
+    ; rcx became a code address on the very first read - the compare below
+    ; then failed immediately and the scan stopped at the first newline,
+    ; landing every target of 2 or more on line 2 and never reaching EOF
+    ; (bug #47). rbx is callee-saved, already pushed above, and otherwise
+    ; free, so the counter lives there and the newline test reads the byte
+    ; straight out of memory rather than borrowing a register for it.
+    mov rbx, 1                   ; current line index
 
 .seek_line_scan:
     mov rax, 0                   ; SYS_READ
@@ -587,12 +595,11 @@ _seek_fd_line:
     je .seek_line_error          ; hit EOF before requested line
     js .seek_line_error
 
-    movzx ebx, byte [rel line_read_tmp]
-    cmp bl, 10                   ; newline?
+    cmp byte [rel line_read_tmp], 10   ; newline?
     jne .seek_line_scan
 
-    inc rcx
-    cmp rcx, r13
+    inc rbx
+    cmp rbx, r13
     jl .seek_line_scan
 
 .seek_line_done_offset:

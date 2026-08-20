@@ -1,0 +1,7 @@
+(Compile-fail: bug #40 - a boolean operand crashes the same way a number
+ does: true is the value 1, and address 1 is not readable.)
+
+open a file for writing called report at "/tmp/vox_write_boolean.txt".
+a boolean called ready is true.
+Write ready to report.
+close report.

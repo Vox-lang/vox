@@ -1,0 +1,34 @@
+(Bug #40's other half: rejecting a scalar operand must not cost `Write` the
+ operands it has always taken. A text writes its characters, a buffer writes
+ its bytes, and a format string renders the very scalars that are refused
+ bare - which is the fix the diagnostic names, so this test is what that
+ message promises. The last pair is the value diagnostic's promise: a value
+ is refused, but copied into a typed variable it writes, whatever it holds.)
+
+a number called temperature is 72.
+a float called humidity is 36.5.
+a boolean called ready is true.
+a text called label is "sensor".
+
+Create a buffer called units.
+append " C" to units.
+
+a value called anything is "dynamic".
+a text called settled is anything.
+
+a text called path is "/tmp/vox_bug40_write.txt".
+open a file for writing called report at path.
+Write label to report.
+Write " " to report.
+Write "{temperature} {humidity} {ready}" to report.
+Write units to report.
+Write " " to report.
+Write settled to report.
+close report.
+
+Create a buffer called readback.
+open a file for reading called saved at path.
+read from saved into readback.
+close saved.
+Print readback.
+Delete the file path.

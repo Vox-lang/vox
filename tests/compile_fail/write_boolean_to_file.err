@@ -1,0 +1,1 @@
+Cannot write boolean ready to a file; Write takes text, a buffer, or a format string. Render it as text: Write "{ready}" to report.

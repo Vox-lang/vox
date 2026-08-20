@@ -2002,21 +2002,60 @@ impl CodeGenerator {
                         // decimal representation. Text values are already valid
                         // text pointers, so they are left unchanged. A buffer is
                         // NOT: it is a struct with a 24-byte header (BUF_DATA_OFFSET)
-                        // whose NUL-terminated character data lives at
-                        // struct + BUF_DATA_OFFSET, so the cast must return the
-                        // data-area pointer, not the struct pointer it was given.
+                        // whose character data lives at struct + BUF_DATA_OFFSET,
+                        // and that data belongs to the buffer, so the cast has to
+                        // hand back a copy of it rather than a pointer into it.
                         let src_type = self.infer_expr_type(value);
                         if matches!(src_type, Some(VarType::Buffer)) {
-                            // Buffer data is always NUL-terminated at its logical
-                            // end (_buffer_append_bytes writes a trailing NUL at
-                            // data+length; _buffer_clear zeroes the first byte), so
-                            // the data-area pointer is a valid C string. Same
-                            // adjustment the boolean cast makes for a buffer source.
+                            // `b as text` yields an INDEPENDENT copy of the
+                            // buffer's bytes (BUGS_FOUND #41). Returning the
+                            // data-area pointer aliased the buffer, and that was
+                            // wrong twice over: rewriting the buffer (`clear` then
+                            // `append`) silently rewrote the text as well, and
+                            // resizing the buffer freed the allocation the text
+                            // pointed at, so reading the text afterwards was a
+                            // use-after-free. Keeping the buffer alive would only
+                            // have fixed the second half; a copy fixes both.
+                            //
+                            // The copy goes into a fresh dynamic buffer from
+                            // `_alloc_buffer` - the same allocation the other
+                            // text-producing conversions and format strings use,
+                            // so exit cleanup tracks it the same way. The source's
+                            // own tracked length is the bound (buffer content is
+                            // not reliably NUL-terminated at its logical end), and
+                            // `_buffer_append_bytes` writes the terminating NUL and
+                            // returns the destination, which may have moved if the
+                            // copy outgrew the initial capacity.
                             self.uses_buffers = true;
+                            let null_label = self.new_label("buf_text_null");
+                            let done_label = self.new_label("buf_text_done");
+                            self.emit_indent("; Cast buffer to text (independent copy)");
+                            self.emit_indent("push rbx");
+                            self.emit_indent("push r12");
+                            self.emit_indent("mov rbx, rax  ; source buffer struct");
+                            self.emit_indent("test rbx, rbx");
+                            self.emit_indent(&format!("jz {}", null_label));
+                            self.emit_indent("call _alloc_buffer");
+                            self.emit_indent("mov r12, rax  ; destination buffer");
+                            self.emit_indent("mov rdi, rbx");
+                            self.emit_indent("call _buffer_length");
+                            self.emit_indent("mov rdx, rax  ; bytes to copy");
+                            self.emit_indent(&format!(
+                                "lea rsi, [rbx + {}]  ; source data area",
+                                BUF_DATA_OFFSET
+                            ));
+                            self.emit_indent("mov rdi, r12");
+                            self.emit_indent("call _buffer_append_bytes  ; rax = destination");
                             self.emit_indent(&format!(
                                 "add rax, {}  ; buffer data area -> NUL-terminated text",
                                 BUF_DATA_OFFSET
                             ));
+                            self.emit_indent(&format!("jmp {}", done_label));
+                            self.emit(&format!("{}:", null_label));
+                            self.emit_indent("xor rax, rax");
+                            self.emit(&format!("{}:", done_label));
+                            self.emit_indent("pop r12");
+                            self.emit_indent("pop rbx");
                         } else if !matches!(src_type, Some(VarType::String)) {
                             self.uses_buffers = true;
                             self.stack_offset += 8;

@@ -1476,6 +1476,7 @@ impl Analyzer {
                         Some(file),
                     );
                 }
+                self.check_file_write_operand(file, value);
                 self.analyze_expr(value);
                 self.deps.uses_io = true;
             }

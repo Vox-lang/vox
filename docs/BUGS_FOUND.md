@@ -2277,9 +2277,17 @@ fixed compiler as controls.
 
 ### 40. `Write` of any scalar to a file segfaults — number, float, and boolean alike
 
-**Status:** **open**, found 2026-08-20 while building vox-fuzz's stdin
-input generation — the generator needed to write bytes to a file and
-tried the obvious thing.
+**Status:** **fixed (diagnostic)** (0.4.8), found 2026-08-20 while
+building vox-fuzz's stdin input generation — the generator needed to
+write bytes to a file and tried the obvious thing. The analyzer now
+refuses a scalar or `value` `Write` operand at compile time, naming the
+operand, its type, and the working spelling; the segfault is gone.
+Compile-fail cases `tests/compile_fail/write_number_to_file.vox`,
+`write_float_to_file.vox`, `write_boolean_to_file.vox`, and
+`write_value_to_file.vox` (all four compiled and crashed at 139 before
+the fix); passing companion
+`tests/bugs_found_40_write_text_and_format.vox` pins that text, buffer,
+format-string, and copied-into-a-typed-variable operands still write.
 
 ```vox
 open a file for writing called out at "/tmp/f.txt".
@@ -2329,6 +2337,39 @@ writing a number is meant to be supported, it needs to render like
 `"{n}"` does rather than dereferencing the value as a pointer, which
 the crash suggests is what happens now.
 
+**What was done.** The first of those two: `check_file_write_operand` in
+`src/analyzer/types.rs` refuses a named operand whose tracked type is
+number, float, or boolean, with `Cannot write number n to a file; Write
+takes text, a buffer, or a format string. Render it as text: Write
+"{n}" to out.` — the exact statement that works, built from the
+operand's and the file's own names. Rendering a scalar directly remains
+an **open design option**: it is a language decision (what `Write true`
+should put on disk, and whether a float follows the `"{x}"` formatter),
+deliberately not taken here, and LANGUAGE.md now states the rule the
+compiler enforces.
+
+**A `value` operand is refused too** (master review). It is the same
+defect wearing a runtime tag: `a value called gap is nothing. Write gap
+to out.` segfaulted, a value holding a number segfaulted, and a value
+holding text happened to write correctly. The compiler cannot tell those
+apart — the type is only known at runtime — so the category goes whole,
+exactly as `check_arithmetic_operand` refuses a value. Its message names
+a *different* fix, and deliberately so: **`Write "{v}" to out` does not
+work for a value.** On the file-write path that interpolation renders the
+value's raw payload, so a text-holding value writes its pointer as a
+decimal (`sensor` → `4210906`) and `nothing` writes `0`, while the print
+path renders both correctly (`Print "{v}"` → `sensor`, `nothing`) — a
+separate formatter defect in `Write`, not filed here, and worth its own
+entry. The message therefore names the spelling that was verified on
+both sides: copy the value into a typed variable (`a text called plain is
+gap.`) and write that; `tests/bugs_found_40_write_text_and_format.vox`
+covers it so the promise stays proven.
+
+**Left open, deliberately:** a `list` or `map` operand still writes the
+bytes at the collection pointer. That is garbage, not a crash, and a
+different question from this one (what *should* writing a list to a file
+mean?), so it stays a follow-up rather than riding along here.
+
 **Note on how it was found:** by a human writing ordinary Vox, not by
 the fuzzer. The generator cannot currently reach this shape because it
 never writes to files — which is exactly the coverage plan 327 Part B is
@@ -2338,9 +2379,15 @@ adding, and `Write` of a non-text operand is now worth adding to it.
 
 ### 41. `buffer as text` aliases the buffer — resizing it leaves the text dangling, and reading it segfaults
 
-**Status:** **open**, found 2026-08-20. **Use-after-free in a language
-whose headline promise is memory safety.** The most serious entry in
-this register.
+**Status:** **fixed** (0.4.8), found 2026-08-20. `as text` on a
+buffer now copies the buffer's bytes into a fresh dynamic buffer — the
+same `_alloc_buffer` allocation format strings and the other
+text-producing casts use, so exit cleanup tracks it identically — and
+returns that copy's data area, so neither rewriting nor resizing the
+source buffer can reach the text. Regression test
+`tests/buffer_as_text_copies.vox`. Originally filed as: **use-after-free
+in a language whose headline promise is memory safety**, the most
+serious entry in this register.
 
 ```vox
 a buffer called b is 512 bytes in size.
@@ -2415,7 +2462,7 @@ such find today, after #40 and the format-string bugs.
 
 ### 42. A buffer declared with a byte count reports `Text (dynamic)` from its `type` property
 
-**Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
+**Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz
 buffer claim ledger — the mapper hand-ran every property in the manual's
 table and this one disagreed; adjudicated by the language lawyer as a
 compiler bug before anything was filed.
@@ -2475,5 +2522,533 @@ string-initialised control, and a `value` holding text (which must stay
 correct buffer type *test* at all — `is a buffer` does not parse — so the
 manual's own advice at :3208 cannot be followed for buffers. Either the
 predicate grows a `buffer` noun or the manual stops recommending it here.
+
+### 43. A conditional `value` return leaves a stale tag, and the caller dereferences an integer as text — segfault
+
+**Status:** **fixed in 0.4.8.** Severity: **memory safety** — a
+valid program, written in a shape the manual itself describes, crashes.
+Regression test: `tests/value_conditional_return.vox`, proven to
+segfault (139, no output at all) on unfixed `origin/main` and to pass
+after. Found 2026-08-20 by the vox-fuzz VALUES claim ledger mapping,
+discrepancy D1 — a mapper probing the manual's own limitation in the
+direction the manual did not show; adjudicated a compiler bug by the
+language lawyer.
+
+```vox
+To label with a value called v.
+  If v is a number, return a value, v.
+  Otherwise, return a value, 99.
+
+a value called r is label of "hello".
+print r.
+```
+→ **segfault (139)**, deterministic. Under gdb: SIGSEGV in
+`_print_cstr_impl.count_loop` with `rdi=0x63` — the integer **99**
+being dereferenced as a `char*`.
+
+**The manual promised a wrong print and got a crash.** LANGUAGE.md's
+`value` section carried a paragraph headed *"One limitation to know"*:
+a conditional `value` return "does not track the return type, so the
+value would print as a number." A wrong print is a defensible
+limitation. It is not what happens. The opposite direction — a text
+returned from a frame whose parameter held a number — does print a
+stable garbage number (`4210906`, tagged `Number (dynamic)`), which is
+the documented outcome; it is only the number-over-text direction that
+crashes. README's "Memory Safety Model" and ROADMAP M0 ("no valid Vox
+program may segfault") both forbid the result either way.
+
+**The single-expression form is fine, which is the control.** `To label
+with a value called v. Return a value, 99.` compiles and prints
+correctly. Only the branch-nested return is affected, and that is
+exactly the difference the mechanism turns on.
+
+**Mechanism, in three steps.**
+
+1. **The parser never puts the type on the signature.**
+   `src/parser/functions.rs` "Gate B" feeds a `Return`'s
+   `declared_type` into the function's `return_type` only for
+   **top-level** body statements. A `Return` nested in an `If` lives in
+   the conditional's own body vector, so Gate B never sees it and
+   `return_type` stays `Type::Void`.
+2. **So codegen never emits the tag.** `src/codegen/statements.rs`
+   loads a `value` return's runtime tag into r11 only when
+   `current_function_return_type == Some(Type::Value)`. With the
+   signature reading `Void`, that load is skipped and r11 is never set
+   for the return.
+3. **And the caller writes r11 anyway.** The `value` declaration path
+   in `src/codegen/statements.rs` stores `r11b` into the variable's tag
+   slot via `emit_load_value_tag`, whose "already in r11" arm assumed
+   r11 held a tag without ever consulting `expr_leaves_tag_in_r11`. The
+   last instruction to touch r11 inside the callee was the predicate's
+   load of the **parameter's** tag — `1`, meaning text. So the caller
+   labels the integer payload `99` as text, and `print` dereferences
+   it.
+
+The generated assembly shows all three at once: the callee's
+`movzx r11, byte [rbp-16]  ; load mixed element tag` for the `is a
+number` predicate is the last write to r11, and the caller's very next
+use is `mov [rel gvar_0_tag], r11b  ; value global tag`.
+
+**The same root cause, memory-safe but silently wrong, in the plain-type
+family:**
+
+```vox
+To choose with a number called n.
+  If n is greater than 0, Return a text, "big".
+  Otherwise, Return a text, "small".
+
+print choose of 5.
+```
+→ prints `4198488` — the address of `"big"`, printed as a number, with
+no diagnostic. Same missing signature; no crash only because a
+plain-typed return carries no tag to corrupt.
+
+**Fix.** Three parts, in the order that matters:
+
+1. **`src/codegen/tags.rs` — make the crash impossible.**
+   `emit_load_value_tag`'s no-tag arm now emits `mov r11, TAG_INTEGER`
+   unless `expr_leaves_tag_in_r11` says the expression really did leave
+   one. This alone turns the segfault into the wrong print the manual
+   had promised, and it holds for any future expression that reaches
+   that arm.
+2. **`src/parser/functions.rs` — fix the cause.** `typed_returns`
+   already collects *every* typed `Return` line in a body, nested ones
+   included — the member rule reports against it — and it is cleared
+   before each body is parsed. When Gate B left `return_type` at `Void`
+   and every collected declaration agrees, that type is now adopted as
+   the signature. Both the `value` case and the `Return a text` family
+   are fixed by this one change.
+3. **`src/codegen/statements.rs` — close the door the fix opens.**
+   Before this, a function's body always ended at its first top-level
+   `Return`, so a typed function could never fall off its end. A
+   branch-only return can. The implicit epilogue now hands back the
+   declared type's empty value — empty text, zero, or a `value` tagged
+   as the number `0` — instead of whatever rax and r11 happened to
+   hold, which for a `text` return would have been a fresh wild
+   dereference.
+
+**Left for a human: conflicting branch types.** A function declaring
+`Return a text` in one branch and `Return a number` in the other has no
+single type to put on its signature. The compiler accepts it today
+with no diagnostic, and this fix deliberately does **not** change that:
+picking either branch's type would mislabel the other one's payload,
+and picking one is a policy choice, not a bug fix. Such a function
+keeps the old `Void` reading — memory-safe, silently wrong. Making it a
+compile error with a clear diagnostic is the obvious answer, but it is
+a language decision and it belongs to whoever owns the spec.
+
+---
+
+### 51. A text initialised from a buffer WITHOUT the cast (`a text called t is b.`) points at the buffer's header and prints its capacity byte
+
+**Status:** **open**, found 2026-08-20 by the vox-41 fix worker probing
+sibling forms of bug #41. Silent wrong data: one character where a whole
+line of text was expected, with no warning and no error.
+
+```vox
+a buffer called b is 64 bytes in size.
+append "first" to b.
+a text called t is b.
+Print t.                     (prints @ — not "first")
+Print "expected: first".
+```
+
+**The cause: the bare `is <buffer>` initializer never adds
+`BUF_DATA_OFFSET`.** A buffer is a struct whose 24-byte header is
+`[capacity][length][flags]`, with the character data at
+`struct + BUF_DATA_OFFSET`. The `as text` cast (`Expr::Cast` →
+`Type::String`, `src/codegen/expr.rs`) knows this and, since #41, copies
+the data area. The cast-free spelling takes the `VarDecl` path instead
+and never reaches that code at all: it stores the **struct pointer**
+into the text variable verbatim. Printing the text therefore reads the
+first byte of the capacity field as a one-character C string.
+
+**Proof it is the capacity field and not memory noise.** Change only the
+declared size; the printed character tracks it exactly:
+
+| Declaration | Prints | Byte |
+|---|---|---|
+| `a buffer called b is 64 bytes in size.` | `@` | 0x40 = 64 |
+| `a buffer called b is 65 bytes in size.` | `A` | 0x41 = 65 |
+
+Deterministic, reproducible, and a direct read of the header — not
+uninitialised stack, not a dangling pointer.
+
+**Why this is harder to catch than #41 was.** It is *stable across
+mutation*. Clearing and refilling the buffer does not change what the
+text prints, because the text is reading the header and never touches the
+data. The "my value changed under me" tell that led to #41 being found
+never fires here, so the only symptom is a wrong character that has
+looked the same since the moment it was written.
+
+The spelling is not exotic. A user who has met `a text called t is
+"hello".` and `a buffer called b is "seed".` will reach for `a text
+called t is b.` well before `a text called t is b as text.` — the
+manual's Basic Conversions table (which, until #41, did not list
+`buffer → text` at all) gives them no reason to expect the cast is
+load-bearing.
+
+**Control:** `a text called t is b as text.` is correct as of the #41
+fix, and `"{b}"` has been correct since v0.1.17. Only the cast-free
+initializer is affected.
+
+**Fix options — a human decides which:**
+
+1. **Copy, like `as text` now does.** Route the bare `is <buffer>`
+   initializer through the same copy the cast emits, so both spellings
+   mean the same thing. Most forgiving, and consistent with `"{b}"`
+   already doing exactly this.
+2. **Reject it, naming the cast.** A compile error on `a text called t is
+   <buffer>.` that suggests `as text`. Keeps one obvious way to spell a
+   conversion, and makes the type change explicit at the point it
+   happens — which is the argument the manual makes elsewhere for
+   preferring explicit casts.
+
+Either is defensible; what is not defensible is the current third
+option, which is to silently print the capacity.
+
+---
+
+### 47. `Seek ... to line N` lands on line 2 for every N of 2 or more, and a line past EOF never sets the error flag
+
+**Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz files
+claim ledger — the mapper hand-ran the manual's Seeking rules against a file
+whose lines were all different lengths, so the landing line could not be
+mistaken; adjudicated by the language lawyer as a compiler bug before
+anything was filed.
+
+```vox
+(the file is AA / BBBB / CCCCCC / DD / EEEEEEEE — five lines, five lengths)
+Seek reader to line 1.   Read line -> AA          (right)
+Seek reader to line 2.   Read line -> BBBB        (right)
+Seek reader to line 3.   Read line -> BBBB        (should be CCCCCC)
+Seek reader to line 5.   Read line -> BBBB        (should be EEEEEEEE)
+Seek reader to line 99.  Read line -> BBBB        (past EOF; no error flag)
+```
+
+Every target above 2 lands at the start of line 2. It is absolute, not
+relative — seeking twice gives the same place — and `Seek ... to byte N` is
+correct throughout, so this is specific to the line form.
+
+**What the spec says.** LANGUAGE.md's Seeking rules: "`Seek ... to line N`
+moves to the first byte of line `N`", and "Invalid targets (e.g. line past
+EOF, position < 1, invalid fd) set the error flag".
+
+**The strongest reading in the compiler's favour** rescues only the second
+half. `lseek(2)` past EOF is legal, so a line form that clamps rather than
+fails would be consistent with the byte form, making the past-EOF rule an
+intent the implementation never had. Nothing rescues the wrong offset: a
+relative reading ("advance one line") would make two consecutive `Seek ... to
+line 2` calls advance twice, and they do not, and would stop `line 1` from
+rewinding to offset 0, and it does.
+
+**Mechanism.** `_seek_fd_line` (`coreasm/x86_64/resource.asm:547`) kept its
+line counter in **rcx** across the read syscall in `.seek_line_scan` — and
+`syscall` clobbers rcx (and r11) with the return address. By the time control
+reached `inc rcx / cmp rcx, r13 / jl`, the counter was a code address, which
+compares far above any plausible line number, so the loop fell out at the
+first newline. That is line 2 for every target, and it is also why the scan
+never ran on to EOF: the past-EOF branch was simply unreachable. EOF detection
+itself was never broken — a single-line file with no trailing newline does set
+the flag, because that read returns 0 before the first newline is ever seen.
+
+**Fix.** The counter now lives in `rbx`, which is callee-saved, already pushed
+at entry and otherwise free, and the newline test reads the byte straight out
+of `line_read_tmp` rather than borrowing a register for it. `_seek_fd_line`
+exists only in the x86_64 runtime; no other architecture has the routine at
+all. Regression test `tests/355_seek_line_positions.vox` runs the shape the
+ledger found this with — a fresh handle for each of lines 1, 2, 3, 5 and 99 —
+and then walks a single handle out of order, forward to line 5, back to line
+3, and past the end, which is what shows the seek is absolute rather than a
+scan that happens to accumulate. Both shapes fail on `origin/main`.
+
+**How it was found:** vox-fuzz files claim ledger discrepancy D3, adjudicated
+by the language lawyer.
+
+---
+
+### 48. A failing `Write` never sets the error flag, and `Read from` a dead handle sets nothing while `Read line from` sets it
+
+**Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz files
+claim ledger; adjudicated by the language lawyer as a compiler bug (D4) with
+the read-side inconsistency (D5) folded into it.
+
+```vox
+(a valid, writable handle on a device that fails every write with ENOSPC)
+open a file for writing called sink at "/dev/full".
+Write "x" to sink.
+On error print "caught".      (never printed)
+```
+
+Four more failure modes, none of them caught: a write to a descriptor that was
+never valid, to a handle opened for reading, to a handle whose `open` failed,
+and to a handle that was closed. `open`, `Read line`, `Seek` and `Delete` all
+set the flag on failure; `Write` never did, in any mode. **From inside Vox, a
+write that did not happen was indistinguishable from one that did.**
+
+The read side disagreed with itself in the same area. A failed `open` leaves
+the handle with descriptor `-2`; against that handle `Read line from` fired
+the handler and `Read from` reported a silent zero-byte read. Against a
+descriptor that is merely invalid rather than negative (`2147483647`) both
+fired — so `Read from` treated a negative descriptor as EOF and a
+positive-but-invalid one as an error.
+
+**What the spec says.** LANGUAGE.md lists "File operation failures" among the
+catchable errors.
+
+**The strongest reading in the compiler's favour** is that "file operation
+failures" is scoped by its section, whose every example is a *read*, so `Write`
+was never claimed to be checkable and the manual is merely silent. Silence is
+not much of a defence in a language whose headline promise is resource safety,
+and it does not touch the read-side half at all: nothing explains why two read
+forms should disagree about the same handle.
+
+**Mechanism.** Two independent omissions.
+
+`FILE_WRITE_STR`, `FILE_WRITE_BUF` and `FILE_WRITE_NEWLINE`
+(`coreasm/x86_64/file.asm:243/285/305`) issued their `write(2)` and then popped
+their saved registers straight past rax without ever inspecting it — the
+syscall's result was discarded. And `Statement::FileWrite`
+(`src/codegen/statements.rs:~2196`) never touched `_last_error` either: it
+`js`-skipped a negative descriptor in silence.
+
+`Statement::FileRead` (`~2093`) took the same `js`-skip on a negative
+descriptor and set nothing, where `Statement::FileReadLine` (`~2109`) emits
+`mov qword [rel _last_error], 1` on the identical jump. One missing line.
+
+**Fix.** A new `RECORD_WRITE_RESULT` macro records the outcome of every write
+syscall in `_last_error` — the errno for a negative return, `EIO` for a short
+write (Vox does not retry, so the missing bytes are lost, and the kernel gives
+no errno for one), zero on success so a later handler cannot fire on stale
+state. It runs before the pops, when rax still holds the return and rdx still
+holds the requested count, and leaves rax untouched the way `FORK` does.
+`FileWrite`, `FileWriteNewline` and `FileRead` each grew the negative-descriptor
+error `FileReadLine` already had. Regression test
+`tests/356_write_and_read_error_handling.vox` covers the `/dev/full` write in
+all three forms, the read-only handle, the closed handle, both read forms and a
+`Write` on a failed-open handle, and — the control that matters — asserts a
+successful write does **not** fire the handler.
+
+**How it was found:** vox-fuzz files claim ledger discrepancies D4 and D5,
+adjudicated by the language lawyer.
+
+---
+
+### 44. `{list}` / `{map}` in a format string renders correctly only in `Print` position — everywhere else it prints a raw heap address
+
+**Status:** **open**, found 2026-08-20 by the vox-fuzz collections-a claim
+ledger (discrepancy D7) and adjudicated by the language lawyer.
+
+```vox
+a list called flat is [1, 2, 3].
+print "print position: {flat}".      (print position: [1, 2, 3])
+a text called captured is "{flat}".
+print captured.                      (140237428518912   — wrong)
+a buffer called sink is 64 bytes in size.
+copy "{flat}" to sink.
+print sink.                          (140237428518912   — wrong)
+```
+
+Maps behave identically: `print "{person}"` gives `{"name": "Ada"}`, and
+`a text called captured is "{person}".` gives `140696375164928`.
+
+The address **changes between runs** — two consecutive runs of the same
+binary gave `140237428518912` and `140604117905408`. That puts this bug in
+a class of its own for vox-fuzz: any generated program that interpolates a
+collection into a non-print sink has wandering output, and the runner
+classifies the program as nondeterministic. The generator would be
+manufacturing a false finding, not reporting a real one.
+
+**What the spec promises.** LANGUAGE.md:3054-3056 — a format string used as
+a value "materializes into a fresh NUL-terminated string, so it works as a
+text initializer or assignment". LANGUAGE.md:3081 — "Every statement that
+takes a string value accepts a format string: `write`, buffer
+`set`/`copy`/`append`, filesystem paths ..., `treating` clauses, and
+function arguments." Both are stated without a type restriction, and both
+are broken by a collection. (The neighbouring "all sinks share one name
+resolver ... render identically" sentence at :3082-3085 does *not* carry
+this: "special names" is fairly read as only the named specials that
+sentence goes on to list. The two citations above are the ones that carry
+it.)
+
+**The language already has a considered answer for this shape.**
+LANGUAGE.md:1224-1227 shows the same construct for a `thing` and makes it a
+compile error with a fix-it:
+
+```vox
+a point called origin.
+a text called note is "the point is {origin}".
+(compile error: 'origin' holds a whole point, which only `Print` can interpolate
+   Interpolate a field instead - point's fields are: x, y)
+```
+
+An aggregate interpolated into a non-print sink is refused, and the
+diagnostic names the way out. Lists and maps get silence and a pointer.
+
+**Mechanism.** `src/codegen/print.rs:88-101` special-cases
+`VarType::List` and `VarType::Map` *inside the Print emitter*, calling
+`_list_print` / `_map_print` on the pointer in `rdi`. Every other sink goes
+through the shared resolver `resolve_format_variable`
+(`src/codegen/format.rs:13`), whose result is handed to
+`emit_append_runtime_value_to_buffer_ptr`
+(`src/codegen/buffers.rs:75-106`). That function has arms for `Buffer`,
+`String`, and `Float` — and no `List`/`Map` arm — so both fall through to
+`_ => self.emit_append_formatted_int_to_buffer(fmt)`: the heap pointer,
+formatted as a decimal integer.
+
+That is exactly the per-sink duplication the resolver's own doc comment
+forbids (`src/codegen/format.rs:4-12`): *"Special names, variable/global
+lookup, and the constant fallback must never be re-implemented per sink:
+that duplication is exactly how the buffer sinks shipped without
+`{current time's hour}` support while Print had it."* Name resolution was
+unified; **value rendering** was not, and the missing-arm bug has already
+been paid for once — the `Float` arm at `buffers.rs:87-101` was added to
+fix bug #1 in this register, and its comment says so in as many words
+("The Print path never hit this because it formats through
+`emit_formatted_value`, which already had a Float arm").
+
+**Severity.** A silent wrong answer with no diagnostic — the failure mode
+LANGUAGE.md:649-660 says the 0.3.0 identifier/literal split was designed to
+eliminate. It costs a false nondeterminism finding on top of the wrong
+answer.
+
+**Fix direction.** At minimum, reject like a thing: a `List` or `Map` in a
+non-print format sink becomes a compile error in the :1224-1227 register
+("only `Print` can interpolate a whole list — print it directly, or
+interpolate an element"). In full, close the duplication rather than paper
+over it: give `emit_append_runtime_value_to_buffer_ptr` `List`/`Map` arms
+that render through a `_list_print`/`_map_print`-to-buffer variant, so a
+collection renders identically in every sink and :3054-3056 becomes true as
+written.
+
+**Not affected today:** no vox-fuzz leaf emits a collection slot in a
+non-print sink — `gen leaf format types` builds its `{hl{n}}` and `{hm{n}}`
+slots into `Print` statements only. The corpus is clean, and the first leaf
+worker to add one would make its output wander.
+
+---
+
+### 45. A function with no declared return type is read back as an integer wherever its result lands untyped
+
+**Status:** **open**, found 2026-08-20 by the vox-fuzz collections-a claim
+ledger (discrepancy D5) and adjudicated by the language lawyer, who found
+the defect is broader than the mixed-list case the ledger reported.
+
+```vox
+To 'opaque label'. Return "hi".
+print 'opaque label'.               (4198488   — wrong)
+a text called saved is 'opaque label'.
+print saved.                        (hi        — right)
+```
+
+Four lines, no list in sight. `'opaque label'` returns a text; printed
+directly it prints `4198488`, the rodata address of `"hi"`. Routed through
+a **declared** `text` first, it prints `hi`. The returned value is intact —
+the read is what is wrong, and it is wrong precisely where nothing supplies
+a type.
+
+The mixed-list case the ledger found is the same confusion reaching a list
+slot, and declaring the return type fixes that too:
+
+```vox
+To 'opaque label'. Return "hi".
+To 'declared label'. Return a text, "hi".
+a list called items is [].
+append 'opaque label' to items.
+append 'declared label' to items.
+print element 1 of items.           (4210906   — wrong)
+print element 2 of items.           (hi        — right)
+```
+
+`is a number` fires on element 1 and `is a text` does not: the slot was
+written with a conservative `TAG_INTEGER` guess. The address is **stable
+across runs** (4210906, 5/5), because it is a static rodata address — so
+the wrong answer looks like data, not like a crash.
+
+**This is type confusion, not a memory-safety fault.** The pointer is never
+dereferenced as an integer nor an integer as a pointer; it is a valid
+pointer handed to the wrong formatter. Nothing segfaults, and it does not
+belong in #41's class.
+
+**What the spec says.** LANGUAGE.md:649-660 describes this exact shape as
+the thing the 0.3.0 identifier/literal split was written to kill: *"a
+function pointer, printed as a number, silently. No error, no warning; the
+program runs and gives a wrong answer that looks like data."* And
+LANGUAGE.md:2233-2235 promised, until this branch, that an unprovable value
+appended to a list "is always read back as what it is rather than silently
+reinterpreted" — flatly contradicted twenty lines later at :2250-2254,
+which concedes the `TAG_INTEGER` guess and narrows the promise to "when it
+really is a number". The manual half is fixed on this branch (:2233-2235
+now carries the same hedge and points the reader at declaring the return
+type); this entry is the compiler half.
+
+**Fix direction.** The honest fix is a rejection at the widening/untyped
+site, not a wider guess. Precedent: `src/analyzer/things.rs:817`
+(`push_whole_thing_not_interpolable`) refuses a construct codegen cannot
+render and names the way out in the diagnostic. The same shape here — *"'opaque
+label' has no declared return type, so its result is read as a number here.
+Declare it (`Return a text, "hi".`), or assign it to a declared variable
+first."* Guessing `number` and staying silent is the one option the
+language's own stated philosophy rules out. Full runtime tag propagation
+(stage 1d, `docs/COLLECTIONS_ROADMAP.md`) fixes it properly; the rejection
+is what can ship before then.
+
+---
+
+### 46. The diagnostic caret can land inside a comment
+
+**Status:** **open**, found 2026-08-20 by the language lawyer during
+adjudication of the vox-fuzz collections-a claim ledger — every probe file
+in that ledger opens with a header comment quoting the token it is testing,
+and the carets were pointing at the header instead of the code.
+
+```vox
+(mentions hello here)
+a list called items is [].
+append hello to items.
+```
+```
+error: Unknown variable: hello
+  --> repro.vox:1:11
+    |
+  1 | (mentions hello here)
+    |           ^--- here
+```
+
+Three lines. The error itself is right — `hello` on line 3 is an unquoted
+bare word, which LANGUAGE.md:645-668 defines as an identifier, and there is
+no variable `hello`. Only the location is wrong: `1:11` is the word `hello`
+**inside the comment on line 1**. The offending token is on line 3, column
+8.
+
+**Mechanism.** `find_symbol_location` (`src/analyzer/scope.rs:194-220`)
+locates a diagnostic from the symbol's *name*, not from a span: it walks
+`source.content.lines()` and takes the first `line.find(&pattern)` hit for
+`{name`, then `"name"`, then bare `name`. It is a plain text search over
+raw source with no awareness of comments or string literals, so the first
+textual occurrence wins wherever it sits. `push_unknown_variable`
+(`:263-290`) routes through `find_use_site_location` (`:143-152`), which
+tries to anchor on the failing read rather than the declaration (plan 318
+§3) — but its pattern list is the same one and it falls back to
+`find_symbol_location`, so a comment mentioning the name still outranks the
+real use site.
+
+**Why it matters more than it looks.** It is a trap laid specifically for
+the people who document their repros. Every probe under
+`docs/ledger/probes/` opens by naming the construct under test, so every
+one of them with a symbol-located diagnostic mis-points — including the D2
+probe in this very ledger, whose caret lands at `D2.vox:4:56`, in the
+middle of its own header comment. A reader who trusts the caret looks at a
+comment, finds nothing wrong there, and starts doubting the diagnostic
+instead of the code. The misleading-diagnostic class is cheap to fix and
+expensive to leave.
+
+**Fix direction.** Give the diagnostic the token's real span — the lexer
+already has it, and `push_error_with_hint_at` (`:247-261`) is the existing
+door for a caller holding a genuine `SourceLocation`. Failing that, make
+the source scan skip comment and string spans; `find_pattern_location`
+already carries exclusion machinery (a declaration line to avoid, a
+`guard_against_called` flag), so the shape is not new. Regression test is
+the three lines above.
 
 ---

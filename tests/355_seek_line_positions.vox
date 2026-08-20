@@ -1,0 +1,79 @@
+(Regression test for bug #47: `Seek ... to line N` kept its line counter in
+rcx across the read syscall. The kernel clobbers rcx with the return address,
+so the counter became a code address on the very first byte read, the scan
+stopped at the first newline, and every target above line 2 landed at the
+start of line 2 - and because the scan never ran on, it never reached EOF, so
+a line past the end of the file never set the error flag either.
+
+Two shapes, because they are not the same test. The first gives every seek a
+fresh handle, which is how the ledger's D3 repro found this. The second walks
+one handle out of order - 5, then back to 3, then past the end - which is what
+proves the seek is absolute rather than a scan that happens to accumulate.)
+
+open a file for writing called setup at "/tmp/vox_test_seek_line_positions.txt".
+Write "AA\nBBBB\nCCCCCC\nDD\nEEEEEEEE\n" to setup.
+Close setup.
+
+(All five lines are different lengths, so the line we land on is unambiguous.)
+
+(A fresh handle per seek.)
+open a file for reading called 'the first reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the first line' is 32 bytes in size.
+Seek 'the first reader' to line 1.
+On error print "BUG: seek to line 1 fired the error handler", exit 1.
+Read line from 'the first reader' into 'the first line'.
+print "fresh handle, line 1 -> {'the first line'}".
+Close 'the first reader'.
+
+open a file for reading called 'the second reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the second line' is 32 bytes in size.
+Seek 'the second reader' to line 2.
+On error print "BUG: seek to line 2 fired the error handler", exit 1.
+Read line from 'the second reader' into 'the second line'.
+print "fresh handle, line 2 -> {'the second line'}".
+Close 'the second reader'.
+
+open a file for reading called 'the third reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the third line' is 32 bytes in size.
+Seek 'the third reader' to line 3.
+On error print "BUG: seek to line 3 fired the error handler", exit 1.
+Read line from 'the third reader' into 'the third line'.
+print "fresh handle, line 3 -> {'the third line'}".
+Close 'the third reader'.
+
+open a file for reading called 'the fifth reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the fifth line' is 32 bytes in size.
+Seek 'the fifth reader' to line 5.
+On error print "BUG: seek to line 5 fired the error handler", exit 1.
+Read line from 'the fifth reader' into 'the fifth line'.
+print "fresh handle, line 5 -> {'the fifth line'}".
+Close 'the fifth reader'.
+
+open a file for reading called 'the far reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the far line' is 32 bytes in size.
+Seek 'the far reader' to line 99.
+On error print "fresh handle, line 99 past the end set the error flag".
+Read line from 'the far reader' into 'the far line'.
+print "fresh handle, line 99 read {'the far line's size} bytes".
+Close 'the far reader'.
+
+(One handle, walked out of order: forward to 5, back to 3, then past the end.
+A seek to a line is absolute, so going back must really go back.)
+open a file for reading called 'the walking reader' at "/tmp/vox_test_seek_line_positions.txt".
+a buffer called 'the walked line' is 32 bytes in size.
+
+Seek 'the walking reader' to line 5.
+On error print "BUG: walking seek to line 5 fired the error handler", exit 1.
+Read line from 'the walking reader' into 'the walked line'.
+print "one handle, line 5 -> {'the walked line'}".
+
+Seek 'the walking reader' to line 3.
+On error print "BUG: walking seek back to line 3 fired the error handler", exit 1.
+Read line from 'the walking reader' into 'the walked line'.
+print "one handle, back to line 3 -> {'the walked line'}".
+
+Seek 'the walking reader' to line 99.
+On error print "one handle, line 99 past the end set the error flag".
+
+Close 'the walking reader'.
+Delete the file "/tmp/vox_test_seek_line_positions.txt".

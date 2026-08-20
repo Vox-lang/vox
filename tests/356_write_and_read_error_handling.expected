@@ -1,0 +1,10 @@
+the successful writes did not fire the handler
+the write to a full device set the error flag
+the newline write to a full device set the error flag
+the buffer write to a full device set the error flag
+the write to a read-only handle set the error flag
+the write to a closed handle set the error flag
+the failed open set the error flag
+Read from a failed handle set the error flag
+Read line from a failed handle set the error flag
+the write to a failed handle set the error flag
