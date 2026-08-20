@@ -1,0 +1,21 @@
+(The passing control for bug #49's new collection-kind check: the three
+ collections LANGUAGE.md actually supports - a list, a range, and
+ `arguments's all` - must all still iterate. The check refuses only what it
+ can PROVE is not a collection, so a list built by hand, an inline range and
+ the argument list all keep working. Run with no arguments, `arguments's
+ all` is empty and contributes no lines, which is itself the assertion that
+ it iterated rather than crashed.)
+
+a list called scores is [3, 5, 7].
+print each score from scores.
+
+For each score in scores,
+    print score.
+
+print each step from 1 to 3.
+
+print each word from arguments's all.
+
+a list called kept is [].
+append each score from scores to kept.
+print kept.

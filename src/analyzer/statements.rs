@@ -850,6 +850,12 @@ impl Analyzer {
             }
 
             Statement::ForEach { variable, collection, body } => {
+                // `each ... from <collection>` walks a list header. Refuse
+                // the operands that would make codegen read one where there
+                // is none (bug #49) before anything else in this arm, so the
+                // rest of the pass is not reasoning about a loop that cannot
+                // run.
+                self.check_loop_collection(variable, collection);
                 self.variables.insert(variable.clone());
                 // The element category is unknown (lists may be mixed), so a
                 // label left over from a previous use of this name - e.g. a

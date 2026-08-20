@@ -1,0 +1,6 @@
+(Bug #49: `each ... from` walks a list header, so a number's own value was
+ dereferenced as a pointer and the program segfaulted at runtime with no
+ diagnostic at all.)
+
+a number called gauge is 4.
+print each part from gauge.

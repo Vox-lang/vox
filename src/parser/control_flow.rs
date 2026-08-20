@@ -78,14 +78,28 @@ impl Parser {
                     self.pos = saved;
                     break;
                 }
-            } else if !matches!(self.current(), Token::But | Token::Comma | Token::And) {
+            } else if !matches!(
+                self.current(),
+                Token::But | Token::Comma | Token::And | Token::Else | Token::Otherwise
+            ) {
                 break;
             }
 
+            // A bare `otherwise`/`else` is the clause keyword itself, not a
+            // separator standing in front of one. `parse_block`'s
+            // trailing-comma arm already ate the comma and stopped ON the
+            // keyword, so only the terse `append` branch ever hands this loop
+            // a comma to consume. Advancing here in the bare case would skip
+            // the keyword and leave the branch's own action current, which is
+            // what made `print x, otherwise print y` a parse error (bug #50).
+            let at_bare_alternative = matches!(self.current(), Token::Else | Token::Otherwise);
+
             // Remember if we started with comma (for ", but if" syntax)
             let started_with_comma = *self.current() == Token::Comma;
-            self.advance();
-            self.skip_noise();
+            if !at_bare_alternative {
+                self.advance();
+                self.skip_noise();
+            }
 
             // After comma, we might have "but if" or just "if"
             if started_with_comma && *self.current() == Token::But {

@@ -416,7 +416,7 @@ open a file for reading called source at each filename from arguments's all trea
 print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
-process of each file from files treating "-" as "/dev/stdin".
+process of each filename from files treating "-" as "/dev/stdin".
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
@@ -2748,7 +2748,7 @@ print "list: {nums}".     (prints: list: [1, 2, 3])
 ```
 
 Elements are separated by `, ` and wrapped in `[` `]`. Each element
-renders exactly as it does when printed individually: text elements are
+renders by its own type, not the list's: text elements are
 quoted (so `["1"]` is distinguishable from `[1]`), booleans as `1`/`0`,
 floats and numbers as usual. Empty lists print `[]`. A nested list
 element renders recursively with the same rules (see Nested Lists above),
@@ -2827,7 +2827,9 @@ Use `clear <buffer>` to reset a buffer to empty while preserving capacity.
 
 **Key features:**
 - **Dynamic growth**: Lists automatically allocate more memory as needed
-- **Type tracking**: The first append determines the list's element type for printing
+- **Mixed types**: Appends of different types are allowed in any order; each
+  element is printed by its own type, never by the list's (see Printing a
+  List above)
 - **Works with any value**: integers, strings, booleans, variables, expressions
 
 **Examples:**
@@ -2840,8 +2842,8 @@ append 20 to nums.
 
 (Append strings)
 a list called words is [].
-append hello to words.
-append world to words.
+append "hello" to words.
+append "world" to words.
 
 (Append from variables)
 a number called x is 42.
@@ -3060,7 +3062,7 @@ open a file for reading called source at each filename from arguments's all trea
 print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
-process of each file from files treating "-" as "/dev/stdin".
+process of each filename from files treating "-" as "/dev/stdin".
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
