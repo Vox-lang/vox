@@ -1886,9 +1886,15 @@ must stay passing.
 
 ### 35. `as a number` wraps silently on overflow — a positive numeral parses to a negative number
 
-**Status:** **open**, found 2026-08-20 against released v0.4.6. Found
-while probing the base-conversion surface before teaching vox-fuzz to
-emit it — a surface no test and no example had ever exercised.
+**Status:** **fixed on `main` (Unreleased).** Found 2026-08-20 against
+released v0.4.6, while probing the base-conversion surface before
+teaching vox-fuzz to emit it — a surface no test and no example had
+ever exercised. **Regression test:**
+`tests/bugs_found_35_number_parse_overflow.vox` — proven to fail
+unfixed (the three overflow-raise lines are silently missing from the
+output), with i64::MAX, i64::MIN, a valid hex value, and the pre-existing
+`"abc" as a base5 number` raise kept as controls that pass unchanged on
+both sides of the fix.
 
 ```vox
 a number called n is "9223372036854775808" as a number.

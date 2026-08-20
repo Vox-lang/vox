@@ -34,6 +34,30 @@ adheres to [Semantic Versioning](https://semver.org/).
   large-magnitude rows, with the sub-2^63, division-derived, and
   IEEE-754-rounding rows kept as controls that pass on both sides. See
   [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #34.
+- **`as a number` no longer wraps silently past i64's range**
+  ([#35](docs/BUGS_FOUND.md)) — `"9223372036854775808" as a number` (one
+  past `i64::MAX`) returned `-9223372036854775808` with the error flag
+  never set, so `On error` could not catch it and the wrapped value was
+  indistinguishable from a real one; applied to every base
+  (`"ffffffffffffffffff" as a hex number` gave `-1`). Every digit in
+  these inputs is valid for its base, so the documented "stops at the
+  first invalid character" rule never engaged — the whole string parsed
+  and the accumulator wrapped. `_parse_i64`, `_parse_int_radix`, and
+  their length-bounded buffer variants in `coreasm/x86_64/int.asm` now
+  accumulate the magnitude with an unsigned `mul` (which reports a
+  truncated product instead of silently wrapping) and range-check the
+  result against the sign at the end: a positive numeral must fit under
+  `i64::MAX`, a negative one may reach `i64::MIN`'s magnitude (`2^63`) —
+  the two are different bounds, so a naive "digits > i64::MAX" check
+  would have wrongly flagged legitimate `i64::MIN` input, which is kept
+  as a control. Either check failing sets the same error flag `On error`
+  already reads for a wholly-invalid string. The returned value on
+  overflow is not defined (0 or a wrapped magnitude); the flag is the
+  fix. Regression test proven to fail on the unfixed compiler on exactly
+  the three overflow cases, with `i64::MAX`, `i64::MIN`, a valid hex
+  value, and the pre-existing `"abc" as a base5 number` raise kept as
+  controls that pass unchanged on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #35.
 
 - **A width specifier no longer changes what a value is**
   ([#36](docs/BUGS_FOUND.md)) — `"{f:06}"` on a float printed its raw
