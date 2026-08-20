@@ -2224,3 +2224,35 @@ Otherwise, a number called s is 1, append s to out.\n";
             asm
         );
     }
+
+    /// Bug #52: the buffer sink must load its destination pointer AFTER the
+    /// format part's value is resolved. `arguments's first` resolves by
+    /// putting the argument index in rdi and calling `_get_arg`, so a
+    /// destination loaded first is gone by the time the append runs, and
+    /// `_buffer_append_cstr` dereferences the index - a segfault. Asserted
+    /// here on the emitted asm so the ordering is locked at the compiler
+    /// level, without assembling or running anything.
+    #[test]
+    fn a_buffer_reloads_its_destination_after_an_argv_property() {
+        let asm = compile_to_asm(
+            "a buffer called built is 64 bytes in size.\n\
+             copy \"{arguments's first}\" to built.\n",
+        );
+        let resolved_at = asm
+            .find("call _get_arg")
+            .expect("the argv property resolves through _get_arg");
+        let appended_at = asm
+            .find("call _buffer_append_cstr")
+            .expect("a text value appends through _buffer_append_cstr");
+        assert!(
+            resolved_at < appended_at,
+            "the value is resolved before it is appended: {}",
+            asm
+        );
+        assert!(
+            asm[resolved_at..appended_at].contains("mov rdi, [rbp-"),
+            "the destination buffer is reloaded into rdi between resolving \
+             the argument and appending it: {}",
+            &asm[resolved_at..appended_at]
+        );
+    }

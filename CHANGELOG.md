@@ -39,6 +39,26 @@ adheres to [Semantic Versioning](https://semver.org/).
   as separators. Found by the vox-fuzz collections-b claim ledger
   (discrepancy D2) and adjudicated by the language lawyer.
 
+- **A text-valued special name built into a buffer no longer segfaults**
+  ([#52](docs/BUGS_FOUND.md)) — `copy "{arguments's first}" to built`
+  crashed the generated program (exit 139), as did `{arguments's
+  second/last/name/all/raw}` and `{environment's first}`, through all
+  three buffer verbs (`set`, `copy`, `append`). LANGUAGE.md promises
+  every sink shares one name resolver, so these render identically
+  whether printed, written to a file, or built into a buffer — and
+  printing and writing them were always correct. The buffer sink loaded
+  its destination pointer into `rdi` before resolving the part's value,
+  but resolving an argument property passes its index in `rdi` to call
+  `_get_arg`, so the append that followed dereferenced an index instead
+  of a buffer. The destination is now loaded once the value is settled,
+  which is the order the stack-slot sink beside it already used and why
+  that one never crashed. The numeric specials (`{arguments's count}`,
+  `{current time's hour}`) had been surviving the same path by luck.
+  Regression test `tests/bug52_argv_property_into_buffer.vox`, proven to
+  segfault on 0.4.8 and to pass after, plus a codegen test that locks
+  the instruction order. Found by the vox-fuzz Input/Output claim ledger
+  (discrepancy D1).
+
 ## [0.4.8] - 2026-08-20
 
 ### Fixed
