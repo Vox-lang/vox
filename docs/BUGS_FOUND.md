@@ -1847,3 +1847,263 @@ as controls.
 must stay passing.
 
 ---
+
+### 35. `as a number` wraps silently on overflow — a positive numeral parses to a negative number
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6. Found
+while probing the base-conversion surface before teaching vox-fuzz to
+emit it — a surface no test and no example had ever exercised.
+
+```vox
+a number called n is "9223372036854775808" as a number.
+On error print "raised".      (never prints)
+Print n.                       (-9223372036854775808)
+```
+
+**The boundary is exact, and the wrap is silent:**
+
+| Input | Result | |
+|---|---|---|
+| `"9223372036854775807"` (i64::MAX) | `9223372036854775807` | ✓ correct |
+| `"9223372036854775808"` (MAX+1) | `-9223372036854775808` | ✗ wraps to i64::MIN |
+| `"99999999999999999999"` | `7766279631452241919` | ✗ arbitrary |
+| `"ffffffffffffffffff"` as a hex number | `-1` | ✗ |
+
+Every digit in these inputs is valid for its base, so the documented
+"stops at the first character invalid for that base" rule does not
+apply — parsing consumes the whole string and the accumulator wraps.
+
+**Why this is worse than a wrong number.** The error flag is never
+set, so `On error` cannot catch it, and the result is
+indistinguishable from a real value: a program asking `is negative`
+about a user-supplied numeral gets `true` for an input that was
+positive. Compare the neighbouring cases, which the language *does*
+signal: `"abc" as a base5 number` returns 0 **and raises**. So the
+implementation already has a way to say "that did not parse" — it
+simply is not used for the one malformed input that produces a
+plausible-looking answer.
+
+LANGUAGE.md §"Text to number" documents the invalid-character rule and
+the supported bases but says nothing about magnitude, so there is no
+documented licence for wraparound. `number` is a 64-bit signed integer,
+and the conversion is the boundary where untrusted text becomes one —
+exactly where a silent wrap is least acceptable.
+
+**Fix direction:** detect accumulator overflow during conversion and
+set the error flag (returning 0, or the saturated value, but the flag
+is the point), so `On error` can catch it as it already can for a
+wholly-invalid string. Regression tests must pin i64::MAX as a passing
+control on both sides of the fix, plus MAX+1, a long decimal, and a
+long hex string.
+
+**Related, filed as an observation rather than a defect:**
+`"12g5" as a hex number` gives 18 and raises nothing (matching the
+spec exactly), while `"abc" as a base5 number` gives 0 and DOES raise.
+Both are "invalid characters encountered", and LANGUAGE.md describes
+them in one breath as not raising. The asymmetry is defensible — 0 is
+ambiguous where a partial parse is not, so flagging it carries real
+information — but the documentation should say so, since as written it
+promises neither raises.
+
+---
+
+### 36. A width specifier in a format string reinterprets a float's bits, and leaks a text's address
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6. The
+float half was found by a red-team agent attacking documented-but-
+unexercised surfaces; the master reproduced it independently and the
+controls below widened it to `text`, which is the worse half.
+
+```vox
+a float called f is 3.5.
+Print "{f:06}".              (4615063718147915776 — the f64 bit pattern)
+
+a text called t is "hi".
+Print "{t:06}".              (4210942 — a POINTER)
+```
+
+**It is the WIDTH specifier, not padding in general, and not precision:**
+
+| Expression | Printed | |
+|---|---|---|
+| `"{n:06}"`, n = 42 | `000042` | ✓ correct |
+| `"{ready:06}"`, boolean true | `000001` | ✓ correct (booleans print 1/0, LANGUAGE.md:2229) |
+| `"{f:.2}"`, f = 3.5 | `3.50` | ✓ precision alone is correct |
+| `"{f:06}"` | `4615063718147915776` | ✗ the IEEE-754 bits of 3.5 |
+| `"{f:8.2}"` | `4615063718147915776` | ✗ adding a width breaks the working precision case |
+| `"{t:06}"`, t = "hi" | `4210942` | ✗ a pointer |
+| `"{t:3}"` | `4210942` | ✗ same pointer, any width |
+| `"{f}"` / `Print f` | `3.5` | ✓ unformatted is correct |
+| `"{b:06}"`, buffer "hi" | `139755576881176` | ✗ a heap pointer |
+| `"{v:06}"`, **`value`** holding 3.5 | `3.5` | ✓ right value (width ignored, not padded) |
+| `"{w:06}"`, **`value`** holding "words" | `words` | ✓ right value (width ignored, not padded) |
+| `"{l:06}"`, list `[1,2]` | `[1, 2]` | ✓ correct |
+
+**Proof that the text case prints an address, not a value.** Two
+distinct `text` variables holding the *same* content print *different*
+numbers:
+
+```vox
+a text called t is "hi".
+a text called u is "hi".
+Print "{t:06}".              (4210942)
+Print "{u:06}".              (4210945)
+```
+
+Same bytes, different addresses, different output. No value-based
+explanation survives that.
+
+**Why this is the worst class.** It is silent wrong data — no crash, no
+diagnostic, no error flag — and for a `text` it prints a raw memory
+address into program output, which is an information leak as well as a
+wrong answer. A program formatting a table with `"{name:20}"`, the
+obvious reason to use a width at all, emits pointers where it meant
+words.
+
+**Family:** #34. That bug is a float formatter routing the integer part
+through an i64; this is the width path treating a non-integer slot as
+an integer outright. Both live in the float/format layer, both are
+silent, and both were found within a day of anyone actually exercising
+formatting. They should be fixed together and their regression tests
+kept adjacent.
+
+**The working implementation is already in the compiler.** The
+runtime-tagged `value` type formats correctly under a width — a `value`
+holding 3.5 prints `3.5`, one holding `"words"` prints `words` — and so
+do lists. To be exact, the dynamic path *ignores* the width rather than
+applying it, so it has a cosmetic gap of its own; but it yields the
+right value, which is the difference between a cosmetic gap and silent
+wrong data. Only the *statically typed* slots (`float`, `text`, `buffer`)
+are wrong. So the width path has a correct, type-aware rendering route
+and simply does not take it when the type is known at compile time,
+which is the one case where it has the most information. That is a
+strong hint about where the fix goes and a ready-made oracle for it.
+
+**Fix direction:** the width path appears to dispatch on the slot's raw
+64 bits with no consultation of the value's type, while the precision
+path clearly does consult it (`"{f:.2}"` is correct) and the tagged
+`value` path clearly does too. Make width honour the same type dispatch
+those already use: pad the value's rendered text, never its raw
+representation. Regression tests must cover width
+on number/float/text/boolean, precision alone, width+precision
+together, and the two-texts-same-content control above, which is the
+one that makes the diagnosis unambiguous.
+
+---
+
+### 37. A file's `readable` property is always true, whatever mode the file was opened in
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6 by the
+same red-team agent that found #36, after being steered off format
+strings onto the file-property surface. Reproduced independently by the
+master, whose controls narrowed the claim: it is `readable` alone, not
+the property pair.
+
+```vox
+open a file for writing called w at "/tmp/out.txt".
+Print w's readable.        (1 — but the handle is write-only)
+```
+
+**`writable` is correct in every mode. Only `readable` is stuck:**
+
+| Opened for | `readable` | `writable` | |
+|---|---|---|---|
+| reading | 1 | 0 | ✓ both correct |
+| writing | **1** | 1 | ✗ `readable` wrong |
+| appending | **1** | 1 | ✗ `readable` wrong |
+
+`writable` distinguishes the modes correctly, which is the control that
+matters: the mechanism for reporting a handle's mode exists and works,
+so `readable` is not an unimplemented feature but a broken one.
+
+**Why nothing caught it, stated exactly.** The pair has precisely one
+test in the whole suite — `tests/044_file_io.vox:25-27` — and it reads
+both properties on a file opened **for reading**, which is the single
+mode in which this bug is invisible. The test is not wrong; it is just
+the one row of the matrix that cannot fail. That is this register's
+recurring lesson in its sharpest form yet: coverage of a *name* is not
+coverage of its *behaviour*.
+
+**The "it means the file's permission bits" reading is dead twice
+over.** First, LANGUAGE.md:3332 defines it as *"Whether file is open
+for reading"* — the handle's mode, in as many words. Second, the same
+table carries a **separate** `permissions` property for the bits
+(LANGUAGE.md:3336), and it works: the same handle reports `420`, which
+is 0644 in decimal. A property that already exists elsewhere is not the
+meaning of this one.
+
+**Consequence.** The obvious defensive idiom — `If f's readable then,`
+before reading — is exactly what this defeats: it passes on a
+write-only handle and the read that follows fails at the OS level. A
+guard that always says yes is worse than no guard, because code is
+written to trust it.
+
+**Fix direction:** report `readable` from the handle's recorded open
+mode, the way `writable` already does — the two should share one source
+of truth rather than one being derived and the other constant.
+Regression tests must cover all three modes for BOTH properties, since
+the `writable` rows are what pin the diagnosis, plus a `permissions`
+row so the two concepts stay distinguished.
+
+**Note for whoever fixes it:** check whether a file opened for reading
+and writing (if the language offers such a mode) is expressible — the
+matrix above only covers the three modes LANGUAGE.md documents.
+
+---
+
+### 38. The documented file property `exists` is a parse error
+
+**Status:** **open**, found 2026-08-20 against released v0.4.6 by the
+red-team agent on the file-property surface, alongside #37. Reproduced
+by the master, who tested the whole table rather than the one property.
+
+```vox
+open a file for reading called h at "/tmp/f.txt".
+Print h's exists.
+```
+→ `error: Expected property name, got Exists`
+
+**Seven of the eight documented file properties work. `exists` alone is
+rejected:**
+
+| Property | LANGUAGE.md | Result |
+|---|---|---|
+| `size` | 3330 | ✓ `3` |
+| `descriptor` | 3331 | ✓ `3` |
+| `readable` | 3332 | ✓ parses (but always true — see #37) |
+| `writable` | 3333 | ✓ `0` |
+| `modified` | 3334 | ✓ `1787209736` |
+| `accessed` | 3335 | ✓ `1787209711` |
+| `permissions` | 3336 | ✓ `420` (0644) |
+| **`exists`** | **3337** | ✗ **parse error** |
+
+LANGUAGE.md:3337 lists it in the File Properties table as *"Whether the
+file exists | Boolean"*, with no note marking it unimplemented, unlike
+other Not-Yet features which the document does flag.
+
+**This is the mildest class of defect and should be recorded as such.**
+It fails loudly at compile time, so no program can silently do the
+wrong thing — the opposite of #36 and #37, which is why it is filed
+below them. The cost is a documented feature nobody can use and a spec
+that promises something the compiler does not provide.
+
+**A design question the fix must answer first.** `exists` is odd among
+these: the other seven describe an *open handle*, but a file that does
+not exist cannot be opened, so `h's exists` on a successfully opened
+handle is trivially true. The useful form is a question about a
+**path**, asked before opening. So the fix is not simply "add the
+missing property" — it needs a decision about what the construct means.
+Three options, for whoever picks this up:
+
+1. Implement it on the handle, where it is nearly always `true` and
+   therefore nearly useless, but matches the table as written.
+2. Provide it on a path instead (some `"/tmp/f.txt"'s exists` form),
+   which is what a program actually wants, and correct the table.
+3. Remove the row and document the existing idiom — opening inside an
+   `On error` handler already answers the question.
+
+Option 2 or 3, with the documentation corrected to match, is more
+honest than making the table true by adding a property that answers a
+question nobody asks.
+
+---
