@@ -1780,7 +1780,22 @@ exercised.
 
 ### 34. A float outside ±2^63 prints as `9223372036854775808.372036854775808`, and one below ~1e-8 prints as `0.0`
 
-**Status:** **open**, found 2026-08-20 against released v0.4.6. Found
+**Status:** **fixed on `main` (Unreleased)** — the large-magnitude half
+only: a float at or beyond 2^63 now prints its own exact decimal digits
+instead of the saturated `9223372036854775808...` constant. This was
+the wrong-DATA half of the bug. The small-magnitude half (a nonzero
+value below the formatter's fixed 15-digit fractional precision still
+prints `0.0`) is **not fixed** — it is a lost-precision problem in a
+different part of the same routine, not a saturation, and needs a
+variable-precision fractional path rather than the fixed-point exact
+technique that fixed the large end; see the note after "Fix direction"
+below. **Regression test:**
+`tests/bugs_found_34_float_magnitude.vox` — proven to fail on the
+unfixed compiler on exactly the large-magnitude rows (`over`, `negover`,
+`atboundary`, and the same values through `"{x}"` interpolation and
+`x as text`), with `belowboundary`, `one18`, `half`, and the IEEE-
+rounding control (`roundctrl`) kept passing on both sides of the fix.
+Found 2026-08-20 against released v0.4.6. Found
 while probing which literal magnitudes are legal before teaching
 vox-fuzz to emit aggressive ones (Josj: *"I wanna see
 1243626351836374761.1224435542121323 ... I wanna make the compiler AND
@@ -1840,6 +1855,27 @@ round-trip formatting if practical, otherwise at minimum a path that
 does not saturate and does not silently flush small values to zero.
 Regression tests must cover both ends and keep the correct rows above
 as controls.
+
+**What actually shipped, and what did not.** Only the large end was
+fixed. At or beyond 2^63 the double is already far past 2^52, the point
+beyond which a 52-bit mantissa has no room left for a fractional bit —
+so every such value is an exact integer, computable from the raw
+mantissa and exponent bits by schoolbook binary-to-decimal (write the
+mantissa's decimal digits, then double the decimal digit array once per
+bit of exponent past 52). That is exact — no floating point is involved
+past reading the bits — and it only had to replace the one saturating
+`cvttsd2si` used for magnitudes cvttsd2si can no longer represent; values
+below 2^63 are untouched and still go through the original, already-
+correct path. The small end is a different shape of problem: it is not
+that a conversion saturates, it's that the fractional part is generated
+at a fixed 15 decimal digits (`* 10^15`, `roundsd`), so any value whose
+first significant digit falls past that point rounds to zero. Fixing it
+needs the formatter to pick its fractional precision from the value's
+own binary exponent (mirroring the large-end technique's mantissa/2^k
+extraction, but multiplying by 5 instead of 2 and placing the decimal
+point on the left) rather than swap one conversion instruction, and was
+judged out of scope for this pass. It is filed as an open follow-up, not
+closed by this entry.
 
 **Note on scope:** correct IEEE rounding is NOT this bug.
 `1243626351836374761.1224435542121323` printing as

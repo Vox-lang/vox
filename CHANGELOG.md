@@ -8,6 +8,33 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A float at or beyond 2^63 no longer saturates when printed**
+  ([#34](docs/BUGS_FOUND.md)) — `Print`, `"{x}"` interpolation, and
+  `x as text` all printed `9223372036854775808.372036854775808` for
+  *every* value at or past 2^63 (10000000000000000000.0 included),
+  because the formatter's integer part went through `cvttsd2si`, which
+  saturates to `i64::MIN`'s bit pattern past `i64::MAX` — the trailing
+  digits were the fractional part of that same wrong, constant value,
+  which is why they never changed. The stored double was always
+  correct; only the print path was wrong. 2^63 is already far past
+  2^52, the point beyond which a double's 52-bit mantissa has no room
+  left for a fractional bit, so every affected value is an exact
+  integer — `_print_float` and `_buffer_append_float` now detect the
+  magnitude and, for that range only, extract the raw mantissa and
+  exponent and produce the exact decimal digits by schoolbook
+  binary-to-decimal (double the mantissa's decimal digit string once
+  per bit of exponent past 52), which is exact because no floating
+  point is involved past reading the bits. Values below 2^63 are
+  untouched and still use the original, already-correct path.
+  Deliberately **not** fixed in this pass: a nonzero float below the
+  formatter's fixed 15-digit fractional precision still prints `0.0` —
+  a lost-precision problem in a different part of the same routine, not
+  a saturation, tracked as still-open in the register entry. Regression
+  test proven to fail on the unfixed compiler on exactly the
+  large-magnitude rows, with the sub-2^63, division-derived, and
+  IEEE-754-rounding rows kept as controls that pass on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #34.
+
 - **A width specifier no longer changes what a value is**
   ([#36](docs/BUGS_FOUND.md)) — `"{f:06}"` on a float printed its raw
   IEEE-754 bit pattern (`4615063718147915776` for 3.5), and on a `text`
