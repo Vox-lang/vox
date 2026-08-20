@@ -2335,3 +2335,80 @@ never writes to files — which is exactly the coverage plan 327 Part B is
 adding, and `Write` of a non-text operand is now worth adding to it.
 
 ---
+
+### 41. `buffer as text` aliases the buffer — resizing it leaves the text dangling, and reading it segfaults
+
+**Status:** **open**, found 2026-08-20. **Use-after-free in a language
+whose headline promise is memory safety.** The most serious entry in
+this register.
+
+```vox
+a buffer called b is 512 bytes in size.
+append "the quick brown fox jumps over the lazy dog" to b.
+a text called t is b as text.
+resize b to 4 bytes.
+Print t.                     (segfault)
+```
+
+Eight lines. Nothing unusual about them — converting a buffer to text
+and later resizing that buffer is ordinary code.
+
+**The cause: `as text` returns a POINTER INTO THE BUFFER, not a copy.**
+Demonstrated without any crash at all:
+
+```vox
+a buffer called b is 64 bytes in size.
+append "first" to b.
+a text called t1 is b as text.
+Print t1.                    (first)
+clear b.
+append "SECOND" to b.
+Print t1.                    (SECOND)
+```
+
+`t1` was never touched. A `text` silently changed because an unrelated
+buffer was reused. That alone is a correctness bug of the worst kind —
+silent wrong data with no diagnostic — before any memory is freed.
+
+**The crash follows from LANGUAGE.md's own documented behaviour.**
+§"Buffer Resizing" (3232) states: *"New buffer is allocated and old
+buffer is freed."* So the text points at freed memory, and reading it is
+a use-after-free.
+
+**Control table:**
+
+| Case | Result |
+|---|---|
+| text from buffer, then **shrink** the buffer | **segfault** |
+| text from buffer, then **grow** the buffer | **segfault** |
+| two texts from one buffer, then resize | **segfault** |
+| text from buffer, then `clear` the buffer | survives, prints empty |
+| plain text literal, unrelated buffer resized | survives, correct |
+
+Both resize directions crash, which is consistent with the documented
+free-and-reallocate. `clear` survives because it presumably zeroes in
+place rather than reallocating — the allocation is still there, so the
+pointer is still valid. The literal control proves the fault is in the
+buffer-derived text specifically, not in resize generally.
+
+**Why this outranks everything else here.** Vox's core claim is that no
+program can be made to violate memory safety. This is a one-line road to
+a use-after-free from ordinary code, with no unsafe construct, no
+foreign function, and no hostile input required. A program that
+processes lines from a file into a list of texts — a completely natural
+shape — hits it the moment the buffer is reused or resized, which is
+exactly what such a loop does.
+
+**Fix direction:** `as text` on a buffer must COPY. The cheap
+alternative — making the text keep the buffer alive — does not fix the
+aliasing half, where `t1` changes because the buffer was rewritten, and
+that is a correctness bug in its own right. A copy fixes both.
+
+**How it was found:** a worker writing the invariant-detector tool in
+Vox needed to read lines from a file into a list, hit behaviour it could
+not explain, and started probing whether `as text` aliased. The master
+reproduced it and found the dangling case. Worth noting that this came
+from *writing an ordinary program in Vox*, not from fuzzing — the third
+such find today, after #40 and the format-string bugs.
+
+---
