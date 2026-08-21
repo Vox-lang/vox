@@ -1,0 +1,7 @@
+initializer: 10
+set: a mode
+condition: 10
+format hole: 10
+collection literal: [10, 1]
+arithmetic: 11
+argument: 10 bytes

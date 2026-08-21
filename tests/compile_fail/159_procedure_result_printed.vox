@@ -1,0 +1,8 @@
+(Bug #63 in print position. The call ran and its leftover printed too -
+ "pong" followed by a bare 1. A print renders whatever type it is told the
+ value has, and a call with no result has none to tell it. Running it is the
+ call on a line of its own.)
+
+To ping. Print "pong".
+
+print ping.

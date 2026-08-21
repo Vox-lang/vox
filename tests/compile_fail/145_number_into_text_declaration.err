@@ -1,0 +1,4 @@
+cannot initialise 'n', which is text, with a number
+145_number_into_text_declaration.vox:8:15
+note: a variable's type is fixed at its declaration, so 'n' can only be initialised with text
+help: declare it as a number - `a number called n is 5.` - or convert it explicitly:  a text called n is 5 as text.

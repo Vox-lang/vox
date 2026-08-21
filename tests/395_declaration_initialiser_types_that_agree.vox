@@ -1,0 +1,99 @@
+(Bug #65's control. Refusing an initialiser whose type is provably wrong must
+ not narrow what a correct declaration is allowed to say. Every line below is
+ a documented shape, and every one of them compiled and ran exactly like this
+ before the fix too: this test exists to prove the fix took nothing away.)
+
+(Each concrete type initialised with its own kind - LANGUAGE.md:450-458.)
+a number called count is 42.
+a float called ratio is 0.5.
+a text called greeting is "hello".
+a boolean called ready is true.
+a list called items is [1, 2, 3].
+a map called ages is {"bo": 42}.
+print count.
+print ratio.
+print greeting.
+print ready.
+print items.
+print ages.
+
+(Every conversion the Basic Conversions table documents, LANGUAGE.md:1902-1918.
+ All of them are explicit casts, which is the whole point: the cast is how a
+ declaration says it meant to change the type.)
+a number called truncated is 3.9 as a number.
+a float called widened is 42 as a float.
+a text called written is 25 as text.
+a number called parsed is "123" as a number.
+a float called measured is "3.5" as a float.
+a number called flagged is true as a number.
+a boolean called switched is 42 as a boolean.
+a text called spelled is true as text.
+a boolean called answered is "true" as a boolean.
+print truncated.
+print widened.
+print written.
+print parsed.
+print measured.
+print flagged.
+print switched.
+print spelled.
+print answered.
+
+(A value takes any type - the sanctioned dynamic mechanism, LANGUAGE.md:585-595.)
+a value called slot is 5.
+print slot.
+set slot to "now it holds text".
+print slot.
+
+(A buffer takes a content write, not a typed value - LANGUAGE.md:581-584.)
+a buffer called data is "seed".
+print data.
+a buffer called tally is 42.
+print tally.
+
+(A text declared from a buffer without the cast still compiles. What it
+ prints is bug #51's open question - copy the bytes, or reject and name
+ `as text` - which this fix deliberately did not decide, so this line asserts
+ only that it is still accepted.)
+a text called line is data.
+
+(A file is opened from a text path and a time comes from the clock. Both give
+ a handle a value of another kind, and LANGUAGE.md:503-519 makes both of them
+ the canonical form - so neither is a mismatch to refuse.)
+a file called source is "./input.txt".
+a time called now is current time.
+print "a file and a time still declare".
+
+(Arithmetic that yields the declared type - and the mixing rule at
+ LANGUAGE.md:1803, which is about expressions, so a float expression goes in
+ a float.)
+a number called total is 3 add 4.
+a float called scaled is 1.5 multiply 2.
+print total.
+print scaled.
+
+(A call's declared return type, matching the declaration it lands in.)
+To 'name it'. Return text, "bo".
+To 'count it'. Return a number, 7.
+
+a text called nickname is 'name it'.
+a number called counted is 'count it'.
+print nickname.
+print counted.
+
+(A format string is text; a character literal is a number.)
+a text called shown is "count = {count}".
+a number called letter is 'A'.
+print shown.
+print letter.
+
+(An element read whose type matches the declaration - bug #54's control,
+ unchanged by this fix.)
+a list called names is ["bo", "cy"].
+a text called who is element 1 of names.
+print who.
+
+(An argument and a return that agree with what the function declares.)
+To greet with a text called who. Print who.
+
+greet with "hello from an argument".

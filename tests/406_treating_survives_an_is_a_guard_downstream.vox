@@ -1,0 +1,14 @@
+(Bug #59's second open question, answered. The register entry asked whether
+ a `treating`-wrapped read carries the wrong type forward into an `is a`
+ guard downstream. It did: the tag reaching a `value` parameter was the
+ integer default, so `is a text` was false for a text element. The
+ predicate reads the runtime tag (LANGUAGE.md:2419-2422), so once the
+ clause keeps the tag the guard sees what the element really is - both for
+ the element the clause replaced and for the one it left alone.)
+
+To describe with a value called what.
+  if what is a text, print "text: {what}",
+  otherwise print "number: {what}".
+
+describe of each item from [1, "a"] treating "a" as "b".
+describe of each item from [1, "a"] treating 1 as 9.

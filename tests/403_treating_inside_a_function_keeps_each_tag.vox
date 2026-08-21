@@ -1,0 +1,10 @@
+(Bug #59 through a call. A `list` parameter has no proven element type, so
+ its loop variable is runtime-tagged exactly like a mixed list literal's -
+ and a `treating` clause in the function body must dispatch on that tag,
+ not on the parameter's static type.)
+
+To announce with a list called things.
+  print each thing from things treating "a" as "b".
+
+announce of [1, "a"].
+announce of ["a", "a"].

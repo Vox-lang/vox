@@ -1,0 +1,8 @@
+(Bug #65 through a return. The caller reads the result as the declared type,
+ so a text return that hands back 5 hands back a pointer to address 5. The
+ caret goes on the signature: that is where the return type is declared, and
+ where the author changes it.)
+
+To 'label'. Return a text, 5.
+
+print label.

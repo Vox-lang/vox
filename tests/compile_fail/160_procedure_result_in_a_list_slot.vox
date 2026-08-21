@@ -1,0 +1,8 @@
+(Bug #63 in a list slot. A slot is tagged with the type proven at the write,
+ and a call that returns nothing proves nothing - the list would carry the
+ return register's leftover under a number's tag.)
+
+To ping. Print "pong".
+
+a list called notes is [ping].
+Print notes.

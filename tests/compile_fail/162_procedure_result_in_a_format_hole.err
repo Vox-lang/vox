@@ -1,0 +1,3 @@
+'shout' returns nothing, so its result cannot be used as a value here
+162_procedure_result_in_a_format_hole.vox:7:17
+give 'shout' a `Return a <type>, <expression>.`, or call 'shout' as a statement instead of using its result

@@ -1,0 +1,8 @@
+(The same drop on the other count in a format spec: `{f:.N}` read its
+ precision with the same 32-bit parse, so a precision past i32::MAX printed
+ the float at its default precision instead - a different number of decimal
+ places than the one asked for, silently. LANGUAGE.md:3106 puts no ceiling
+ on N either, so only a precision too large to hold is refused.)
+
+a float called f is 3.5.
+Print "{f:.18446744073709551616}".

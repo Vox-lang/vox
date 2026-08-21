@@ -1,0 +1,7 @@
+(Bug #65 into a boolean. The text's address landed in the boolean's slot and
+ printed as a decimal number - not true, not false, and not any value a
+ boolean has. LANGUAGE.md:1917 gives text-to-boolean an explicit cast,
+ which is what this sentence has to say if that is what it means.)
+
+a boolean called ready is "x".
+Print ready.

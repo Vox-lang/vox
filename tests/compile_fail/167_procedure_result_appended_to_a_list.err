@@ -1,0 +1,3 @@
+'ping' returns nothing, so its result cannot be used as a value here
+167_procedure_result_appended_to_a_list.vox:7:8
+give 'ping' a `Return a <type>, <expression>.`, or call 'ping' as a statement instead of using its result

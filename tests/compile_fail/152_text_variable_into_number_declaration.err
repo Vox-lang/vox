@@ -1,0 +1,4 @@
+cannot initialise 'count', which is a number, with text
+152_text_variable_into_number_declaration.vox:6:17
+note: a variable's type is fixed at its declaration, so 'count' can only be initialised with a number
+help: declare it as text - `a text called count is written.` - or convert it explicitly:  a number called count is written as a number.

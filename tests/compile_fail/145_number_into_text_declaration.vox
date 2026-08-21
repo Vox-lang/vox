@@ -1,0 +1,9 @@
+(Bug #65: the declaration itself was never type-checked. The type lock has
+ guarded every write to an already-declared name since 0.3.0 - `Set n to 5.`
+ on a text is refused - but the declaration below stored the literal 5 in the
+ text's slot, and Print dereferenced 5 as a pointer: segfault.
+ LANGUAGE.md:531-532 fixes a variable's type at its declaration, which is
+ exactly the sentence this case gets wrong.)
+
+a text called n is 5.
+Print n.

@@ -1,0 +1,7 @@
+(Bug #64: the `the` spelling reads every property the bare spelling does
+ - and rejects everything neither of them does. A word that is not a
+ property is still a compile error behind the article, with the same
+ message the bare spelling gives.)
+
+open a file for reading called h at "/tmp/f.txt".
+Print the h's cromulence.

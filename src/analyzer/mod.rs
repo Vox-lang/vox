@@ -1,6 +1,7 @@
 use crate::parser::ast::*;
 use crate::errors::{CompileError, SourceFile, SourceLocation, find_similar_keyword, ENGLISH_KEYWORDS};
 use std::collections::{HashMap, HashSet};
+use crate::codegen::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
 
 const FD_MAX: i64 = 2_147_483_647;
 
@@ -23,6 +24,7 @@ mod statements;
 pub(crate) mod things;
 mod types;
 mod untyped_returns;
+mod void_results;
 
 pub struct Analyzer {
     pub deps: Dependencies,
@@ -82,6 +84,13 @@ pub struct Analyzer {
     /// returned text into the address of its bytes. See
     /// `untyped_returns.rs` for the whole rule and every rejection site.
     untyped_result_functions: HashSet<String>,
+    /// Functions that return nothing - a `To` with no `Return` at all -
+    /// keyed exactly like `function_signatures` (BUGS_FOUND #63). There is
+    /// no result at a call to one of these, so a caller that reads one in
+    /// value position reads the return register's leftover instead. See
+    /// `void_results.rs` for the whole rule, its `.lib` half (#62), and
+    /// every rejection site.
+    procedures: HashSet<String>,
     /// Names declared as the dynamic `value` type (value parameters and `a
     /// value called x` locals). A bare `value` is not usable in arithmetic
     /// without an explicit type check (stage 1c predicate); the arithmetic
@@ -238,6 +247,7 @@ impl Analyzer {
             function_param_counts: HashMap::new(),
             function_signatures: HashMap::new(),
             untyped_result_functions: HashSet::new(),
+            procedures: HashSet::new(),
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),

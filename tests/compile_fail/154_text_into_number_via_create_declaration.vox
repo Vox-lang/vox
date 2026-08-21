@@ -1,0 +1,6 @@
+(Bug #65 through `Create a <type> called <name> is <value>.` - the third
+ spelling of one declaration, and the third way into the same slot. Same
+ statement, same rule.)
+
+Create a number called n is "five".
+Print n.

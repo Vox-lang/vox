@@ -1,0 +1,4 @@
+cannot initialise 'ratio', which is a float, with text
+148_text_into_float_declaration.vox:6:16
+note: a variable's type is fixed at its declaration, so 'ratio' can only be initialised with a float
+help: declare it as text - `a text called ratio is "abc".` - or convert it explicitly:  a float called ratio is "abc" as a float.

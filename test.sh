@@ -1087,6 +1087,90 @@ EOF
 }
 run_see_name_resolution_test
 
+# A4.5 — BUGS_FOUND #62: a `.lib` entry with no `, returning` clause returns
+# nothing (LANGUAGE.md:4963-4965), and step 5 of consuming a library promises
+# its calls "type-check like any other function" (LANGUAGE.md:4990). Reading
+# such a call's result used to compile silently and hand the consumer whatever
+# the call left in the return register — `a number called n is greet.` printed
+# 1. The parameter side of that same promise already worked (A4.3's arity and
+# type checks), so this closes the return side. Built from the same
+# mathkit_lib.vox as A4.1, whose `greet` is exactly the bare entry in
+# question; the .lib is asserted bare first, so the case cannot quietly stop
+# testing what it claims to. Must never skip.
+run_see_void_result_test() {
+    local work lib_src
+    lib_src="$SCRIPT_DIR/tests/shared/mathkit_lib.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libmathkit.so" >"$work/build.log" 2>&1; then
+        fail_msg="see/void-result (library build)"; fail_log="$work/build.log"
+    elif ! grep -q '^    To greet\.$' "$work/libmathkit.lib"; then
+        fail_msg="see/void-result (greet's .lib entry is no longer the bare void one)"
+        fail_log="$work/libmathkit.lib"
+    else
+        # 1. The bug: greet's result read into a typed variable.
+        cat >"$work/read_void.vox" <<'EOF'
+see mathkit version "1.0" from "./libmathkit.lib".
+
+a number called n is greet.
+Print n.
+EOF
+        local err rc
+        err=$( { cd "$work" && "$VOX_BIN" read_void.vox -o read_void ; } 2>&1 )
+        rc=$?
+        if [[ $rc -eq 0 ]]; then
+            fail_msg="see/void-result (reading a void .lib entry compiled instead of erroring)"
+            { echo "built; ran:"; "$work/read_void" 2>&1; } >"$work/read_void.fail"
+            fail_log="$work/read_void.fail"
+        elif [[ "$err" != *"'greet' has no declared return type in its .lib entry"* ]] \
+            || [[ "$err" != *"cannot be used as a value here"* ]] \
+            || [[ "$err" != *"read_void.vox:3:22"* ]] \
+            || [[ "$err" != *"returning a <type>"* ]] \
+            || [[ "$err" != *"call 'greet' as a statement"* ]]; then
+            fail_msg="see/void-result (diagnostic must name greet, its .lib entry, the use site and both ways out)"
+            printf '%s\n' "$err" >"$work/read_void.fail"
+            fail_log="$work/read_void.fail"
+        else
+            # 2. The controls, in one program: the same void entry CALLED as a
+            #    statement, and an entry that does declare a return type read
+            #    as a value. Both must still compile and answer.
+            cat >"$work/call_void.vox" <<'EOF'
+see mathkit version "1.0" from "./libmathkit.lib".
+
+greet.
+a number called sum is 'add two numbers' of 3 and 4.
+Print sum.
+EOF
+            if ! ( cd "$work" && "$VOX_BIN" call_void.vox -o call_void ) >"$work/control.log" 2>&1; then
+                fail_msg="see/void-result (statement call of a void entry must stay legal)"
+                fail_log="$work/control.log"
+            else
+                local out
+                out=$("$work/call_void" 2>"$work/control_run.log")
+                if [[ "$out" != $'hi from mathkit\n7' ]]; then
+                    fail_msg="see/void-result (control printed '$out', not 'hi from mathkit' then 7)"
+                    { echo "stdout: $out"; cat "$work/control_run.log"; } >"$work/control.fail"
+                    fail_log="$work/control.fail"
+                fi
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/void-result (a void .lib entry's result is refused, calling it is not)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_void_result_test
+
 # Plan 282: examples/ was never compiled by this test runner at all, which
 # is exactly the gap that let a real regression (examples/sh.vox breaking
 # under the while-ParagraphBreak fix) ship undetected until someone found

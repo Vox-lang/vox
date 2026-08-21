@@ -1,0 +1,7 @@
+(Bug #63 in a map value, the sibling of the list slot: same tag written from
+ the same missing proof.)
+
+To ping. Print "pong".
+
+a map called readings is {"first": ping}.
+Print readings.

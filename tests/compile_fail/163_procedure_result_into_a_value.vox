@@ -1,0 +1,9 @@
+(Bug #63 into a `value`, the one declared type that carries its payload's
+ type as a runtime tag. The tag is set from the type proven at the write, and
+ a call with no result proves none - so the tag would say "number" over a
+ payload that was never handed back.)
+
+To ping. Print "pong".
+
+a value called answer is ping.
+Print answer.

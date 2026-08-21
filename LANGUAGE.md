@@ -3171,6 +3171,17 @@ The value inside `{}` must be a variable or expression, not a bare literal —
 assume a declared `a number called n is 255.` (set `n` to 5 or 8 for the
 binary and octal rows).
 
+`N` is a count in both forms, and both render in full: `{var:N}` pads out to
+`N` characters and `{var:.N}` prints exactly `N` decimal places, correctly
+rounded (an exact tie goes to the even digit). Neither is capped — a very
+large `N` is simply a very large amount of output — but `N` has to be a
+count the compiler can hold, at most 9223372036854775807; past that it is a
+compile error naming the limit, not a width that quietly does nothing. A
+precision past the value's exact decimal expansion pads with zeros, since the
+expansion has ended and not because accuracy has run out: a float is a
+binary fraction, so it always has an exact finite expansion, and `{pi:.50}`
+prints all fifty places of it.
+
 #### Expressions in Format Strings
 
 ```

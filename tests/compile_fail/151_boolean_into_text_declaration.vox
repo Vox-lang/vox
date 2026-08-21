@@ -1,0 +1,6 @@
+(Bug #65 the other way round: a boolean into a text. `true` is 1, so the text
+ pointed at address 1 and Print dereferenced it: segfault. LANGUAGE.md:1916
+ gives `true as text` for the text "true".)
+
+a text called label is true.
+Print label.

@@ -1,0 +1,8 @@
+(Bug #65 through a call's argument. The callee stores 5 in the parameter's
+ text slot and reads it as a text, so this faulted inside the function, one
+ frame away from the sentence that caused it - the same shape bug #57 has
+ for the absent value.)
+
+To greet with a text called who. Print who.
+
+greet with 5.
