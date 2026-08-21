@@ -1036,7 +1036,15 @@ impl Parser {
                     self.expect(&Token::Number);
                     self.skip_noise();
                     if *self.current() == Token::From || *self.current() == Token::Between {
-                        let inclusive = *self.current() == Token::Between;
+                        // Both prepositions spell one range, and every range
+                        // in the language includes its end bound
+                        // (LANGUAGE.md:277 - "`1 to 5` includes 1, 2, 3, 4,
+                        // and 5"). This site used to read inclusiveness off
+                        // which word was written, so `all the numbers from 1
+                        // to 3` stopped at 2 while `between 1 and 3` did not
+                        // (bug #56). Every other range site in the parser
+                        // hardcodes `true`; so does this one now.
+                        let inclusive = true;
                         self.advance();
                         self.skip_noise();
                         let start = self.parse_primary_reserving(true, false)?;

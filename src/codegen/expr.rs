@@ -1680,7 +1680,20 @@ impl CodeGenerator {
                     false
                 };
 
-                if is_buffer || matches!(treating_type, Some(VarType::String)) {
+                // A match value that is provably NOT text can never equal a
+                // text subject - and `_str_eq`/`_mem_eq` would dereference it
+                // as a char* to discover that. That is the fault in bug #55
+                // wherever the analyzer cannot prove the collection's element
+                // type and so cannot reject the clause outright (a list
+                // widened by a later `Append`, for one). Compare in registers
+                // instead: a pointer never equals 98, so the substitution
+                // correctly never fires and nothing is read through the match.
+                let match_cannot_be_text = matches!(
+                    self.infer_expr_type(match_value),
+                    Some(VarType::Integer) | Some(VarType::Float) | Some(VarType::Boolean)
+                );
+
+                if (is_buffer || matches!(treating_type, Some(VarType::String))) && !match_cannot_be_text {
                     // Evaluate the value
                     self.generate_expr(value);
                     self.emit_indent("push rax  ; save original value (struct ptr if buffer)");

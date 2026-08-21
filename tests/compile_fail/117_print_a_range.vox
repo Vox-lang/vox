@@ -1,0 +1,5 @@
+(Bug #56's quiet sibling: printing the range phrase straight out emitted no
+ value at all, so the program printed whatever the accumulator held - `0` -
+ instead of the three numbers the sentence names.)
+
+print all the numbers between 1 and 3.

@@ -1,0 +1,3 @@
+Treating value and match must be the same type (got number vs text).
+115_treating_text_match_over_range.vox:6:12
+'step' holds a number here, so it can never equal text

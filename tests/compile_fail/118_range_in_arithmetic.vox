@@ -1,0 +1,4 @@
+(Bug #56: a range does not hold a number either, so it cannot be an operand.)
+
+a number called total is all the numbers between 1 and 3 add 4.
+print total.

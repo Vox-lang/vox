@@ -867,7 +867,15 @@ impl Analyzer {
                     &[format!("each {} ", variable)],
                     true,
                 );
-                self.analyze_expr(range);
+                // The loop's own bounds, walked directly: `analyze_expr`
+                // refuses a bare range everywhere a value is expected
+                // (bug #56), and this is the one position where one belongs.
+                if let Expr::Range { start, end, .. } = range {
+                    self.analyze_expr(start);
+                    self.analyze_expr(end);
+                } else {
+                    self.analyze_expr(range);
+                }
                 self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
@@ -919,7 +927,18 @@ impl Analyzer {
                     // body - the loop spelling of an element read into a
                     // mistyped variable - reach the type lock instead of
                     // compiling to a number written into a text slot.
-                    if let Some(t) = list_name.and_then(|n| self.list_element_type_of(n)) {
+                    // Bug #55: an inline collection - `each item from
+                    // ["a"]` - has no name to look up, so the same
+                    // element type has to be read off the literal. Without
+                    // it the loop variable stayed untyped and a
+                    // type-mismatched `treating` clause over a list
+                    // literal reached codegen.
+                    let element_type = match (list_name, collection) {
+                        (Some(n), _) => self.list_element_type_of(n),
+                        (None, Expr::ListLit { elements }) => self.list_literal_element_type(elements),
+                        (None, _) => None,
+                    };
+                    if let Some(t) = element_type {
                         self.scalar_types.insert(variable.clone(), t);
                     }
                 }
