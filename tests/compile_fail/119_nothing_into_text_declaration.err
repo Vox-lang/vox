@@ -1,0 +1,4 @@
+cannot initialise 'greeting', which is text, with nothing
+119_nothing_into_text_declaration.vox:7:15
+note: nothing is the absent value: it sits in a list slot, a map value, or a value parameter or return - never in text
+help: declare 'greeting' as a value, the type that can be absent - or give it text's own empty value, ""

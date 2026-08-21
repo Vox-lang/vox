@@ -1,0 +1,32 @@
+(Bug #58's worst symptom, and the reason it is a memory-safety bug rather
+ than a wrong answer. `Set <buffer> to <property>` re-read the name's type
+ off the initializer, saw an argument read, and re-labelled a declared
+ buffer as text - and once the name was no longer a buffer the assignment
+ stopped copying bytes into the buffer struct and stored the raw argv
+ pointer straight over it.
+
+ From there every buffer operation was aimed at the process's own argv
+ block. `capacity` read the argument's first eight bytes as an integer
+ (8100956900724599905 for "alphaalp"), so the bounds check compared against
+ a number no position could exceed and passed everything: `Set byte 1 of
+ assigned` wrote into the *next* argument's storage, and a large position
+ segfaulted (139) on origin/main.
+
+ The 8-byte declaration is deliberate: the write below is far outside it,
+ so a buffer that kept its own capacity must refuse the write and leave
+ both the argument block and the program intact.)
+
+a buffer called assigned is 8 bytes in size.
+Set assigned to arguments's first.
+Print assigned's type.
+Print assigned's capacity.
+Print assigned's size.
+
+Set byte 100000000 of assigned to 'X'.
+On error print "out-of-bounds write refused".
+
+Set byte 1 of assigned to 'X'.
+Print assigned.
+Print arguments's first.
+Print arguments's second.
+Print "survived".

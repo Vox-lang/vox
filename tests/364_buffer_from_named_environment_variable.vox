@@ -1,0 +1,36 @@
+(Bug #58: `a buffer called b is environment's "NAME".` copied the bytes in
+ correctly and then lost the name's type. The declaration says buffer, and
+ LANGUAGE.md:3286 says a statically-typed variable reports the type "the
+ compiler knows ... from the declaration" - but codegen re-read the type off
+ the initializer's shape, saw an environment read, and re-labelled the name
+ as text. Every later read then dispatched as text: `Print b` printed the
+ buffer header as a C string (an empty line) and `b's size` fell through to
+ the file fallback and answered -1.
+
+ The sizes are compared against a two-step control - `a text called ...`
+ then `a buffer called ... is <that text>` - rather than against a fixed
+ number, because HOME and PATH differ per machine. The control took the
+ already-correct path, so an equal size is the whole claim: the one-step
+ declaration must reach the same buffer the two-step one does.)
+
+a buffer called direct is environment's "PATH".
+a text called indirect is environment's "PATH".
+a buffer called control is indirect.
+
+Print direct's type.
+If direct's size is equal to control's size then,
+    print "set: sizes agree".
+Otherwise,
+    print "set: MISMATCH".
+Print direct's empty.
+
+(An unset name is the empty text, so the buffer is empty - not -1 long.)
+a buffer called missing is environment's "VOX_BUG_58_DEFINITELY_UNSET".
+Print missing's size.
+Print missing's empty.
+Print missing's type.
+
+(A buffer that kept its type still takes the buffer verbs.)
+append "tail" to missing.
+Print missing.
+Print missing's size.

@@ -169,6 +169,17 @@ impl Analyzer {
                     let target = format!("{}'s {}", name, param_name);
                     self.check_thing_copy(&target, name, &thing, arg);
                 }
+                // Bug #57: `nothing` handed to a concretely-typed parameter.
+                // The callee stores it in that parameter's slot and reads it
+                // as the declared type, so a `text` parameter took a null
+                // pointer and faulted on the callee's first read.
+                Some((param_name, param_type)) if matches!(arg, Expr::NothingLit) => {
+                    let (param_name, param_type) = (param_name.clone(), param_type.clone());
+                    // A `value` parameter is `nothing`'s documented home, so
+                    // this reports on it and leaves it alone.
+                    self.check_nothing_argument(name, &param_name, &param_type, arg);
+                    self.analyze_expr(arg);
+                }
                 _ => self.analyze_expr(arg),
             }
         }

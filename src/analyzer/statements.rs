@@ -575,6 +575,13 @@ impl Analyzer {
                 // declaration itself.
                 if let (Some(vt), Some(v)) = (var_type.as_ref(), value.as_ref()) {
                     self.check_declared_read_type(name, vt, v);
+                    // Bug #57: `a text called t is nothing.` (and the
+                    // `Set`/`Create ... to nothing.` spellings, which parse
+                    // into this same statement). Checked here for the same
+                    // reason as the read above - the type lock guards writes
+                    // to an already-declared name, and this is the
+                    // declaration itself.
+                    self.check_nothing_initialiser(name, vt, v);
                 }
                 // Track the scalar category (number/float/text/boolean) for
                 // the arithmetic type check. Numeric/boolean declarations are
@@ -1003,6 +1010,15 @@ impl Analyzer {
                         self.check_buffer_return_source(v);
                         self.analyze_expr(v);
                     }
+                    // Bug #57: `Return text, nothing.` The caller reads the
+                    // result as the declared type, so a text return handed
+                    // back a null pointer to dereference and a number return
+                    // quietly answered 0.
+                    (Some(ref declared), Some(v)) if Analyzer::nothing_is_refused_for(declared) => {
+                        let declared = declared.clone();
+                        self.check_nothing_return(&declared, v);
+                        self.analyze_expr(v);
+                    }
                     (_, Some(v)) => self.analyze_expr(v),
                     (_, None) => {}
                 }
@@ -1157,7 +1173,9 @@ impl Analyzer {
                 let saved_value_typed_names = self.value_typed_names.clone();
                 let saved_thing_vars = self.thing_vars.clone();
                 let saved_return_type = self.current_function_return_type.take();
+                let saved_function_name = self.current_function_name.take();
                 self.current_function_return_type = Some(return_type.clone());
+                self.current_function_name = Some(name.clone());
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -1221,6 +1239,7 @@ impl Analyzer {
                 self.value_typed_names = saved_value_typed_names;
                 self.thing_vars = saved_thing_vars;
                 self.current_function_return_type = saved_return_type;
+                self.current_function_name = saved_function_name;
                 self.apply_env(&saved_env);
 
                 self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {

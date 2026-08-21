@@ -365,8 +365,44 @@ impl CodeGenerator {
                         || self.variable_types.get(name) == Some(&VarType::Mixed)
                         || self.mixed_tag_slots.contains_key(name)
                         || self.global_value_tag_labels.contains_key(name);
+                    // A buffer keeps the type its declaration gave it.
+                    // LANGUAGE.md:531 — "A variable's type is fixed at its
+                    // declaration and never changes" — and :3285, which
+                    // explains a buffer reports `(static)` because "the
+                    // compiler knows the type from the declaration". The
+                    // initializer of `a buffer called b is <text>` is a value
+                    // to *copy into* the buffer (:3347-3351, "Creating buffer
+                    // from string"), never a retyping of the name. Without this
+                    // guard the arms below read the initializer's shape and
+                    // overwrite Buffer: `a buffer called b is environment's
+                    // "HOME".` (and `arguments's first`, `environment's
+                    // first`/`last`) became VarType::String, so every later
+                    // read of `b` dispatched as text — `Print b` printed the
+                    // buffer *header* as a C string (an empty line, the
+                    // capacity's low byte being 0) and `b's size` fell through
+                    // to the file fallback `_file_size` and answered -1 (bug
+                    // #58). On the declaration form the copy itself always
+                    // ran and only the name's type was lost. On the `Set b to
+                    // <property>` form the lost type cost more: `is_buffer_target`
+                    // below is read off this same table, so a re-labelled buffer
+                    // stopped copying bytes into its struct and stored the raw
+                    // argv/environ pointer straight over the buffer pointer.
+                    // `capacity` then read the text's first eight bytes as the
+                    // capacity, which no position could exceed, so `Set byte N
+                    // of b` lost its bounds check and wrote into the process's
+                    // own argument block — a wild write, and a segfault at a
+                    // large N. The bare-assignment arm below already carries
+                    // exactly this guard (`variable_types.get(name) !=
+                    // Some(&VarType::Buffer)`); the declare-with-initializer
+                    // arm was missing it. Reading the *current* type rather
+                    // than `var_type` covers the `Set b to ...` / `the b is
+                    // ...` spellings, which also route through VarDecl with no
+                    // declared type of their own; an explicit declaration has
+                    // already written its own type into the table above, so a
+                    // later `a text called b is ...` still re-types freely.
+                    let is_buffer_var = self.variable_types.get(name) == Some(&VarType::Buffer);
                     // Track list type and element type for lists
-                    if !is_value_var {
+                    if !is_value_var && !is_buffer_var {
                         if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
                         // A nested map-literal element makes this a list-of-maps;
@@ -514,7 +550,7 @@ impl CodeGenerator {
                             self.list_element_types.insert(name.clone(), elem_type);
                         }
                     }
-                    } // end `if !is_value_var` — a `value` keeps Mixed
+                    } // end the guard — a `value` keeps Mixed, a buffer keeps Buffer
 
                     // Special handling for buffer initialization/assignment with text/format/buffer source
                     let is_buffer_target = matches!(var_type, Some(Type::Buffer))

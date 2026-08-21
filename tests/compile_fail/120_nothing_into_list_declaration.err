@@ -1,0 +1,3 @@
+cannot initialise 'items', which is a list, with nothing
+120_nothing_into_list_declaration.vox:4:15
+help: declare 'items' as a value, the type that can be absent - or give it list's own empty value, []

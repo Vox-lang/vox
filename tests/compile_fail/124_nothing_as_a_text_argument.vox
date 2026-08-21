@@ -1,0 +1,7 @@
+(Bug #57 through a call. The callee stores the argument in its parameter's
+ text slot and reads it as a text, so this faulted inside the function, one
+ frame away from the sentence that caused it.)
+
+To greet with a text called who. Print who.
+
+greet with nothing.

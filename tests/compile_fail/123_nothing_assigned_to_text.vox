@@ -1,0 +1,8 @@
+(Bug #57 through the assignment spelling. The absent value has no Type, so
+ the type lock's static inference answered "don't know" and waved it through;
+ the declared text then held a null pointer, with no declaration in sight to
+ blame for it.)
+
+a text called greeting is "hello".
+set greeting to nothing.
+Print greeting.

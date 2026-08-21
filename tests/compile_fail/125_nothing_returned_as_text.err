@@ -1,0 +1,4 @@
+cannot return nothing from a function that returns text
+125_nothing_returned_as_text.vox:6:4
+note: nothing is the absent value: it sits in a list slot, a map value, or a value parameter or return - never in text
+help: declare the return as a value, the type that can be absent - or give it text's own empty value, ""
