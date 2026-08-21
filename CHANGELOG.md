@@ -59,45 +59,104 @@ adheres to [Semantic Versioning](https://semver.org/).
   the instruction order. Found by the vox-fuzz Input/Output claim ledger
   (discrepancy D1).
 
-## [Unreleased]
+- **`Return a buffer, "<text>"` is a compile error instead of an empty
+  buffer or a segfault** ([#53](docs/BUGS_FOUND.md)) — `To 'give
+  literal'. Return a buffer, "ABC".` handed the caller the address of the
+  literal's characters with no buffer header in front of them, and the
+  caller's `_buffer_append` then read eight bytes past the first
+  character as a length and copied that many bytes. With one
+  string-initialised buffer in the program the call answered a silently
+  **empty** buffer (`size` printed `0`); with two it **segfaulted** (139)
+  — one defect reading different bytes, and which one a program got
+  depended on what the assembler happened to lay down after the literal.
+  LANGUAGE.md:722-727 makes `buffer` a legal `Return a <type>,` return
+  type and nothing more; the single place the manual gives text a buffer
+  meaning is the declaration initializer `a buffer called buf is
+  "Hello".`. A text literal or a text variable returned as a buffer is
+  now refused with a fix-it — build the buffer first, return the variable
+  — while returning a buffer variable, a buffer parameter, or another
+  buffer-returning call is untouched. Regression tests
+  `tests/compile_fail/099_return_buffer_text_literal.vox` and
+  `100_return_buffer_text_variable.vox`, both proven to segfault on
+  unfixed `main`, plus the passing control
+  `tests/bug53_return_buffer_variable.vox`. Found by the vox-fuzz
+  Functions claim ledger (discrepancies D7 and D8).
 
-### Fixed
+- **A collection element read into a variable of another type is a
+  compile error, not a segfault** ([#54](docs/BUGS_FOUND.md)) — `a list
+  called counts is [1, 2].` then `label is element 1 of counts.` into a
+  `text` crashed the generated program (139) with no output at all, and
+  the reverse direction — a text element into a `number` — silently
+  printed `4198536`, an address. Printing the read directly was always
+  correct, so the read, its bounds check and its tag dispatch all worked;
+  it was the copy into a differently-typed slot that broke. The analyzer
+  answered "can't prove it, allow it" for every element, `'s first`/`'s
+  last`, byte and map read, and codegen then emitted a plain quadword
+  move, so `Print` picked its printer from the destination's declared
+  type and walked a number as a `char *`. LANGUAGE.md:530-541 fixes a
+  variable's type at its declaration and says every form that writes to a
+  declared name is checked the same way: a homogeneous list literal's
+  proven element type now reaches both the assignment type lock and the
+  declaration site, which had no type check at all, and a `For each` loop
+  variable over a proven list carries it too. The proof is only offered
+  where it holds — a list that any `Append`, element write, whole-list
+  assignment, call argument or copy could widen gets no element type, and
+  a mixed list still reads through `value` unchanged. Regression tests
+  `tests/compile_fail/106_element_number_list_into_text.vox` through
+  `112_foreach_element_into_mistyped_variable.vox`, plus the passing
+  controls `tests/bug54_element_read_typecheck.vox` and
+  `tests/bug54_helper_widens_a_list.vox`. Found by the vox-fuzz Variables
+  claim ledger (discrepancy D1).
 
-- **`For each` over a scalar, a map or a buffer is now a compile error
-  instead of a crash or garbage** ([#49](docs/BUGS_FOUND.md)) — `print
-  each part from 4.`, a two-token program, segfaulted; so did `For each
-  part in n,` and `append each part from 4 to out.` over a number or a
-  text. A map or a buffer instead iterated silently over nonsense (a
-  3-entry map ran 3 iterations printing `0, 0, 3`; the buffer `"abc"`
-  printed `6513249`, its own bytes read as a qword). The analyzer checked
-  only that the collection name was defined, and codegen unconditionally
-  read `[ptr + 8]` as a list header's element count — so a number was
-  dereferenced as an address and a map's or buffer's own header was
-  misread as a list's. LANGUAGE.md's supported collections are a list, a
-  range and `arguments's all`; the analyzer now refuses what it can prove
-  is none of them, suggesting `'s keys` or `'s values` for a map. It is a
-  known-scalar rejection, not a whitelist: an untyped parameter, a
-  `value`, a function result and a property read all keep iterating.
-  Found by the vox-fuzz collections-b claim ledger (discrepancies D3 and
-  D4) and adjudicated by the language lawyer as one memory-safety bug.
+- **A `treating` clause whose types do not match the collection is a
+  compile error instead of a segfault** ([#55](docs/BUGS_FOUND.md)) —
+  `print each item from ["a"] treating 98 as 31.`, one line, compiled
+  clean and died with 139; over a named text list it crashed identically,
+  and over a range (`each step from 1 to 3 treating "a" as "b"`) the
+  clause silently never fired. The analyzer already compared a
+  `treating` clause's match against its replacement, but never against
+  the thing being substituted: `infer_simple_expr_type` answers `None`
+  for a plain name, so the loop variable — which holds an element of the
+  collection — was invisible to the check. Codegen was meanwhile
+  confident enough to pick the text comparison from the subject's type
+  alone and hand `_str_eq` the number 98 as a `char *`. The subject's
+  type is now resolved through `named_value_type`, which reads the
+  element type an `each` loop records for its variable, and a list
+  literal in the loop header supplies one the same way a named list
+  already did. Where the element type cannot be proven — a list widened
+  by a later `Append` — codegen no longer dereferences a match value
+  that cannot be text, so the substitution simply never fires instead of
+  faulting. A mixed list is left to the runtime, as `value` always is.
+  Found by the vox-fuzz basics-expansion claim ledger (discrepancies D3
+  and D4), master-reproduced.
 
-- **`For each` over a scalar, a map or a buffer is now a compile error
-  instead of a crash or garbage** ([#49](docs/BUGS_FOUND.md)) — `print
-  each part from 4.`, a two-token program, segfaulted; so did `For each
-  part in n,` and `append each part from 4 to out.` over a number or a
-  text. A map or a buffer instead iterated silently over nonsense (a
-  3-entry map ran 3 iterations printing `0, 0, 3`; the buffer `"abc"`
-  printed `6513249`, its own bytes read as a qword). The analyzer checked
-  only that the collection name was defined, and codegen unconditionally
-  read `[ptr + 8]` as a list header's element count — so a number was
-  dereferenced as an address and a map's or buffer's own header was
-  misread as a list's. LANGUAGE.md's supported collections are a list, a
-  range and `arguments's all`; the analyzer now refuses what it can prove
-  is none of them, suggesting `'s keys` or `'s values` for a map. It is a
-  known-scalar rejection, not a whitelist: an untyped parameter, a
-  `value`, a function result and a property read all keep iterating.
-  Found by the vox-fuzz collections-b claim ledger (discrepancies D3 and
-  D4) and adjudicated by the language lawyer as one memory-safety bug.
+- **`all the numbers from/between …` no longer segfaults outside a loop
+  header, and both spellings now include their end bound**
+  ([#56](docs/BUGS_FOUND.md)) — `For each step in all the numbers between
+  1 and 3,` crashed the generated program (exit 139), and so did `a list
+  called steps is all the numbers from 1 to 3.` followed by `Print
+  steps.`, which printed `[` and died. The same phrase printed straight
+  out gave `0`, and as an arithmetic operand gave the other operand back.
+  LANGUAGE.md:4716 names the phrase a **range**, and :262 says a range is
+  "**not** allocated as lists - they compile directly to efficient loop
+  constructs", so it has no value to emit: codegen's arm for it emitted
+  nothing at all and left the accumulator's previous contents to be
+  stored in a list slot or dereferenced as a list header. Every `For
+  each` header handed a range now routes to the range loop through the
+  same helper loop expansion has always used — which is why `Print each
+  step from all the numbers between 1 and 3.` was the one spelling that
+  worked — and a range anywhere a value is expected is a compile error
+  naming the documented spelling, `For each n from 1 to 3,`. Separately,
+  that one working position was answering wrongly: the parse site read
+  inclusiveness off which preposition was written, so `all the numbers
+  from 1 to 3` yielded `1 2` while `between 1 and 3` yielded `1 2 3`,
+  against :277's "Ranges are **inclusive**". Both spellings are one
+  range, and both now reach their end. Regression tests
+  `tests/361_foreach_over_all_the_numbers.vox` and
+  `tests/362_all_the_numbers_is_inclusive.vox` plus three compile-fail
+  fixtures, proven to crash or answer wrongly on 0.4.8 and to pass after.
+  Found by the vox-fuzz keywords claim ledger (discrepancies D5, D6 and
+  D7).
 
 ## [0.4.8] - 2026-08-20
 

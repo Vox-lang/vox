@@ -1,0 +1,3 @@
+Treating value and match must be the same type (got text vs number).
+114_treating_number_match_over_text_list_variable.vox:6:12
+'item' holds text here, so it can never equal a number

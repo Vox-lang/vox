@@ -1,0 +1,6 @@
+(Bug #55, the named-collection spelling: the element type comes from the
+ list's declaration instead of from a literal in the loop header, and the
+ mismatch is just as provable.)
+
+a list called words is ["a", "b"].
+print each item from words treating 98 as 31.

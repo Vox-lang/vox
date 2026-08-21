@@ -1,0 +1,6 @@
+(Bug #56: a range is not a value, so it cannot start a list. This declaration
+ used to compile, leaving the list variable pointing at whatever was in the
+ accumulator; printing it walked off the end of that and segfaulted.)
+
+a list called steps is all the numbers from 1 to 3.
+print steps.

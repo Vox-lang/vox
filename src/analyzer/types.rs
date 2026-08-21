@@ -942,6 +942,28 @@ explicitly:  a {} called {} is {} as {}.",
         true
     }
 
+    /// The type a `treating` clause's subject holds, for the value-vs-match
+    /// check below. A plain name is resolved through `named_value_type`
+    /// rather than `infer_simple_expr_type`, because the latter answers
+    /// None for a scalar name - and `scalar_types` is exactly where an
+    /// `each` loop records the element type of the collection it walks. So
+    /// long as the check could only see literal subjects, `each item from
+    /// ["a"] treating 98 as 31` walked straight past it and the generated
+    /// `_str_eq` dereferenced 98 (bug #55).
+    ///
+    /// A `value`-typed name genuinely holds a different type from one
+    /// iteration to the next - a loop over a mixed list is the case that
+    /// matters here - so it answers None and is left to the runtime rather
+    /// than pinned to whatever type it happened to hold first.
+    fn treating_subject_type(&self, expr: &Expr) -> Option<Type> {
+        let ty = match expr {
+            Expr::Identifier(name) if self.value_typed_names.contains(name.as_str()) => None,
+            Expr::Identifier(name) => self.named_value_type(name),
+            other => self.infer_simple_expr_type(other),
+        };
+        ty.filter(|t| !matches!(t, Type::Value | Type::Unknown))
+    }
+
     pub(crate) fn validate_treating_expr(&mut self, value: &Expr, match_value: &Expr, replacement: &Expr) {
         if let (Some(match_ty), Some(replacement_ty)) = (
             self.infer_simple_expr_type(match_value),
@@ -960,17 +982,35 @@ explicitly:  a {} called {} is {} as {}.",
         }
 
         if let (Some(value_ty), Some(match_ty)) = (
-            self.infer_simple_expr_type(value),
+            self.treating_subject_type(value),
             self.infer_simple_expr_type(match_value),
         ) {
             if !self.treating_types_compatible(&value_ty, &match_ty) {
-                self.push_error(
+                // Name the subject when there is one to name: over a loop
+                // this is the loop variable, and the type it reports is the
+                // element type of the collection being walked, which is the
+                // half of the mismatch the author cannot see in the clause
+                // itself.
+                let subject = match value {
+                    Expr::Identifier(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                let hint = subject.map(|name| {
+                    format!(
+                        "'{}' holds {} here, so it can never equal {} - the substitution would never fire, and comparing the two reads one as the other",
+                        name,
+                        self.typed_phrase(&value_ty),
+                        self.typed_phrase(&match_ty)
+                    )
+                });
+                self.push_error_with_hint(
                     format!(
                         "Treating value and match must be the same type (got {} vs {}).",
                         self.type_name(&value_ty),
                         self.type_name(&match_ty)
                     ),
-                    None,
+                    subject,
+                    hint.as_deref(),
                 );
             }
         }

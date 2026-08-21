@@ -441,9 +441,29 @@ impl Analyzer {
                 }
             }
             
+            // A range is a loop's counter bounds, not a value: LANGUAGE.md:262
+            // says ranges are "**not** allocated as lists - they compile
+            // directly to efficient loop constructs". Only a loop header may
+            // hold one, and `Statement::ForRange` walks its bounds itself
+            // rather than coming through here. Anything else reaching this arm
+            // wrote `all the numbers from/between ...` where a value belongs,
+            // which codegen has no value to emit for - it left whatever was in
+            // the accumulator, and a list initialiser or a print then read that
+            // as a list header and segfaulted (bug #56).
             Expr::Range { start, end, .. } => {
                 self.analyze_expr(start);
                 self.analyze_expr(end);
+                // The caret is placed by searching the source for the phrase
+                // itself: `all` alone matches inside `called`, and nothing
+                // else in the language builds a range in expression position,
+                // so the whole phrase is both safe and exact.
+                self.push_error_with_hint(
+                    "A range is not a value: `all the numbers from/between ...`".to_string(),
+                    Some("all the numbers"),
+                    Some(
+                        "a range counts, it does not hold - iterate it with `For each n from 1 to 3,`, or write the items out as a list, `[1, 2, 3]`",
+                    ),
+                );
             }
             
             Expr::PropertyCheck { value, .. } => {

@@ -558,11 +558,12 @@ impl Parser {
                     body
                 };
                 
-                Ok(Statement::ForEach {
-                    variable,
-                    collection,
-                    body,
-                })
+                // `all the numbers from/between ...` parses as a range,
+                // and a range is a loop's counter bounds, never a list
+                // header (LANGUAGE.md:262). Route it to the range loop the
+                // same way the loop-expansion clause does, or codegen walks
+                // it as a list and segfaults (bug #56).
+                Ok(Self::for_each_loop(variable, collection, body))
             }
         } else if *self.current() == Token::In {
             self.advance();
@@ -605,11 +606,9 @@ impl Parser {
                 }
             }
             
-            Ok(Statement::ForEach {
-                variable,
-                collection,
-                body,
-            })
+            // Same range-collection routing as the `from` spelling above
+            // (bug #56).
+            Ok(Self::for_each_loop(variable, collection, body))
         } else {
             Err(self.err("Expected 'from', 'between', or 'in' after for each"))
         }

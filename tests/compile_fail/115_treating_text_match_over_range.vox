@@ -1,0 +1,6 @@
+(Bug #55 over a range: a range loop variable counts with numbers, so a
+ text match can never equal it. This one did not crash - the comparison
+ silently never fired and the clause was dead - but it is the same
+ mismatch and the same rule rejects it.)
+
+print each step from 1 to 3 treating "a" as "b".

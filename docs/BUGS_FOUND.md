@@ -3648,3 +3648,308 @@ would have made this fix unreviewable. Recorded here so it is not lost.
 that two `see`-include helpers under `tests/compile_fail/include/` can
 never satisfy, so the runner prints a `WARN` about a `.vox`/`.err` count
 mismatch on a perfectly healthy corpus. Cosmetic, pre-existing, left alone.
+
+---
+
+### 55. A `treating` clause whose types do not match the collection segfaults — `print each item from ["a"] treating 98 as 31.`
+
+**Status:** **fixed** (unreleased, on top of 0.4.8+#49/#50/#52/#53/#54).
+Severity: **memory safety** — a one-line program, compiled clean, faults
+on an address taken from a number literal. Regression tests: compile-fail
+cases `tests/compile_fail/113_treating_number_match_over_text_list.vox`,
+`114_treating_number_match_over_text_list_variable.vox` and
+`115_treating_text_match_over_range.vox`, plus the passing controls
+`tests/359_treating_matching_types_substitutes.vox` (every spelling where
+the types agree still substitutes) and
+`tests/360_treating_over_an_unprovable_list.vox` (the collection whose
+element type cannot be proven no longer faults). Found 2026-08-21 by the
+vox-fuzz basics-expansion claim ledger (discrepancies D3 and D4),
+master-reproduced on 0.4.8+#49/#50/#52/#53/#54.
+
+```vox
+print each item from ["a"] treating 98 as 31.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+**The matrix, each case its own program, on `origin/main` (131cf73) and on
+the fix:**
+
+| program | before | after |
+|---|---|---|
+| `print each item from ["a"] treating 98 as 31.` | 139 | rejected |
+| `a list called words is ["a", "b"].` + `print each item from words treating 98 as 31.` | 139 | rejected |
+| `print each step from 1 to 3 treating "a" as "b".` | prints `1 2 3`, clause dead | rejected |
+| `a list called words is ["a"].` + `append "b" to words.` + `print each item from words treating 98 as 31.` | 139 | prints `a b`, clause never fires |
+| `print each item from ["-", "keep"] treating "-" as "/dev/stdin".` | correct | correct |
+| `print each count from [1, 2] treating 1 as 9.` | correct | correct |
+| `print each name from arguments's all treating "-" as "dash".` | correct | correct |
+| `print each item from [1, "a"] treating 98 as 31.` | prints `1` then `4198536` | unchanged — see below |
+
+**The check was not missing — it was blind on one side.** The analyzer
+already refuses `treating 98 as "z"`, with `Treating match and
+replacement must be the same type`, and it already had a second check
+comparing the clause's *subject* to its match. That second check could
+never fire over a loop, because `infer_simple_expr_type`
+(`src/analyzer/types.rs:399`) answers `None` for a plain
+`Expr::Identifier` unless the name is a buffer, list, map or flag — and a
+loop variable is none of those. Its scalar category lives in
+`scalar_types`, which only `named_value_type` (`src/analyzer/types.rs:10`)
+consults. So the check saw literals and nothing else.
+
+**What the spec promises.** LANGUAGE.md:404-424 introduces `treating X as
+Y` as "inline value substitution" and says only "If the loop variable
+equals `<match>`, it's replaced with `<replacement>` for that iteration".
+Nothing licenses a match of a type the loop variable can never hold —
+equality between a text and a number is not a comparison Vox offers
+anywhere else, and LANGUAGE.md:530-541 fixes a name's type at its
+declaration. ROADMAP M0 (ROADMAP.md:62-64) and README's "Memory Safety
+Model" forbid the outcome independently: no valid Vox program may
+segfault at runtime.
+
+**Mechanism — codegen was more confident than the analyzer.**
+`Expr::TreatingAs` (`src/codegen/expr.rs:1670-1713`) picks its comparison
+from the *subject's* type alone:
+
+```rust
+let treating_type = self.infer_expr_type(value);
+if is_buffer || matches!(treating_type, Some(VarType::String)) {
+    ...
+    self.emit_indent("mov rdi, rax  ; comparison ptr in rdi");
+    self.generate_expr(match_value);
+    self.emit_indent("mov rsi, rax  ; match value in rsi");
+    self.emit_indent("call _str_eq");
+```
+
+Over `["a"]` the subject is text, so this branch is taken and
+`generate_expr(match_value)` leaves the *integer* 98 in `rsi`. `_str_eq`
+(`coreasm/x86_64/string.asm:92-109`) then walks both operands a byte at a
+time:
+
+```asm
+.loop:
+    mov al, [rdi]
+    mov bl, [rsi]      ; rsi = 98 — reads address 0x62
+```
+
+which is the fault. The other direction is the same confusion with no
+signal: over a range the subject is a number, the register branch is
+taken instead, a pointer is compared against an integer, they are never
+equal and the clause is silently dead — the ledger's D4 shape.
+
+**Fix — reject the provable mismatch, and never dereference an
+unprovable one.** Two parts, one per layer:
+
+1. *Analyzer, `src/analyzer/types.rs`.* A new `treating_subject_type`
+   resolves a plain name through `named_value_type` instead of
+   `infer_simple_expr_type`, so the subject-vs-match check finally sees
+   the loop variable's element type. A `value`-typed name answers `None`
+   and is left alone. The error names both types and points at the
+   subject:
+
+   ```
+   error: Treating value and match must be the same type (got text vs number).
+     --> 113_treating_number_match_over_text_list.vox:5:12
+       |
+     5 | print each item from ["a"] treating 98 as 31.
+       |            ^--- here
+
+     hint: 'item' holds text here, so it can never equal a number - the
+           substitution would never fire, and comparing the two reads one
+           as the other
+   ```
+
+   The `ForEach` arm (`src/analyzer/statements.rs`, the bug #54 block)
+   now also reads an element type off a list *literal* in the loop
+   header via `list_literal_element_type`; before, only a named list had
+   one, because only a name could be looked up.
+
+2. *Codegen, `src/codegen/expr.rs`.* The text branch is taken only when
+   the match value could itself be text. A match that is provably a
+   number, float or boolean can never equal a text subject, so the
+   register comparison is used: the two are unequal, the substitution
+   correctly never fires, and nothing is read through the match value.
+   This is what closes the case the analyzer cannot prove — a list
+   widened by a later `Append` has no element type, so nothing is
+   rejected, and before this the generated program still faulted.
+
+**The proof is only offered where it holds.** `arguments's all` has no
+provable element type and keeps compiling exactly as it did (both
+existing analyzer tests over it are untouched and still pass). So does a
+widened list, an untyped parameter and a function result — the analyzer
+stays silent on all of them and codegen's guard carries the safety.
+
+**Not fixed: `treating` over a MIXED list still prints a raw pointer.**
+This is the ledger's D4, and it survives:
+
+```vox
+print each item from [1, "a"] treating 98 as 31.
+```
+→ prints `1` then `4198536`, exit 0.
+
+A mixed list's loop variable is runtime-tagged (`value`), so there is no
+static element type to check against and this fix deliberately does not
+invent one. But the leak is **not** caused by the type mismatch, which is
+what the ledger assumed. The type-*matching* version leaks identically:
+
+```vox
+print each item from [1, "a"] treating "a" as "b".
+```
+→ prints `1` then `4198536`, where `1` then `b` is correct — while the
+same list with no `treating` clause at all prints `1` and `a`, correctly.
+So
+wrapping a mixed-list loop variable in `Expr::TreatingAs` loses its tag:
+`infer_expr_type` for `TreatingAs` reports the subject's type
+(`src/codegen/expr.rs:2408`) and `Print` picks its printer from that,
+rather than dispatching on the per-slot tag the way a bare read does.
+That is a wrong-value bug in the `Mixed`/`value` printing path, the same
+family as #44/#45, and it wants its own number and its own reproduction
+matrix. Recorded here so it is not lost.
+
+---
+
+### 56. `all the numbers from/between X and Y` — a range that segfaults in a loop header, segfaults as a value, and drops its end bound
+
+**Status:** **fixed** (unreleased, on top of 0.4.8). Severity: **memory
+safety** — two legal-looking programs, two and two lines long, crash; a
+third answers wrongly. Regression tests
+`tests/361_foreach_over_all_the_numbers.vox` and
+`tests/362_all_the_numbers_is_inclusive.vox` plus three compile-fail
+fixtures (`tests/compile_fail/116_range_as_list_initialiser.vox`,
+`117_print_a_range.vox`, `118_range_in_arithmetic.vox`), all proven to
+misbehave on unfixed `main` and to pass after. Found 2026-08-21 by the
+vox-fuzz keywords claim ledger (discrepancies D5, D6 and D7),
+master-reproduced on 0.4.8.
+
+**Three symptoms, one phrase.**
+
+```vox
+For each step in all the numbers between 1 and 3,
+    Print step.
+```
+→ **segfault (139)**, no output. (D6)
+
+```vox
+a list called steps is all the numbers from 1 to 3.
+Print steps.
+```
+→ prints `[` and **segfaults (139)**. (D7)
+
+```vox
+Print each step from all the numbers from 1 to 3.
+```
+→ prints `1 2`. The same sentence with `between 1 and 3` prints `1 2 3`.
+(D5)
+
+**The matrix, each case its own program, on `main` and on the fix:**
+
+| the phrase's position | 0.4.8 | fixed |
+|---|---|---|
+| `For each step in all the numbers between 1 and 3,` | 139 | `1 2 3` |
+| `For each step in all the numbers from 1 to 3,` | 139 | `1 2 3` |
+| `For each step from all the numbers between 1 and 3,` | 139 | `1 2 3` |
+| `For each step from all the numbers from 1 to 3,` | 139 | `1 2 3` |
+| `Print each step from all the numbers between 1 and 3.` | `1 2 3` | `1 2 3` |
+| `Print each step from all the numbers from 1 to 3.` | `1 2` | `1 2 3` |
+| `a list called steps is …` then `Print steps.` | 139 | compile error |
+| `… Print steps's length.` | 139 | compile error |
+| `Print all the numbers between 1 and 3.` | `0` | compile error |
+| `a number called total is all the numbers between 1 and 3 add 4.` | `8` | compile error |
+| `Print each step from 1 to 3.` (plain range, control) | `1 2 3` | `1 2 3` |
+
+Loop expansion was the one position that already ran — and it was the one
+that showed D5, because it was the only place the end bound was ever
+observable.
+
+**What the spec promises.** LANGUAGE.md:4715-4716 names `all` a
+contextual keyword claimed by "the `all the numbers from/between …`
+range" — so the phrase denotes a **range**, in both spellings, named in
+one breath. LANGUAGE.md:262 says what a range is: "Ranges … are **not**
+allocated as lists - they compile directly to efficient loop constructs
+with a counter, bounds check, and increment." A range is therefore not a
+value and has nothing to put in a variable. LANGUAGE.md:277 says how far
+one goes: "Ranges are **inclusive** - `1 to 5` includes 1, 2, 3, 4, and
+5." The `For each` forms at :2095-2116 are `For each <n> from <start> to
+<end>` for a range and `For each <var> in <list>` for a list; loop
+expansion at :284 is explicitly "a loop that executes for each item in a
+collection **or range**". README's "Memory Safety Model" and ROADMAP M0
+("no valid Vox program may segfault") forbid the crash independently.
+
+**Mechanism, part one — one node with no value, reachable from every
+expression position.** `all the numbers …` is parsed in `parse_primary`
+(`src/parser/expressions.rs:1030-1055`) and yields `Expr::Range`. That is
+the only place in the language that builds a `Range` in *expression*
+position; everywhere else a range is constructed directly into a
+`Statement::ForRange`. But `parse_primary` is `parse_primary` — the node
+then flows wherever an expression may go, and codegen's arm for it
+(`src/codegen/expr.rs:840`) is:
+
+```rust
+Expr::Range { .. } => {}
+```
+
+Nothing is emitted, so `rax` keeps whatever the previous instruction left
+in it. Two ends of the same defect follow:
+
+- **The loop header (D6).** `For each <var> in <collection>` and `For
+  each <var> from <collection>` (`src/parser/control_flow.rs`, pre-fix
+  :561 and :608) built a `Statement::ForEach` whatever the collection
+  was, and `ForEach` codegen reads `[ptr + 8]` as a list header's element
+  count — the same dereference bug #49 closed for scalars, reached this
+  time by a node no analyzer check could name. `rax` is dereferenced as a
+  list pointer: SIGSEGV.
+- **The value position (D7).** `a list called steps is <Range>` stores
+  that same stale `rax` in the list slot. The declaration alone survives
+  — replacing the read with `Print "declared".` runs clean — because
+  nothing has walked the header yet. `Print steps.` walks it: it manages
+  the opening `[` and dies. The quieter siblings never crash and are
+  worse for it: `Print all the numbers between 1 and 3.` printed `0`, and
+  the same phrase as an arithmetic operand printed `8` — the constant `4`
+  it was added to, plus a `4` that was never a range.
+
+**Mechanism, part two — inclusiveness read off the preposition (D5).**
+The same parse site decided how far the range goes from which word the
+programmer happened to write:
+
+```rust
+let inclusive = *self.current() == Token::Between;
+```
+
+`Expr::Range`'s `inclusive` flag is a single `inc rax` on the end bound
+before the `jge` (`src/codegen/statements.rs:880-889`), so `from` lost
+the last iteration and `between` did not. Every other range-building site
+in the parser hardcodes `inclusive: true` — `control_flow.rs:459`, `:895`
+and `:909` — which is why the documented `For each number from 1 to 10`
+was always right and only this phrase was not. Nothing in :4716
+distinguishes the two spellings; it names them as one range.
+
+**The fix, one root, three symptoms.** A range now reaches codegen only
+as a loop's counter bounds, and it always includes its end.
+
+1. Every `For each` header handed a range routes to `Statement::ForRange`
+   through the existing `for_each_loop` helper — the same helper the
+   loop-expansion clause has always used, which is precisely why loop
+   expansion was the one spelling that worked. `in` and `from` now agree
+   with `each … from`.
+2. `Expr::Range` in the analyzer's expression walk is a compile error,
+   `A range is not a value: all the numbers from/between ...`, with the
+   hint "a range counts, it does not hold - iterate it with `For each
+   n from 1 to 3,`, or write the items out as a list, `[1, 2, 3]`". The
+   caret is placed by searching the source for the phrase itself.
+   `Statement::ForRange` walks its own `start` and `end` instead of the
+   `Range` node, so the one legitimate position is unaffected.
+3. `inclusive` at the phrase's parse site is `true`, like every other
+   range site, so both spellings reach their end bound.
+
+Rejecting rather than allocating a list is what the manual supports:
+:262 is explicit that a range is not a list, so building one here would
+invent a value the language says does not exist.
+
+**Manual gap, recorded not closed.** LANGUAGE.md never states in one
+place that a range is not a first-class value — :262 says ranges are not
+*allocated* as lists, which a reader can take as an implementation note
+about efficiency rather than a rule about where the phrase may appear.
+Nor does the Ranges section mention the `all the numbers …` spelling at
+all; it is introduced 4,400 lines later in a list of contextual keywords.
+A reader who meets the phrase there has no way to learn from the Ranges
+section that `a list called steps is all the numbers from 1 to 3.` is not
+a thing. The diagnostic now says so; the manual still should.
