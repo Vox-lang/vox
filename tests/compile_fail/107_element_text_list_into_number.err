@@ -1,0 +1,4 @@
+cannot assign text to 'n', which is a number
+107_element_text_list_into_number.vox:7:1
+note: 'n' was declared as a number at 107_element_text_list_into_number.vox:6:17
+help: convert it explicitly:  n is element 1 of names as a number.

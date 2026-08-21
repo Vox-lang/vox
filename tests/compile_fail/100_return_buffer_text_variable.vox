@@ -1,0 +1,13 @@
+(Bug #53, the same fault reached through a name: a text variable returned
+ as a buffer hands back the same address as a literal does, and segfaults
+ the same way. Refused for the same reason, and pointed at the same
+ remedy - build the buffer, then return the buffer.)
+
+To 'give text'.
+  a text called greeting is "ABC".
+  Return a buffer, greeting.
+
+a buffer called direct is "ABC".
+a buffer called second is "DEF".
+a buffer called 'from text' is 'give text'.
+print 'from text''s size.

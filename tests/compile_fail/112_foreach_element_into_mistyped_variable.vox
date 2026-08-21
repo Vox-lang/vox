@@ -1,0 +1,9 @@
+(Bug #54, the loop spelling: `part` holds an element of a list proven to
+ hold numbers, so writing it into a text was the same mismatched read as
+ `element 1 of counts` - and the Print segfaulted the same way.)
+
+a text called label is "x".
+a list called counts is [1, 2].
+For each part in counts,
+    label is part.
+Print label.

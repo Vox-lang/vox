@@ -1,0 +1,16 @@
+(Bug #53: `Return a buffer, "ABC"` left the address of the text's own
+ characters in rax, and the caller read that address as a buffer struct -
+ length at +8. With another literal laid down after it, those characters
+ became the length (4.6 MB), and the caller's append copied that far past
+ the end of the mapping: a deterministic segfault, from a program that
+ compiled clean. With only one literal in the program the same eight bytes
+ read as 0 and the call quietly answered an empty buffer instead. A
+ declaration initializer is the one place text builds a buffer; nothing
+ promises that conversion in a return, so the return is refused.)
+
+To 'give literal'. Return a buffer, "ABC".
+
+a buffer called direct is "ABC".
+a buffer called second is "DEF".
+a buffer called 'from literal' is 'give literal'.
+print 'from literal''s size.

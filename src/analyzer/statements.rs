@@ -123,6 +123,16 @@ impl Analyzer {
             }
         }
 
+        // Bug #54: which lists can still be widened or aliased after their
+        // declaration, so the element-type proof below is only offered for
+        // the ones that cannot - plus the blunter question of whether any
+        // function widens a list it was handed, which no name can be
+        // pinned on. Whole-program and order-independent, so a read early
+        // in the file gets the same answer as one after the append that
+        // widens the list.
+        self.widened_lists = collect_widened_lists(&program.statements);
+        self.functions_widen_lists = any_function_widens_a_parameter(&program.statements);
+
         // Load and validate the thing registry before anything can consult it
         // for a size, an offset, or a field path (plan 310 §6, §10).
         self.load_things(program);
@@ -497,6 +507,14 @@ impl Analyzer {
                         if self.list_literal_is_mixed(elements) {
                             self.list_mixed.insert(name.clone());
                         }
+                        // Bug #54: a homogeneous list literal's element type
+                        // is provable, which makes a read of an element into
+                        // a differently-typed variable a statically-detectable
+                        // type-lock violation instead of the segfault it used
+                        // to compile to.
+                        if let Some(t) = self.list_literal_element_type(elements) {
+                            self.list_element_type.insert(name.clone(), t);
+                        }
                     }
                 }
                 if let Some(Type::Map(_)) = var_type {
@@ -549,6 +567,14 @@ impl Analyzer {
                         }
                         None => self.analyze_expr(v),
                     }
+                }
+                // Bug #54: a declaration initialised from a collection or
+                // buffer read of a provably different type. The read is
+                // checked here because the type lock below only guards
+                // writes to an ALREADY-declared name, and this is the
+                // declaration itself.
+                if let (Some(vt), Some(v)) = (var_type.as_ref(), value.as_ref()) {
+                    self.check_declared_read_type(name, vt, v);
                 }
                 // Track the scalar category (number/float/text/boolean) for
                 // the arithmetic type check. Numeric/boolean declarations are
@@ -887,6 +913,15 @@ impl Analyzer {
                     self.value_typed_names.insert(variable.clone());
                 } else {
                     self.value_typed_names.remove(variable.as_str());
+                    // Bug #54: over a list whose element type IS provable,
+                    // the loop variable holds that type on every iteration.
+                    // Recording it is what makes `label is part.` inside the
+                    // body - the loop spelling of an element read into a
+                    // mistyped variable - reach the type lock instead of
+                    // compiling to a number written into a text slot.
+                    if let Some(t) = list_name.and_then(|n| self.list_element_type_of(n)) {
+                        self.scalar_types.insert(variable.clone(), t);
+                    }
                 }
                 self.analyze_expr(collection);
                 self.loop_depth += 1;
@@ -940,6 +975,14 @@ impl Analyzer {
                 match (self.current_function_return_type.clone(), value) {
                     (Some(Type::Thing(thing)), Some(v)) => {
                         self.check_thing_copy("this function's result", "Return", &thing, v);
+                    }
+                    // A buffer return hands back a pointer the caller reads as
+                    // a buffer struct, so a text (or any other non-buffer)
+                    // source is refused rather than compiled into an
+                    // out-of-bounds read (bug #53).
+                    (Some(Type::Buffer), Some(v)) => {
+                        self.check_buffer_return_source(v);
+                        self.analyze_expr(v);
                     }
                     (_, Some(v)) => self.analyze_expr(v),
                     (_, None) => {}

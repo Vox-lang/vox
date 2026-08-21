@@ -104,6 +104,30 @@ pub struct Analyzer {
     /// site is consulted, not aliasing or later `Set <map>'s "k" to
     /// <value>` writes that could widen it.
     map_value_type: HashMap<String, Type>,
+    /// A list's element type, proven from its own literal initializer when
+    /// every element shares one provable type (bug #54) - e.g. `[1, 2]` is
+    /// a list of number. Consulted by `arithmetic_operand_type` so a read
+    /// of an element (`element 1 of counts`, `counts's first`) carries that
+    /// type, which makes a read into a differently-typed variable a
+    /// statically-provable type-lock violation instead of a segfault at
+    /// runtime.
+    ///
+    /// Only offered for a name absent from `widened_lists`: the proof holds
+    /// exactly as long as nothing can change or share the elements after
+    /// the declaration. Absent (no entry) for an empty literal, a mixed
+    /// one, or a non-literal initializer - `arithmetic_operand_type` then
+    /// answers `None` for a read from it, the same "can't prove it, so
+    /// allow" policy as everywhere else in this file.
+    list_element_type: HashMap<String, Type>,
+    /// Every list name some statement in the program can widen or alias -
+    /// see `collect_widened_lists`. Filled once, before the walk, so the
+    /// answer does not depend on where in the file a read appears.
+    widened_lists: HashSet<String>,
+    /// Set when some function in the program appends to (or element-sets)
+    /// one of its own parameters - see `any_function_widens_a_parameter`.
+    /// That is the one widening move no name can be pinned on, so while it
+    /// is true no list gets an element-type proof at all.
+    functions_widen_lists: bool,
     loop_depth: usize,
     /// True when compiling `--shared`. A shared library has no `_start`, so a
     /// top-level executable statement would be generated into the discarded
@@ -202,6 +226,9 @@ impl Analyzer {
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),
+            list_element_type: HashMap::new(),
+            widened_lists: HashSet::new(),
+            functions_widen_lists: false,
             loop_depth: 0,
             shared_mode: false,
             current_library: None,

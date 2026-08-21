@@ -1,0 +1,4 @@
+cannot assign number to 'label', which is a text
+112_foreach_element_into_mistyped_variable.vox:8:5
+note: 'label' was declared as a text at 112_foreach_element_into_mistyped_variable.vox:5:15
+help: convert it explicitly:  label is part as text.
