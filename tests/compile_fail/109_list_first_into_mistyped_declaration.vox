@@ -1,0 +1,6 @@
+(Bug #54's sibling: `'s first` and `'s last` read one element out of the
+ same list header as `element N of`, and segfaulted the same way.)
+
+a list called counts is [1, 2].
+a text called label is counts's first.
+Print label.

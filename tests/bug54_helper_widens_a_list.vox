@@ -1,0 +1,17 @@
+(Bug #54's false-positive guard: a helper that appends to a list it was
+ HANDED can widen any list in the program, and the append names the
+ parameter rather than the caller's list - so no element-type proof is
+ offered anywhere while such a helper exists, and this text read of a
+ number list's third element, which the helper made text, still compiles.)
+
+To stash with a list called bag.
+    Append "extra" to bag.
+
+a list called counts is [1, 2].
+stash with counts.
+a text called third is element 3 of counts.
+Print third.
+
+(The reads that always matched still answer correctly.)
+a number called 'first count' is element 1 of counts.
+Print 'first count'.

@@ -3338,3 +3338,313 @@ fixed marker instead of the unstable address.
 analyzer rejects every source expression that would reach it ("Copy
 source must be a buffer"), so it is unreachable today; worth closing
 before something new makes it reachable.
+
+---
+
+### 53. `Return a buffer, "<text literal>"` answers with an empty buffer — or segfaults, once the program holds a second string
+
+**Status:** **fixed** (unreleased, on top of 0.4.8). Severity: **memory
+safety** — a legal program, compiled clean, reads megabytes past the end
+of its own mapping. Regression tests:
+`tests/compile_fail/099_return_buffer_text_literal.vox` and
+`tests/compile_fail/100_return_buffer_text_variable.vox` (both proven to
+compile clean and segfault with 139 on unfixed `origin/main`, and to be
+rejected at compile time after), plus the passing control
+`tests/bug53_return_buffer_variable.vox`, which pins that the buffer
+spellings that always worked still do. Found 2026-08-21 by the vox-fuzz
+Functions claim ledger (discrepancies D7 empty / D8 segfault),
+master-reproduced on 0.4.8 and on current `main`.
+
+```vox
+To 'give literal'. Return a buffer, "ABC".
+
+a buffer called direct is "ABC".
+a buffer called second is "DEF".
+a buffer called 'from literal' is 'give literal'.
+Print 'from literal''s size.
+```
+→ **segfault (139)**, deterministic.
+
+Drop the two other buffers and the same call silently answers an **empty
+buffer** — `size` prints `0`, no crash, no error flag. The wrong answer
+and the crash are the same defect reading different bytes; which one a
+program gets depends on what the assembler happened to lay down after
+the literal.
+
+**The control says it is the source, not the return.** Returning a
+buffer *variable* is fine:
+
+```vox
+To 'give made'. a buffer called made is "ABC". Return a buffer, made.
+```
+→ `3`, correct, before the fix and after. So does a buffer parameter
+handed straight back, and so does a call to another buffer-returning
+function. Only a source that is not a buffer is affected.
+
+**A text VARIABLE fails identically.** `a text called greeting is "ABC".
+Return a buffer, greeting.` segfaults in the same program shape (139),
+because it hands back the same kind of address. Both spellings are
+refused.
+
+**What the spec promises.** LANGUAGE.md:722-727 makes `buffer` a legal
+`Return a <type>,` return type, and nothing more. The manual gives text a
+buffer meaning in exactly one place — "Creating buffer from string",
+LANGUAGE.md:3347-3352, the declaration initializer `a buffer called buf
+is "Hello".`, which allocates a buffer and appends the bytes. No
+paragraph promises that conversion in a return.
+README's "Memory Safety Model" and ROADMAP M0 ("no valid Vox program may
+segfault") forbid the outcome either way.
+
+**Mechanism — a text's address returned where a buffer struct's address
+is expected.** A buffer is a header plus its bytes: capacity at +0,
+length at +8, flags at +16, data from +24
+(`coreasm/x86_64/resource.asm:11-14`). The general `Statement::Return`
+arm (`src/codegen/statements.rs:1025-1042`) just leaves
+`generate_expr(value)`'s result in `rax`, and for a text literal that is
+`lea rax, [rel str_0]` (`src/codegen/expr.rs:389-392`) — the address of
+the characters, with no header in front of them. On the caller's side, a
+buffer declared from a call takes the initializer path at
+`src/codegen/statements.rs:580-596`: `emit_copy_expr_into_buffer_slot`
+declines the expression, the call is emitted, `infer_expr_type` reports
+`Buffer` from the declared return type, and
+`emit_append_runtime_value_to_buffer_ptr`
+(`src/codegen/buffers.rs:75-81`) emits `mov rsi, rax` / `call
+_buffer_append`. `_buffer_append`
+(`coreasm/x86_64/resource.asm:1428-1441`) then reads `[rsi + BUF_LENGTH]`
+— eight bytes past the first character of `"ABC"` — as the source length,
+and copies that many bytes from `rsi + 24`.
+
+The emitted assembly for the repro, with the two loads that disagree
+about what `rax` holds:
+
+```asm
+    call give_literal
+    mov rdi, [rel gvar_1]  ; destination buffer
+    mov rsi, rax           ; "source buffer" - actually str_0's characters
+    call _buffer_append
+
+give_literal:
+    lea rax, [rel str_0]   ; str_0: db 'ABC', 0
+```
+
+In the repro's binary the three literals land adjacent — `str_0` at
+`0x40308c` holding `ABC\0ABC\0DEF\0` — so the qword at `str_0 + 8` is
+`"DEF\0"` plus the zeroed head of `.bss`: **4,605,764**. The destination
+grows to fit, and the copy then walks 4.6 MB forward from `str_0 + 24`,
+which is inside a `.bss` of 68 KB. It runs off the end and the program
+dies. With only one literal in the program, `str_0 + 8` is entirely
+zeroed `.bss`, the length reads 0, `_buffer_append` takes its
+`jz .append_done` branch, and the caller gets an empty buffer instead of
+a crash. Nothing in between is checked, because nothing on this path
+knows the address is not a buffer.
+
+**Fix — refuse the return.** `check_buffer_return_source`
+(`src/analyzer/types.rs:285-343`, with `render_buffer_return_source` at
+`:349-360`), called from the `Statement::Return`
+arm when the declared return type is `buffer`
+(`src/analyzer/statements.rs:948-951`), rejects a source it can prove is
+not a buffer and names the spelling that works:
+
+```
+error: Cannot return text "ABC" as a buffer; the caller reads what Return
+hands back as a buffer, and text is not one. Build the buffer first:
+'a buffer called made is "ABC". Return a buffer, made.'
+```
+
+The remedy is one spelling for every rejected type, because a buffer
+declaration already accepts text, a format string, a number, a float or
+a boolean as its initializer and writes the value's bytes (the same
+latitude `check_type_lock` grants a buffer destination). Only a provable
+non-buffer is refused: a call, a property read, a `value` name, an
+unresolved name all pass, the "can't prove it, allow it" policy
+`check_arithmetic_operand` and `check_file_write_operand` (bug #40)
+already follow. This is the same treatment bug #40 gives `Write <scalar>`
+— refuse the form that compiles to a bad address, rather than invent a
+conversion.
+
+**The language question this does not answer.** Whether `Return a
+buffer, "ABC"` *should* convert the way the declaration does is a
+decision that has not been taken. Converting would add language surface
+(a second place text means "buffer") and belongs to the language owner,
+not to a memory-safety fix; refusing it keeps the door open in either
+direction.
+
+**Never exercised until now.** `Return a buffer` appears nowhere in the
+repository — not in `tests/`, not in `examples/`, not in LANGUAGE.md.
+The only coverage was `tests/p296_full_type_vocabulary.rs`, whose matrix
+proves the *parser* accepts all eleven type nouns and stands every one of
+them on the same filler operand, `1`. Its buffer case now stands on a
+real buffer, so it still tests the parser vocabulary it was written for.
+
+**Sibling, out of scope, not fixed here:** `Return a list, "ABC".` and
+`Return a number, "ABC".` are unchecked in exactly the same way — the
+list form answers `0` for its size on the repro shape, and the number
+form prints the literal's address. Neither was in this fix's scope; only
+`buffer` is judged today.
+
+### 54. A list element read into a variable of another type segfaults — `a text called label is element 1 of counts.`
+
+**Status:** **fixed** (unreleased, on top of 0.4.8+#49/#50/#52). Severity:
+**memory safety** — a legal-looking program with no diagnostic at all
+crashes, and the near-miss version silently prints an address as a number.
+Regression tests: compile-fail cases
+`tests/compile_fail/099_element_number_list_into_text.vox` through
+`105_foreach_element_into_mistyped_variable.vox`, and the passing controls
+`tests/bug54_element_read_typecheck.vox` and
+`tests/bug54_helper_widens_a_list.vox`. Found 2026-08-21 by the vox-fuzz
+Variables claim ledger (discrepancy D1), master-reproduced on
+0.4.8+#49/#50/#52.
+
+```vox
+a list called counts is [1, 2].
+a text called label is "x".
+label is element 1 of counts.
+Print label.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+**The matrix, each case its own program, on `origin/main` (34f9831) and on
+the fix:**
+
+| read | destination | 0.4.8+ | fixed |
+|---|---|---|---|
+| `element 1 of counts` (`[1, 2]`) | `text`, by assignment | 139 | rejected |
+| `element 1 of counts` | `text`, by declaration | 139 | rejected |
+| `element 1 of names` (`["a", "b"]`) | `number`, by assignment | prints `4198536` | rejected |
+| `counts's first` | `text`, by declaration | 139 | rejected |
+| `byte 1 of raw` (a buffer) | `text`, by declaration | 139 | rejected |
+| `ages's "bo"` (`{"bo": 42}`) | `text`, by declaration | 139 | rejected |
+| `ages's "bo"` | `text`, by assignment | already rejected | rejected |
+| `For each part in counts, label is part.` | `text` | 139 | rejected |
+| `element 1 of counts` | `number` | `1` | `1` |
+| `element 1 of oddments` (`[7, "seven"]`) | `value` | `7` | `7` |
+| `Print element 1 of counts.` (no copy) | — | `1` | `1` |
+
+Two rows carry the whole story. **Printing the read directly is correct**
+— `Print element 1 of counts.` prints `1`, and `Print element 1 of names.`
+prints `a` — so the read itself, its bounds check and its tag dispatch all
+work. It is the *copy into a differently-typed slot* that breaks. And the
+map row shows the asymmetry that hid this: the assignment spelling of a
+mismatched map read was already refused (plan 294 findings 4/14 gave a
+homogeneous map literal a provable value type), while the declaration
+spelling of the same read was not, and crashed.
+
+**What the spec promises.** LANGUAGE.md:530-541: "A variable's type is
+fixed at its declaration and never changes", `value` excepted, and every
+form that writes to a declared name is checked "the same way". An element
+read is such a write. LANGUAGE.md:2783-2807 documents element access and
+promises only an error flag on the one failure it has (out of bounds).
+ROADMAP M0 (ROADMAP.md:62-64) and README's "Memory Safety Model" forbid the outcome
+independently: no valid Vox program may segfault at runtime.
+
+**Mechanism — an untyped 8-byte copy into a typed slot.** The analyzer
+knew nothing about what an element read yields:
+`arithmetic_operand_type` (`src/analyzer/types.rs:38`) answered `None`
+for `Expr::ElementAccess`, `ByteAccess` and `PropertyAccess{First,Last}`
+— and `None` means "can't prove it, allow it", so `check_type_lock`
+(`src/analyzer/types.rs:662`) passed every such assignment through.
+The declaration spelling was worse off still: the `VarDecl` arm
+(`src/analyzer/statements.rs:576-600`) type-checked nothing at all, it
+merely *recorded* a category, and for a `text` declaration whose
+initializer was not provably text it silently dropped the name from
+`scalar_types` — so the mismatch not only passed, it erased the tracking
+that would have caught the next line.
+
+Codegen then emitted a plain quadword move. The whole of the repro's
+element read and print, from `--emit-asm`:
+
+```asm
+.elem_ok_1:
+    mov rax, [rax]        ; get element  -> rax = 1
+.elem_done_3:
+    mov [rel gvar_1], rax ; label's slot now holds the NUMBER 1
+    mov rax, [rel gvar_1]
+    mov rdi, rax
+    PRINT_CSTR rdi        ; ... printed as a char* at address 1
+```
+
+`Print` picks its printer from the destination *variable's* declared type
+(`src/codegen/print.rs:205-226`): `label` is a `text`, so `PRINT_CSTR`
+walks a string at address `1`. The reverse direction is the same copy with
+the roles swapped — a text element's pointer lands in a `number` slot and
+`PRINT_INT` renders the pointer, which is where `4198536` comes from. No
+bounds check, tag, or conversion is involved in either; the element's raw
+payload is simply moved.
+
+**Fix — refuse the provable mismatch, stay silent on the unprovable
+one.** Three parts, all in the analyzer:
+
+1. `list_element_type` (`src/analyzer/mod.rs:121`) records a list's element
+   type from a homogeneous literal initializer, exactly as
+   `map_value_type` already did for maps;
+   `list_literal_element_type` (`src/analyzer/types.rs:414`) reads it off the
+   same `list_element_kind` classifier `list_literal_is_mixed` uses, so
+   the two can never disagree about which lists are homogeneous.
+2. `arithmetic_operand_type` now answers for the read forms:
+   `element N of <list>` and `<list>'s first`/`'s last` yield the proven
+   element type, and `byte N of <buffer>` yields a number, which is true
+   of every byte whatever buffer it came from. That alone makes the
+   assignment spelling reach the existing type lock.
+3. `check_declared_read_type` (`src/analyzer/types.rs:543`) applies the same
+   judgement at the declaration site, which had no type check to reach.
+   A `For each` loop variable over a proven list now carries the element
+   type too (`src/analyzer/statements.rs:913`, the `ForEach` arm), which is
+   what catches the loop spelling.
+
+**The proof is only offered where it holds.** `collect_widened_lists`
+(`src/parser/ast.rs:955`) walks the whole program — function bodies included —
+and collects every list name that an `Append`, a `Set element N of`, a
+whole-list assignment, a call argument, or a copy into or out of another
+variable could widen or alias. A name in that set gets no element type at
+all, so
+
+```vox
+a list called grown is [1, 2].
+Append "three" to grown.
+a text called third is element 3 of grown.   (still accepted, still prints "three")
+```
+
+keeps working. The scan is whole-program and order-independent by design:
+a read early in the file gets the same answer as one after the append, and
+a widening move anywhere disables the proof everywhere. The cost is a
+missed diagnostic; the alternative is a false one.
+
+One widening move cannot be pinned on a name at all — a function that
+appends to a list it was *handed*, since the append names the parameter
+and the call that passed the list may sit in an expression position the
+scan does not walk. `any_function_widens_a_parameter`
+(`src/parser/ast.rs`) answers that bluntly: while any function in the
+program appends to or element-sets one of its own parameters, no list
+anywhere gets a proof. (A function that appends to a list by its own
+global name is a different case, and IS attributed — that append names
+the list directly, and the scan descends into function bodies to see it.)
+
+Mixed lists are untouched — `list_literal_element_type` answers `None`
+for them, which is the existing "can't prove it, allow it" path, so the
+`value` machinery keeps handling them and LANGUAGE.md:2460-2467's guarded
+read out of `[1, "two", 3.5]` still prints `2, guarded away, guarded
+away`.
+
+**A separate, wider defect this deliberately does NOT fix.** The
+declaration site performs no general type check, and only the *reads*
+above were given one here. All of these still compile, and all of them
+still crash or lie, on the fix:
+
+```vox
+a text called label is 42.        (segfault, 139)
+a number called n is "hello".     (prints 4198488 — an address)
+a number called n is 5.
+a text called label is n.         (segfault, 139)
+```
+
+That is one bug — a missing declaration-site type check — with a far wider
+blast radius than this one, since it reaches every literal and every
+variable copy rather than the six read forms. It wants its own number, its
+own reproduction matrix and its own regression sweep; folding it in here
+would have made this fix unreviewable. Recorded here so it is not lost.
+
+**Also noticed, unrelated:** the `compile_fail` corpus counter in
+`test.sh` counts `.vox` recursively but is compared against a `.err` count
+that two `see`-include helpers under `tests/compile_fail/include/` can
+never satisfy, so the runner prints a `WARN` about a `.vox`/`.err` count
+mismatch on a perfectly healthy corpus. Cosmetic, pre-existing, left alone.

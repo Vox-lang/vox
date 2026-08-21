@@ -1,0 +1,3 @@
+cannot initialise 'label', which is a text, with a number read out of buffer 'raw'
+110_byte_read_into_mistyped_declaration.vox:7:15
+note: the read yields a number, and 'label' is declared as a text

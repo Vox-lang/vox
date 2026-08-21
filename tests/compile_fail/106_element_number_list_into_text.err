@@ -1,0 +1,4 @@
+cannot assign number to 'label', which is a text
+106_element_number_list_into_text.vox:7:1
+note: 'label' was declared as a text at 106_element_number_list_into_text.vox:6:15
+help: convert it explicitly:  label is element 1 of counts as text.

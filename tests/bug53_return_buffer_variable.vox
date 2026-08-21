@@ -1,0 +1,30 @@
+(Regression: refusing `Return a buffer, <text>` (bug #53) must not refuse
+ the spellings that always worked. A buffer built inside the function, a
+ buffer parameter handed straight back, and a call to another
+ buffer-returning function all answer with a real buffer struct, so the
+ caller's read of its size is the length that was actually written.)
+
+To 'make a greeting'.
+  a buffer called greeting is "ABC".
+  Return a buffer, greeting.
+
+To 'hand back' with a buffer called incoming.
+  Return a buffer, incoming.
+
+To 'pass along'.
+  Return a buffer, 'make a greeting'.
+
+(Two string-initialised buffers: the shape that turned bug #53's
+ empty-buffer discrepancy into a segfault, kept so a regression would
+ crash here rather than quietly read 0 and pass.)
+a buffer called direct is "ABC".
+a buffer called second is "DEFGH".
+
+a buffer called made is 'make a greeting'.
+print made's size.
+
+a buffer called handed is 'hand back' of second.
+print handed's size.
+
+a buffer called relayed is 'pass along'.
+print relayed's size.

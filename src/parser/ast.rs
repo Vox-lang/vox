@@ -921,3 +921,196 @@ pub fn collect_all_typed_decls(stmts: &[Statement]) -> std::collections::HashMap
     walk(stmts, &mut out, &mut poisoned);
     out
 }
+
+/// Every list name whose element types this file cannot pin down from its
+/// declaration alone — because something in the program can still change,
+/// replace, or share the elements after that declaration (bug #54).
+///
+/// The analyzer proves a list's element type from a homogeneous literal
+/// initializer (`a list called counts is [1, 2].`) and refuses a read of
+/// an element into a variable of a different type. That proof is only
+/// sound while nothing widens the list afterwards, so every name reachable
+/// by a widening or aliasing move is collected here and the proof is
+/// simply not offered for it:
+///
+/// - `Append <value> to <list>` and `Set element N of <list> to <value>`
+///   write an element directly, of any type.
+/// - `<list> is <value>.` replaces the whole list.
+/// - a name used as a call argument escapes into a body that can append
+///   to it (lists are heap objects passed by reference).
+/// - a name copied into or out of another variable (`a list called other
+///   is counts.`) makes two names for one heap object, so an append
+///   through either widens both — both ends of the copy are collected.
+///
+/// Deliberately name-keyed and whole-program, with no scoping and no
+/// type-awareness: a widening move anywhere disables the proof
+/// everywhere, including for an unrelated local of the same name. That is
+/// the safe direction — the cost is a missed diagnostic, never a false
+/// one — and it makes the answer independent of statement order, which a
+/// proof consulted mid-walk would otherwise depend on.
+///
+/// Unlike `collect_definite_decls`/`collect_all_typed_decls`, this DOES
+/// descend into function bodies: a list appended to inside a function is
+/// widened by that append no matter whose name reached it.
+pub fn collect_widened_lists(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    walk_widened_lists(stmts, &mut out);
+    out
+}
+
+/// True if any function in the program widens a list it was HANDED - it
+/// appends to, or element-sets, one of its own parameters.
+///
+/// This is the one widening move `collect_widened_lists` cannot attribute
+/// to a name: the append is written against the parameter, and the call
+/// that passes the caller's list may sit in an expression position the
+/// scan does not reach. A function that appends to a list by its own
+/// global name is a different case and IS attributed, since that append
+/// names the list directly.
+///
+/// The analyzer's answer to this is blunt on purpose: while it is true, no
+/// list anywhere gets an element-type proof. Losing a diagnostic in a
+/// program that has such a helper costs nothing; offering a proof that a
+/// call could have invalidated would cost a false rejection.
+pub fn any_function_widens_a_parameter(stmts: &[Statement]) -> bool {
+    fn body_widens(body: &[Statement], params: &std::collections::HashSet<&str>) -> bool {
+        body.iter().any(|stmt| match stmt {
+            Statement::ListAppend { list, .. } | Statement::ElementSet { list, .. } => {
+                params.contains(list.as_str())
+            }
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                body_widens(then_block, params)
+                    || else_if_blocks.iter().any(|(_, b)| body_widens(b, params))
+                    || else_block.as_ref().is_some_and(|b| body_widens(b, params))
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => body_widens(body, params),
+            Statement::OnError { actions } => body_widens(actions, params),
+            _ => false,
+        })
+    }
+
+    stmts.iter().any(|stmt| match stmt {
+        Statement::FunctionDef { params, body, .. } => {
+            let names: std::collections::HashSet<&str> =
+                params.iter().map(|(n, _)| n.as_str()).collect();
+            body_widens(body, &names)
+        }
+        _ => false,
+    })
+}
+
+fn walk_widened_lists(stmts: &[Statement], out: &mut std::collections::HashSet<String>) {
+    fn note_alias(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        if let Expr::Identifier(n) = expr {
+            out.insert(n.clone());
+        }
+    }
+
+    fn note_call_args(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        // Only a call's own arguments matter here: an identifier anywhere
+        // else in an expression is a read, and a read cannot widen. The
+        // walk still has to reach nested calls, so it recurses through the
+        // expression shapes that can contain one.
+        match expr {
+            Expr::FunctionCall { args, .. } => {
+                for arg in args {
+                    note_alias(arg, out);
+                    note_call_args(arg, out);
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                note_call_args(left, out);
+                note_call_args(right, out);
+            }
+            Expr::UnaryOp { operand, .. } => note_call_args(operand, out),
+            Expr::Cast { value, .. } | Expr::TreatingAs { value, .. } => note_call_args(value, out),
+            Expr::ListLit { elements } => {
+                for e in elements {
+                    note_call_args(e, out);
+                }
+            }
+            Expr::MapLit { pairs } => {
+                for (k, v) in pairs {
+                    note_call_args(k, out);
+                    note_call_args(v, out);
+                }
+            }
+            Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => {
+                note_call_args(list, out);
+                note_call_args(index, out);
+            }
+            Expr::FormatString { parts } => {
+                for part in parts {
+                    if let FormatPart::Expression { expr, .. } = part {
+                        note_call_args(expr, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for stmt in stmts {
+        match stmt {
+            Statement::ListAppend { list, value } => {
+                out.insert(list.clone());
+                note_call_args(value, out);
+            }
+            Statement::ElementSet { list, index, value } => {
+                out.insert(list.clone());
+                note_call_args(index, out);
+                note_call_args(value, out);
+            }
+            Statement::Assignment { name, value } => {
+                out.insert(name.clone());
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::VarDecl { value: Some(value), .. } => {
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::Return { value: Some(value), .. } => {
+                // A returned list leaves with the callee's name and comes
+                // back under the caller's; the copy is an alias like any
+                // other.
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::FunctionCall { args, .. } => {
+                for arg in args {
+                    note_alias(arg, out);
+                    note_call_args(arg, out);
+                }
+            }
+            Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                note_call_args(condition, out);
+                walk_widened_lists(then_block, out);
+                for (cond, block) in else_if_blocks {
+                    note_call_args(cond, out);
+                    walk_widened_lists(block, out);
+                }
+                if let Some(block) = else_block {
+                    walk_widened_lists(block, out);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. }
+            | Statement::FunctionDef { body, .. } => {
+                walk_widened_lists(body, out);
+            }
+            Statement::OnError { actions } => {
+                walk_widened_lists(actions, out);
+            }
+            Statement::Print { value, .. } => {
+                note_call_args(value, out);
+            }
+            _ => {}
+        }
+    }
+}

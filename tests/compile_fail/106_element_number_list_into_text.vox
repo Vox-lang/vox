@@ -1,0 +1,8 @@
+(Bug #54: the element is a number and `label` is a text, so the number was
+ copied into a text slot and printing it dereferenced 1 as a text pointer -
+ segfault, exit 139, with no diagnostic at all.)
+
+a list called counts is [1, 2].
+a text called label is "x".
+label is element 1 of counts.
+Print label.

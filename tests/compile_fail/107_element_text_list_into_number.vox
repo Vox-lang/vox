@@ -1,0 +1,8 @@
+(Bug #54, the other direction: a text element read into a number does not
+ crash - it prints the string's address as a decimal number, a wrong answer
+ that looks like a right one.)
+
+a list called names is ["a", "b"].
+a number called n is 0.
+n is element 1 of names.
+Print n.

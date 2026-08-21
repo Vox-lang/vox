@@ -1,0 +1,7 @@
+(Bug #54: the declaration spelling of the same read. The type lock only
+ guards writes to an already-declared name, so this form reached codegen
+ unchecked and segfaulted.)
+
+a list called counts is [1, 2].
+a text called label is element 1 of counts.
+Print label.

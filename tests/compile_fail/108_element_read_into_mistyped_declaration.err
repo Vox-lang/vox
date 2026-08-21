@@ -1,0 +1,4 @@
+cannot initialise 'label', which is a text, with a number read out of list 'counts'
+108_element_read_into_mistyped_declaration.vox:6:15
+note: the read yields a number, and 'label' is declared as a text
+help: declare it as a number - `a number called label is element 1 of counts.` - or convert it explicitly:  a text called label is element 1 of counts as text.

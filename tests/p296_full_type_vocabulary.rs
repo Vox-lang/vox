@@ -73,11 +73,32 @@ const TYPES: &[&str] = &[
     "number", "float", "text", "boolean", "list", "map", "buffer", "file", "time", "timer", "value",
 ];
 
+/// What a `Return a <type>,` case stands on: whatever must be declared
+/// above the function, and the operand itself. The vocabulary under test is
+/// the parser's, and the parser never looks at the operand - which is why a
+/// bare `1` used to serve all eleven types. A buffer return is judged by
+/// the analyzer as well (bug #53: a non-buffer source leaves an address the
+/// caller reads as a buffer struct, and reading a text literal's characters
+/// as a buffer header segfaults), so the buffer case stands on a real
+/// buffer. Every other type keeps the `1`, so a narrowing on any of them
+/// still fails here.
+fn return_operand(ty: &str) -> (&'static str, &'static str) {
+    if ty == "buffer" {
+        ("a buffer called source is \"ok\".\n\n", "source")
+    } else {
+        ("", "1")
+    }
+}
+
 #[test]
 fn return_inline_path_accepts_every_type() {
     // Return as the function's literal first (and only) statement.
     for ty in TYPES {
-        let src = format!("To 'give it'. Return a {}, 1.\n\nPrint \"ok\".\n", ty);
+        let (prelude, operand) = return_operand(ty);
+        let src = format!(
+            "{}To 'give it'. Return a {}, {}.\n\nPrint \"ok\".\n",
+            prelude, ty, operand
+        );
         compile_ok(&format!("inline-{}", ty), &src);
     }
 }
@@ -87,9 +108,14 @@ fn return_gate_b_path_accepts_every_type() {
     // A preceding statement forces Gate B (`parse_return`) instead of the
     // inline first-statement path.
     for ty in TYPES {
+        let (prelude, operand) = return_operand(ty);
+        // The local `x` is what forces Gate B; the buffer case returns the
+        // global above instead of that number, for the reason in
+        // `return_operand`.
+        let operand = if *ty == "buffer" { operand } else { "x" };
         let src = format!(
-            "To 'give it'.\n  a number called x is 1.\n  Return a {}, x.\n\nPrint \"ok\".\n",
-            ty
+            "{}To 'give it'.\n  a number called x is 1.\n  Return a {}, {}.\n\nPrint \"ok\".\n",
+            prelude, ty, operand
         );
         compile_ok(&format!("gateb-{}", ty), &src);
     }

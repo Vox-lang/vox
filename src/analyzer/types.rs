@@ -112,6 +112,23 @@ impl Analyzer {
             // types falls through to `None`, same "can't prove it, allow
             // it" policy as everywhere else in this function.
             Expr::MapAccess { map, .. } => self.map_value_type.get(map).cloned(),
+            // Bug #54: a read of one element out of a collection. The type
+            // is the element type when the list's own literal initializer
+            // proved one (`list_element_type`) and nothing can widen the
+            // list; unprovable lists answer `None` and stay allowed, the
+            // same policy the `MapAccess` arm above follows. A byte is a
+            // number by construction, whatever buffer it came out of.
+            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
+                match list.as_ref() {
+                    Expr::Identifier(name) => self.list_element_type_of(name),
+                    _ => None,
+                }
+            }
+            Expr::PropertyAccess { object, property: ObjectProperty::First }
+            | Expr::PropertyAccess { object, property: ObjectProperty::Last } => {
+                self.list_element_type_of(object)
+            }
+            Expr::ByteAccess { .. } => Some(Type::Integer),
             _ => None,
         }
     }
@@ -259,6 +276,107 @@ impl Analyzer {
         self.push_error(message, Some(name));
     }
 
+    /// Bug #53: `Return a buffer, <expr>` leaves whatever the expression
+    /// evaluates to in rax and the caller reads that as the address of a
+    /// buffer struct - capacity at +0, length at +8, bytes from +24. A text
+    /// literal's address points at its characters instead, so the caller
+    /// reads the eight bytes that follow the string as a length: with one
+    /// string in the program those are zeroed `.bss` and the call quietly
+    /// answers an EMPTY buffer, and with another string laid down after it
+    /// those characters become the length (4.6 MB in the register's repro)
+    /// and the copy walks off the end of the mapping (segfault). A text
+    /// VARIABLE returns the same kind of address and fails identically.
+    ///
+    /// A declaration initializer (`a buffer called made is "ABC".`) is the
+    /// one place LANGUAGE.md gives text a buffer meaning: it allocates a
+    /// buffer and appends the bytes. Nothing promises that conversion in a
+    /// return, so the source is refused here and the message names the
+    /// spelling that works - the same treatment `Write` gives a scalar
+    /// (bug #40). Whether a return should convert the way a declaration does
+    /// is a language decision that has not been taken.
+    ///
+    /// Only a source this can PROVE is not a buffer is refused - a call, a
+    /// property read, a `value` name, an unresolved name all answer None and
+    /// pass, the same "can't prove it, allow it" policy
+    /// `check_arithmetic_operand` follows.
+    pub(crate) fn check_buffer_return_source(&mut self, value: &Expr) {
+        let ty = match value {
+            // A double-quoted literal is text by construction unless the
+            // name it spells is a variable in scope (`operand_label` draws
+            // the same distinction when it decides whether to quote).
+            Expr::StringLit(s) => match self.named_value_type(s) {
+                Some(t) if self.is_variable_available(s) => t,
+                _ => Type::String,
+            },
+            Expr::FormatString { .. } => Type::String,
+            Expr::IntegerLit(_) => Type::Integer,
+            Expr::FloatLit(_) => Type::Float,
+            Expr::BoolLit(_) => Type::Boolean,
+            // A bare name that resolves to nothing tracked is left alone: a
+            // zero-argument function name reads as an identifier here and is
+            // a call by the time codegen sees it (plan 270 G4).
+            Expr::Identifier(name) => match self.named_value_type(name) {
+                Some(t) => t,
+                None => return,
+            },
+            _ => return,
+        };
+        // A `value` carries its type at runtime, so nothing can be proved
+        // about it here. `Unknown` is the same answer wearing a different
+        // name, and refusing it would print "Cannot return unknown x as a
+        // buffer", which tells the author nothing they can act on.
+        if matches!(ty, Type::Buffer | Type::Value | Type::Unknown) {
+            return;
+        }
+        // A buffer declaration is the remedy for every one of these types -
+        // `a buffer called made is <text/number/float/boolean>.` allocates a
+        // buffer and writes the value's bytes into it (see `check_type_lock`,
+        // which lets a buffer destination take any of them). So the message
+        // says the same thing whatever was returned, spelled with the source
+        // actually written where that can be rendered back faithfully.
+        let named = self.type_name(&ty);
+        let message = match self.render_buffer_return_source(value) {
+            Some(source) => format!(
+                "Cannot return {} {} as a buffer; the caller reads what Return \
+                 hands back as a buffer, and {} is not one. Build the buffer \
+                 first: 'a buffer called made is {}. Return a buffer, made.'",
+                named, source, named, source,
+            ),
+            // A format string (and anything else with no faithful one-line
+            // spelling) is described rather than quoted back - fabricating
+            // source that would not parse is worse than naming no source at
+            // all, the same call `render_value_hint` makes.
+            None => format!(
+                "Cannot return {} as a buffer; the caller reads what Return hands \
+                 back as a buffer, and {} is not one. Build the buffer first - \
+                 'a buffer called made is <that {}>.' - and return made.",
+                named, named, named,
+            ),
+        };
+        let symbol = match value {
+            Expr::Identifier(name) => Some(name.as_str()),
+            Expr::StringLit(s) if self.is_variable_available(s) => Some(s.as_str()),
+            _ => None,
+        };
+        self.push_error(message, symbol);
+    }
+
+    /// Spell a rejected buffer-return source back the way the author wrote
+    /// it, for the "build the buffer first" remedy. `None` means there is no
+    /// faithful single-line spelling (a format string, an expression), and
+    /// the caller words the message without one.
+    fn render_buffer_return_source(&self, value: &Expr) -> Option<String> {
+        match value {
+            Expr::Identifier(name) => Some(name.clone()),
+            Expr::StringLit(s) if self.is_variable_available(s) => Some(s.clone()),
+            Expr::StringLit(s) => Some(format!("\"{}\"", s)),
+            Expr::IntegerLit(n) => Some(n.to_string()),
+            Expr::FloatLit(n) => Some(n.to_string()),
+            Expr::BoolLit(b) => Some(if *b { "true".to_string() } else { "false".to_string() }),
+            _ => None,
+        }
+    }
+
     /// Arithmetic/bitwise operators require numeric operands. Comparisons and
     /// logical and/or are excluded (they are valid across types and handled
     /// elsewhere).
@@ -388,6 +506,38 @@ impl Analyzer {
         false
     }
 
+    /// The single provable element type shared by every element of a list
+    /// literal (bug #54), or `None` for an empty literal, a mixed one, or
+    /// any element that isn't a simple literal. The `Some` case is exactly
+    /// the complement of `list_literal_is_mixed`'s `true`, read off the
+    /// same `list_element_kind` classifier, so the two can never disagree
+    /// about which lists are homogeneous.
+    pub(crate) fn list_literal_element_type(&self, elements: &[Expr]) -> Option<Type> {
+        let mut seen: Option<Type> = None;
+        for e in elements {
+            let t = self.list_element_kind(e)?;
+            match &seen {
+                None => seen = Some(t),
+                Some(prev) if !self.treating_types_compatible(prev, &t) => return None,
+                Some(_) => {}
+            }
+        }
+        seen
+    }
+
+    /// The element type a read from `name` yields, or `None` when it is not
+    /// provable - because the list's initializer never proved one, because
+    /// something in the program can widen or alias the list after its
+    /// declaration (`collect_widened_lists`), or because some function
+    /// appends to a list it was handed and so could have widened this one
+    /// (`any_function_widens_a_parameter`).
+    pub(crate) fn list_element_type_of(&self, name: &str) -> Option<Type> {
+        if self.functions_widen_lists || self.widened_lists.contains(name) {
+            return None;
+        }
+        self.list_element_type.get(name).cloned()
+    }
+
     /// The single provable value type shared by every pair in a map
     /// literal (keys are always text and don't factor in), or `None` for
     /// an empty map, a mixed one, or a value that isn't a simple literal.
@@ -441,7 +591,146 @@ impl Analyzer {
             Expr::FloatLit(n) => n.to_string(),
             Expr::BoolLit(b) => if *b { "true".to_string() } else { "false".to_string() },
             Expr::Identifier(name) => name.clone(),
+            // The collection and buffer reads bug #54 added to
+            // `arithmetic_operand_type`: without these the help line for a
+            // mismatched element read read `label is <value> as text.`,
+            // which is not source anyone can paste.
+            Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => format!(
+                "element {} of {}",
+                self.render_value_hint(index),
+                self.render_value_hint(list)
+            ),
+            Expr::ByteAccess { buffer, index } => format!(
+                "byte {} of {}",
+                self.render_value_hint(index),
+                self.render_value_hint(buffer)
+            ),
+            Expr::PropertyAccess { object, property: ObjectProperty::First } => {
+                format!("{}'s first", object)
+            }
+            Expr::PropertyAccess { object, property: ObjectProperty::Last } => {
+                format!("{}'s last", object)
+            }
+            Expr::MapAccess { map, key } => {
+                format!("{}'s {}", map, self.render_value_hint(key))
+            }
             _ => "<value>".to_string(),
+        }
+    }
+
+    /// Bug #54: a declaration whose initializer READS one element out of a
+    /// collection or a buffer - `a text called label is element 1 of
+    /// counts.`, `... is counts's first.`, `... is ages's "bo".`, `... is
+    /// byte 1 of raw.` - and whose declared type differs from the element
+    /// type the read provably yields. Codegen copies the element's payload
+    /// into the variable's slot with no conversion and no tag, so a number
+    /// element read into a `text` is then dereferenced as a text pointer
+    /// and the program segfaults; the reverse (a text element read into a
+    /// `number`) prints the pointer as a decimal number. Both are refused
+    /// here, naming the two types, in the shape #40's `Write` operand and
+    /// #49's `For each` collection are refused.
+    ///
+    /// Only the READ forms are judged, and only when the element type is
+    /// provable (see `list_element_type_of` / `map_value_type`). This is
+    /// deliberately NOT a general declaration-site type check: a
+    /// declaration initialised from a plain literal or another variable
+    /// (`a text called t is 42.`) is unchecked too, and crashes the same
+    /// way, but that is a separate defect of much wider blast radius -
+    /// recorded under #54 in docs/BUGS_FOUND.md as its own discrepancy
+    /// rather than fixed here.
+    ///
+    /// Permissive in the same places `check_type_lock` is: a `value`
+    /// destination is the language's sanctioned dynamic-type mechanism and
+    /// must keep accepting an element of any type, and a `buffer`
+    /// destination takes a content write rather than a typed value. A
+    /// `thing` destination is excluded too - an initializer there is a
+    /// whole-thing copy, which `check_thing_copy` already judges and would
+    /// otherwise report twice.
+    pub(crate) fn check_declared_read_type(&mut self, name: &str, declared: &Type, value: &Expr) {
+        if matches!(declared, Type::Value | Type::Buffer | Type::Thing(_)) {
+            return;
+        }
+        if !matches!(
+            value,
+            Expr::ElementAccess { .. }
+                | Expr::ListAccess { .. }
+                | Expr::ByteAccess { .. }
+                | Expr::MapAccess { .. }
+                | Expr::PropertyAccess { property: ObjectProperty::First, .. }
+                | Expr::PropertyAccess { property: ObjectProperty::Last, .. }
+        ) {
+            return;
+        }
+        let Some(actual) = self.arithmetic_operand_type(value) else {
+            return;
+        };
+        if matches!(actual, Type::Value) || self.treating_types_compatible(declared, &actual) {
+            return;
+        }
+
+        // `symbol_error_counts` is deliberately not touched: it indexes
+        // WRITE sites for `find_write_site_location`, and this error is
+        // anchored on the declaration instead. Bumping it here would make
+        // a later type-lock error on the same name underline the wrong
+        // line.
+        let mut err = CompileError::new(&format!(
+            "cannot initialise '{}', which is a {}, with a {} read out of {}",
+            name,
+            self.type_name(declared),
+            self.type_name(&actual),
+            self.read_source_label(value)
+        ));
+        if let Some(loc) = self.find_declaration_location(name) {
+            err = err.with_underline_note(
+                name.len().max(1),
+                &format!("this reads {}", self.typed_phrase(&actual)),
+            );
+            err = err.with_location(loc);
+        }
+        err = err.with_note_line(&format!(
+            "the read yields a {}, and '{}' is declared as a {}",
+            self.type_name(&actual),
+            name,
+            self.type_name(declared)
+        ));
+        let hint = self.render_value_hint(value);
+        if !hint.contains("<value>") {
+            err = err.with_help_line(&format!(
+                "declare it as a {} - `a {} called {} is {}.` - or convert it \
+explicitly:  a {} called {} is {} as {}.",
+                self.type_name(&actual),
+                self.type_name(&actual),
+                name,
+                hint,
+                self.type_name(declared),
+                name,
+                hint,
+                if matches!(declared, Type::String) {
+                    "text".to_string()
+                } else {
+                    format!("a {}", self.type_name(declared))
+                }
+            ));
+        }
+        self.errors.push(err);
+    }
+
+    /// A short label naming what a bug #54 read came out of, for the
+    /// diagnostic's first line: the collection or buffer's own name when
+    /// the read names one, or a generic noun when it does not.
+    fn read_source_label(&self, value: &Expr) -> String {
+        match value {
+            Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => match list.as_ref() {
+                Expr::Identifier(n) => format!("list '{}'", n),
+                _ => "a list".to_string(),
+            },
+            Expr::PropertyAccess { object, .. } => format!("list '{}'", object),
+            Expr::MapAccess { map, .. } => format!("map '{}'", map),
+            Expr::ByteAccess { buffer, .. } => match buffer.as_ref() {
+                Expr::Identifier(n) => format!("buffer '{}'", n),
+                _ => "a buffer".to_string(),
+            },
+            _ => "a collection".to_string(),
         }
     }
 
