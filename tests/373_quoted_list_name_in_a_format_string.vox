@@ -1,0 +1,32 @@
+(Regression test found while fixing bug #44. A `{name}` whose name is
+ QUOTED - `{'the running total'}` - and a bare list literal `{[1, 2]}` do
+ not parse as variable parts at all: they parse as EXPRESSIONS. Print's
+ expression arm had a Map case from stage 1e2 but never a List one, so
+ both spellings printed the list's heap address even in Print position -
+ the one position bug #44 reported as working.
+
+ Fixing the other sinks without this would have inverted the bug: every
+ sink but Print would render a quoted list name correctly.
+
+ Acceptance: a quoted name, a list literal and a nested literal render the
+ same in Print position as they do captured into a text - and a map, which
+ already worked, still does.)
+
+a list called 'the running total' is [1, 2, 3].
+a map called 'the record' is {"name": "Ada"}.
+
+Print "{'the running total'}".
+a text called 'the quoted name' is "{'the running total'}".
+Print 'the quoted name'.
+
+Print "{[7, 8]}".
+a text called 'the literal' is "{[7, 8]}".
+Print 'the literal'.
+
+Print "{[[1], [2, 3]]}".
+a text called 'the nested literal' is "{[[1], [2, 3]]}".
+Print 'the nested literal'.
+
+Print "{'the record'}".
+a text called 'the quoted map' is "{'the record'}".
+Print 'the quoted map'.

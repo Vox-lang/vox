@@ -652,7 +652,8 @@ _map_values:
 ; _map_print - print a map as {"key": value, ...} in insertion order.
 ; Args: rdi = map. Uses the shared _print_depth counter (64-deep budget,
 ; shared with _list_print) so a mixed map/list tree is cycle-safe.
-; Conditional assembly: gated on __IO_ASM_INCLUDED__ (uses PRINT_*). The
+; Conditional assembly: gated on __IO_ASM_INCLUDED__ (uses RENDER_*, which
+; wrap the PRINT_* macros - see io.asm). The
 ; float branch is further gated on __FLOAT_ASM_INCLUDED__; the list branch
 ; on __LIST_ASM_INCLUDED__ (a map only holds a list/float value when the
 ; corresponding literal set that flag, so the needed runtime is present).
@@ -691,7 +692,7 @@ _map_print:
     jg .mp_depth
 
     mov rbx, rdi                       ; rbx = map
-    PRINT_STR _mp_lbrace, _mp_lbrace_len
+    RENDER_STR _mp_lbrace, _mp_lbrace_len
 
     mov r13, [rbx + MAP_LENGTH_OFFSET] ; r13 = length
     test r13, r13
@@ -703,16 +704,16 @@ _map_print:
 .mp_loop:
     test r12, r12
     jz .mp_first
-    PRINT_STR _mp_comma, _mp_comma_len
+    RENDER_STR _mp_comma, _mp_comma_len
 .mp_first:
     ; print "key":  quote + key C-string + '": '
-    PRINT_STR _mp_quote, _mp_quote_len
+    RENDER_STR _mp_quote, _mp_quote_len
     mov rax, r12
     imul rax, MAP_ENTRY_SIZE
     lea rax, [r14 + rax]               ; rax = entry base
     mov rdi, [rax + MAP_ENTRY_KEY]
-    PRINT_CSTR rdi
-    PRINT_STR _mp_colon, _mp_colon_len
+    RENDER_CSTR rdi
+    RENDER_STR _mp_colon, _mp_colon_len
 
     ; dispatch value on its stored tag
     mov rax, r12
@@ -735,22 +736,23 @@ _map_print:
     cmp r8, MAP_TAG_NOTHING
     je .mp_nothing
     ; INTEGER / BOOLEAN / fallback: print as a number
-    PRINT_INT rdi
+    RENDER_INT rdi
     jmp .mp_next
 
 .mp_str:
-    ; rdi holds the value pointer; PRINT_STR below clobbers rdi, so stash it.
+    ; rdi holds the value pointer; stash it across the opening quote so the
+    ; value's lifetime does not rest on a rendering macro's register discipline.
     push rdi
-    PRINT_STR _mp_quote, _mp_quote_len
+    RENDER_STR _mp_quote, _mp_quote_len
     pop rdi
-    PRINT_CSTR rdi
-    PRINT_STR _mp_quote, _mp_quote_len
+    RENDER_CSTR rdi
+    RENDER_STR _mp_quote, _mp_quote_len
     jmp .mp_next
 
 %ifdef __FLOAT_ASM_INCLUDED__
 .mp_flt:
     movq xmm0, rdi
-    PRINT_FLOAT
+    RENDER_FLOAT
     jmp .mp_next
 %endif
 
@@ -765,7 +767,7 @@ _map_print:
     jmp .mp_next
 
 .mp_nothing:
-    PRINT_STR _mp_nothing, _mp_nothing_len
+    RENDER_STR _mp_nothing, _mp_nothing_len
     jmp .mp_next
 
 .mp_next:
@@ -774,7 +776,7 @@ _map_print:
     jl .mp_loop
 
 .mp_close:
-    PRINT_STR _mp_rbrace, _mp_rbrace_len
+    RENDER_STR _mp_rbrace, _mp_rbrace_len
     dec qword [rel _print_depth]
     pop r14
     pop r13
@@ -786,11 +788,37 @@ _map_print:
     ; Depth limit exceeded: signal the error, print a truncation marker in
     ; place of the over-deep subtree, then unwind.
     mov qword [rel _last_error], 1
-    PRINT_STR _mp_trunc, _mp_trunc_len
+    RENDER_STR _mp_trunc, _mp_trunc_len
     dec qword [rel _print_depth]
     pop r14
     pop r13
     pop r12
     pop rbx
     ret
+
+; ----------------------------------------------------------------------------
+; _map_render_to_buffer - render a map into a dynamic buffer.
+; ----------------------------------------------------------------------------
+; Args:      rdi = destination buffer, rax = map pointer
+; Returns:   rax = destination buffer (possibly reallocated)
+; The list twin of this routine carries the full explanation
+; (list.asm, `_list_render_to_buffer`; docs/BUGS_FOUND.md #44).
+%ifdef __RESOURCE_ASM_INCLUDED__
+_map_render_to_buffer:
+    push rbx
+    push r12
+
+    mov rbx, [rel _render_sink]     ; previous sink, restored on the way out
+    mov r12, rdi                    ; destination buffer
+    mov [rel _render_sink], r12
+    mov rdi, rax                    ; map pointer
+    call _map_print
+    mov rax, [rel _render_sink]     ; the buffer, after any reallocation
+    mov [rel _render_sink], rbx
+
+    pop r12
+    pop rbx
+    ret
+%endif
+
 %endif

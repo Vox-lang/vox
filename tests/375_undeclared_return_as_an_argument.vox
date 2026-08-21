@@ -1,0 +1,12 @@
+(Bug #45 — the other right column, and the one that surprised the fix. An
+ argument is NOT an untyped position: the callee's parameter declares its own
+ type, and that is what the result is read as. `'opaque label'` handed to a
+ `text` parameter has always printed "hi", so the rejection deliberately does
+ not reach here.)
+
+To 'opaque label'. Return "hi".
+
+To 'announce label' with a text called label.
+  print label.
+
+'announce label' with 'opaque label'.

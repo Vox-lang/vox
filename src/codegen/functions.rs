@@ -46,6 +46,15 @@ impl CodeGenerator {
         let is_thing_param = |i: usize| -> bool {
             matches!(param_types.get(i), Some(Type::Thing(_)))
         };
+        // A parameter declared `a text called ...` holds text, so a buffer
+        // argument is converted on the way in rather than arriving as a
+        // struct pointer the callee would read as a C string - the capacity
+        // byte, historically (#51). A copy is also what makes the argument
+        // behave like every other Vox argument: the callee's text does not
+        // change when the caller refills or resizes the buffer afterwards.
+        let is_text_param = |i: usize| -> bool {
+            param_types.get(i) == Some(&Type::String)
+        };
         // Number of argument words a given arg contributes.
         let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
 
@@ -68,7 +77,11 @@ impl CodeGenerator {
             if is_thing_param(i) {
                 self.emit_thing_address(&args[i]); // rax = where the thing is
             } else {
-                self.generate_expr(&args[i]); // rax = payload
+                if is_text_param(i) {
+                    self.generate_expr_as_text(&args[i]); // rax = text payload
+                } else {
+                    self.generate_expr(&args[i]); // rax = payload
+                }
                 if is_value_param(i) {
                     self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
                     self.emit_indent("push r11  ; value param tag word");

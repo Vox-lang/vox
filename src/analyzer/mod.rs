@@ -22,6 +22,7 @@ mod expressions;
 mod statements;
 pub(crate) mod things;
 mod types;
+mod untyped_returns;
 
 pub struct Analyzer {
     pub deps: Dependencies,
@@ -74,6 +75,13 @@ pub struct Analyzer {
     /// an argument's shape and the result's shape can be checked against
     /// what the definition declared.
     function_signatures: HashMap<String, (Vec<(String, Type)>, Type)>,
+    /// Functions that hand a value back but never declared its type - keyed
+    /// exactly like `function_signatures` (bug #45). A caller reading one of
+    /// these into a slot that supplies no type of its own has nothing to read
+    /// the value AS, and the conservative "it is a number" fallback turns a
+    /// returned text into the address of its bytes. See
+    /// `untyped_returns.rs` for the whole rule and every rejection site.
+    untyped_result_functions: HashSet<String>,
     /// Names declared as the dynamic `value` type (value parameters and `a
     /// value called x` locals). A bare `value` is not usable in arithmetic
     /// without an explicit type check (stage 1c predicate); the arithmetic
@@ -229,6 +237,7 @@ impl Analyzer {
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
             function_signatures: HashMap::new(),
+            untyped_result_functions: HashSet::new(),
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),

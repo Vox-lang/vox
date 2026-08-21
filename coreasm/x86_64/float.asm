@@ -919,3 +919,56 @@ _float_big_int_digits:
     pop rcx
     pop rbx
     ret
+
+; ============================================================================
+; _render_float - the body behind io.asm's RENDER_FLOAT macro.
+; ============================================================================
+; Sends the float in xmm0 to whichever sink `_render_sink` (core.asm) names:
+; stdout, exactly as PRINT_FLOAT did, or appended to a dynamic buffer. It
+; lives here rather than beside its sibling writers in resource.asm because
+; both routines it dispatches between - `_print_float` and
+; `_buffer_append_float` - are in this file, and this file is only included
+; when the program has floats at all.
+;
+; float.asm is only included when `uses_floats` is set, which also forces
+; resource.asm in, so `_buffer_append_float`'s own `_buffer_append_bytes`
+; calls always resolve. Gated on __IO_ASM_INCLUDED__ only for the stdout
+; branch's sake.
+%ifdef __IO_ASM_INCLUDED__
+_render_float:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov rdi, [rel _render_sink]
+    test rdi, rdi
+    jz .render_float_to_stdout
+
+    movq rax, xmm0                  ; raw bits: _buffer_append_float's arg
+    call _buffer_append_float
+    mov [rel _render_sink], rax     ; the append may have reallocated it
+    jmp .render_float_done
+
+.render_float_to_stdout:
+    call _print_float               ; xmm0, as PRINT_FLOAT does
+
+.render_float_done:
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+%endif

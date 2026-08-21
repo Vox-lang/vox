@@ -1,0 +1,7 @@
+(Bug #45: an interpolation renders the hole as whatever type it is told the
+ value has. With no declared return type it is told "number", and the text
+ comes out as the address of its bytes.)
+
+To 'opaque label'. Return "hi".
+
+print "got {'opaque label'}".

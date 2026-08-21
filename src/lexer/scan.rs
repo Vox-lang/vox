@@ -88,7 +88,7 @@ impl<'a> Lexer<'a> {
         result
     }
     
-    fn is_char_literal(&self) -> bool {
+    pub(super) fn is_char_literal(&self) -> bool {
         // Check if this is a character literal: 'X' (single char followed by closing quote)
         let mut input = self.input.clone();
         
@@ -111,7 +111,7 @@ impl<'a> Lexer<'a> {
         false
     }
     
-    fn is_single_quoted_identifier(&self) -> bool {
+    pub(super) fn is_single_quoted_identifier(&self) -> bool {
         // Check if the content after ' looks like a single-quoted identifier.
         // NOT a standalone possessive `'s` (an apostrophe followed by `s` and
         // a non-identifier char) — that is the bare-identifier possessive form

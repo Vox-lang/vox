@@ -1,4 +1,5 @@
 use super::*;
+use crate::lexer::SourceRegion;
 
 impl Analyzer {
     pub(crate) fn check_for_typos(&mut self) {
@@ -39,8 +40,12 @@ impl Analyzer {
         self.typo_candidates.insert(name.to_string());
     }
 
-    /// Core of `find_write_site_location`/`find_bind_site_location`: search
-    /// `patterns` in order, skipping `exclude_line` (the declaration, when
+    /// Core of `find_symbol_location`/`find_write_site_location`/
+    /// `find_bind_site_location`: search `patterns` in order, skipping
+    /// any match that is not real code - a name mentioned in a `( … )`
+    /// comment is not a use of it, and a text literal only counts for a
+    /// pattern that asks for one (docs/BUGS_FOUND.md #46) - and skipping
+    /// `exclude_line` (the declaration, when
     /// known) and requiring a left word boundary so a shorter name doesn't
     /// match as a suffix of a longer one (symbol "x", pattern "x is "
     /// matching inside "max is " - each pattern's own trailing space
@@ -74,10 +79,47 @@ impl Analyzer {
         exclude_line: Option<usize>,
         guard_against_called: bool,
     ) -> Option<SourceLocation> {
+        // Two passes. A hit in real code always beats one inside a text
+        // literal, however much earlier the literal sits: `Print "hello".`
+        // above `append hello to items.` is not where the unknown variable
+        // is (docs/BUGS_FOUND.md #46). The second pass is for the name that
+        // genuinely only ever appears inside a literal - interpolated as
+        // `{name}`, or quoted - and it is the only pass a text-seeking
+        // pattern can land in.
+        self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, false)
+            .or_else(|| {
+                self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, true)
+            })
+    }
+
+    /// One pass of `find_pattern_location`, taking the first pattern that
+    /// matches at all. `allow_text` opens the pass to matches sitting
+    /// inside a text literal, and only to patterns that ask for one: a
+    /// match inside a `( … )` comment is never a use of the name and is
+    /// refused in both passes.
+    fn scan_patterns(
+        &self,
+        symbol: &str,
+        patterns: &[String],
+        occurrence: usize,
+        exclude_line: Option<usize>,
+        guard_against_called: bool,
+        allow_text: bool,
+    ) -> Option<SourceLocation> {
         let source = self.source_file.as_ref()?;
         for pattern in patterns {
             let Some(name_offset) = pattern.find(symbol) else {
                 continue;
+            };
+            // Whether this pattern is *asking* to land inside a text
+            // literal. `{name` (interpolation) and `"name"` (the literal
+            // itself) both put the symbol behind a delimiter the lexer
+            // keeps inside a text token, so a hit there is the real thing.
+            // Every other pattern describes code, and a hit inside a
+            // literal is then a coincidence.
+            let reaches_into_text = {
+                let before = &pattern[..name_offset];
+                before.ends_with('{') || before.ends_with('"')
             };
             let mut seen = 0usize;
             for (idx, line) in source.content.lines().enumerate() {
@@ -99,7 +141,12 @@ impl Analyzer {
                         .get(name_end)
                         .map_or(true, |b| !(b.is_ascii_alphanumeric() || *b == b'_'));
                     let excluded_by_called = guard_against_called && line[..pat_col].ends_with("called ");
-                    if left_ok && right_ok && !excluded_by_called {
+                    let region_ok = match source.region_of(line_no, name_col, name_end) {
+                        SourceRegion::Code => true,
+                        SourceRegion::Text => allow_text && reaches_into_text,
+                        SourceRegion::Comment => false,
+                    };
+                    if left_ok && right_ok && region_ok && !excluded_by_called {
                         if seen == occurrence {
                             return Some(SourceLocation::new(&source.filename, line_no, name_col + 1, line));
                         }
@@ -191,15 +238,29 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(name, 0))
     }
 
+    /// Where `symbol` appears, for a diagnostic that has nothing but a
+    /// name to go on. Prefers the interpolation form `{symbol` and the
+    /// literal form `"symbol"` over the bare name, and goes through
+    /// `find_pattern_location` so it inherits that scan's two guarantees:
+    /// the match is a whole word (the symbol `n` no longer anchors on the
+    /// `n` inside `print`, docs/BUGS_FOUND.md #55) and it sits in real
+    /// code, never in a `( … )` comment and never inside a text literal
+    /// the pattern did not ask for (#46).
     pub(crate) fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
-        let source = self.source_file.as_ref()?;
-        let preferred_patterns = [
-            format!("{{{}", symbol),
-            format!("\"{}\"", symbol),
-            symbol.to_string(),
-        ];
+        self.find_pattern_location(symbol, &symbol_patterns(symbol), occurrence, None, false)
+            .or_else(|| self.find_mention_location(symbol, occurrence))
+    }
 
-        for pattern in preferred_patterns {
+    /// Last resort for `find_symbol_location`: the pre-#46 scan - first
+    /// textual occurrence of the name anywhere, comments and literals
+    /// included. Only reached when the name occurs nowhere in code at all,
+    /// where a caret on a comment is poor but an error with no `-->` line
+    /// is worse; this file's standing policy is that pointing at something
+    /// beats pointing at nothing.
+    fn find_mention_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
+        let source = self.source_file.as_ref()?;
+
+        for pattern in symbol_patterns(symbol) {
             let mut seen = 0usize;
             for (idx, line) in source.content.lines().enumerate() {
                 if let Some(column) = line.find(&pattern) {
@@ -592,4 +653,17 @@ impl Analyzer {
         }
     }
 
+}
+
+/// The patterns `find_symbol_location` looks for, in preference order: a
+/// name interpolated into a text (`{name`), a name written as a text
+/// literal (`"name"`), then the bare name. The first two only ever match
+/// inside a literal, and `find_pattern_location` lets them do so only
+/// after the bare name has failed to turn up anywhere in real code.
+fn symbol_patterns(symbol: &str) -> [String; 3] {
+    [
+        format!("{{{}", symbol),
+        format!("\"{}\"", symbol),
+        symbol.to_string(),
+    ]
 }

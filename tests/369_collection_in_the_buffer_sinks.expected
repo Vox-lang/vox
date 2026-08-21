@@ -1,0 +1,7 @@
+copy: [1, 2, 3]
+copy: [1, 2, 3]
+set: {"name": "Ada", "born": 1815}
+set: {"name": "Ada", "born": 1815}
+set: {"name": "Ada", "born": 1815} and [1, 2, 3]
+set: {"name": "Ada", "born": 1815} and [1, 2, 3]
+fixed: [1, 2, 3]

@@ -174,3 +174,82 @@ _print_int_impl:
     
     leave
     ret
+
+; ============================================================================
+; RENDER_* - the sink-agnostic form of the PRINT_* macros
+; ============================================================================
+; `_list_print` and `_map_print` are the ONE renderer that knows what a list
+; or a map looks like as text. LANGUAGE.md ("Format Strings Everywhere")
+; promises a format string renders identically whether the result is
+; printed, written to a file, or built into a buffer - so those renderers
+; must be able to emit somewhere other than stdout. They therefore emit
+; through these macros instead of PRINT_* directly: with `_render_sink`
+; zero the bytes go to stdout, instruction for instruction, exactly as they
+; did before; with it holding a dynamic buffer pointer the same bytes are
+; appended to that buffer. Writing a second, buffer-shaped list renderer is
+; the duplication that shipped `{list}` as a raw heap address in every sink
+; but Print (docs/BUGS_FOUND.md #44).
+;
+; The buffer branch needs resource.asm's `_buffer_append_*`, which is only
+; included when the program uses buffers - and a program with no buffers has
+; no non-stdout sink to reach, so `_render_sink` there is unreachably zero
+; and the PRINT_* form is what it would have executed anyway. The %ifdef is
+; evaluated where the macro is EXPANDED (list.asm/map.asm, both included
+; after resource.asm), not where it is defined.
+;
+; Unlike the PRINT_* macros, these are transparent in every general-purpose
+; register: the argument registers are saved here and the rest inside the
+; helper. The renderers keep their iteration state in callee-saved registers
+; either way, but a renderer is exactly the place where a surprise clobber
+; would show up as wrong output rather than a crash.
+
+%macro RENDER_STR 2
+  %ifdef __RESOURCE_ASM_INCLUDED__
+    push rsi
+    push rdx
+    lea rsi, [rel %1]
+    mov rdx, %2
+    call _render_bytes
+    pop rdx
+    pop rsi
+  %else
+    PRINT_STR %1, %2
+  %endif
+%endmacro
+
+%macro RENDER_CSTR 1
+  %ifdef __RESOURCE_ASM_INCLUDED__
+    push rdi
+    push rsi
+    mov rdi, %1
+    call _render_cstr
+    pop rsi
+    pop rdi
+  %else
+    PRINT_CSTR %1
+  %endif
+%endmacro
+
+%macro RENDER_INT 1
+  %ifdef __RESOURCE_ASM_INCLUDED__
+    push rdi
+    push rsi
+    mov rdi, %1
+    call _render_int
+    pop rsi
+    pop rdi
+  %else
+    PRINT_INT %1
+  %endif
+%endmacro
+
+; Only ever expanded inside a `%ifdef __FLOAT_ASM_INCLUDED__` branch of a
+; renderer, so `_render_float` (which lives in float.asm, beside the two
+; float writers it dispatches between) is always defined where this lands.
+%macro RENDER_FLOAT 0
+  %ifdef __RESOURCE_ASM_INCLUDED__
+    call _render_float
+  %else
+    PRINT_FLOAT
+  %endif
+%endmacro

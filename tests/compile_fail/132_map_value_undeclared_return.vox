@@ -1,0 +1,8 @@
+(Bug #45: a map value carries the same per-slot tag a list element does, so
+ an undeclared return type lands the same wrong tag on it.)
+
+To 'opaque label'. Return "hi".
+
+a map called labels is {}.
+set labels's "first" to 'opaque label'.
+print labels's "first".

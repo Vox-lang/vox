@@ -1,11 +1,12 @@
 (Stage 1b — inference soundness flip. An alias of a list widened to Mixed
  must itself dispatch on runtime tags: the fixed point propagates Mixed
- through the alias. Acceptance criterion 4.)
+ through the alias. Acceptance criterion 4. The opaque element is a
+ `value` for the reason test 155 gives.)
 
-To five with a number called x. Return x add 1.
+a value called tally is 5.
 a list called src is [].
 append "hello" to src.
-append five of 4 to src.
+append tally to src.
 a list called dst is the src.
 print element 1 of dst.
 print element 2 of dst.

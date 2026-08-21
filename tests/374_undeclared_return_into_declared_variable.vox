@@ -1,0 +1,18 @@
+(Bug #45 — the right column. A call whose return type was never declared is
+ refused only where nothing supplies a type. A declared variable supplies
+ one, at the declaration and at every later reassignment, so this is the way
+ out the diagnostic names and it must keep working exactly as it did.)
+
+To 'opaque label'. Return "hi".
+
+a text called saved is 'opaque label'.
+print saved.
+print "got {saved}".
+
+a text called later is "placeholder".
+the later is 'opaque label'.
+print later.
+
+a list called items is [].
+append saved to items.
+print element 1 of items.

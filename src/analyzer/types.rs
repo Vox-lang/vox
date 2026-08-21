@@ -1003,6 +1003,20 @@ explicitly:  a {} called {} is {} as {}.",
         if matches!(actual, Type::Value) {
             return false;
         }
+        // A buffer written into a text is a CONVERSION, not a retype. The
+        // destination keeps its declared type and takes a copy of the
+        // buffer's bytes - the one meaning LANGUAGE.md's Basic Conversions
+        // table gives `buffer -> text` ("a copy of the buffer's bytes"), and
+        // the meaning `"{b}"` has carried since v0.1.17. The language
+        // owner's ruling on BUGS_FOUND #51 is that the cast-free spellings
+        // say the same thing as `as text`, so `Set t to b.` / `the t is b.`
+        // are accepted here and copy in codegen instead of demanding a cast
+        // that would not change what the sentence means. Type immutability
+        // (LANGUAGE.md:531-532) is untouched: `t` is text before the write
+        // and text after it.
+        if matches!(declared, Type::String) && matches!(actual, Type::Buffer) {
+            return false;
+        }
         if self.treating_types_compatible(&declared, &actual) {
             return false;
         }

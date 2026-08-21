@@ -1,0 +1,34 @@
+(Regression test for bug #44: the buffer sinks - `set`, `copy` and
+ `append` - shared Print's name resolver but not its VALUE renderer, so a
+ `{list}` or `{map}` part reached the integer formatter and the buffer
+ received the collection's heap address in decimal.
+
+ LANGUAGE.md "Format Strings Everywhere" names these three sinks and says
+ all sinks render identically; the Float arm of the same shared renderer
+ was added for bug #1 for exactly this reason.
+
+ Acceptance: every buffer line matches the Print control above it, and the
+ collection composes with surrounding literal text and with a second
+ append.)
+
+a list called flat is [1, 2, 3].
+a map called person is {"name": "Ada", "born": 1815}.
+
+Create a buffer called out.
+
+Print "copy: {flat}".
+copy "copy: {flat}" to out.
+Print out.
+
+Print "set: {person}".
+set out to "set: {person}".
+Print out.
+
+Print "set: {person} and {flat}".
+append " and {flat}" to out.
+Print out.
+
+(A fixed-size buffer takes the rendered text, not an address, too.)
+a buffer called small is 64 bytes in size.
+copy "fixed: {flat}" to small.
+Print small.

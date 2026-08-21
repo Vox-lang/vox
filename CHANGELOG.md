@@ -217,6 +217,143 @@ adheres to [Semantic Versioning](https://semver.org/).
   environment claim ledger (discrepancy D1) and re-found by the
   fuzzer's environment leaves (ASSERT ENV-03/ENV-06).
 
+- **The documented file property `exists` is now a clear compile error
+  instead of a bare parser complaint** ([#38](docs/BUGS_FOUND.md)) —
+  `Print h's exists.` on an open handle failed with `Expected property
+  name, got Exists`, which named the token but not the problem.
+  `exists` described an open handle, but a handle that opened
+  successfully already proves the file exists, so the property answered
+  nothing; LANGUAGE.md's File Properties table has been corrected to
+  drop the row and document the idiom that answers the real question —
+  open the path inside an `On error` handler — with a worked example
+  covering both an existing and a missing path. The parser now names
+  that idiom directly when `exists` appears in property position. A
+  path-level `exists` predicate remains a planned future addition, noted
+  in the manual rather than promised as syntax. Regression tests
+  `tests/compile_fail/141_file_handle_exists_property.vox` (the
+  diagnostic) and `tests/390_file_exists_idiom.vox` (the documented
+  idiom, both branches).
+
+- **A list or map interpolated into a format string renders everywhere,
+  not just in `Print`** ([#44](docs/BUGS_FOUND.md)) — `Print "{flat}"`
+  gave `[1, 2, 3]`, but `a text called captured is "{flat}".` and `copy
+  "{flat}" to sink.` gave `140237428518912`: the collection's heap
+  address, formatted as a decimal integer, and a different address on
+  every run. Maps behaved identically. LANGUAGE.md:3133-3136 says a
+  format string used as a value materializes into a fresh string, and
+  :3157-3163 says every string-taking statement accepts one and all sinks
+  render identically — neither with a type restriction. `Print` special-
+  cased `List` and `Map` inside its own emitter, while every other sink
+  went through `emit_append_runtime_value_to_buffer_ptr`, which had arms
+  for `Buffer`, `String` and `Float` and no arm for a collection, so both
+  fell to the integer formatter. Rather than write a second, buffer-
+  shaped renderer, the existing one was redirected: `_list_print` and
+  `_map_print` now emit through `RENDER_*` macros that consult a
+  `_render_sink`, which is zero for stdout and a buffer pointer
+  otherwise, so the text initializer, buffer `set`/`copy`/`append`,
+  `write`, filesystem paths, `treating` clauses and function arguments
+  all render through the very routine `Print` calls. Nested lists, empty
+  collections, a mixed list's quoted strings and floats, and a cyclic
+  list's `...` truncation therefore come out identical in every sink. A
+  whole `thing` in a text initializer is still the compile error
+  LANGUAGE.md:1224-1227 documents — a thing's fields are written out at
+  compile time and it has no runtime renderer to redirect. Found while
+  fixing this: `{'the running total'}` (a quoted name) and `{[1, 2]}` (a
+  bare literal) parse as expressions, not variable parts, and `Print`'s
+  expression arm had a `Map` case but never a `List` one, so those two
+  spellings printed an address in `Print` position too; that arm's list
+  twin is here. Six regression tests, `tests/368_…` through
+  `tests/373_…`, one per sink, all proven to print heap addresses on
+  unfixed `main` and to pass after. Found by the vox-fuzz collections-a
+  claim ledger (discrepancy D7) and adjudicated by the language lawyer.
+
+- **A call with no declared return type is a compile error where nothing
+  supplies one, instead of being read as a number**
+  ([#45](docs/BUGS_FOUND.md)) — `To 'opaque label'. Return "hi".` followed
+  by `print 'opaque label'.` printed `4198488`, the rodata address of
+  `"hi"`; routed through a declared `text` first it printed `hi`. The
+  returned value was always intact — the read was wrong, and wrong
+  precisely where nothing supplied a type. The same confusion reached a
+  list slot (`append 'opaque label' to items.` then `print element 1`,
+  giving `4210906`, stable across runs so the wrong answer looked like
+  data), a map value, a list literal, `set element`, a `{...}`
+  interpolation and a `value` declaration. LANGUAGE.md:649-660 names this
+  exact shape — "a function pointer, printed as a number, silently. No
+  error, no warning; the program runs and gives a wrong answer that looks
+  like data" — as the thing the 0.3.0 identifier/literal split was written
+  to kill, so guessing `number` and staying silent was the one option the
+  language's own philosophy ruled out. The analyzer now refuses the read
+  and names both ways out: declare the return type, or assign the result
+  to a declared variable first. The rejection is scoped to positions that
+  supply no type of their own — a declared variable, a reassignment to
+  one, an argument landing on a declared parameter, and a comparison
+  against a typed operand were never broken and are untouched. Seven
+  compile-fail fixtures and three passing controls, proven wrong on
+  0.4.8 and right after; the mixed-list section of LANGUAGE.md, which
+  documented the old guess and gave a worked example of it, is rewritten,
+  and a "Reading a result" subsection states the rule under Functions.
+  Full runtime tag propagation (stage 1d) is what would let such a call
+  carry its own tag. Found by the vox-fuzz collections-a claim ledger
+  (discrepancy D5) and adjudicated by the language lawyer, who found the
+  defect broader than the mixed-list case the ledger reported.
+
+- **A diagnostic's caret no longer lands in a comment, in a text literal,
+  or in the middle of a longer word** ([#46](docs/BUGS_FOUND.md)) — a
+  three-line program whose first line is the comment `(mentions hello
+  here)` reported its `Unknown variable: hello` at `1:11`, pointing inside
+  the comment instead of at the `hello` on line 3. `Print "hello".` above
+  the same use captured the caret the same way, and a one-letter name
+  anchored inside a longer word: with `print "counting".` above it,
+  `append 1 to n.` put its caret on the `n` of `print`. The analyzer
+  locates these errors by searching the raw source for the name — the
+  AST carries no span for an identifier — and the search had no idea what
+  it was reading: first textual hit anywhere, substring match, comments
+  and literals included. It is a trap laid for whoever documents their
+  repro, since a header comment naming the construct under test is
+  exactly what an unlucky first hit looks like. The scan is now
+  region-aware and whole-word: every byte of the source is classified the
+  way the lexer itself reads it — nested and multi-line `( … )` comments,
+  text literals with their escapes, character literals and quoted
+  identifiers — a name mentioned in a comment is never a caret, and a hit
+  in real code always outranks one inside a literal. Interpolation is
+  untouched: a name that only ever appears as `{name}` inside a text
+  still anchors there. The classifier is pinned against the lexer by a
+  test asserting no token the lexer emits can start inside what the
+  classifier calls a comment. Regression tests
+  `tests/compile_fail/137_caret_skips_a_comment_mention.vox` through
+  `140_caret_skips_a_multi_line_comment_mention.vox`. Found by the
+  language lawyer while adjudicating the vox-fuzz collections-a claim
+  ledger, whose every probe file mis-pointed this way.
+
+- **A buffer put into a text no longer needs the cast, and never yields
+  the buffer's header** ([#51](docs/BUGS_FOUND.md)) — `a text called t is
+  b.` stored the buffer's struct pointer in the text slot, so `Print t.`
+  read the 24-byte header as a C string and printed the capacity field's
+  low byte: `@` for a 64-byte buffer, `A` for a 65-byte one. It was
+  stable across mutation — clearing and refilling `b` changed nothing,
+  because the text never touched the data — so the only symptom was one
+  wrong character that had looked the same since it was written. Four
+  more spellings put a cast-free buffer into a text slot; `'show it'
+  with b.` into a `text` parameter and `Return a text, b.` were wrong
+  the same way, while `Set t to b.` and `the t is b.` were refused by
+  the type lock, which named a cast that would not have changed what the
+  sentence meant. LANGUAGE.md's Basic Conversions table gives `buffer →
+  text` one meaning — "a copy of the buffer's bytes" — and the language
+  designer ruled that the cast-free spellings say the same thing, so all
+  five now make that copy and `b as text` and `"{b}"` still agree with
+  them word for word. The copy the cast emitted inline became
+  `emit_buffer_to_text_copy`, called from one place by all of them
+  rather than written out per site, which is how #58's two spellings
+  drifted apart. Type immutability is untouched: `t` is text before the
+  write and text after it, and every other mismatched write is still a
+  compile error. Regression tests
+  `tests/385_text_from_buffer_copies.vox`,
+  `386_text_from_buffer_at_every_write_site.vox` and
+  `387_text_from_buffer_is_an_independent_copy.vox` — the last pinning
+  #41's promise through #51's spelling, that clearing, refilling and
+  resizing the buffer leave the text exactly as it was. Found by the
+  vox-41 fix worker probing sibling forms of bug #41.
+
 ## [0.4.8] - 2026-08-20
 
 ### Fixed
