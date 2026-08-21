@@ -3953,3 +3953,318 @@ all; it is introduced 4,400 lines later in a list of contextual keywords.
 A reader who meets the phrase there has no way to learn from the Ranges
 section that `a list called steps is all the numbers from 1 to 3.` is not
 a thing. The diagnostic now says so; the manual still should.
+
+---
+
+### 59. A `treating` clause on a mixed-list loop variable prints a pointer, matched or mismatched (wrong value; family of #44/#45)
+
+**Status:** **open**, found 2026-08-21 by the #55 fix worker (REPORT-55,
+§6) while closing #55; master-reproduced on this branch.
+
+```vox
+print each item from [1, "a"] treating "a" as "b".
+```
+→ `1` then `4198536` (expected `1` then `b`)
+
+```vox
+print each item from [1, "a"] treating 98 as 31.
+```
+→ `1` then `4198536` (left standing after #55 — #55 added a compile-time
+type-mismatch guard for statically-typed collections only, see Mechanism)
+
+```vox
+print each item from [1, "a"].
+```
+→ `1` then `a` (correct — no `treating` clause)
+
+All three re-run three times each on this branch's binary; every line is
+byte-for-byte identical across runs, including the pointer value
+(`4198536` = `0x401088`). That address does **not** wander the way #44's
+heap pointer does — this is a fixed `.rodata`/text-segment address in a
+non-PIE binary, not an ASLR'd allocation — but it is still a raw address
+printed as if it were the string's value.
+
+**What the manual promises.** The `treating X as Y` clause (LANGUAGE.md
+:404-424, duplicated at :3050-3070) is "inline value substitution": "If
+the loop variable equals `<match>`, it's replaced with `<replacement>`
+for that iteration" (:424 / :3070) — nothing here narrows the promise to
+single-typed collections. Mixed-list printing is documented separately
+(:2227 "elements carry a small per-slot type tag at runtime"; :2348 "the
+value carries its runtime tag, so a text prints as text and a number as
+a number") — and the third repro above, with no `treating` clause,
+honors that exactly. `treating` is the only thing that breaks it.
+
+**Step 0.** The vox-fuzz keywords ledger (`expansion.md`, Discrepancy 4)
+already carries the *mismatched* case as unfiled, reasoning that "with a
+mixed list the element type genuinely is not statically uniform, so the
+'can't always know' defence is at its strongest here" — while still
+noting "it still leaks a memory address into program output." That
+defence does not reach the first repro above at all: `treating "a" as
+"b"` substitutes text for text, so there is no type ambiguity for the
+compiler to plead ignorance of, and the *matched* case fails identically
+to the mismatched one. A defence that only covers half of two
+reproductions that behave identically cannot license either, so this is
+filed rather than left as a recorded discrepancy.
+
+**Mechanism.** `Expr::TreatingAs { value, .. } =>
+self.infer_expr_type(value)` (`src/codegen/expr.rs:2421`) reports the
+*subject's* static type for a `treating`-wrapped loop variable — for a
+mixed list, that's an untyped/unknowable static type — instead of
+deferring to the per-slot runtime tag the way a bare `Expr::Identifier`
+read does. `Print`'s printer selection reads that inferred type, so
+wrapping the loop variable in `TreatingAs` at all — independent of
+whether `<match>` fires, and independent of whether its type matches the
+collection's — discards tag dispatch and falls through to the same
+print-the-pointer-as-an-integer path #44 documents for an unrelated
+reason. #55 (this repo, commit 5aab1c3) closed the *statically-typed*
+half of this family — a `treating` clause whose `<match>`/`<replacement>`
+type disagrees with a **known** collection element type is now a compile
+error — but it deliberately does not invent a static element type for a
+mixed list (there isn't one to invent), so `TreatingAs`'s type inference
+at :2421 is untouched by that fix and this survives it.
+
+**Not yet known.** Whether the same tag loss reaches a `treating` clause
+inside a `For each ... in` grid clause (as opposed to the `print each
+... from` loop-expansion form tested here), and whether a `value`-typed
+variable assigned from a `TreatingAs`-wrapped read carries the wrong
+static type forward into arithmetic or `is a ...` guards downstream —
+neither was probed for this entry.
+
+Not fixed; recorded for the fix queue.
+
+---
+
+### 60. `{f:.N}` for N ≥ 18 corrupts the decimals — culminating in a spliced `i64::MIN` sentinel from N=20
+
+**Status:** **open**, found 2026-08-20 by the vox-fuzz literals worker's
+format-specifier probes (REPORT-LITERALS §4, D2); master-reproduced on
+this branch.
+
+```vox
+a float called f is 3.14159.
+Print "{f:.17}".   → 3.14158999999999988      (correct)
+Print "{f:.18}".   → 3.141589999999999872     (wrong — see below)
+Print "{f:.19}".   → 4.-8584100000000001280   (wrong — bad integer part, embedded '-')
+Print "{f:.20}".   → 3.0-9223372036854775808  (wrong — i64::MIN literally spliced in)
+Print "{f:.25}".   → 3.000000-9223372036854775808
+Print "{f:.30}".   → 3.00000000000-9223372036854775808
+```
+
+Re-run three times each; all six lines reproduce byte-for-byte every
+time. The double's true value, expanded to arbitrary precision
+(`python3 -c "from decimal import Decimal; print(format(Decimal(3.14159),'f'))"`),
+is `3.14158999999999988261834005243144929409027099609375…`; glibc's
+correctly-rounded `printf("%.*f", n, f)` agrees with Vox through N=17 and
+diverges starting at N=18, where the correct rounding is `…999883`
+against Vox's `…999872`.
+
+**What the manual promises.** LANGUAGE.md:3106: `{var:.N}` is "N decimal
+places" (`{pi:.2}` → `3.14`). No bound on N is stated anywhere in the
+Format Specifiers section (:3101-3119).
+
+**Mechanism.** `_print_float_precision` (`coreasm/x86_64/format.asm
+:1035`) takes the fractional part once, then scales it by `10^N` two
+different ways, both unbounded in N:
+- `.mul_loop` (:1081-1088) multiplies the fractional `xmm0` by 10, N
+  times, in a plain `mulsd` loop rather than computing `10^N` once —
+  the accumulated floating-point error from N sequential multiplications
+  is already enough to explain N=18's `…872` vs the correctly-rounded
+  `…883`.
+- `.threshold_loop` (:1096-1101) separately computes `10^N` as a
+  **64-bit signed integer**, via `imul r15, 10` repeated N times, also
+  with no bound. `10^19` (10 000 000 000 000 000 000) exceeds
+  `i64::MAX` (9 223 372 036 854 775 807), so at N=19 the multiplication
+  wraps and `r15` reads as negative under the signed `cmp r14, r15 / jl
+  .no_carry` carry check at :1104-1105 — which is why N=19 shows a
+  corrupted integer part and a `-` spliced into the middle of the
+  digits, not yet the clean `i64::MIN` literal.
+- By N=20 the scaled fractional value itself (`~1.4×10^19`) exceeds what
+  `cvttsd2si` (:1093) can convert. Per the SSE2 spec, `cvttsd2si` on a
+  source that overflows the destination range returns the "integer
+  indefinite" value `0x8000000000000000` = **`-9223372036854775808`** —
+  exactly the literal spliced, unmodified, into every N≥20 output above.
+
+**Not yet known.** The exact first-bad-N is a function of the input
+float's fractional magnitude, not a fixed constant — a float whose
+fractional part starts with more leading zeros would push both overflows
+to a higher N before either becomes visible. This entry's 18/19/20
+boundary is specific to `3.14159`; the two overflows underneath it (a
+`10^N` threshold computed as a wrapping 64-bit integer, and the SSE2
+integer-indefinite sentinel on an out-of-range float-to-int conversion)
+are unconditional and will surface for any float at a large enough N.
+
+Not fixed; recorded for the fix queue.
+
+---
+
+### 61. A format pad width beyond `i32::MAX` is silently dropped — no padding, no diagnostic; a pad width below that renders correctly but at roughly one syscall per byte
+
+**Status:** **open**, found 2026-08-20 by the vox-fuzz literals worker's
+format-specifier probes (REPORT-LITERALS §4, D3); master-reproduced on
+this branch, root-caused against source on this branch (below).
+
+```vox
+a number called n is 255.
+Print "{n:1000000000}" without newline.
+```
+
+| width | measured on this branch |
+|---|---|
+| 1 000 | 1 000 bytes, instant |
+| 100 000 | 100 000 bytes, 0.39 s |
+| 1 000 000 | 1 000 000 bytes, 3.88 s |
+| 10 000 000 | 10 000 000 bytes, 36.6 s |
+| 100 000 000 | not finished after 25 s in the foreground (only 6.47 MB written by then); run to completion in the background: **100 000 000 bytes, 413.25 s** |
+| 2 147 483 647 (2^31 − 1, `i32::MAX`) | not finished after 30 s (only 8.37 MB written); not run to completion |
+| **2 147 483 648 (2^31)** | **returns instantly, 3 bytes (`255`), no padding at all** |
+
+The 100 000 → 100 000 000 points give a stable throughput of roughly
+240-273 KB/s across three orders of magnitude — consistent with a
+genuinely linear render, just a very slow one. 2 147 483 647 at 30 s had
+written 8.37 MB, ≈279 KB/s, the same rate — **this is the documented,
+correctly-padding case, not a hang; it is slow because of how each byte
+is written (see Mechanism), and it is on a linear track to finish, not
+stuck.** At the measured 1e8 rate, `1 000 000 000` extrapolates to
+≈4 130 s (≈69 minutes) and `2 147 483 647` to ≈8 870 s (≈2.5 hours) —
+both large, neither divergent. Per the language designer's standing
+ruling (2026-08-21), the timing above is recorded as measured, not
+asserted as a "hang" — whether the render being this slow is itself
+worth filing is a separate, pending call.
+
+**The one datapoint that is unambiguously a bug: 2 147 483 648 renders no
+padding at all, silently.** LANGUAGE.md documents `{var:N}` / `{var:0N}`
+("Pad to N characters" / "Zero-pad to N chars", :3107-3108) with no
+upper bound on N stated anywhere in :3101-3119 — the construct is legal
+for any `N`, and the compiler gives no diagnostic. What actually happens
+at N = 2^31 is not "attempt a 2-billion-byte pad and something goes
+wrong at that scale" — it is that the width clause is discarded before
+codegen ever sees it.
+
+**Mechanism, the silent drop.** `src/codegen/format.rs:230`:
+```rust
+if let Ok(width) = width_digits.parse::<i32>() {
+    spec.width = Some(width);
+    ...
+    has_width = true;
+    ...
+}
+```
+`width_digits` is parsed as `i32`. `"2147483648"` is one past
+`i32::MAX`, so `.parse::<i32>()` returns `Err`, the `if let` body never
+runs, `has_width` stays `false`, and the format spec is built exactly as
+if no width had been written at all — the same code path as a bare
+`{n}`. No error surfaces because nothing checks the `Err` arm; the parse
+failure is silently swallowed. `2147483647` (`i32::MAX` itself) parses
+successfully, so it takes the normal padded-print path — which is why
+the boundary sits at exactly `2^31`, not at some render-size limit.
+
+**Mechanism, the slow-but-linear render for widths that do parse.**
+`_print_int_padded_impl`'s `.pad_loop` (`coreasm/x86_64/format.asm
+:999-1012`) writes padding **one character per `write(2)` syscall** —
+`push`/set one byte in `_format_buffer`/`syscall`/`pop`, in a loop that
+runs `width - digit_count` times. That is O(N) as documented, but with a
+syscall's worth of overhead per byte instead of one buffered/vectored
+write, which is the entire reason a width in the low billions takes
+minutes: at ~265 KB/s, `2^31` bytes (if it parsed) would be a ~2.2 hour
+render, and `1 000 000 000` a ~1 hour render — neither is an infinite
+loop, both are just this loop's per-byte cost multiplied out.
+
+**Not yet known.** Whether the same `.parse::<i32>()` truncation affects
+the zero-pad (`{var:0N}`) or the hex/binary/octal width forms identically
+— the repro above only exercises the plain decimal width. `1 000 000 000`
+and `2 147 483 647` were not run to completion (only the 1e8 point was,
+at 413.25 s); their behavior above the 30-60 s window is an extrapolation
+from a consistent measured rate, not a direct observation.
+
+Not fixed; recorded for the fix queue.
+
+---
+
+### 62. A `.lib` entry with no `, returning` clause is not type-checked at the call site — its non-existent result is silently accepted into a typed variable
+
+**Status:** **open**, found 2026-08-20 by the vox-fuzz libraries claim
+ledger (Discrepancy 4) as "recorded, not filed, not adjudicated";
+adjudicated and ordered filed by the language designer (Josj,
+2026-08-21) and master-reproduced on this branch.
+
+```vox
+see mathkit version "1.0" from "fixtures/libmathkit.lib".
+
+a number called n is greet.
+Print n.
+```
+
+`greet`'s `.lib` entry is bare — `To greet.`, no `, returning` clause —
+meaning it genuinely returns nothing. Re-run against
+`fixtures/libmathkit.lib`/`.so` from the vox-fuzz libraries probe set:
+
+```
+hello from mathkit
+1
+```
+
+Exit 0, no diagnostic. `greet` ran (it printed its message), and `n`
+receives `1` — plausibly leftover register state from the call/return
+convention, not a computed answer — accepted into `a number called n`
+with no complaint anywhere in the pipeline.
+
+**What the manual promises.** LANGUAGE.md:4964-4966: "No `returning`
+clause means the function returns nothing." The six-step `see`-of-`.lib`
+consumption process, step 5 (LANGUAGE.md:4990): "Registers the
+signatures, so calls type-check like any other function." A void
+function's result used as a value is exactly the shape a type-check
+exists to reject.
+
+**The check exists and works on the other side of the same call.**
+`'add two numbers' of 3.` (arity mismatch, one argument short) against
+the same `.lib` is rejected at compile time: `error: Function 'add two
+numbers' expects 2 arguments but was called with 1.` — re-run and
+confirmed on this branch. Step 5's promise holds for **parameters** and
+fails for **return values** on the identical library, the identical
+`see`, the identical call-site type-checking pass.
+
+**Step 0.** LANGUAGE.md states plainly that no clause means "the
+function returns nothing" — there is no reading under which a genuinely
+void function's result may be read into `a number`. The ledger's own
+weakest defence ("the omitted clause is ambiguous between true `void`
+and 'return type not recorded'") does not survive here either: `greet`
+is unambiguously `To greet.` with no `Return` statement anywhere in its
+body — the true-void case, not the recorded-vs-unrecorded edge case —
+so even the ledger's most charitable reading does not reach this repro.
+Filed rather than left as a discrepancy, per the designer's ruling.
+
+**Severity.** Not memory-unsafe — nothing crashes, nothing is
+dereferenced wrongly, and the value read is a plausible-looking small
+integer rather than a raw pointer (contrast #44/#45/#59). It is a
+soundness gap in the one step of the `.lib` pipeline whose stated job is
+type-checking a boundary: a library consumer gets no compiler help
+distinguishing "this call's result is real" from "this call's result is
+whatever was left in a register," for both a genuinely void function and
+(per the ledger's LIB-39/broader note) any function whose author wrote a
+bare `Return <expr>.` with no declared return type.
+
+**Expected fix (Josj, 2026-08-21).** Using a void `.lib` entry's result
+as a value is a compile-time error, not a wider guess at what the
+leftover register might mean — symmetric with #45's fix direction.
+Reject at the use site, naming the function, stating that it returns
+nothing, with the caret on the use and a hint pointing at both ways out:
+
+```
+error: 'greet' has no declared return type in its .lib entry, so its
+result cannot be used as a value here.
+  --> D4.vox:3:20
+    |
+  3 | a number called n is greet.
+    |                      ^--- here
+
+  hint: add ', returning a <type>' to greet's .lib entry, or call
+        'greet' as a statement instead of assigning its result
+```
+
+The same rejection applies to any `.lib` entry with no `, returning`
+clause, not just a true `void` function — per the vox-fuzz `libraries.md`
+ledger's LIB-39, a bare `Return <expr>.` with no declared type records no
+return type in the `.lib` at all, so it is indistinguishable from
+`greet` at the consuming end and must be rejected identically.
+
+Not fixed; recorded for the fix queue.
