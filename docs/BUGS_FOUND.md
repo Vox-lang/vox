@@ -3209,3 +3209,132 @@ its own tally), and the control
 already worked still produces `[9, 9, 7]`.
 
 ---
+
+### 52. Any text-valued special name built into a buffer segfaults — `copy "{arguments's first}" to built`
+
+**Status:** **fixed** (unreleased, on top of 0.4.8). Severity: **memory
+safety** — a legal program, in the exact shape LANGUAGE.md:3158-3161
+promises, crashes. Regression test:
+`tests/bug52_argv_property_into_buffer.vox`, proven to segfault (139, no
+output at all) on unfixed `origin/main` and to pass after; plus a codegen
+unit test (`src/codegen/tests.rs`) that locks the instruction ordering
+without assembling. Found 2026-08-21 by the vox-fuzz Input/Output claim
+ledger (discrepancy D1), master-reproduced on 0.4.8.
+
+```vox
+a buffer called built is 64 bytes in size.
+copy "{arguments's first}" to built.
+Print built.
+```
+→ **segfault (139)**, deterministic, with arguments and without.
+
+**The matrix, each case its own program, run as `./case alpha beta` on
+`origin/main` and on the fix:**
+
+| built into a buffer | 0.4.8 | fixed |
+|---|---|---|
+| `copy "{arguments's first}"` | 139 | `alpha` |
+| `copy "{arguments's second}"` | 139 | `beta` |
+| `copy "{arguments's last}"` | 139 | `beta` |
+| `copy "{arguments's name}"` | 139 | `./copy_name` |
+| `copy "{arguments's all}"` | 139 | an address (see below) |
+| `copy "{arguments's raw}"` | 139 | an address (see below) |
+| `copy "{environment's first}"` | 139 | `SHELL=/bin/bash` |
+| `set built to "{arguments's first}"` | 139 | `alpha` |
+| `append "{arguments's first}" to built` | 139 | `alpha` |
+| `copy "{arguments's count}"` | 3 | 3 |
+| `copy "{environment's count}"` | 109 | 109 |
+| `copy "{current time's hour}"` | 23 | 23 |
+
+Every text-valued special name crashed; every numeric one did not. All
+three buffer verbs crashed, because all three route through one sink.
+
+**The controls say it is the sink, not the property.** `Print
+"{arguments's first}"` and `write "{arguments's first}" to <file>` are
+both fine, so the property itself resolves correctly. The type split in
+the table looks like the story and is not: it is a split by which
+register the resolution happens to touch.
+
+**What the spec promises.** LANGUAGE.md:3158-3161: "All sinks share one
+name resolver, so special names like `{arguments's first}` and `{current
+time's hour}` ... render identically whether the result is printed,
+written to a file, or built into a buffer." The buffer sink is named by
+that paragraph's own list at :3155-3157. README's "Memory Safety Model"
+and ROADMAP M0 ("no valid Vox program may segfault") forbid the outcome
+independently of what the paragraph promises.
+
+**Mechanism — a clobbered destination register, not a bad string.**
+Every `_buffer_append_*` helper takes the destination buffer in `rdi`
+(`coreasm/x86_64/resource.asm:1628-1631`).
+`emit_format_parts_into_buffer` (`src/codegen/format.rs:110-169`,
+pre-fix) loaded the destination into `rdi` at the *top* of each part
+(`:125`), then resolved the part's value, then appended. But resolving an
+argv property means calling `_get_arg`, which takes its **index in
+`rdi`** (`coreasm/x86_64/args.asm:55-68`) — so
+`generate_expr(Expr::ArgumentFirst)` (`src/codegen/expr.rs:1416-1425`)
+emits `mov rdi, 1` straight over the destination pointer. The emitted
+assembly for the three lines above:
+
+```asm
+    mov rdi, [rbp-8]
+    push rdi  ; save destination buffer pointer
+    mov rdi, 1  ; index 1 - first user arg      <-- destination gone
+    call _get_arg
+    ...
+    mov rsi, rax
+    call _buffer_append_cstr                    <-- rdi = 1
+```
+
+`_buffer_append_cstr` then reads a buffer header at address `1`. The
+`push rdi` on the line before is not a red herring: the destination *was*
+saved — and never restored. It was popped into `rsi` after the append and
+discarded (`:167`).
+
+Two things follow from the mechanism that the symptoms hid. First, the
+numeric specials were never safe, only lucky: `{arguments's count}`
+resolves through `call _get_argc`, which happens not to write `rdi`, so
+the stale destination survived by accident. Second, the exposure is not
+confined to the named specials the resolver knows about:
+`{environment's first}` is not in `resolve_format_variable` at all and
+arrives as a `FormatPart::Expression`, whose lowering (`xor rdi, rdi` /
+`call _get_env_at`) clobbers `rdi` exactly the same way — hence its 139
+in the table. Any expression that needs a first argument would have done
+the same.
+
+`emit_format_parts_into_buffer_slot` (`:76-108`) — the sibling sink used
+when the destination is a plain stack slot — resolves the value *first*
+and loads `rdi` after, and never crashed. The two sinks disagreed about
+one ordering.
+
+**Fix.** `src/codegen/format.rs`: the destination is now loaded from its
+home slot immediately before each append, once the value is settled in
+`rax` — the ordering the slot sink already used. The save-and-discard
+`push rdi`/`pop rsi` pair is gone with it, since reading the home slot is
+both the restore and a pickup of any destination that resolution itself
+reallocated. All four arms (literal, resolved-literal, unknown
+placeholder, and runtime value) reload, so the expression arm is covered
+too. The runtime needed no change: `_buffer_append_cstr` already measures
+its source with a `strlen` loop and assumes no arena header, so the argv
+`char*` — which points into the process's original argv block, not the
+string arena — was always a valid source.
+
+**One text-valued form cannot reach this path at all:** `environment's
+"HOME"` does not survive inside a format string, because the nested
+quotes end the string (`Expected 'to' after source in copy statement`).
+It is unaffected, and reading a named environment variable into a buffer
+has to go through a `text` variable today.
+
+**Not fixed here, and deliberately:** `{arguments's all}` and
+`{arguments's raw}` build a raw heap address into the buffer. `Print`
+renders them exactly the same way, so the shared-resolver promise holds
+and the rendering question is bug #44's family (a collection in a format
+string renders correctly only in `Print` position), not this one. The
+regression test covers the `all` form as "must not crash" and prints a
+fixed marker instead of the unstable address.
+
+**Latent, same shape, left alone:** the `Statement::BufferCopy` fallback
+(`src/codegen/statements.rs:1975-1993`) also loads `rdi` before
+`generate_expr(source)`, and pushes twice while popping once. The
+analyzer rejects every source expression that would reach it ("Copy
+source must be a buffer"), so it is unreachable today; worth closing
+before something new makes it reachable.

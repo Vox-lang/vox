@@ -121,26 +121,42 @@ impl CodeGenerator {
             }
         };
 
+        // Every `_buffer_append_*` helper takes the destination buffer in rdi,
+        // and resolving a part's value is free to destroy rdi on the way: the
+        // shared name resolver lowers `{arguments's first}` to `mov rdi, 1` /
+        // `call _get_arg` (src/codegen/expr.rs), and an arbitrary `{expression}`
+        // lowers to whatever generate_expr needs. Loading the destination once
+        // before resolution and appending afterwards therefore called the
+        // helper with an argument index — or any other leftover — in place of
+        // the buffer, and the append dereferenced it: a segfault on a legal,
+        // documented program (docs/BUGS_FOUND.md #52). The destination is now
+        // loaded from its home slot immediately before each append, once the
+        // value is settled in rax - the same order the buffer-slot sink above
+        // already used, which is why that one never crashed. (The
+        // loop used to push rdi here and pop it into rsi afterwards, saving a
+        // copy it never restored; reading the home slot picks up a destination
+        // that resolution itself reallocated, which a saved copy would not.)
         for part in parts {
-            load_dst(self);
-            self.emit_indent("push rdi  ; save destination buffer pointer");
             match part {
                 FormatPart::Literal(s) => {
                     let label = self.add_string(s);
                     self.emit_indent(&format!("lea rsi, [rel {}]", label));
                     self.emit_indent(&format!("mov rdx, {}_len", label));
+                    load_dst(self);
                     self.emit_indent("call _buffer_append_bytes");
                 }
                 FormatPart::Variable { name, format } => {
                     match self.resolve_format_variable(name) {
                         FormatPartValue::Loaded(value_type) => {
                             let fmt_spec = self.parse_format_spec(format.as_deref());
+                            load_dst(self);
                             self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt_spec);
                         }
                         FormatPartValue::Literal(s) => {
                             let label = self.add_string(&s);
                             self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
+                            load_dst(self);
                             self.emit_indent("call _buffer_append_bytes");
                         }
                         FormatPartValue::Unknown => {
@@ -148,6 +164,7 @@ impl CodeGenerator {
                             let label = self.add_string(&placeholder);
                             self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
+                            load_dst(self);
                             self.emit_indent("call _buffer_append_bytes");
                         }
                     }
@@ -156,6 +173,7 @@ impl CodeGenerator {
                     self.generate_expr(expr);
                     let expr_type = self.infer_expr_type(expr);
                     let fmt_spec = self.parse_format_spec(format.as_deref());
+                    load_dst(self);
                     self.emit_append_runtime_value_to_buffer_ptr(expr_type, fmt_spec);
                 }
             }
@@ -164,7 +182,6 @@ impl CodeGenerator {
             } else if let Some(label) = dst_global {
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
-            self.emit_indent("pop rsi  ; discard saved pointer copy");
         }
     }
 
