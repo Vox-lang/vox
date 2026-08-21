@@ -1,0 +1,3 @@
+cannot pass nothing to 'who', which 'greet' declares as text
+124_nothing_as_a_text_argument.vox:5:29
+help: declare 'who' as a value, the type that can be absent - or give it text's own empty value, ""

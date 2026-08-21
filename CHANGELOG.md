@@ -158,6 +158,65 @@ adheres to [Semantic Versioning](https://semver.org/).
   Found by the vox-fuzz keywords claim ledger (discrepancies D5, D6 and
   D7).
 
+- **`nothing` in a concretely-typed slot is now a compile error instead of
+  a segfault or a silent `0`** ([#57](docs/BUGS_FOUND.md)) — `a text
+  called t is nothing.` followed by `Print t.` crashed the generated
+  program (exit 139); a list did the same after printing `[`, and a map
+  after `{`. The declaration alone was harmless — the read was the fault,
+  which put the crash a line away from its cause. LANGUAGE.md:2660-2661
+  says where the literal may sit, "a list slot, a map value, or a `value`
+  parameter or return", and the bare-`Create` defaults table (:489-501)
+  gives `nothing` to `value` alone, so a `text`/`list`/`map` variable has
+  no representation for it: codegen stored the literal's payload, 0, with
+  no tag beside it, and the read dispatched on the declared type and
+  dereferenced a null pointer. The quiet half was the same defect wearing
+  a plausible answer — a `number` initialised to `nothing` printed `0`,
+  against :2685's "**`nothing` is not zero**" and against the compile
+  error `nothing add 1` already raised for exactly that reason. The
+  literal is now refused wherever it is written into a slot of any
+  concrete type: a declaration, an assignment, a call argument, and a
+  return, each diagnostic naming the type and offering both ways out — a
+  `value`, or that type's own empty value. Every position the manual does
+  give the literal is untouched, pinned by
+  `tests/363_nothing_in_its_documented_places.vox`, whose output is
+  byte-identical before and after; seven compile-fail fixtures
+  (`tests/compile_fail/119`-`125`) cover the rejections, each proven to
+  crash or answer wrongly on 0.4.8+#49-#56. The same crash reached at run
+  time — through a `value`, or a collection whose element type cannot be
+  proven — is recorded in BUGS_FOUND and not fixed here. Found by the
+  vox-fuzz random-literals worker's probes (§4 D1),
+  master-reproduced.
+
+- **A buffer declared from a text-valued property keeps its type — and,
+  on `Set`, its bounds** ([#58](docs/BUGS_FOUND.md)) — `a buffer called
+  home is environment's "HOME".` copied the bytes in correctly and then
+  lost the name's type, so `Print home.` printed an empty line and
+  `home's size` answered `-1`; the same for `environment's
+  first`/`last` and every `arguments's` positional, while the two-step
+  spelling through a `text` variable was always right. LANGUAGE.md:531
+  says "**A variable's type is fixed at its declaration and never
+  changes**", and :3285 explains a buffer reports `(static)` precisely
+  because "the compiler knows the type from the declaration" — but
+  codegen re-read the type off the initializer's shape, saw an
+  environment or argument read, and re-labelled the buffer as text, so
+  every later read dispatched as text and `size` fell through to the
+  file fallback `_file_size`. The `Set b to <property>` spelling was
+  worse than a wrong answer: the decision to treat the destination as a
+  buffer is read back out of the same table, so a re-labelled buffer
+  stopped copying bytes into its struct and stored the raw `argv`
+  pointer over the buffer pointer — `capacity` then read the argument's
+  own bytes as the capacity, no position could exceed it, and `Set byte
+  N of b` wrote into the process's argument block, segfaulting at a
+  large `N`. The declare-with-initializer arm now carries the guard the
+  bare-assignment arm beside it already had. Regression tests
+  `tests/364_buffer_from_named_environment_variable.vox`,
+  `365_buffer_from_positional_environment_property.vox`,
+  `366_buffer_from_argument_property.vox` and
+  `367_set_buffer_to_argument_keeps_its_bounds.vox`, proven to answer
+  wrongly or segfault on 0.4.8 and to pass after. Found by the vox-fuzz
+  environment claim ledger (discrepancy D1) and re-found by the
+  fuzzer's environment leaves (ASSERT ENV-03/ENV-06).
+
 ## [0.4.8] - 2026-08-20
 
 ### Fixed

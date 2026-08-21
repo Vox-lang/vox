@@ -1,0 +1,20 @@
+nothing
+nothing
+nothing
+[1, nothing, "x"]
+the middle slot is absent
+the first slot is not
+{"found": 4, "absent": nothing}
+the key is present and absent
+nothing
+a value holds it
+nothing
+now it holds text
+nothing
+nothing
+through a value parameter and back
+[nothing, nothing, "x"]
+{"found": nothing, "absent": nothing}
+unharmed
+[1, 2]
+{"bo": 42}

@@ -1,0 +1,8 @@
+(Bug #57 through a return. The caller reads the result as the declared type,
+ so a text return handed back a null pointer for print to dereference. A
+ `value` return is the documented way to hand back an absent result -
+ LANGUAGE.md:2661 names it in the same breath as a list slot and a map value.)
+
+To label. Return text, nothing.
+
+print label.

@@ -734,6 +734,183 @@ explicitly:  a {} called {} is {} as {}.",
         }
     }
 
+    /// Bug #57: `nothing` is not a value any concretely-typed variable can
+    /// hold, so it is refused wherever the literal is written into one.
+    ///
+    /// LANGUAGE.md:2659-2661 says where the literal may sit - it "can sit in
+    /// a list slot, a map value, or a `value` parameter or return" - and the
+    /// bare-`Create` defaults table (LANGUAGE.md:489-501) hands `nothing` to
+    /// `value` alone, giving `text`, `list` and `map` the empty string, `[]`
+    /// and `{}` instead. A concretely-typed slot therefore has no
+    /// representation for it. Vox wrote one anyway: codegen's
+    /// `Expr::NothingLit` arm materialises the payload, 0, and the tag that
+    /// says "this is nothing" is only stored where a `value`, a list slot or
+    /// a map slot has a place to put it. So a `text` took a null pointer, a
+    /// `list` a header at address 0, a `map` a map at 0 - and the next read
+    /// dereferenced it (SIGSEGV). `number`, `float`, `boolean` and `buffer`
+    /// do not fault; they answer `0`, which is the other half of the same
+    /// mistake and the one LANGUAGE.md:2685 names outright: "`nothing` is
+    /// not zero".
+    ///
+    /// Refused rather than guarded in codegen because there is nothing to
+    /// guard: the manual gives these types no `nothing` to print or compare
+    /// against, and inventing one - "a text holding nothing prints
+    /// `nothing`" - would add a second inhabitant to every concrete type
+    /// that the manual does not describe, and would make `is nothing` a
+    /// meaningful question about a `text`. `value` is exactly the type for a
+    /// slot that may be absent, and it already works.
+    ///
+    /// `Type::Value` is the sanctioned home and is allowed through.
+    /// `Type::Thing` is left to `check_thing_copy`, which owns every write
+    /// into a thing's storage; `Void`/`Unknown` name no storage to reject.
+    pub(crate) fn nothing_is_refused_for(declared: &Type) -> bool {
+        matches!(
+            declared,
+            Type::Integer
+                | Type::Float
+                | Type::String
+                | Type::Boolean
+                | Type::List(_)
+                | Type::Map(_)
+                | Type::Buffer
+                | Type::File
+                | Type::Time
+                | Type::Timer
+        )
+    }
+
+    /// The `nothing` diagnostics' shared second line: what the literal is,
+    /// and the positions the manual gives it.
+    fn nothing_note_line(&self, declared: &Type) -> String {
+        format!(
+            "nothing is the absent value: it sits in a list slot, a map value, or a value parameter or return - never in {}",
+            self.typed_phrase(declared)
+        )
+    }
+
+    /// The `nothing` diagnostics' shared help line: the two ways out - the
+    /// type that can be absent, or this type's own empty value. `buffer`,
+    /// `file`, `time` and `timer` have no empty literal to name, so they get
+    /// the first half only.
+    fn nothing_help_line(&self, declared: &Type, subject: &str) -> String {
+        let empty = match declared {
+            Type::Integer => Some("0"),
+            Type::Float => Some("0.0"),
+            Type::String => Some("\"\""),
+            Type::Boolean => Some("false"),
+            Type::List(_) => Some("[]"),
+            Type::Map(_) => Some("{}"),
+            _ => None,
+        };
+        match empty {
+            Some(empty) => format!(
+                "declare {} as a value, the type that can be absent - or give it {}'s own empty value, {}",
+                subject,
+                self.type_name(declared),
+                empty
+            ),
+            None => format!("declare {} as a value, the type that can be absent", subject),
+        }
+    }
+
+    /// Bug #57 at a declaration: `a text called t is nothing.` and the
+    /// `Set`/`Create ... to nothing.` spellings that parse into the same
+    /// statement. Anchored on the declaration, like bug #54's
+    /// `check_declared_read_type` - and for the same reason, that the type
+    /// lock only guards writes to an ALREADY-declared name.
+    pub(crate) fn check_nothing_initialiser(&mut self, name: &str, declared: &Type, value: &Expr) -> bool {
+        if !matches!(value, Expr::NothingLit) || !Self::nothing_is_refused_for(declared) {
+            return false;
+        }
+        // `symbol_error_counts` is deliberately not touched, exactly as in
+        // `check_declared_read_type`: it indexes WRITE sites, and this error
+        // is anchored on the declaration instead.
+        let mut err = CompileError::new(&format!(
+            "cannot initialise '{}', which is {}, with nothing",
+            name,
+            self.typed_phrase(declared)
+        ));
+        if let Some(loc) = self.find_declaration_location(name) {
+            err = err.with_underline_note(
+                name.len().max(1),
+                &format!("this {} is given nothing", self.type_name(declared)),
+            );
+            err = err.with_location(loc);
+        }
+        err = err.with_note_line(&self.nothing_note_line(declared));
+        err = err.with_help_line(&self.nothing_help_line(declared, &format!("'{}'", name)));
+        self.errors.push(err);
+        true
+    }
+
+    /// Bug #57 at a call site: `greet with nothing.` where `greet`'s
+    /// parameter is declared `a text called who`. The callee stores the
+    /// argument in the parameter's concretely-typed slot, so this is the
+    /// declaration case reached through the call - and it faulted the same
+    /// way, on the callee's first read.
+    pub(crate) fn check_nothing_argument(
+        &mut self,
+        function: &str,
+        param_name: &str,
+        param_type: &Type,
+        arg: &Expr,
+    ) -> bool {
+        if !matches!(arg, Expr::NothingLit) || !Self::nothing_is_refused_for(param_type) {
+            return false;
+        }
+        let mut err = CompileError::new(&format!(
+            "cannot pass nothing to '{}', which '{}' declares as {}",
+            param_name,
+            function,
+            self.typed_phrase(param_type)
+        ));
+        let occurrence = *self.symbol_error_counts.get(param_name).unwrap_or(&0);
+        if let Some(loc) = self.find_symbol_location(param_name, occurrence) {
+            err = err.with_underline_note(
+                param_name.len().max(1),
+                &format!("this parameter is {}", self.typed_phrase(param_type)),
+            );
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(param_name.to_string(), occurrence + 1);
+        err = err.with_note_line(&self.nothing_note_line(param_type));
+        err = err.with_help_line(&self.nothing_help_line(param_type, &format!("'{}'", param_name)));
+        self.errors.push(err);
+        true
+    }
+
+    /// Bug #57 at a return: `Return text, nothing.` The caller reads the
+    /// result as the declared type, so a text return handed back a null
+    /// pointer and a number return quietly answered `0`.
+    pub(crate) fn check_nothing_return(&mut self, declared: &Type, value: &Expr) -> bool {
+        if !matches!(value, Expr::NothingLit) || !Self::nothing_is_refused_for(declared) {
+            return false;
+        }
+        let mut err = CompileError::new(&format!(
+            "cannot return nothing from a function that returns {}",
+            self.typed_phrase(declared)
+        ));
+        // The caret goes on the signature line: that is where the return
+        // type is declared, and where the author changes it to a `value`.
+        // It also earns the `note:`/`help:` lines, which the renderer only
+        // draws for a located error.
+        if let Some(function) = self.current_function_name.clone() {
+            let occurrence = *self.symbol_error_counts.get(&function).unwrap_or(&0);
+            if let Some(loc) = self.find_symbol_location(&function, occurrence) {
+                err = err.with_underline_note(
+                    function.len().max(1),
+                    &format!("this function returns {}", self.typed_phrase(declared)),
+                );
+                err = err.with_location(loc);
+            }
+            self.symbol_error_counts.insert(function, occurrence + 1);
+        }
+        err = err.with_note_line(&self.nothing_note_line(declared));
+        err = err.with_help_line(&self.nothing_help_line(declared, "the return"));
+        self.errors.push(err);
+        true
+    }
+
     /// Type-lock check: a concretely-typed variable's type is fixed at
     /// declaration and never changes (the language owner's fix for the
     /// whole "tracked type disagrees with runtime type" bug family - see
@@ -767,14 +944,59 @@ explicitly:  a {} called {} is {} as {}.",
     ///   `is_buffer_variable` exclusions the old `Statement::Assignment`
     ///   arm used before this check replaced it). Locking buffers here
     ///   would reject `a buffer called b is "".` / `b is 42.`, which must
-    ///   keep working.
+    ///   keep working. A buffer is *not* excused from the `nothing` check
+    ///   below: a content write formats the value's text into the buffer,
+    ///   and `nothing` has no text - it formatted its payload and wrote
+    ///   `0`, which is the "`nothing` is not zero" mistake again and would
+    ///   have contradicted the same statement's rejection at the buffer's
+    ///   declaration (bug #57).
     pub(crate) fn check_type_lock(&mut self, name: &str, value: &Expr) -> bool {
-        if self.value_typed_names.contains(name) || self.is_buffer_variable(name) {
+        if self.value_typed_names.contains(name) {
             return false;
         }
         let Some(declared) = self.named_value_type(name) else {
             return false;
         };
+        // Bug #57: `nothing` is not a `Type`, so `arithmetic_operand_type`
+        // answers None for it and the lock used to wave it straight through
+        // - `set t to nothing.` on a text stored a null pointer that the
+        // next read dereferenced, exactly as the declaration form did. Same
+        // rule, reported against the write site the lock already locates.
+        if matches!(value, Expr::NothingLit) {
+            if !Self::nothing_is_refused_for(&declared) {
+                return false;
+            }
+            let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+            let mut err = CompileError::new(&format!(
+                "cannot assign nothing to '{}', which is {}",
+                name,
+                self.typed_phrase(&declared)
+            ));
+            if let Some(loc) = self.find_write_site_location(name, occurrence) {
+                err = err.with_underline_note(name.len().max(1), "this assigns nothing");
+                err = err.with_location(loc);
+            }
+            self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+            // A `CompileError` carries one `note:` line, and this is the one
+            // worth having: the mismatched-assignment case below spends its
+            // note on the declaration site, but `find_write_site_location`
+            // has already put the caret there, and what the author needs is
+            // what `nothing` actually is.
+            err = err.with_note_line(&self.nothing_note_line(&declared));
+            err = err.with_help_line(&self.nothing_help_line(&declared, &format!("'{}'", name)));
+            self.errors.push(err);
+            // Same reason as the mismatched-assignment case below: the write
+            // was rejected, and leaving the old type in place would cascade
+            // a second error out of a mistake already reported.
+            self.scalar_types.remove(name);
+            return true;
+        }
+        // A buffer's content write is exempt from the type lock proper (see
+        // the doc comment above), but not from the `nothing` check that has
+        // already run.
+        if self.is_buffer_variable(name) {
+            return false;
+        }
         let Some(actual) = self.arithmetic_operand_type(value) else {
             return false;
         };

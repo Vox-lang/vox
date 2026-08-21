@@ -186,6 +186,12 @@ pub struct Analyzer {
     /// the whole shape into the caller's storage (plan 310 §5), and only the
     /// signature says whether that is what this `Return` means.
     current_function_return_type: Option<Type>,
+    /// The name of the function currently being walked, paired with the
+    /// return type above and saved/restored beside it. A diagnostic about
+    /// the return needs somewhere to put its caret, and the signature line
+    /// - where the return type is declared - is the place the author has to
+    /// change (bug #57).
+    current_function_name: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -239,6 +245,7 @@ impl Analyzer {
             things: HashMap::new(),
             thing_vars: HashMap::new(),
             current_function_return_type: None,
+            current_function_name: None,
         }
     }
 

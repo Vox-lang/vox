@@ -1,0 +1,5 @@
+(Bug #57's list sibling: the same store of a null, and _list_print walked a
+ header at address 0 - it managed the opening bracket and then faulted.)
+
+a list called items is nothing.
+Print items.

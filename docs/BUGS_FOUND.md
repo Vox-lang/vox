@@ -3956,6 +3956,452 @@ a thing. The diagnostic now says so; the manual still should.
 
 ---
 
+### 57. A `text`, `list` or `map` initialised to `nothing` segfaults on the first read — `a text called t is nothing.`
+
+**Status:** **fixed** (unreleased, on top of 0.4.8+#49/#50/#52/#53/#54/#55/#56).
+Severity: **memory safety** — a two-line program, compiled clean, faults on
+a null pointer it was handed by a literal. Regression tests: compile-fail
+cases `tests/compile_fail/119_nothing_into_text_declaration.vox`,
+`120_nothing_into_list_declaration.vox`,
+`121_nothing_into_map_declaration.vox`,
+`122_nothing_into_number_declaration.vox`,
+`123_nothing_assigned_to_text.vox`,
+`124_nothing_as_a_text_argument.vox` and
+`125_nothing_returned_as_text.vox`, plus the passing control
+`tests/363_nothing_in_its_documented_places.vox`, which walks every
+position LANGUAGE.md gives the literal and is byte-identical before and
+after. Found 2026-08-21 by the vox-fuzz random-literals worker's probes
+(REPORT-LITERALS.md §4 D1), master-reproduced on 0.4.8+#49–#56.
+
+```vox
+a text called greeting is nothing.
+Print greeting.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+**The matrix, each case its own program, on `origin/main` (5dbbc75) and on
+the fix:**
+
+| program | before | after |
+|---|---|---|
+| `a text called t is nothing.` + `Print t.` | 139 | rejected |
+| `a list called t is nothing.` + `Print t.` | prints `[`, then 139 | rejected |
+| `a map called t is nothing.` + `Print t.` | prints `{`, then 139 | rejected |
+| the same three with `null` / `nil` | 139 | rejected |
+| `a text called t is nothing.` + `Print "declared".` | prints `declared` | rejected |
+| `a text called t is nothing.` + `If t is nothing, …` | prints nothing at all | rejected |
+| `a list called t is nothing.` + `Append 1 to t.` | 139 | rejected |
+| `a map called t is nothing.` + `Print t's "k".` | 139 | rejected |
+| `a text called t is "hi".` + `set t to nothing.` + `Print t.` | 139 | rejected |
+| `the t is nothing.` on a declared text | 139 | rejected |
+| `Set a text called t to nothing.` / `Create … to nothing.` | 139 | rejected |
+| `To greet with a text called who. Print who.` + `greet with nothing.` | 139 | rejected |
+| `To label. Return text, nothing.` + `print label.` | 139 | rejected |
+| `a number called n is nothing.` + `Print n.` | prints `0` | rejected |
+| `a float called f is nothing.` + `Print f.` | prints `0.0` | rejected |
+| `a boolean called b is nothing.` + `Print b.` | prints `0` | rejected |
+| `a buffer called b is nothing.` + `Print b.` | prints `0` | rejected |
+| a sized buffer, then `set b to nothing.` + `Print b.` | prints `0` | rejected |
+| `a file called f is nothing.` | compiles | rejected |
+| `To bump with a number called n. Print n.` + `bump with nothing.` | prints `0` | rejected |
+| `a value called v is nothing.` + `Print v.` (control) | `nothing` | `nothing` |
+| `print nothing.` / `null` / `nil` (control) | `nothing` | `nothing` |
+| `a list called L is [1, nothing, "x"].` + `print L.` (control) | correct | correct |
+| `a map called m is {"absent": nothing}.` + `print m.` (control) | correct | correct |
+| `Set element 1 of L to nothing.` / `Set m's "k" to nothing.` (control) | correct | correct |
+| a `value` parameter and a `value` return carrying it (control) | correct | correct |
+| `a text called t is v.` where `v` is a `value` holding it | 139 | **unchanged — see below** |
+| `a text called t is m's "absent".` | 139 | **unchanged — see below** |
+| `Set t to nothing.` on a brand-new, untyped name | prints `0` | **unchanged — see below** |
+
+The declaration alone is not what crashes — `a text called t is nothing.`
+followed by `Print "declared".` runs clean. The READ is the fault, which is
+why the crash arrives a line away from its cause.
+
+**Which reading the manual supports.** The rejecting one, on three
+independent statements:
+
+1. LANGUAGE.md:2659-2661 enumerates where the literal may sit, and the
+   enumeration is the definition: "`nothing` is the value that means 'no
+   value here' … It **can sit in a list slot, a map value, or a `value`
+   parameter or return**, and it prints as the word `nothing`." A
+   `text`/`list`/`map`/`number` variable is none of those three.
+2. The bare-`Create` defaults table (LANGUAGE.md:489-501) says what each
+   type's absent-looking value actually is, and only one row is `nothing`:
+   `text` defaults to the empty string, `list` to `[]`, `map` to `{}`,
+   `number` to `0` — and `value` to `nothing`. The language already has a
+   type whose inhabitant set includes the absent value, and it is not any
+   of these.
+3. LANGUAGE.md:2685 forbids the quiet half outright: "**`nothing` is not
+   zero.** This is the distinction that matters most." A `number`
+   initialised to `nothing` printed `0`, which is precisely the collision
+   that sentence denies, and :2706-2713 already makes `a number called n is
+   nothing add 1.` a compile error *for this very reason* — "the stored
+   payload of `nothing` really is 0. Left unchecked, `total add
+   missing_field` would quietly evaluate to `total` — a wrong answer that
+   looks completely plausible." A language that refuses `nothing add 1`
+   because the payload is 0, but accepts `a number called n is nothing.`
+   and hands back that same 0, is refusing the symptom and licensing the
+   cause.
+
+The alternative reading — make a `text` holding `nothing` print `nothing`,
+the way a `value` does — was rejected because it adds a second inhabitant
+to every concrete type that the manual never describes. It would make `is
+nothing` a meaningful question about a `text` (LANGUAGE.md:2677 introduces
+the predicate for map values and mixed elements), it would need an answer
+for `t's length` and for `Append` on a `nothing` list, and it would leave
+`a number called n is nothing.` still colliding with `0` at :2685. The
+memory-safety promise (README "Memory Safety Model"; ROADMAP M0, "no valid
+Vox program may segfault") forbids the crash under either reading; only
+this one also stops the wrong answer.
+
+**Mechanism — the payload is stored, the tag has nowhere to go.** Codegen's
+literal arm (`src/codegen/expr.rs`) is honest about what it emits:
+
+```rust
+Expr::NothingLit => {
+    self.emit_indent("xor rax, rax  ; nothing literal, payload 0 (tag 6 set by caller)");
+}
+```
+
+The tag is the caller's job, and only a `value` slot, a list slot and a map
+slot have a place to keep one. A concretely-typed variable has one
+quadword, so the declaration compiles to a bare store of 0 and the read
+dispatches on the *declared* type, which is all codegen has left:
+
+```asm
+    xor rax, rax  ; nothing literal, payload 0 (tag 6 set by caller)
+    mov [rel gvar_0], rax  ; global store greeting
+    mov rax, [rel gvar_0]
+    mov rdi, rax
+    PRINT_CSTR rdi          ; rdi = 0
+```
+
+`_print_cstr_impl` (`coreasm/x86_64/io.asm:77-90`) then counts the string's
+length with `mov al, [rsi + rcx]` from address 0 — the fault. The list and
+map spellings differ only in which routine walks the null: `_list_print`
+(`coreasm/x86_64/list.asm:605-630`) prints `[` and *then* reads `[rbx +
+LIST_LENGTH_OFFSET]`, which is exactly the partial output the crash shows,
+and `_map_print` dies the same way after `{`. Where the type is a scalar
+there is no dereference and nothing to fault — the 0 simply prints as 0,
+which is the same defect wearing a plausible answer.
+
+`If t is nothing` on such a text printed nothing at all, and that is the
+tell: the predicate compares runtime type tags (LANGUAGE.md:2691-2693), and
+a text slot has no tag to compare, so a text "holding nothing" cannot even
+be recognised as holding it. There was never a value there to read.
+
+**The fix — refuse the literal at every write site that can see it.**
+One rule, `Analyzer::nothing_is_refused_for` (`src/analyzer/types.rs`):
+`nothing` may not be written into a slot of any concrete type
+(`number`, `float`, `text`, `boolean`, `list`, `map`, `buffer`, `file`,
+`time`, `timer`). `value` is its documented home and is untouched;
+`Thing` is left to `check_thing_copy`, which already owns every write into
+a thing's storage.
+
+Four sites see the literal, and all four faulted or lied:
+
+1. *The declaration* — `check_nothing_initialiser`, called from the
+   `VarDecl` arm beside bug #54's `check_declared_read_type` and for the
+   same reason: the type lock only guards writes to an ALREADY-declared
+   name, and this is the declaration itself. This covers `Set a text
+   called t to nothing.` and `Create … to nothing.`, which parse into the
+   same statement.
+2. *The assignment* — a new branch at the top of `check_type_lock`.
+   `nothing` is not a `Type` (tag 6 exists only at runtime), so
+   `arithmetic_operand_type` answered `None` for it and the lock's
+   "can't prove it, allow it" policy waved it straight through. A buffer
+   is deliberately **not** excused here, though it is excused from the
+   lock proper: a buffer content write formats the value's text into the
+   buffer, and `nothing` has no text — it formatted its payload and wrote
+   `0`, which would have contradicted the same statement's rejection two
+   lines earlier at the buffer's own declaration.
+3. *A call argument* — `check_nothing_argument`, from
+   `analyze_call_arguments`. The callee stores the argument in its
+   parameter's concretely-typed slot and reads it as that type, so
+   `greet with nothing.` faulted *inside* `greet`, one frame from the
+   sentence that caused it.
+4. *A return* — `check_nothing_return`, from the `Return` arm. The caller
+   reads the result as the declared type, so a `text` return handed back a
+   null pointer and a `number` return quietly answered `0`.
+
+Each diagnostic names the type, points at the site, and offers the two
+ways out — the type that can be absent, or this type's own empty value:
+
+```
+error: cannot initialise 'greeting', which is text, with nothing
+  --> 119_nothing_into_text_declaration.vox:7:15
+    |
+  7 | a text called greeting is nothing.
+    |               ^^^^^^^^ this text is given nothing
+    |
+  note: nothing is the absent value: it sits in a list slot, a map value, or a value parameter or return - never in text
+  help: declare 'greeting' as a value, the type that can be absent - or give it text's own empty value, ""
+```
+
+**Nothing documented was taken away.**
+`tests/363_nothing_in_its_documented_places.vox` runs the literal through
+every position the manual gives it — all three spellings printed, a list
+slot, a map value, a `value` declaration, `Create a value called v.`, a
+`value` reassigned to and from the literal, a `value` parameter and a
+`value` return, `Set element 1 of L to nothing.` and `Set m's "k" to
+nothing.` — and its output is byte-identical on `origin/main` and on the
+fix.
+
+**Not fixed: the same crash reached at run time, where no literal is
+visible.** Three shapes survive, all of them 139 before and after:
+
+```vox
+a value called v is nothing.
+a text called t is v.
+Print t.
+```
+```vox
+a map called m is {"absent": nothing}.
+a text called t is m's "absent".
+Print t.
+```
+```vox
+a list called L is [nothing].
+a text called t is element 1 of L.
+Print t.
+```
+
+These are the residue of bug #54's deliberate permissiveness: a `value`
+source, and a collection whose element/value type cannot be proven, both
+answer "can't prove it" and are allowed through, so the null arrives in a
+text slot with nothing static to catch it. This fix does not invent a proof
+it does not have. The manual already says what the answer should be —
+:2715-2717, for exactly this situation: "When a value only turns out to be
+`nothing` at run time — read out of a map or a mixed list — the compiler
+cannot catch it, so the operation **sets the error flag** instead", with
+`on error` as the author's handle. That is a codegen change at every
+concretely-typed store fed by a dynamically-tagged source, it needs its own
+number and its own reproduction matrix, and it is recorded here so it is
+not lost.
+
+**Manual gaps, recorded not closed.**
+
+- LANGUAGE.md is silent on what an *untyped* declaration makes of the
+  literal. `Set t to nothing.` and `the t is nothing.` on a brand-new name
+  declare `t` with no type keyword to check against, and both print `0` —
+  the ":2685 is not zero" collision again, through the one door this fix
+  does not close, because there is no declared type for the literal to
+  conflict with. The coherent answer is that such a name infers `value`,
+  the type whose default the table already gives as `nothing`; that is a
+  language decision, not a bug fix, so the behaviour is unchanged.
+- The `nothing` section states its three legal positions in a sentence of
+  prose (:2660-2661) and never says what happens outside them. A reader
+  who writes `a text called t is nothing.` has nothing in that section to
+  read it against — the defaults table 2,170 lines earlier is what settles
+  it, and the table is about `Create` with no initialiser. The diagnostics
+  now say the rule; the manual still should.
+
+---
+
+### 58. A buffer declared from a text-valued property (`environment's "HOME"`, `environment's first`, `arguments's first`) is silently re-typed as text — size `-1`, prints nothing, and on `Set` loses its bounds
+
+**Status:** **fixed** (unreleased, on top of 0.4.8). Severity: **memory
+safety** — the declaration form answers wrongly, and the `Set` form drops
+a fixed buffer's bounds check and lets `Set byte N of ...` write into the
+process's own argument block, segfaulting at a large `N`. Regression
+tests `tests/364_buffer_from_named_environment_variable.vox`,
+`tests/365_buffer_from_positional_environment_property.vox`,
+`tests/366_buffer_from_argument_property.vox` and
+`tests/367_set_buffer_to_argument_keeps_its_bounds.vox`, all proven to
+misbehave on unfixed `main` and to pass after. Found 2026-08-21 by the
+vox-fuzz environment claim ledger (discrepancy D1,
+`docs/ledger/environment.md`, probes `D1.vox`/`D1b.vox`), re-found by the
+fuzzer's new environment leaves (ASSERT ENV-03/ENV-06 in 2 of 40 seeds),
+master-reproduced on 0.4.8. Sibling of #52 — the same family of text-valued
+special names built into a buffer — but a different mechanism.
+
+```vox
+a buffer called home is environment's "HOME".
+Print home.               (wrong: an empty line)
+Print home's size.        (wrong: -1)
+
+a text called address is environment's "HOME".
+a buffer called duplicate is address.
+Print duplicate's size.   (correct: 10)
+```
+
+The two-step spelling — read the property into a `text`, then declare the
+buffer from that text — is the control, and it was always right. The
+one-step declaration named in the same breath was not.
+
+**The matrix, each case its own program, run as `./case alpha beta` on
+`main` and on the fix:**
+
+| the program | 0.4.8 | fixed |
+|---|---|---|
+| `a buffer called b is environment's "HOME".` then `Print b.` | *(empty line)* | `/home/josj` |
+| `… Print b's size.` | `-1` | `10` |
+| `… Print b's capacity.` | `4096` | `4096` |
+| `… Print b's empty.` | `0` | `0` |
+| `a buffer called b is environment's "VOX_NOPE_58".` then `… size` | `-1` | `0` |
+| `a buffer called b is environment's first.` then `… size` | `-1` | `15` |
+| `a buffer called b is environment's last.` then `… size` | `-1` | `19` |
+| `a buffer called b is arguments's first.` then `Print b.` | *(empty line)* | `alpha` |
+| `… Print b's size.` | `-1` | `5` |
+| `a buffer called b is arguments's last.` then `… size` | `-1` | `4` |
+| `a buffer called b is arguments's name.` then `… size` | `-1` | `17` |
+| `a buffer called b is 64 bytes in size.` `Set b to arguments's first.` `… size` | `-1` | `5` |
+| `… Print b's capacity.` | `7305401963912391777` | `64` |
+| `… Set byte 100000000 of b to 'X'.` | **139** | error flag, program survives |
+| `a text called t is arguments's first.` `a buffer called b is t.` `… size` (control) | `5` | `5` |
+| `a buffer called b is "alpha".` `… size` (control) | `5` | `5` |
+| `a buffer called b is "{arguments's first}".` `… size` (control) | `5` | `5` |
+| `a text called t is environment's "HOME".` `Print t.` (control) | `/home/josj` | `/home/josj` |
+| `a buffer called b is arguments's count.` `… size` (numeric, control) | `1` | `1` |
+
+Three properties of a buffer that was, by the compiler's own `type`
+property, still a `Buffer (static)`, disagreed with each other: it printed
+as empty, reported `size -1`, and reported `empty` false. The
+disagreement is the tell. `capacity` and `empty` read the buffer header
+directly and were right; only `size` and `Print` dispatch on the
+variable's *type*, and only those two were wrong.
+
+**What the spec promises.** LANGUAGE.md:531-532 is the rule this breaks:
+"**A variable's type is fixed at its declaration and never changes** —
+`value` is the one deliberate exception". LANGUAGE.md:3285 says the same
+thing from the other side, explaining why a buffer reports `(static)`:
+"the compiler knows the type from the declaration". `a buffer called b`
+is a declaration; nothing that follows `is` may change what `b` is.
+LANGUAGE.md:3347-3351 establishes that a buffer's initializer is a *text
+value to copy in* — "Creating buffer from string: `a buffer called buf is
+"Hello".`" — and the environment and argument properties are text
+(LANGUAGE.md:3158-3161's shared name resolver, and #52's own finding that
+"every text-valued special name" belongs to one family). README's "Memory
+Safety Model" and ROADMAP M0 ("no valid Vox program may segfault") forbid
+the `Set` form's outcome independently.
+
+**Mechanism — a silent retype in codegen, not a missing copy.** The copy
+always ran. The emitted assembly for the headline program allocates,
+clears, resolves the environment variable and appends its bytes, exactly
+as the working two-step control does:
+
+```asm
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rel gvar_0], rax  ; global store buffer home
+    mov rdi, [rel gvar_0]
+    call _buffer_clear
+    mov [rel gvar_0], rax
+    lea rax, [rel str_0]
+    mov rdi, rax
+    call _get_env
+    ...
+    mov rdi, [rel gvar_0]
+    mov rsi, rax
+    call _buffer_append_cstr      ; the bytes are in the buffer
+    mov [rel gvar_0], rax
+```
+
+The two programs' assembly diverges at one instruction, and it is in the
+property read, not the initialization:
+
+```asm
+    mov rax, [rax + 8]  ; buffer length/size    <- the control
+    call _file_size                             <- the one-step declaration
+```
+
+`Expr::PropertyAccess`'s `Size` arm (`src/codegen/expr.rs:1076-1089`)
+branches on `self.variable_types.get(object)`; anything that is not a
+Buffer, List or Map falls through to the file fallback `_file_size`,
+which is handed a buffer pointer as a file descriptor and returns `-1`.
+`Print` dispatches on the same table and rendered the buffer *header* as
+a C string — an empty line, because the capacity's low byte is `0`.
+
+The type was correct when the declaration was read and wrong a few lines
+later. `Statement::VarDecl` (`src/codegen/statements.rs:313-338`) writes
+the declared type into `variable_types` — `Type::Buffer` → `VarType::Buffer`.
+The block that follows (`:402-551`) then re-reads the type off the
+*initializer's shape*, for names that have no declared type of their own,
+and one of its arms is a list of every argument and environment spelling:
+
+```rust
+// Argument/environment expressions return string pointers
+else if matches!(val,
+    Expr::ArgumentAt { .. } | Expr::ArgumentName | Expr::ArgumentFirst |
+    Expr::ArgumentSecond | Expr::ArgumentLast |
+    Expr::EnvironmentVariable { .. } | Expr::EnvironmentVariableAt { .. } |
+    Expr::EnvironmentVariableFirst | Expr::EnvironmentVariableLast
+) {
+    self.variable_types.insert(name.clone(), VarType::String);
+}
+```
+
+It is right about the expression — these do return string pointers — and
+that is exactly the trap. The initializer's type is not the variable's
+type when the variable was declared; here it overwrote `Buffer` with
+`String` unconditionally.
+
+**Why the neighbours were safe, which is what names the missing guard.**
+The arm below it, which inherits a type from a source *variable*, is
+guarded — `var_type.is_none() || matches!(var_type, Some(Type::List(_)))`
+— so the two-step control never entered it and never lost its type. The
+bare-assignment arm at `:738-740` carries the guard in its other spelling,
+`self.variable_types.get(name) != Some(&VarType::Buffer)`. Only the
+declare-with-initializer arm had none. A string literal and a format
+string are not in any of these arms at all, which is why `a buffer called
+b is "alpha".` and `a buffer called b is "{arguments's first}".` — #52's
+territory — were always correct.
+
+**Why `Set` was worse than a wrong answer.** `Set b to <property>` on a
+name with no declared type of its own routes through this same `VarDecl`
+arm. Twenty lines further down, the decision to treat the destination as a
+buffer at all is read back out of the table this arm just corrupted:
+
+```rust
+let is_buffer_target = matches!(var_type, Some(Type::Buffer))
+    || self.variable_types.get(name) == Some(&VarType::Buffer);
+```
+
+With `var_type` `None` (an assignment declares nothing) and the table now
+saying `String`, `is_buffer_target` is false, so the assignment stopped
+copying bytes into the buffer struct and stored the raw `argv`/`environ`
+pointer straight over the buffer pointer. The declared 64-byte buffer was
+still allocated, and nothing pointed at it any more. From there every
+buffer operation was aimed at the process's own argument block:
+`capacity` read the argument's first eight bytes as an integer
+(`7305401963912391777` — the eight bytes `alpha\0be`, read little-endian), the bounds
+check in `Set byte N of b` compared against that number and passed
+everything, and the write landed at `argv[1] + 24`. With three arguments
+`aaaa bbbb…bbbb cccc`, `Set byte 1 of b to 'X'` on `main` left the
+*second* argument reading `bbbbbbbbbbbbbbbbbbbX`. A large position
+segfaulted (139).
+
+**Fix.** `src/codegen/statements.rs`: the initializer-shape inference
+block is now skipped when the name is already a buffer —
+`self.variable_types.get(name) != Some(&VarType::Buffer)`, the guard the
+bare-assignment arm beside it already used. Reading the *current* type
+rather than the declaration's `var_type` is what covers the `Set b to ...`
+and `the b is ...` spellings, which route through `VarDecl` carrying no
+declared type of their own; an explicit declaration has already written
+its own type into the table above this point, so a later `a text called b
+is ...` still re-types freely and Type Immutability's real enforcement,
+in the analyzer, is untouched. No runtime change was needed: the copy was
+always emitted correctly.
+
+**Checked and found sound, recorded not fixed:** `append <property> to
+<buffer>` has no such hole because it has no such form. `append
+arguments's first to joined.` is a parse error (`Expected value to
+append`), and the two-step `append <text variable> to <buffer>` is
+rejected by the analyzer (`Buffer append requires a buffer source`).
+Both spellings LANGUAGE.md:3383-3389 does document — `append "literal"
+to b` and `append "{arguments's first}" to b` — go through the format-part
+sink #52 fixed, and both are correct. The rejection is uniform for a
+property and for a plain text variable, so nothing here is
+property-specific.
+
+**Not this bug's family, left alone:** `b's capacity` on an *unsized*
+buffer reports `4096` where the declaration's allocation request was
+`1024`. That is `_alloc_buffer` rounding to a page and is the same before
+and after this fix, for every unsized buffer however it is initialized.
+
+---
+
 ### 59. A `treating` clause on a mixed-list loop variable prints a pointer, matched or mismatched (wrong value; family of #44/#45)
 
 **Status:** **open**, found 2026-08-21 by the #55 fix worker (REPORT-55,
