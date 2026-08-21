@@ -1,0 +1,5 @@
+(a comment that runs
+across several lines and
+mentions hello on the way)
+a list called items is [].
+append hello to items.

@@ -1,0 +1,9 @@
+(Bug #38: `exists` was documented as a file property at LANGUAGE.md:3427
+ but the parser never accepted it, only ever raising the generic "Expected
+ property name, got Exists" error. The docs half of the fix removed the
+ row; this half makes the parse error explain why `exists` is not a
+ property to begin with and points at the `On error` idiom that answers
+ the real question.)
+
+open a file for reading called h at "/tmp/f.txt".
+Print h's exists.

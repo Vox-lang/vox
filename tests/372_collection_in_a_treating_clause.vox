@@ -1,0 +1,17 @@
+(Regression test for bug #44: a `treating` clause's replacement is a
+ string value, and LANGUAGE.md's "Format Strings Everywhere" lists
+ `treating` clauses among the sinks that accept a format string. A
+ `{list}` or `{map}` replacement substituted the collection's heap address
+ in decimal instead of its rendering.
+
+ Acceptance: the substituted iterations read like the Print controls, and
+ the iterations that do NOT match are untouched.)
+
+a list called flat is [1, 2, 3].
+a map called person is {"name": "Ada", "born": 1815}.
+
+Print "{flat}".
+print each token from ["-", "kept"] treating "-" as "{flat}".
+
+Print "{person}".
+print each token from ["-", "kept"] treating "-" as "{person}".

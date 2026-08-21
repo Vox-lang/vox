@@ -782,6 +782,33 @@ ping.
 Print 'add numbers' of x and y.
 ```
 
+### Reading a result
+
+`Return a <type>,` is optional in the grammar, but it decides where the
+result may be read. A declared return type travels to every call site, so
+the result can be printed, interpolated, stored in a list or map slot, or
+put in a `value` — each of those reads it back as what it is.
+
+A result with **no** declared return type has nothing to be read as, and
+the compiler will not guess: it is accepted only where the position itself
+supplies the type, and refused where nothing does.
+
+```vox fragment
+To 'opaque label'. Return "hi".
+
+a text called saved is 'opaque label'.   (fine — the declaration says text)
+print saved.                             (prints: hi)
+
+print 'opaque label'.                    (compile error: no declared return type)
+```
+
+Positions that supply a type: a declared variable's declaration, a later
+assignment to one, and an argument landing on a declared parameter. Every
+other position — `print <call>`, a `{...}` interpolation, `append`, a list
+literal slot, `set element`, a map value, a `value` declaration — needs the
+return type declared. See
+[Mixed-Type Lists](#mixed-type-lists) for what the guess used to cost.
+
 ---
 
 ## Things
@@ -1925,6 +1952,17 @@ promise format strings make (see "Format Strings as Values"). This
 matters because resizing frees the buffer's old allocation: without the
 copy, reading such a text would be reading freed memory.
 
+**The cast is optional for this one conversion.** Every spelling that puts
+a buffer into a slot that holds text means the same thing and makes the
+same copy — `a text called line is data.`, `Set line to data.`, `the line
+is data.`, a `text` parameter given a buffer argument, and `Return a text,
+data.` — as do `data as text` and `"{data}"`. Writing the cast is still
+good style where the type change is worth pointing at, but leaving it out
+never changes what the sentence does. This does not loosen type
+immutability: `line` is text before the write and text after it, and every
+*other* mismatched write is still the compile error described under "Type
+Immutability".
+
 **Radix (Base) Conversions:**
 
 Text-to-number casting isn't limited to base 10. A radix word can be
@@ -2238,22 +2276,17 @@ Appending, `set element`, `element N of`, `first`/`last`, iteration, and
 Booleans print as `1`/`0`, matching homogeneous boolean lists.
 
 The compiler earns the homogeneous fast path by **proof**, not assumption.
-A value whose type it cannot statically prove — for example the result of a
-function with an undeclared return type, or any other opaque expression —
-widens the list to mixed, so reads dispatch on each slot's runtime tag
-rather than on one assumed type. What that tag *says* is only as good as
-what the compiler could prove at the write: for a genuinely opaque value
-it is a conservative `number` guess (see the limitation below), so an
-opaque value that is **not** a number is still reinterpreted — an
-undeclared-return-type function returning a text lands in the slot tagged
-as a number and reads back as a raw address rather than as its text.
-Declare the return type and the slot carries the right tag:
+A value whose type it cannot statically prove widens the list to mixed, so
+reads dispatch on each slot's runtime tag rather than on one assumed type.
+A [`value`](#dynamic-values-value) is the everyday case: its type travels
+with its payload as a runtime tag, so the slot is written with the type the
+payload actually has, whatever that turns out to be.
 
 ```
-To five with a number called x. Return x add 1.
+a value called tally is 5.
 a list called items is [].
 append "hello" to items.
-append five of 4 to items.
+append tally to items.
 print element 1 of items.   (prints: hello)
 print element 2 of items.   (prints: 5)
 ```
@@ -2262,11 +2295,32 @@ A function result whose return type **is** declared (e.g. `Return a text,
 "hi".`) is statically known, so it is tagged with that type at the write
 and widens the list only because its type differs from the other elements.
 
-Residual limitation: for a genuinely opaque value (no declared return
-type), the slot's own tag may still be a conservative `TAG_INTEGER` guess
-until runtime tag propagation arrives in stage 1d; the list still widens
-and reads dispatch on tags, so the value prints correctly when it really
-is a number. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+A function whose return type is **not** declared is the one thing a slot
+cannot be written from. Nothing proves what the result is, and nothing
+carries a tag for it either, so the write would have to guess — and a
+returned text stored under a guessed `number` tag reads back as the raw
+address of its bytes, which is the silent wrong answer the 0.3.0
+identifier/literal split exists to prevent (see
+[Names and strings](#names-and-strings)). So it is refused at compile time
+rather than guessed, and the error names both ways out: declare the return
+type, or assign the result to a declared variable and append that.
+
+```
+To five with a number called x. Return x add 1.
+a list called items is [].
+append five of 4 to items.   (compile error: 'five' has no declared return type)
+```
+
+The same rule holds everywhere else a result lands with no type of its own
+— `print <call>`, a `{...}` interpolation, a list literal slot, `set
+element`, a map value, and a `value` declaration. A position that *does*
+supply a type is unaffected: a declared variable, a later assignment to
+one, and an argument landing on a declared parameter all read a result back
+as what the declaration says it is.
+
+Full runtime tag propagation, which would let an opaque call carry its own
+tag the way a `value` does, is stage 1d — see
+`docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
 ### Nested Lists
 
@@ -3424,7 +3478,6 @@ On error print "Index out of bounds!".
 | `modified` | Last modification time (Unix timestamp) | Number |
 | `accessed` | Last access time (Unix timestamp) | Number |
 | `permissions` | File permission bits (e.g., 0644) | Number |
-| `exists` | Whether the file exists | Boolean |
 
 **Example:**
 ```
@@ -3436,6 +3489,29 @@ print src's modified.
 If src's size is greater than 1048576 then,
     print "File is larger than 1MB".
 ```
+
+**Checking whether a file exists.** There is no `exists` property: every
+property above describes a handle that is already open, and a file that
+did not exist could not have been opened, so `exists` on a handle would
+be trivially `true` and answer nothing. The question worth asking —
+"can this path be opened?" — is answered by opening it and catching the
+failure with `On error`, the same pattern used for every other file
+operation that can fail:
+
+```
+open a file for reading called present at "./data.txt".
+On error print "data.txt: cannot be opened".
+If present's descriptor is greater than -1 then,
+    print "data.txt: exists".
+
+open a file for reading called missing at "./no-such-file.txt".
+On error print "no-such-file.txt: cannot be opened".
+```
+→ `data.txt: exists` then `no-such-file.txt: cannot be opened`
+
+A path-level `exists` predicate — asked before opening, with no handle
+involved — is a planned future addition; today the `On error` idiom
+above is how a program finds out.
 
 #### List Properties
 

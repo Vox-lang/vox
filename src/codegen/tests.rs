@@ -290,22 +290,25 @@
     }
 
     #[test]
-    fn undeclared_return_function_append_widens() {
-        // Acceptance criterion 3: a function with an undeclared return type
-        // (`Return x add 1.` — no `a number,` prefix) is genuinely opaque to
-        // the compiler, so appending its result widens the list to Mixed and
-        // reads dispatch on tags (the flip from 1a's optimistic default).
+    fn unknowable_value_append_widens() {
+        // Acceptance criterion 3: a `value` is genuinely opaque to the
+        // compiler — its type travels with its payload as a runtime tag, not
+        // as anything this pass can prove — so appending one widens the list
+        // to Mixed and reads dispatch on tags (the flip from 1a's optimistic
+        // default). Written on an undeclared-return function until bug #45
+        // made that append a compile error; a `value` is the same opacity
+        // with the tag actually carried.
         let asm = compile_to_asm(
-            "To five with a number called x.\n  Return x add 1.\n\
+            "a value called tally is 5.\n\
              a list called items is [].\n\
              append \"hello\" to items.\n\
-             append five of 4 to items.\n\
+             append tally to items.\n\
              print element 1 of items.\n\
              print element 2 of items.\n",
         );
         assert!(
             asm.contains("mixp_"),
-            "an unknowable (undeclared-return) append must widen the list to Mixed"
+            "an unknowable (value) append must widen the list to Mixed"
         );
     }
 
@@ -436,7 +439,7 @@ To makebuf.\n  Create a buffer called b.\n  Append \"hello\" to b.\n  Return b's
         // version script does not export.
         let src = "\
 Library mathkit version \"1.0\".\n\
-To double with a number called n.\n  Return n add n.\n\
+To double with a number called n.\n  Return a number, n add n.\n\
 To run.\n  Print double of 21.\n";
         let asm = compile_to_asm_shared(src);
         assert!(
@@ -844,7 +847,7 @@ To c. Return a number, 3.\n";
         // name, no library prefix, no `:function` export.
         let src = "\
 To greet.\n  Print \"hi\".\n\
-To double with a number called n.\n  Return n add n.\n\
+To double with a number called n.\n  Return a number, n add n.\n\
 To run.\n  Print double of 21.\n";
         let asm = compile_to_asm(src);
         assert!(
@@ -2254,5 +2257,79 @@ Otherwise, a number called s is 1, append s to out.\n";
             "the destination buffer is reloaded into rdi between resolving \
              the argument and appending it: {}",
             &asm[resolved_at..appended_at]
+        );
+    }
+
+    // ---- Bug #44: a collection renders through one renderer in every sink ----
+
+    #[test]
+    fn list_in_a_text_initializer_routes_to_the_shared_renderer() {
+        // The buffer sinks must reach `_list_print` through the redirection,
+        // never the integer formatter - that fallthrough is what put the
+        // list's heap address into the text (docs/BUGS_FOUND.md #44).
+        let asm = compile_to_asm(
+            "a list called flat is [1, 2, 3].\n\
+             a text called captured is \"{flat}\".\n\
+             print captured.\n",
+        );
+        assert!(
+            asm.contains("call _list_render_to_buffer"),
+            "a list in a text initializer must render through \
+             _list_render_to_buffer: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_formatted_int"),
+            "a list part must never reach the integer formatter: {}",
+            asm
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/list.asm\""),
+            "rendering a list into a buffer must include list.asm"
+        );
+    }
+
+    #[test]
+    fn map_in_a_buffer_copy_routes_to_the_shared_renderer() {
+        let asm = compile_to_asm(
+            "a map called person is {\"name\": \"Ada\"}.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             copy \"{person}\" to sink.\n\
+             print sink.\n",
+        );
+        assert!(
+            asm.contains("call _map_render_to_buffer"),
+            "a map copied into a buffer must render through \
+             _map_render_to_buffer: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_formatted_int"),
+            "a map part must never reach the integer formatter: {}",
+            asm
+        );
+    }
+
+    #[test]
+    fn quoted_list_name_in_print_routes_to_list_print() {
+        // `{'the running total'}` parses as an expression, not a variable
+        // part, so it lands in Print's expression arm - which had a Map case
+        // and no List one, and emitted PRINT_INT on the list pointer
+        // (docs/BUGS_FOUND.md #44).
+        let asm = compile_to_asm(
+            "a list called 'the running total' is [1, 2].\n\
+             print \"{'the running total'}\".\n",
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "a quoted list name in a format string must render through \
+             _list_print: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("PRINT_INT rdi"),
+            "a quoted list name must not print the list pointer as an \
+             integer: {}",
+            asm
         );
     }

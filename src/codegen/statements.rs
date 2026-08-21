@@ -349,6 +349,25 @@ impl CodeGenerator {
                 }
                 
                 if let Some(val) = value {
+                    // Is this write landing in a slot that holds TEXT? Read
+                    // before the type-inference arms below run, so it reflects
+                    // the destination's own type rather than the initializer's
+                    // shape. Covers the declaration (`a text called t is b.`,
+                    // whose type the block above has just recorded) and the
+                    // bare-assignment spellings (`Set t to b.` / `the t is b.`,
+                    // which arrive with no declared type of their own).
+                    let is_text_target = matches!(var_type, Some(Type::String))
+                        || (var_type.is_none()
+                            && self.variable_types.get(name) == Some(&VarType::String));
+                    // A buffer written into a text is a CONVERSION, not a
+                    // retype: the text keeps its type and takes a copy of the
+                    // buffer's bytes (BUGS_FOUND #51, the language owner's
+                    // ruling — the bare spelling means what `as text` means).
+                    // The inference arms below must therefore not read the
+                    // initializer's shape and relabel the name a buffer, which
+                    // is the same trap #58's buffer guard closes one line down.
+                    let is_text_from_buffer = is_text_target
+                        && matches!(self.infer_expr_type(val), Some(VarType::Buffer));
                     // A declared `value` (Mixed) carries its runtime type in a
                     // shadow tag slot (local) or BSS tag byte (global), dispatched
                     // on at every read. Demoting it to a concrete type from the
@@ -402,7 +421,7 @@ impl CodeGenerator {
                     // later `a text called b is ...` still re-types freely.
                     let is_buffer_var = self.variable_types.get(name) == Some(&VarType::Buffer);
                     // Track list type and element type for lists
-                    if !is_value_var && !is_buffer_var {
+                    if !is_value_var && !is_buffer_var && !is_text_from_buffer {
                         if let Expr::ListLit { elements } = val {
                         self.variable_types.insert(name.clone(), VarType::List);
                         // A nested map-literal element makes this a list-of-maps;
@@ -633,7 +652,14 @@ impl CodeGenerator {
                             }
                         }
                     } else {
-                        self.generate_expr(val);
+                        // A text slot takes a copy of a buffer source, never
+                        // the buffer's struct pointer (#51); every other source
+                        // generates exactly as before.
+                        if is_text_target {
+                            self.generate_expr_as_text(val);
+                        } else {
+                            self.generate_expr(val);
+                        }
                         self.emit_store_rax_to_target(&target, &format!("{}", name));
                         // A declared `value` stores its runtime tag alongside
                         // the payload, in whichever storage (local shadow
@@ -779,7 +805,14 @@ impl CodeGenerator {
                             self.emit_append_runtime_value_to_buffer_slot(offset, self.infer_expr_type(value), fmt_spec);
                         }
                     } else {
-                        self.generate_expr(value);
+                        // `Set t to b.` / `the t is b.` on a text local copies
+                        // the buffer's bytes, exactly as `t is b as text.`
+                        // does (#51); every other source is unchanged.
+                        if self.variable_types.get(name) == Some(&VarType::String) {
+                            self.generate_expr_as_text(value);
+                        } else {
+                            self.generate_expr(value);
+                        }
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                         // Reassigning a `value` local must update its shadow tag
                         // slot too, or the runtime tag would go stale.
@@ -814,7 +847,12 @@ impl CodeGenerator {
                             );
                         }
                     } else {
-                        self.generate_expr(value);
+                        // The global mirror of the text-takes-a-copy rule above.
+                        if self.variable_types.get(name) == Some(&VarType::String) {
+                            self.generate_expr_as_text(value);
+                        } else {
+                            self.generate_expr(value);
+                        }
                         self.emit_indent(
                             &format!("mov [rel {}], rax", label));
                         // A top-level `value` keeps its runtime tag paired
@@ -1060,7 +1098,15 @@ impl CodeGenerator {
 
             Statement::Return { value, .. } => {
                 if let Some(v) = value {
-                    self.generate_expr(v); // leaves return payload in RAX
+                    // `Return a text, b.` hands back a copy of the buffer's
+                    // bytes, not its struct pointer (#51) - and a copy is the
+                    // only safe thing to return anyway, since a buffer local
+                    // to this frame does not outlive it.
+                    if self.current_function_return_type == Some(Type::String) {
+                        self.generate_expr_as_text(v);
+                    } else {
+                        self.generate_expr(v); // leaves return payload in RAX
+                    }
                     // A `value` return carries its runtime tag in r11 for the
                     // caller. Load it AFTER generate_expr (which leaves r11=tag
                     // for fresh reads / value-returning calls, or nothing for a

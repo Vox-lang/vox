@@ -1,4 +1,5 @@
 use super::*;
+use super::untyped_returns::UntypedPosition;
 
 /// A short, human-readable name for a statement kind, used in the shared-mode
 /// top-level diagnostic. Only called for statements that are NOT one of the
@@ -169,7 +170,7 @@ impl Analyzer {
                 Statement::LibraryDecl { name, version } => {
                     current_lib = Some((name.clone(), version.clone()));
                 }
-                Statement::FunctionDef { name, params, return_type, .. } => {
+                Statement::FunctionDef { name, params, return_type, body, .. } => {
                     let key = crate::codegen::make_function_label(
                         self.shared_mode,
                         current_lib.as_ref(),
@@ -181,7 +182,12 @@ impl Analyzer {
                     // call to a function defined further down the file still
                     // knows whether an argument is a thing to copy.
                     self.function_signatures
-                        .insert(key, (params.clone(), return_type.clone()));
+                        .insert(key.clone(), (params.clone(), return_type.clone()));
+                    // Bug #45: whether the result of a call has a type to
+                    // read is settled here too, for the same reason - a call
+                    // above the definition must be judged the same as one
+                    // below it.
+                    self.record_untyped_result_function(key, return_type, body);
                 }
                 Statement::FlagSchemaDecl { name, value_type, .. } => {
                     self.flag_variables.insert(
@@ -412,7 +418,12 @@ impl Analyzer {
                         self.deps.uses_strings = true;
                         self.analyze_format_parts(parts, true);
                     }
-                    _ => self.analyze_printed_expr(value),
+                    _ => {
+                        self.analyze_printed_expr(value);
+                        // Bug #45: `print 'opaque label'.` has no type to
+                        // print the result AS.
+                        self.reject_untyped_call_result(value, UntypedPosition::Print);
+                    }
                 }
 
                 if matches!(value, Expr::StringLit(_)) {
@@ -441,6 +452,21 @@ impl Analyzer {
                         }
                     }
                 }
+                // Bug #45: a `value` is the one declared type that supplies
+                // no static type - it carries the payload's type as a runtime
+                // tag, set from whatever was proven at the write. An
+                // undeclared return type proves nothing, so the tag would be
+                // the conservative "number" guess and the payload a text.
+                // Both the declaration and a later `Set v to <call>` write
+                // that tag, so both are checked.
+                let writes_a_dynamic_value = matches!(var_type, Some(Type::Value))
+                    || (var_type.is_none() && self.value_typed_names.contains(name));
+                if writes_a_dynamic_value {
+                    if let Some(v) = value {
+                        self.reject_untyped_call_result(v, UntypedPosition::DynamicValue);
+                    }
+                }
+
                 // `Set x to <value>.` / `Create x to <value>.` parse into
                 // this same statement with `var_type: None` regardless of
                 // whether `x` is brand-new or already exists (no explicit
@@ -1352,6 +1378,7 @@ impl Analyzer {
                 self.track_identifier(list);
                 self.analyze_expr(index);
                 self.analyze_expr(value);
+                self.reject_untyped_call_result(value, UntypedPosition::ListElement);
 
                 if !self.is_variable_available(list) {
                     self.push_error(format!("Unknown list: {}", list), Some(list));
@@ -1370,6 +1397,7 @@ impl Analyzer {
                 self.track_identifier(map);
                 self.analyze_expr(key);
                 self.analyze_expr(value);
+                self.reject_untyped_call_result(value, UntypedPosition::MapValue);
 
                 if !self.is_variable_available(map) {
                     self.push_error(format!("Unknown map: {}", map), Some(map));
@@ -1418,7 +1446,10 @@ impl Analyzer {
                         }
                     }
                 } else if self.is_list_variable(list) {
-                    // Valid list append path.
+                    // Valid list append path - except for bug #45's slot: the
+                    // element's tag is written from the type proven here, and
+                    // an undeclared return type proves nothing.
+                    self.reject_untyped_call_result(value, UntypedPosition::ListAppend);
                 } else if !self.is_variable_available(list) {
                     self.push_error(format!("Unknown variable: {}", list), Some(list));
                 } else {

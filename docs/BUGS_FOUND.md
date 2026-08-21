@@ -2109,9 +2109,25 @@ matrix above only covers the three modes LANGUAGE.md documents.
 
 ### 38. The documented file property `exists` is a parse error
 
-**Status:** **open**, found 2026-08-20 against released v0.4.6 by the
+**Status:** **fixed**, found 2026-08-20 against released v0.4.6 by the
 red-team agent on the file-property surface, alongside #37. Reproduced
 by the master, who tested the whole table rather than the one property.
+Closed 2026-08-21 by master ruling (with the language designer's
+delegated judgment): **option 3** below — the row is removed and
+LANGUAGE.md now documents the existing `On error` idiom in its place,
+with a worked example covering both an existing and a missing path.
+Option 2 (a path-level `exists` predicate) is noted in the manual as a
+planned future addition rather than implemented now: it is a genuine new
+feature, and features wait until the fuzzer runs autonomously. The parse
+error itself — `Expected property name, got Exists` — is now a specific
+diagnostic naming the idiom, raised unconditionally whenever `exists`
+appears in property position (the parser tracks no per-variable type at
+that site to gate on "is this actually a file handle", but `exists` has
+no valid meaning for any other object type either, so the unconditional
+reading is correct). Regression tests:
+`tests/compile_fail/141_file_handle_exists_property.vox` (the
+diagnostic) and `tests/390_file_exists_idiom.vox` (the documented
+idiom).
 
 ```vox
 open a file for reading called h at "/tmp/f.txt".
@@ -2641,9 +2657,12 @@ a language decision and it belongs to whoever owns the spec.
 
 ### 51. A text initialised from a buffer WITHOUT the cast (`a text called t is b.`) points at the buffer's header and prints its capacity byte
 
-**Status:** **open**, found 2026-08-20 by the vox-41 fix worker probing
-sibling forms of bug #41. Silent wrong data: one character where a whole
-line of text was expected, with no warning and no error.
+**Status:** **fixed** (this branch), found 2026-08-20 by the vox-41 fix
+worker probing sibling forms of bug #41. Silent wrong data: one character
+where a whole line of text was expected, with no warning and no error.
+Adjudicated by the language designer (TheJostler, 2026-08-21), who ruled
+**option 1, copy**: helpful by default — the bare spelling means what `as
+text` means and what `"{b}"` has meant since v0.1.17.
 
 ```vox
 a buffer called b is 64 bytes in size.
@@ -2692,7 +2711,7 @@ load-bearing.
 fix, and `"{b}"` has been correct since v0.1.17. Only the cast-free
 initializer is affected.
 
-**Fix options — a human decides which:**
+**Fix options — a human decided between them:**
 
 1. **Copy, like `as text` now does.** Route the bare `is <buffer>`
    initializer through the same copy the cast emits, so both spellings
@@ -2706,6 +2725,89 @@ initializer is affected.
 
 Either is defensible; what is not defensible is the current third
 option, which is to silently print the capacity.
+
+**The ruling: option 1, copy.** The designer's reason is "helpful by
+default" — the sentence already reads as a conversion to anyone who wrote
+it, and refusing it would demand a cast that does not change what the
+sentence means. It sits comfortably with what the manual already says.
+The Basic Conversions table (LANGUAGE.md:1918) gives `buffer → text`
+exactly one meaning, "a copy of the buffer's bytes", added by the #41 fix
+and not qualified by which spelling asks for it. Type immutability
+(:531-532: "**A variable's type is fixed at its declaration and never
+changes**", and every write to an already-declared name is checked
+against that type) is untouched, because this is a *conversion into* a
+text and not a *retype of* one: `t` is text before the write and text
+after. And :3347-3351 ("Creating buffer from string") already reads a
+cross-type initializer the same way in the other direction — `a buffer
+called buf is "Hello".` copies the text's bytes into the buffer rather
+than retyping `buf`.
+
+**The sibling write sites, all of which had the same defect.** The
+register found the declaration; the fix worker found four more ways to
+land a cast-free buffer in a text slot, and every one of them stored the
+struct pointer:
+
+| spelling | before | after |
+|---|---|---|
+| `a text called t is b.` | `@` | `first` |
+| `Set t to b.` | *compile error naming the cast* | `first` |
+| `the t is b.` | *compile error naming the cast* | `first` |
+| `'show it' with b.` (a `text` parameter) | `@` | `first` |
+| `Return a text, b.` | `@` | `first` |
+
+An empty buffer showed it too: `a buffer called untouched is 32 bytes in
+size.` converted to a text that printed as a single space, 0x20 being a
+32-byte capacity's low byte. There was never a case that did not read the
+header — only cases whose header byte happened to be printable.
+
+The two assignment spellings were refused rather than wrong, by the type
+lock in `src/analyzer/types.rs` (`check_type_lock`) — which is option 2
+already implemented, at two of the five sites, while the other three were
+silently wrong. Under the ruling they convert like the rest, so the lock
+now returns "allow" for a buffer flowing into a text and leaves the
+conversion to codegen. Nothing else about the lock moves: every other
+mismatched write is still an error, and `nothing` into a text is still
+bug #57's error.
+
+**Fix.** The copy sequence the cast emitted inline is now
+`emit_buffer_to_text_copy` (`src/codegen/buffers.rs`) — one function,
+called by the cast and by every cast-free site through the thin wrapper
+`generate_expr_as_text` (generate the expression; if it is a buffer,
+copy). The five sites reach it from `Statement::VarDecl` and
+`Statement::Assignment` (`src/codegen/statements.rs`, both the local-slot
+and global-mirror branches), `Statement::Return` (guarded by the
+function's declared return type), and `emit_function_call`
+(`src/codegen/functions.rs`, guarded by the parameter's declared type).
+Writing the copy a second time per site is the mistake #58 was: two
+spellings of one idea drift apart exactly where nobody looks.
+
+The `VarDecl` arm needed one more guard, composed with #58's rather than
+fighting it. That arm infers a name's type from its initializer's shape,
+and #58 taught it to skip a name already typed buffer; a buffer
+initializer flowing into a *text* is the mirror image, and without the
+same skip `Set t to b.` would have relabelled `t` a buffer — turning a
+conversion back into the retype the ruling says it is not.
+`tests/387_...` prints `t's type` for exactly this reason.
+
+**Tests.** `tests/385_text_from_buffer_copies.vox` (the register's repro
+at 64 and 65 bytes, so the old answer's dependence on the capacity field
+is what fails; the `as text` and `"{b}"` controls; and an empty buffer,
+which must give empty text rather than a header read),
+`386_text_from_buffer_at_every_write_site.vox` (the four siblings), and
+`387_text_from_buffer_is_an_independent_copy.vox` (#41's class through
+#51's spelling: clear-and-refill and then resize the buffer, and the text
+must not move — the resize being the half that would otherwise be a
+use-after-free — plus the type check above and a frame-local copy inside
+a function, which is a different store in codegen). All three fail on
+`origin/main`.
+
+**Also true on this branch, and NOT fixed here:** `a text called n is 5.`
+compiles and segfaults. The declaration path has no type check at all —
+the type lock above only guards *writes to an already-declared name* — so
+a number initializer lands in a text slot and the first read dereferences
+`5`. It is a different bug from this one (this entry is about a
+conversion the language defines; that is about a mismatch it does not),
+it is outside this branch's brief, and it wants its own register entry.
 
 ---
 
@@ -2836,8 +2938,31 @@ adjudicated by the language lawyer.
 
 ### 44. `{list}` / `{map}` in a format string renders correctly only in `Print` position — everywhere else it prints a raw heap address
 
-**Status:** **open**, found 2026-08-20 by the vox-fuzz collections-a claim
-ledger (discrepancy D7) and adjudicated by the language lawyer.
+**Status:** **fixed** (unreleased, on top of 0.4.8). The reading taken is
+**render everywhere**, on LANGUAGE.md:3133-3136 and :3157-3163 (see "What
+the spec promises" below) — a list or map now renders through the SAME
+routine `Print` uses in every sink. Regression tests
+`tests/368_collection_in_a_text_initializer.vox`,
+`tests/369_collection_in_the_buffer_sinks.vox`,
+`tests/370_collection_written_to_a_file.vox`,
+`tests/371_collection_as_a_function_argument.vox`,
+`tests/372_collection_in_a_treating_clause.vox` and
+`tests/373_quoted_list_name_in_a_format_string.vox`, all six proven to
+print heap addresses on unfixed `main` and to pass after, each stable over
+three consecutive runs. Found 2026-08-20 by the vox-fuzz collections-a
+claim ledger (discrepancy D7) and adjudicated by the language lawyer.
+
+**One more sink than the entry knew about.** `{'the running total'}` — a
+`{name}` whose name is QUOTED — and a bare list literal `{[1, 2]}` do not
+parse as `FormatPart::Variable` at all: `parse_format_string`
+(`src/parser/expressions.rs:564`) hands anything `try_parse_expression`
+accepts to `FormatPart::Expression`. Print's expression arm carried a
+`Map` case from stage 1e2 and never a `List` one, so those two spellings
+printed a heap address **in Print position too** — the one position this
+entry reported as working. Fixing only the sinks below would have inverted
+the bug, leaving `Print` the sole sink still wrong for a quoted list name.
+`src/codegen/print.rs` gained the list twin of that map arm; test 373 is
+that case.
 
 ```vox
 a list called flat is [1, 2, 3].
@@ -2912,27 +3037,68 @@ LANGUAGE.md:649-660 says the 0.3.0 identifier/literal split was designed to
 eliminate. It costs a false nondeterminism finding on top of the wrong
 answer.
 
-**Fix direction.** At minimum, reject like a thing: a `List` or `Map` in a
-non-print format sink becomes a compile error in the :1224-1227 register
-("only `Print` can interpolate a whole list — print it directly, or
-interpolate an element"). In full, close the duplication rather than paper
-over it: give `emit_append_runtime_value_to_buffer_ptr` `List`/`Map` arms
-that render through a `_list_print`/`_map_print`-to-buffer variant, so a
-collection renders identically in every sink and :3054-3056 becomes true as
-written.
+**The fix — render everywhere, through one renderer.** The two readings on
+offer were *render* (:3133-3136 and :3157-3163, which promise a format
+string materialises into a string and that every string-taking statement
+accepts one, neither with a type restriction) and *refuse like a thing*
+(:1224-1227, where a whole `point` in a text initializer is a compile
+error). Render wins, and the `thing` precedent is not evidence against it:
+a `thing` has no runtime renderer at all — `emit_thing_print` writes its
+fields out at COMPILE time from a layout the compiler knows and the
+program does not carry, so there is nothing for a runtime sink to call. A
+list and a map each have `_list_print` / `_map_print` sitting in the
+runtime already. The manual refuses the thing because it cannot be done,
+not because an aggregate ought to be refused.
+
+So the renderer was redirected rather than copied. `_list_print` and
+`_map_print` now emit through `RENDER_*` macros (`coreasm/x86_64/io.asm`)
+instead of `PRINT_*`: with the new `_render_sink` (`core.asm`) at zero the
+bytes go to stdout, instruction for instruction, as before; with it
+holding a buffer pointer the same bytes are appended to that buffer, the
+possibly-reallocated pointer stored back each time.
+`_list_render_to_buffer` / `_map_render_to_buffer` are eight-line
+redirections that set the sink, call the very routine `Print` calls, and
+return the buffer — the `_buffer_append` / `_buffer_append_float`
+contract, so the two new arms in
+`emit_append_runtime_value_to_buffer_ptr` sit beside the Float arm as
+equals. Every sink named at :3157-3163 goes through that one function, so
+the text initializer, `set`/`copy`/`append`, `write`, filesystem paths,
+`treating` clauses and function arguments were all fixed by those two
+arms; nothing renders per sink.
+
+Because the redirection is the renderer itself, the awkward cases come
+free and identical in both sinks: nested lists, an empty list or map, a
+mixed list's quoted strings and floats, a map holding a list, and a cyclic
+list — which truncates at the shared 64-deep `_print_depth` budget and
+writes the same `...` marker into a buffer that it writes to stdout. A
+fixed-size buffer too small for the rendering truncates through
+`_buffer_append_bytes`'s existing fixed-buffer path and sets the error
+flag, rather than growing or faulting.
+
+Refusing like a thing was the fallback if the render path could not be
+unified. It could, so it was not taken, and a `thing` in a text
+initializer is still the compile error :1224-1227 documents
+(`tests/compile_fail/thing_interpolated_into_text.vox`, unchanged).
+
+**Line numbers.** The two format-string citations above have shifted since
+this entry was written: :3054-3056 is now :3133-3136 and :3081 is now
+:3157-3163. The `thing` precedent is still at :1224-1227.
 
 **Not affected today:** no vox-fuzz leaf emits a collection slot in a
 non-print sink — `gen leaf format types` builds its `{hl{n}}` and `{hm{n}}`
-slots into `Print` statements only. The corpus is clean, and the first leaf
-worker to add one would make its output wander.
+slots into `Print` statements only. The corpus was clean, and with this
+fix a leaf worker adding one gets stable output instead of a false
+nondeterminism finding; a quoted collection name in a `Print` slot is now
+safe to emit too.
 
 ---
 
 ### 45. A function with no declared return type is read back as an integer wherever its result lands untyped
 
-**Status:** **open**, found 2026-08-20 by the vox-fuzz collections-a claim
-ledger (discrepancy D5) and adjudicated by the language lawyer, who found
-the defect is broader than the mixed-list case the ledger reported.
+**Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
+collections-a claim ledger (discrepancy D5) and adjudicated by the language
+lawyer, who found the defect is broader than the mixed-list case the ledger
+reported.
 
 ```vox
 To 'opaque label'. Return "hi".
@@ -2993,12 +3159,107 @@ language's own stated philosophy rules out. Full runtime tag propagation
 (stage 1d, `docs/COLLECTIONS_ROADMAP.md`) fixes it properly; the rejection
 is what can ship before then.
 
+**Which positions are actually untyped.** Hand-run before the fix, the
+"read as a number" fault is not everywhere a call appears — it is exactly
+the positions that store or render a value with no declared type of their
+own. Two positions that look untyped are not, and both keep working
+unchanged:
+
+| position | before the fix |
+|---|---|
+| `print 'opaque label'.` | `4198488` — wrong |
+| `print "got {'opaque label'}".` | `got 4198488` — wrong |
+| `append 'opaque label' to items.` | element reads `4210906` — wrong |
+| `a list called items is ['opaque label', …].` | `4210906` — wrong |
+| `set element 1 of items to 'opaque label'.` | `4210906` — wrong |
+| `set labels's "first" to 'opaque label'.` | `4210906` — wrong |
+| `a value called label is 'opaque label'.` | `4210906` — wrong |
+| `a text called saved is 'opaque label'.` | `hi` — **right** |
+| `the saved is 'opaque label'.` (reassignment) | `hi` — **right** |
+| `'announce label' with 'opaque label'.` (a `text` parameter) | `hi` — **right** |
+| `if 'opaque label' is "hi",` | `same` / `diff` — **right** |
+
+The argument position was the surprise. An argument is *not* untyped: the
+callee's parameter declares its own type, and that is what the result is
+read as, so the rejection deliberately stops short of it. A comparison
+against a typed operand likewise settles the read. The rule the fix
+implements is therefore narrower than "reject every untyped call": it is
+*reject where the position supplies no type*.
+
+**Fix.** One set, `untyped_result_functions`, filled in the analyzer's
+signature pre-pass beside `function_signatures` (`src/analyzer/statements.rs`)
+so a call above the definition is judged the same as one below it. A
+function joins it when its declared return type is `Void` **and** its body
+hands a value back — a `Return <expr>` at any depth, since bug #43
+established the only `Return` can sit inside an `If`. A function with no
+value-returning `Return` at all is deliberately excluded: it returns
+nothing, which is a different question and a different diagnostic.
+
+Everything else lives in `src/analyzer/untyped_returns.rs`:
+`untyped_call_result` names the callee behind an `Expr::FunctionCall` or a
+zero-argument name in expression position (plan 270 G4), and
+`reject_untyped_call_result` pushes the diagnostic. The seven rejection
+sites are one call to it each — `Statement::Print`, `FormatPart::Expression`,
+`Statement::ListAppend`'s list path, `Statement::ElementSet`,
+`Statement::MapSet`, `Expr::ListLit`, `Expr::MapLit`, and a `value`
+declaration or `Set` — so the rule reads in one place.
+
+The caret is put on the call, not the definition: `find_symbol_location`
+takes the first textual hit for a name, which for a function is always its
+own `To` line, so `find_call_site_location` excludes that line first.
+
+**The manual.** LANGUAGE.md's mixed-list section documented the old guess
+as a residual limitation and gave a worked example of it (`To five with a
+number called x. Return x add 1.` appended to a list, printing `5`). That
+example is now a compile error, so the section is rewritten: a `value` is
+the everyday opaque element (its tag genuinely travels with its payload),
+an undeclared-return call is refused with both ways out, and stage 1d is
+named as what would let such a call carry its own tag. A new "Reading a
+result" subsection under Functions states the rule where the author is
+looking when they decide whether to write `Return a <type>,`.
+
+**Tests.** Compile-fail fixtures
+`tests/compile_fail/130_print_undeclared_return.vox`,
+`131_append_undeclared_return_to_list.vox`,
+`132_map_value_undeclared_return.vox`,
+`133_format_hole_undeclared_return.vox`,
+`134_list_literal_undeclared_return.vox`,
+`135_value_declaration_undeclared_return.vox` and
+`136_set_element_undeclared_return.vox`, each pinning the position clause
+as well as the message. `133`'s also pins `7:14`, its caret's
+file:line:column: a call may legitimately sit inside a text literal
+(`"got {'opaque label'}"` is an interpolated call), which is the one place
+#46's "a match inside a literal is a coincidence" rule has to be stepped
+around rather than obeyed - see the composition note in that entry. Passing controls
+`tests/374_undeclared_return_into_declared_variable.vox` (declaration,
+interpolation of the declared variable, reassignment, and appending it),
+`tests/375_undeclared_return_as_an_argument.vox` (the position that was
+never broken), and `tests/376_declared_return_reads_everywhere.vox` (a
+declared return read back correctly in all six refused positions).
+
+`tests/155_unknowable_append_widens.vox` and
+`156_alias_of_mixed_dispatches.vox` were written on the rejected
+construct — they proved that an element the compiler cannot type widens
+the list to mixed, using an undeclared-return function as the opaque
+value. The property is unchanged and still worth testing; both now use a
+`value`, which is opaque in exactly the same way and carries the tag the
+function never did.
+
+**Not closed by this fix:** a function with **no** `Return` at all
+(`To ping. Print "pong".`) still reads back as whatever its last
+instruction left in the accumulator — `print ping.` prints `pong` then
+`1`. It is the neighbouring shape, not this one (nothing was returned, so
+there is no returned type to declare), and it wants its own diagnostic. An
+undeclared-return function exported through a `.lib` is also out of reach:
+the `.lib` records no `returning` clause for it, which is exactly what a
+procedure records, so the two cannot be told apart without the body.
+
 ---
 
 ### 46. The diagnostic caret can land inside a comment
 
-**Status:** **open**, found 2026-08-20 by the language lawyer during
-adjudication of the vox-fuzz collections-a claim ledger — every probe file
+**Status:** **fixed** (this branch), found 2026-08-20 by the language
+lawyer during adjudication of the vox-fuzz collections-a claim ledger — every probe file
 in that ledger opens with a header comment quoting the token it is testing,
 and the carets were pointing at the header instead of the code.
 
@@ -3050,6 +3311,71 @@ the source scan skip comment and string spans; `find_pattern_location`
 already carries exclusion machinery (a declaration line to avoid, a
 `guard_against_called` flag), so the shape is not new. Regression test is
 the three lines above.
+
+**The real span was not available.** The preferred fix — hand
+`push_error_with_hint_at` a genuine `SourceLocation` — has nowhere to get
+one for this family. `Expr::Identifier` is a bare `String`
+(`src/parser/ast.rs:89`), and no statement carrying an identifier carries
+a location either: the only spans in the AST are `ThingDefinition`'s
+`line` and `FunctionDef`'s two body-ended-early markers, none of which
+reach an unknown-variable or unknown-function error. The lexer's
+`TokenInfo` has the line and column, and the parser drops them at every
+expression site. Threading a span through `Expr` is a compiler-wide
+refactor — parser, analyzer, codegen and every test that builds an AST by
+hand — so nothing was converted, and the fix is the fallback done
+properly.
+
+**Fix.** Two defects, one scan.
+
+`classify_lines` (`src/lexer/regions.rs`) reads the source the way
+`Lexer::tokenize` does and answers, for every byte, whether it is code,
+inside a `( … )` comment, or inside a text literal. It mirrors rather
+than approximates: comments nest and span lines, a quote inside a comment
+opens nothing, a parenthesis inside a text literal or a character literal
+opens nothing either, and an unclosed comment runs to end of file — the
+`'` cases ask the lexer's own `is_char_literal` / `is_single_quoted_
+identifier` lookahead rather than guessing. A quoted identifier's content
+counts as code, because it is a name. `SourceFile` computes the map once
+and answers `region_of(line, start, end)` (`src/errors.rs`).
+
+`find_pattern_location` (`src/analyzer/scope.rs`) — the scan every
+symbol-located diagnostic ends up in — now refuses a match whose symbol
+sits in a comment, and runs its pattern list **twice**: once for code
+only, then once allowing a text literal, so a hit in real code always
+outranks an earlier hit inside a literal. Only a pattern that asks for a
+literal (`{name` for interpolation, `"name"` for the literal itself) can
+land in the second pass, and interpolation is undisturbed: a name that
+appears only as `{name}` inside a text still anchors there.
+
+`find_symbol_location` — the terminal fallback for the whole family, and
+the one function in the file with **no word boundaries at all** — now goes
+through `find_pattern_location` instead of running its own bare
+`line.find`. That closes the substring anchoring the #55 worker hit
+(symbol `n` anchoring on the `n` inside `print`) everywhere at once, and
+makes the occurrence counter see every match on a line rather than only
+the first. The pre-fix scan survives as `find_mention_location`, reached
+only when the name occurs nowhere in code at all: a caret on a comment is
+poor, an error with no `-->` line is worse, and "point at something rather
+than nothing" is this file's existing policy.
+
+**Tests.** Compile-fail fixtures
+`tests/compile_fail/137_caret_skips_a_comment_mention.vox` (the three
+lines above, caret pinned at 3:8), `138_caret_skips_a_text_literal_
+mention.vox` (`Print "hello".` above the use), `139_caret_matches_a_whole_
+word_only.vox` (`n` against `print`) and `140_caret_skips_a_multi_line_
+comment_mention.vox` — each `.err` pins the file:line:column, so a caret
+that drifts back fails the corpus. Twelve unit tests in
+`src/lexer/regions.rs` cover nesting, multi-line comments, escapes,
+character literals holding a `(`, quoted identifiers, multi-byte
+characters and row alignment with `str::lines`; the last of them pins the
+classifier against the lexer itself — no token the lexer emits may start
+inside what the classifier calls a comment.
+
+**Not closed by this fix:** the caret still points at *an* occurrence of
+the name, not at the token that failed. Where a name is used twice in
+code, the occurrence counter picks between them by error order, which is
+right for the common case and a guess in the rest. Only real spans fix
+that, and they need `Expr` to carry one.
 
 ---
 

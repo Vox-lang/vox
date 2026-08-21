@@ -1,0 +1,9 @@
+(Bug #45: `value` is the one declared type that supplies no static type - it
+ carries the payload's type as a runtime tag, set from whatever was proven at
+ the write. An undeclared return type proves nothing, so the tag said number
+ while the payload was a text.)
+
+To 'opaque label'. Return "hi".
+
+a value called label is 'opaque label'.
+print label.

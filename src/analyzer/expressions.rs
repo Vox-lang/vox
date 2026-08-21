@@ -1,4 +1,5 @@
 use super::*;
+use super::untyped_returns::UntypedPosition;
 
 impl Analyzer {
     /// The key under which a function DEFINED in the current library is filed
@@ -375,6 +376,10 @@ impl Analyzer {
                     } else {
                         self.analyze_expr(expr);
                     }
+                    // Bug #45: `"got {'opaque label'}"` renders the result as
+                    // whatever type it is told the value has, and an
+                    // undeclared return type tells it nothing.
+                    self.reject_untyped_call_result(expr, UntypedPosition::Interpolation);
                 }
                 FormatPart::Variable { name, .. } => {
                     if name.is_empty() {
@@ -720,6 +725,9 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 for elem in elements {
                     self.analyze_expr(elem);
+                    // Bug #45: a literal's slot is tagged from the type
+                    // proven here, exactly as `append` is.
+                    self.reject_untyped_call_result(elem, UntypedPosition::ListElement);
                 }
             }
 
@@ -730,6 +738,7 @@ impl Analyzer {
                 for (key, value) in pairs {
                     self.analyze_expr(key);
                     self.analyze_expr(value);
+                    self.reject_untyped_call_result(value, UntypedPosition::MapValue);
                     if self.infer_simple_expr_type(key) != Some(Type::String) {
                         self.push_error(
                             "Map keys must be text".to_string(),

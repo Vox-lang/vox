@@ -1,0 +1,31 @@
+(Regression test for bug #44: `write` is the first sink LANGUAGE.md's
+ "Format Strings Everywhere" names, and a `{list}` or `{map}` part written
+ through it put the collection's heap address into the file - an address
+ that changed on every run, so the file's contents were not even stable.
+
+ Acceptance: the bytes that reach a real file on disk are the same bytes
+ Print produces, read back here to prove they landed.)
+
+a list called flat is [1, 2, 3].
+a map called person is {"name": "Ada", "born": 1815}.
+
+(Straight to stdout through a file handle, beside the Print control.)
+Print "stdout: {flat}".
+Open a file at 1 for writing called console.
+write "stdout: {flat}\n" to console.
+
+(And to a real file, read back so the assertion is on the stored bytes.)
+open a file for writing called sink at "./test_bug44_write.txt".
+Write "{flat}\n" to sink.
+Write "{person}\n" to sink.
+Close sink.
+
+open a file for reading called stored at "./test_bug44_write.txt".
+a buffer called line is 256 bytes in size.
+(`Read line` keeps the line's own newline, so print without adding another.)
+Read line from stored into line.
+Print line without newline.
+Read line from stored into line.
+Print line without newline.
+Close stored.
+Delete the file "./test_bug44_write.txt".

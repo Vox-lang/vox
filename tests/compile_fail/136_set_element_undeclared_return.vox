@@ -1,0 +1,8 @@
+(Bug #45: `set element 1 of items to <call>` writes a list slot's tag the
+ same way `append` does.)
+
+To 'opaque label'. Return "hi".
+
+a list called items is ["first"].
+set element 1 of items to 'opaque label'.
+print element 1 of items.

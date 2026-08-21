@@ -1191,6 +1191,17 @@ impl Parser {
                                 Token::Permissions => ObjectProperty::Permissions,
                                 Token::Readable => ObjectProperty::Readable,
                                 Token::Writable => ObjectProperty::Writable,
+                                // BUGS_FOUND #38: `exists` is not a file
+                                // property - reachable only through this
+                                // possessive site as `<handle>'s exists`,
+                                // and `exists` is a property on nothing else
+                                // in the language, so this reading is
+                                // unconditional rather than gated on the
+                                // base's type (the parser tracks no type for
+                                // an ordinary variable at this point).
+                                Token::Exists => return Err(self.err(
+                                    "a file handle has no `exists` property - a handle you hold is already open; to test whether a path can be opened, open it inside an `On error` handler (see the File Properties section)"
+                                )),
 
                                 // List properties
                                 Token::Identifier(ref id) if id.to_lowercase() == "first" => ObjectProperty::First,
