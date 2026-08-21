@@ -1,0 +1,11 @@
+(Bug #59, the rest of the tag alphabet. A decimal element used to print as
+ the bit pattern of its double and a boolean as a raw integer once a
+ `treating` clause was present, because the clause discarded the per-slot
+ tag for the whole loop. LANGUAGE.md:2236-2238 lists iteration among the
+ reads that respect each element's actual type, and says booleans print as
+ 1/0.)
+
+print each item from [1, "a", 3.5, yes] treating "a" as "b".
+
+(A decimal match fires on the decimal element and spares the rest.)
+print each item from [1, "a", 3.5, no] treating 3.5 as 9.5.

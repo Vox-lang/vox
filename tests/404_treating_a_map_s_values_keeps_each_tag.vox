@@ -1,0 +1,8 @@
+(Bug #59 over a map. A map's values are runtime-tagged the way a mixed
+ list's slots are (LANGUAGE.md:2348-2350 - "the value carries its runtime
+ tag, so a text prints as text and a number as a number"), so a `treating`
+ clause walking them must keep each tag too.)
+
+a map called person is {"name": "Ada", "age": 36}.
+print each detail from person's values treating "Ada" as "Grace".
+print each detail from person's values treating 36 as 37.

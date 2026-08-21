@@ -1,0 +1,8 @@
+(Bug #63 through `Append`, whose element tag is written from the type proven
+ at the append - the same missing proof as the list literal.)
+
+To ping. Print "pong".
+
+a list called notes is [1].
+Append ping to notes.
+Print notes.

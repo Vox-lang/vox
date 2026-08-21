@@ -2333,3 +2333,98 @@ Otherwise, a number called s is 1, append s to out.\n";
             asm
         );
     }
+
+    // ---- format specs: the count the author wrote is the count that is
+    // emitted (docs/BUGS_FOUND.md #61) ----
+
+    /// `{n:2147483648}` used to compile to exactly the same code as a bare
+    /// `{n}`: the width was read with `parse::<i32>()`, the `Err` was
+    /// dropped by an `if let` with no else arm, and the spec came out with
+    /// no width at all. The cliff sat between two adjacent literals - one
+    /// past `i32::MAX` - and nothing was said about it at compile time or
+    /// run time. This asserts on the emitted instruction, so it fails
+    /// without assembling or writing two billion spaces.
+    #[test]
+    fn a_pad_width_past_i32_max_still_reaches_the_padded_printer() {
+        let asm = compile_to_asm("a number called n is 255.\nPrint \"{n:2147483648}\".\n");
+        assert!(
+            asm.contains("PRINT_INT_PADDED rdi, 2147483648"),
+            "the width the author wrote is the width emitted: {}",
+            asm
+        );
+    }
+
+    /// The other side of the same boundary, so the two are pinned as one
+    /// behaviour rather than two: `i32::MAX` always padded, and it must go
+    /// on padding.
+    #[test]
+    fn a_pad_width_at_i32_max_still_reaches_the_padded_printer() {
+        let asm = compile_to_asm("a number called n is 255.\nPrint \"{n:2147483647}\".\n");
+        assert!(
+            asm.contains("PRINT_INT_PADDED rdi, 2147483647"),
+            "the width the author wrote is the width emitted: {}",
+            asm
+        );
+    }
+
+    /// A precision past `i32::MAX` was dropped the same way, which silently
+    /// turned `{f:.3000000000}` into `{f}` - a different number of places
+    /// than the one asked for, with no diagnostic.
+    #[test]
+    fn a_precision_past_i32_max_still_reaches_the_precision_printer() {
+        let asm = compile_to_asm("a float called f is 3.5.\nPrint \"{f:.3000000000}\".\n");
+        assert!(
+            asm.contains("mov rdi, 3000000000")
+                && asm.contains("call _print_float_precision"),
+            "the precision the author wrote is the precision emitted: {}",
+            asm
+        );
+    }
+
+    /// A count too large to hold comes back saturated and *reported*, never
+    /// as "no count was written" - the two are indistinguishable downstream,
+    /// which is the whole shape of the bug.
+    #[test]
+    fn a_count_too_large_to_hold_is_reported_not_dropped() {
+        let (spec, fault) = super::read_format_spec(Some("99999999999999999999"));
+        assert_eq!(spec.width, Some(super::FORMAT_MAX_COUNT));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::WidthTooLarge(
+                "99999999999999999999".to_string()
+            ))
+        );
+
+        let (spec, fault) = super::read_format_spec(Some(".99999999999999999999"));
+        assert_eq!(spec.precision, Some(super::FORMAT_MAX_COUNT));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::PrecisionTooLarge(
+                "99999999999999999999".to_string()
+            ))
+        );
+    }
+
+    /// A spec that is not a count at all is not a fault - `.2z` is not a
+    /// precision, and never was; it must stay a quiet no-op rather than
+    /// become an error.
+    #[test]
+    fn a_spec_that_is_not_a_count_is_not_a_fault() {
+        let (spec, fault) = super::read_format_spec(Some(".2z"));
+        assert_eq!(spec.precision, None);
+        assert_eq!(fault, None);
+    }
+
+    /// More than one leading zero used to leave the base specifier
+    /// unconsumed - `{n:004x}` read as a zero-padded *decimal* because
+    /// `remaining` was cut at a fixed offset of one zero instead of at the
+    /// digits actually consumed. LANGUAGE.md:3110 documents `{n:04x}`; the
+    /// wider width is the same spec with a wider field.
+    #[test]
+    fn extra_leading_zeros_still_leave_the_base_specifier() {
+        let (spec, fault) = super::read_format_spec(Some("004x"));
+        assert_eq!(spec.width, Some(4));
+        assert!(spec.zero_pad);
+        assert_eq!(spec.base, super::IntegerBase::HexLower);
+        assert_eq!(fault, None);
+    }

@@ -1,0 +1,10 @@
+(Bug #65 from a call. `five` declares that it returns a number, so what lands
+ in `got` is provable without running anything - and it was the number 5,
+ which Print then dereferenced as a text pointer: segfault. This is
+ LANGUAGE.md:651-660's worked example with the call spelled the way 0.3.0
+ made it legal.)
+
+To 'five'. Return a number, 5.
+
+a text called got is five.
+Print got.

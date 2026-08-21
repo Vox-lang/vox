@@ -275,6 +275,81 @@ _print_octal_impl:
 ; PADDED NUMBER OUTPUT
 ; ============================================================================
 
+section .bss
+    ; One page of pad characters, refilled per call. Padding used to go out
+    ; one write(2) per character - about 265 KB/s, which is the whole reason
+    ; a width in the millions took minutes and a width of 2^31 would have
+    ; taken hours (docs/BUGS_FOUND.md #61). A width is a character count
+    ; with no ceiling, so the loop still writes exactly as many characters
+    ; as asked; it just stops paying a syscall for each one.
+    _fmt_pad_chunk: resb 4096
+
+section .text
+
+; Write exactly rdx bytes from rsi to stdout.
+; A single write(2) is allowed to write less than it was asked to (a pipe
+; with a full buffer does exactly that), so a chunked writer that ignores
+; the return value silently truncates its output - a per-byte loop never
+; had to care. Resumes after a short write and retries an interrupted one.
+; Args: rsi = bytes, rdx = length. Clobbers rax, rcx, r11 (the syscall's
+; own scratch); rdi, rsi and rdx come back as they went in.
+_fmt_write_all:
+    push rdi
+    push rsi
+    push rdx
+.chunk:
+    test rdx, rdx
+    jz .done
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    test rax, rax
+    jg .advance
+    cmp rax, -4                 ; -EINTR: the same bytes, again
+    je .chunk
+    jmp .done                   ; any other error: stop, as the per-byte
+                                 ; loop this replaces also did
+.advance:
+    add rsi, rax
+    sub rdx, rax
+    jmp .chunk
+.done:
+    pop rdx
+    pop rsi
+    pop rdi
+    ret
+
+; Emit rax copies of the pad character in r9b to stdout.
+; Args: rax = count (<= 0 writes nothing), r9b = the character.
+; Clobbers rax, rcx, rdx, rsi, rdi, r11; r8 and r9 are preserved.
+_fmt_emit_pad:
+    push r8
+    mov r8, rax                 ; characters still owed
+    test r8, r8
+    jle .done
+
+    ; Fill the chunk with this call's pad character.
+    movzx eax, r9b
+    lea rdi, [rel _fmt_pad_chunk]
+    mov rcx, 4096
+    rep stosb
+
+.chunk:
+    mov rdx, 4096
+    cmp r8, rdx
+    jae .have_length
+    mov rdx, r8
+.have_length:
+    lea rsi, [rel _fmt_pad_chunk]
+    call _fmt_write_all
+    sub r8, rdx
+    jnz .chunk
+
+.done:
+    pop r8
+    ret
+
+
 ; Print integer with minimum width (right-aligned, space-padded)
 ; Args: value, min_width
 %macro PRINT_INT_PADDED 2
@@ -726,29 +801,19 @@ _print_hex_padded_impl:
     sub rax, r15                ; padding needed
     jle .print_digits
     
-.zero_loop:
-    test rax, rax
-    jz .print_digits
-    push rax
-    push r14
-    push r15
+    ; rax = characters of padding, r8 = 0 for '0' and 1 for ' '.
+    ; _fmt_emit_pad writes them a page at a time; this used to be one
+    ; write(2) per character (docs/BUGS_FOUND.md #61). r9 is saved because
+    ; this routine has never clobbered it, and the macro wrapping it does
+    ; not push it.
+    push r9
+    mov r9b, '0'
     test r8, r8
-    jz .use_zero
-    mov byte [rel _format_buffer + 40], ' '
-    jmp .write_pad
-.use_zero:
-    mov byte [rel _format_buffer + 40], '0'
-.write_pad:
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer + 40]
-    mov rdx, 1
-    syscall
-    pop r15
-    pop r14
-    pop rax
-    dec rax
-    jmp .zero_loop
+    jz .emit_pad
+    mov r9b, ' '
+.emit_pad:
+    call _fmt_emit_pad
+    pop r9
     
 .print_digits:
     ; Print the actual digits
@@ -788,29 +853,19 @@ _print_binary_padded_impl:
     sub rax, r14                ; padding needed
     jle .print_digits
     
-.zero_loop:
-    test rax, rax
-    jz .print_digits
-    push rax
-    push r13
-    push r14
+    ; rax = characters of padding, r8 = 0 for '0' and 1 for ' '.
+    ; _fmt_emit_pad writes them a page at a time; this used to be one
+    ; write(2) per character (docs/BUGS_FOUND.md #61). r9 is saved because
+    ; this routine has never clobbered it, and the macro wrapping it does
+    ; not push it.
+    push r9
+    mov r9b, '0'
     test r8, r8
-    jz .use_zero
-    mov byte [rel _format_buffer + 40], ' '
-    jmp .write_pad
-.use_zero:
-    mov byte [rel _format_buffer + 40], '0'
-.write_pad:
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer + 40]
-    mov rdx, 1
-    syscall
-    pop r14
-    pop r13
-    pop rax
-    dec rax
-    jmp .zero_loop
+    jz .emit_pad
+    mov r9b, ' '
+.emit_pad:
+    call _fmt_emit_pad
+    pop r9
     
 .print_digits:
     ; Print the actual digits
@@ -860,29 +915,19 @@ _print_octal_padded_impl:
     sub rax, r14                ; padding needed
     jle .print_digits
     
-.zero_loop:
-    test rax, rax
-    jz .print_digits
-    push rax
-    push r13
-    push r14
+    ; rax = characters of padding, r8 = 0 for '0' and 1 for ' '.
+    ; _fmt_emit_pad writes them a page at a time; this used to be one
+    ; write(2) per character (docs/BUGS_FOUND.md #61). r9 is saved because
+    ; this routine has never clobbered it, and the macro wrapping it does
+    ; not push it.
+    push r9
+    mov r9b, '0'
     test r8, r8
-    jz .use_zero
-    mov byte [rel _format_buffer + 40], ' '
-    jmp .write_pad
-.use_zero:
-    mov byte [rel _format_buffer + 40], '0'
-.write_pad:
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer + 40]
-    mov rdx, 1
-    syscall
-    pop r14
-    pop r13
-    pop rax
-    dec rax
-    jmp .zero_loop
+    jz .emit_pad
+    mov r9b, ' '
+.emit_pad:
+    call _fmt_emit_pad
+    pop r9
     
 .print_digits:
     ; Print the actual digits
@@ -997,19 +1042,12 @@ _print_int_padded_impl:
     mov r9b, ' '
 
 .pad_loop:
-    test rax, rax
-    jz .print_result
-
-    push rax
-    mov byte [rel _format_buffer + 32], r9b
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer + 32]
-    mov rdx, 1
-    syscall
-    pop rax
-    dec rax
-    jmp .pad_loop
+    ; rax = characters of padding, r9b = the pad character. _fmt_emit_pad
+    ; writes them a page at a time and preserves r8 and r15 (the digit
+    ; string and its length, printed below); this used to be one write(2)
+    ; per character, which is what made a width of a million take minutes
+    ; (docs/BUGS_FOUND.md #61).
+    call _fmt_emit_pad
 
 .print_result:
     ; Print the actual number
@@ -1030,167 +1068,362 @@ _print_int_padded_impl:
 ; FLOAT PRECISION PRINTING
 ; ============================================================================
 
-; Print float with specified decimal precision
-; xmm0 = float value, rdi = precision (number of decimal places)
+; float.asm defines __FLOAT_ASM_INCLUDED__ and is included before this
+; file. Only the precision printer needs it (it shares the big-integer
+; digit routine with the default float printer), and codegen sets
+; uses_floats alongside uses_format for every `{f:.N}` it emits, so the
+; guard never hides a routine a program can actually reach - it keeps
+; format.asm assembling on its own for a program that pads integers and
+; has no floats at all. Same idiom as list.asm's float-tag branch.
+%ifdef __FLOAT_ASM_INCLUDED__
+
+; Print a float with a given number of decimal places.
+;
+; `{f:.N}` promises "N decimal places" (LANGUAGE.md:3106) and puts no
+; ceiling on N. A double is a binary fraction, so it always HAS an exact,
+; finite decimal expansion - at most 1074 places, for the smallest
+; subnormal - and "N places of it, correctly rounded" is a well-defined
+; string for every N. This routine produces exactly that string, digit by
+; digit, matching glibc's printf("%.*f") including its round-half-to-even
+; on an exact tie.
+;
+; Nothing here scales the fraction into a register, which is what the
+; previous routine did three ways and got wrong three ways from N=18
+; (docs/BUGS_FOUND.md #60): a `mulsd`-by-10 loop that accumulated rounding
+; error, a 10^N carry threshold built with `imul` that wrapped negative at
+; N=19, and one `cvttsd2si` of the scaled fraction that returned the SSE
+; "integer indefinite" 0x8000000000000000 from N=20 - the
+; -9223372036854775808 that used to appear spliced into the digits. It also
+; splices no longer: the same cvttsd2si took the INTEGER part, so every
+; magnitude at or beyond 2^63 printed that sentinel too.
+;
+; The value is taken apart as m * 2^e with m an exact integer mantissa:
+;   e >= 0  - an exact integer with no fraction at all. Its digits come
+;             from _float_big_int_digits (float.asm), the same routine the
+;             default float printer uses for this range, so `{f}` and
+;             `{f:.N}` agree on every value including infinities and NaNs.
+;   e < 0   - the integer part is m >> -e, which is below 2^52 and so fits
+;             a register, and the fraction is the exact rational
+;             (m & (2^-e - 1)) / 2^-e. Its decimal digits come from
+;             Horner's rule over the numerator's bits, least significant
+;             first: start at 0, and for each bit "add it, then halve".
+;             Halving a decimal digit string is exact and appends at most
+;             one digit (always a 5), so -e steps yield at most -e digits
+;             and every digit is the true one.
+;
+; Digits past the expansion's end are zeros - not an approximation, the
+; value has ended - so an N larger than the expansion just pads, and the
+; padding goes out a page at a time like every other pad in this file.
+;
+; xmm0 = value, rdi = N (>= 0)
+
+section .bss
+    ; The '.' sits in the byte before the digits so the point and the
+    ; fraction go out in one write.
+    _fmt_frac_point: resb 8
+    ; One decimal digit per byte (0-9, not ASCII until they are written),
+    ; index 0 = the first place after the point. 1074 is the longest exact
+    ; expansion a double has; the rest is slack for the guard digit.
+    _fmt_frac_digits: resb 1088
+    ; ASCII digits of the integer part, written right-aligned at +384: 309
+    ; for the largest double, plus room to the left for a rounding carry
+    ; that lengthens the string (9.95 -> 10.0) and for a '-'.
+    _fmt_int_area: resb 400
+
+section .text
+
 _print_float_precision:
     push rbp
     mov rbp, rsp
-    sub rsp, 64
+    push rbx
     push r12
     push r13
     push r14
     push r15
+    sub rsp, 72
 
-    mov r12, rdi                ; precision
+%define PFP_PRECISION [rbp-56]
+%define PFP_LENGTH    [rbp-64]
+%define PFP_STICKY    [rbp-72]
+%define PFP_SIGN      [rbp-80]
+%define PFP_INT_PTR   [rbp-88]
+%define PFP_INT_LEN   [rbp-96]
+%define PFP_PLACES    [rbp-104]
+%define PFP_KEPT      [rbp-112]
 
-    ; Get the float value
+    mov PFP_PRECISION, rdi
+    mov qword PFP_LENGTH, 0
+    mov qword PFP_STICKY, 0
+
     movq rax, xmm0
+    mov rbx, rax
+    shr rbx, 63
+    mov PFP_SIGN, rbx           ; the sign bit, so -0.0 prints as -0.00
+    btr rax, 63                 ; magnitude only from here on
 
-    ; Check for negative
-    test rax, rax
-    jns .positive
+    mov r8, rax
+    shr r8, 52                  ; biased exponent
+    mov r9, rax
+    mov rcx, 0x000FFFFFFFFFFFFF
+    and r9, rcx                 ; the stored 52 fraction bits
 
-    ; Print minus sign
-    mov byte [rel _format_buffer], '-'
-    push rax
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer]
-    mov rdx, 1
-    syscall
-    pop rax
+    ; value = m * 2^e
+    test r8, r8
+    jz .subnormal
+    mov rcx, 1
+    shl rcx, 52
+    or r9, rcx                  ; m gains the implicit leading 1
+    lea r10, [r8 - 1075]        ; e = exponent - bias(1023) - 52
+    jmp .have_mantissa
+.subnormal:
+    mov r10, -1074              ; no implicit bit, fixed exponent
+.have_mantissa:
 
-    ; Make positive
-    mov rcx, 0x7FFFFFFFFFFFFFFF
-    and rax, rcx
-    movq xmm0, rax
+    test r10, r10
+    js .has_fraction
 
-.positive:
-    ; Get integer part
-    cvttsd2si r13, xmm0         ; r13 = integer part
+    ; ---- e >= 0: an exact integer, and no fraction at all ----
+    movq rdi, xmm0
+    btr rdi, 63                 ; the sign is printed separately
+    lea rsi, [rel _fmt_int_area + 384]
+    call _float_big_int_digits  ; rax = first digit, rdx = digit count
+    mov PFP_INT_PTR, rax
+    mov PFP_INT_LEN, rdx
+    mov qword PFP_PLACES, 0     ; no fraction digits exist to produce
+    jmp .digits_ready
 
-    ; If no decimal places are required, just print the truncated integer.
-    test r12, r12
-    jz .print_int_only
+.has_fraction:
+    ; places = -e: the fraction's denominator is 2^places, and its exact
+    ; decimal expansion is at most that many digits long.
+    mov rcx, r10
+    neg rcx
+    mov PFP_PLACES, rcx
 
-    ; Compute fractional part
-    cvtsi2sd xmm1, r13          ; xmm1 = integer as float
-    subsd xmm0, xmm1            ; xmm0 = fractional part
+    ; The integer part is m >> places. e < 0 puts the value below 2^52, so
+    ; it always fits in a register - only the e >= 0 branch above needs
+    ; digit-string arithmetic.
+    xor rax, rax
+    mov r11, r9                 ; places >= 64: the whole mantissa is fraction
+    cmp rcx, 64
+    jae .integer_ready
+    mov rax, r9
+    shr rax, cl                 ; integer part
+    mov r11, 1
+    shl r11, cl
+    dec r11
+    and r11, r9                 ; fraction numerator over 2^places
+.integer_ready:
 
-    ; Multiply by 10^precision
-    mov r14, r12                ; counter
-    movsd xmm1, [rel _ten_const]
-.mul_loop:
-    test r14, r14
-    jz .round_frac
-    mulsd xmm0, xmm1
-    dec r14
-    jmp .mul_loop
-
-.round_frac:
-    ; Round and convert to integer
-    addsd xmm0, [rel _half_const]
-    cvttsd2si r14, xmm0         ; r14 = rounded fractional integer
-
-    ; Compute threshold = 10^precision
-    mov r15, 1
-    mov rcx, r12
-.threshold_loop:
-    imul r15, 10
-    dec rcx
-    jnz .threshold_loop
-
-    ; Handle carry into the integer part (e.g. 0.9995 -> 1.000).
-    cmp r14, r15
-    jl .no_carry
-    sub r14, r15
-    inc r13
-.no_carry:
-
-    ; Print integer part
-    push r12
-    push r14
-    push r15
-    PRINT_INT r13
-    pop r15
-    pop r14
-    pop r12
-
-    ; Print decimal point
-    mov byte [rel _format_buffer], '.'
-    push rax
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer]
-    mov rdx, 1
-    syscall
-    pop rax
-
-    ; Print fractional digits: r14 value, r12 precision width
-    mov r15, r14                ; value
-    mov r14, r12                ; digits needed
-
-    ; Count digits in value
-    xor rcx, rcx
-    mov rax, r15
-    test rax, rax
-    jnz .count_digits
-    mov rcx, 0
-    jmp .pad_zeros
-
-.count_digits:
-    test rax, rax
-    jz .pad_zeros
-    inc rcx
-    xor rdx, rdx
+    push r11
+    lea rdi, [rel _fmt_int_area + 384]
     mov rbx, 10
+    xor rcx, rcx
+.integer_digit:
+    xor rdx, rdx
     div rbx
-    jmp .count_digits
+    add dl, '0'
+    dec rdi
+    mov [rdi], dl
+    inc rcx
+    test rax, rax
+    jnz .integer_digit
+    mov PFP_INT_PTR, rdi
+    mov PFP_INT_LEN, rcx
+    pop r11
 
-.pad_zeros:
-    ; Print leading zeros: r14 - rcx zeros needed
-    sub r14, rcx
-    jle .print_value
+    ; Keep at most N+1 digits: N to print and one to round on. Digits past
+    ; those can never change them - halving carries rightward, never left -
+    ; so a dropped digit only has to be remembered as "something non-zero
+    ; follows", which is what the sticky flag is.
+    mov rax, PFP_PLACES
+    mov rcx, PFP_PRECISION
+    cmp rcx, rax
+    jae .keep_all
+    lea rax, [rcx + 1]
+.keep_all:
+    mov PFP_KEPT, rax
 
-.zero_loop:
-    test r14, r14
-    jz .print_value
-    mov byte [rel _format_buffer], '0'
-    push rcx
-    push r14
-    push r15
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel _format_buffer]
-    mov rdx, 1
-    syscall
-    pop r15
-    pop r14
-    pop rcx
-    dec r14
-    jmp .zero_loop
+    ; Horner over the numerator's bits, least significant first:
+    ; digits = (digits + bit) / 2, in decimal, exactly.
+    lea rsi, [rel _fmt_frac_digits]
+    xor r14, r14                ; digits produced so far
+    mov r15, PFP_KEPT
+    mov r13, PFP_PLACES         ; one step per bit of the denominator
+    xor r12, r12
+.halve_step:
+    cmp r12, r13
+    jae .halve_done
+    xor rbx, rbx
+    cmp r12, 64
+    jae .bit_is_zero            ; the mantissa ran out; the rest are zeros
+    mov rcx, r12
+    mov rbx, r11
+    shr rbx, cl
+    and rbx, 1
+.bit_is_zero:
+    xor rdi, rdi
+.halve_digit:
+    cmp rdi, r14
+    jae .halve_carry
+    movzx rax, byte [rsi + rdi]
+    lea rcx, [rbx + rbx*4]
+    lea rax, [rax + rcx*2]      ; carry*10 + digit, at most 19
+    mov rbx, rax
+    and rbx, 1                  ; carry into the next place
+    shr rax, 1
+    mov [rsi + rdi], al
+    inc rdi
+    jmp .halve_digit
+.halve_carry:
+    test rbx, rbx
+    jz .halve_next
+    ; Halving spilled one place further: that digit is always a 5.
+    cmp r14, r15
+    jae .halve_drop
+    mov byte [rsi + r14], 5
+    inc r14
+    jmp .halve_next
+.halve_drop:
+    mov qword PFP_STICKY, 1     ; a non-zero digit fell past the guard
+.halve_next:
+    inc r12
+    jmp .halve_step
+.halve_done:
+    mov PFP_LENGTH, r14
 
-.print_value:
-    ; Print the fractional digits
-    test r15, r15
-    jz .done
-    PRINT_INT r15
-    jmp .done
+.digits_ready:
+    ; Round to N places. r14 = digits produced, r12 = N.
+    lea rsi, [rel _fmt_frac_digits]
+    mov r14, PFP_LENGTH
+    mov r12, PFP_PRECISION
+    xor r13, r13                ; carry to add to the last kept digit
+    cmp r14, r12
+    jbe .rounding_done          ; the expansion ended inside N: exact
 
-.print_int_only:
-    PRINT_INT r13
+    movzx rax, byte [rsi + r12] ; the first digit not being printed
+    cmp rax, 5
+    ja .round_up
+    jb .round_settled
+    cmp qword PFP_STICKY, 0
+    jne .round_up               ; more than a half: up
+    ; Exactly a half, with nothing after it. glibc's printf rounds such a
+    ; tie to even, and so does this.
+    test r12, r12
+    jz .tie_on_integer
+    movzx rax, byte [rsi + r12 - 1]
+    jmp .tie_parity
+.tie_on_integer:
+    mov rax, PFP_INT_PTR
+    add rax, PFP_INT_LEN
+    movzx rax, byte [rax - 1]
+    sub rax, '0'
+.tie_parity:
+    and rax, 1
+    jz .round_settled           ; already even
+.round_up:
+    mov r13, 1
+.round_settled:
+    mov r14, r12                ; the guard digit is not printed
+
+.rounding_done:
+    test r13, r13
+    jz .emit
+    mov rdi, r14
+.carry_digit:
+    test rdi, rdi
+    jz .carry_into_integer
+    dec rdi
+    movzx rax, byte [rsi + rdi]
+    inc rax
+    cmp rax, 10
+    jb .carry_settled
+    mov byte [rsi + rdi], 0
+    jmp .carry_digit
+.carry_settled:
+    mov [rsi + rdi], al
+    jmp .emit
+
+.carry_into_integer:
+    ; Every kept place wrapped (0.999 -> 1.000), or N is 0.
+    mov rdi, PFP_INT_PTR
+    add rdi, PFP_INT_LEN
+.carry_integer_digit:
+    dec rdi
+    mov al, [rdi]
+    inc al
+    cmp al, '9'
+    jbe .carry_integer_settled
+    mov byte [rdi], '0'
+    cmp rdi, PFP_INT_PTR
+    ja .carry_integer_digit
+    ; Carried out of the leading digit: 9.99 -> 10.0.
+    dec rdi
+    mov byte [rdi], '1'
+    mov PFP_INT_PTR, rdi
+    inc qword PFP_INT_LEN
+    jmp .emit
+.carry_integer_settled:
+    mov [rdi], al
+
+.emit:
+    cmp qword PFP_SIGN, 0
+    je .sign_done
+    mov rdi, PFP_INT_PTR
+    dec rdi
+    mov byte [rdi], '-'
+    mov PFP_INT_PTR, rdi
+    inc qword PFP_INT_LEN
+.sign_done:
+    mov rsi, PFP_INT_PTR
+    mov rdx, PFP_INT_LEN
+    call _fmt_write_all
+
+    mov r12, PFP_PRECISION
+    test r12, r12
+    jz .done                    ; no places asked for, no point printed
+
+    lea rsi, [rel _fmt_frac_digits]
+    mov rcx, r14
+    xor rdi, rdi
+.to_ascii:
+    cmp rdi, rcx
+    jae .ascii_done
+    add byte [rsi + rdi], '0'
+    inc rdi
+    jmp .to_ascii
+.ascii_done:
+    mov byte [rsi - 1], '.'
+    dec rsi
+    lea rdx, [rcx + 1]
+    call _fmt_write_all
+
+    ; Whatever is left of the N places is zeros: the expansion has ended.
+    mov rax, r12
+    sub rax, r14
+    jle .done
+    mov r9b, '0'
+    call _fmt_emit_pad
 
 .done:
+    add rsp, 72
     pop r15
     pop r14
     pop r13
     pop r12
+    pop rbx
     leave
     ret
 
-section .data
-    _ten_const: dq 10.0
-    _half_const: dq 0.5
+%undef PFP_PRECISION
+%undef PFP_LENGTH
+%undef PFP_STICKY
+%undef PFP_SIGN
+%undef PFP_INT_PTR
+%undef PFP_INT_LEN
+%undef PFP_PLACES
+%undef PFP_KEPT
+
+%endif  ; __FLOAT_ASM_INCLUDED__
 
 section .text
 

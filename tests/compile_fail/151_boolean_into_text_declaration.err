@@ -1,0 +1,4 @@
+cannot initialise 'label', which is text, with a boolean
+151_boolean_into_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'label' can only be initialised with text
+help: declare it as a boolean - `a boolean called label is true.` - or convert it explicitly:  a text called label is true as text.

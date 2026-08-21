@@ -588,7 +588,19 @@ impl Analyzer {
         match expr {
             Expr::StringLit(s) => format!("\"{}\"", s),
             Expr::IntegerLit(n) => n.to_string(),
-            Expr::FloatLit(n) => n.to_string(),
+            // A whole-valued float renders as `8`, which is a NUMBER
+            // literal - pasting the help line's suggestion back would then
+            // be rejected as a number where a float belongs (bug #65). Vox
+            // recognizes a float by its decimal point (LANGUAGE.md:1803),
+            // so keep one.
+            Expr::FloatLit(n) => {
+                let rendered = n.to_string();
+                if rendered.contains(['.', 'e', 'E', 'n', 'i']) {
+                    rendered
+                } else {
+                    format!("{}.0", rendered)
+                }
+            }
             Expr::BoolLit(b) => if *b { "true".to_string() } else { "false".to_string() },
             Expr::Identifier(name) => name.clone(),
             // The collection and buffer reads bug #54 added to
@@ -646,9 +658,9 @@ impl Analyzer {
     /// `thing` destination is excluded too - an initializer there is a
     /// whole-thing copy, which `check_thing_copy` already judges and would
     /// otherwise report twice.
-    pub(crate) fn check_declared_read_type(&mut self, name: &str, declared: &Type, value: &Expr) {
+    pub(crate) fn check_declared_read_type(&mut self, name: &str, declared: &Type, value: &Expr) -> bool {
         if matches!(declared, Type::Value | Type::Buffer | Type::Thing(_)) {
-            return;
+            return false;
         }
         if !matches!(
             value,
@@ -659,13 +671,13 @@ impl Analyzer {
                 | Expr::PropertyAccess { property: ObjectProperty::First, .. }
                 | Expr::PropertyAccess { property: ObjectProperty::Last, .. }
         ) {
-            return;
+            return false;
         }
         let Some(actual) = self.arithmetic_operand_type(value) else {
-            return;
+            return false;
         };
         if matches!(actual, Type::Value) || self.treating_types_compatible(declared, &actual) {
-            return;
+            return false;
         }
 
         // `symbol_error_counts` is deliberately not touched: it indexes
@@ -713,6 +725,7 @@ explicitly:  a {} called {} is {} as {}.",
             ));
         }
         self.errors.push(err);
+        true
     }
 
     /// A short label naming what a bug #54 read came out of, for the
@@ -907,6 +920,348 @@ explicitly:  a {} called {} is {} as {}.",
         }
         err = err.with_note_line(&self.nothing_note_line(declared));
         err = err.with_help_line(&self.nothing_help_line(declared, "the return"));
+        self.errors.push(err);
+        true
+    }
+
+    /// Bug #65: the type an initialiser, an argument or a returned value
+    /// provably yields, or `None` when nothing can be proven statically -
+    /// the same "can't prove it, allow it" policy `arithmetic_operand_type`
+    /// follows, and for the same reason: a false positive here rejects a
+    /// correct program. Two differences from that function, both of which
+    /// matter only in a storage position:
+    ///
+    /// - a double-quoted token is a string literal everywhere since 0.3.0
+    ///   (LANGUAGE.md:612-620), so it is classified as text here instead of
+    ///   being looked up as a variable name the way the arithmetic check
+    ///   still does. Without this, `a number called count is "count".`
+    ///   proved itself a number by finding the name it was declaring.
+    /// - a call answers with the return type its function declares, so
+    ///   `a text called got is five.` is judged against what `five`
+    ///   promises. A function that declares no return type answers `void`,
+    ///   which proves nothing about what it hands back - that is bug #45's
+    ///   hole, not this one's - so it is mapped back to `None`.
+    pub(crate) fn provable_value_type(&self, expr: &Expr) -> Option<Type> {
+        let proven = match expr {
+            Expr::StringLit(_) => Some(Type::String),
+            Expr::ListLit { .. } => Some(Type::List(Box::new(Type::Unknown))),
+            Expr::MapLit { .. } => Some(Type::Map(Box::new(Type::Unknown))),
+            Expr::FunctionCall { name, .. } => self.function_return_type(name),
+            // A bare name that is not a variable but names a zero-argument
+            // function is a call (LANGUAGE.md's `a text called got is
+            // five.`); a variable of that name shadows the function, which
+            // is why the variable lookup goes first.
+            Expr::Identifier(name) => self.arithmetic_operand_type(expr).or_else(|| {
+                if self.is_zero_arg_function(name) {
+                    self.function_return_type(name)
+                } else {
+                    None
+                }
+            }),
+            _ => self.arithmetic_operand_type(expr),
+        };
+        match proven {
+            Some(Type::Void) | Some(Type::Unknown) => None,
+            other => other,
+        }
+    }
+
+    /// Bug #65: whether a provable value of type `actual` is refused in a
+    /// slot declared as `declared`. The rule is the type lock's own
+    /// (LANGUAGE.md:531-532, a variable's type is fixed at its
+    /// declaration), so it shares the lock's compatibility predicate and
+    /// its exemptions - the point of this bug's fix is that the lock
+    /// guarded every write to an already-declared name and nothing at all
+    /// at the declaration itself, where the type is decided.
+    ///
+    /// Permissive in the same places `check_type_lock` is:
+    /// - a `value` destination is the language's sanctioned dynamic-type
+    ///   mechanism and must keep taking any type;
+    /// - a `buffer` destination takes a content write rather than a typed
+    ///   value, so `a buffer called b is "seed".` and `b is 42.` are
+    ///   correct programs, not mismatches;
+    /// - a `thing` destination is a whole-thing copy, which
+    ///   `check_thing_copy` already judges and would otherwise report twice;
+    /// - a `value` source is dynamic: its runtime type is not known until
+    ///   runtime, so there is nothing to prove either way.
+    ///
+    /// And permissive in four places of its own:
+    /// - **`number` and `float` are one family.** The language designer's
+    ///   ruling (Josj, 2026-08-21): "in human language we call 1 a number
+    ///   and pi a number; it should be the same in Vox - dynamic casting as
+    ///   and when needed". So `a number called n is 3.5.` keeps the 3.5,
+    ///   and `a float called ratio is 3.` takes the 3 - converted to 3.0 at
+    ///   the store (codegen's `VarDecl` arm), not stored as raw integer bits
+    ///   for the next read to render as `0.0`. The type lock still refuses
+    ///   `Set f to 3.` and `Set n to 3.5.` one line later; that
+    ///   disagreement is the designer's own static-int64 gap, left with
+    ///   them, and deliberately not closed from this side.
+    /// - a `file`, `time` or `timer` destination. These are handles, not
+    ///   values: they have no literal spelling, no conversion in the Basic
+    ///   Conversions table, and their documented initialisers are of
+    ///   another type outright - LANGUAGE.md:503-519 makes `a file called
+    ///   source is "input.txt".` the canonical way to open one, so a text
+    ///   into a file is a correct program, and `a time called now is
+    ///   current time.` is the same shape. `param_accepts` records the same
+    ///   judgement for arguments ("file parameters accept number-like
+    ///   handles"; `Time | Timer => true`).
+    /// - a buffer read into a text without the cast, which is bug #51 -
+    ///   still open, and whose two candidate fixes (copy the bytes, or
+    ///   reject and name `as text`) are a human's call. Refusing it here
+    ///   would decide that open question as a side effect of this one, so
+    ///   it is left exactly as it is.
+    fn initialiser_type_is_refused(&self, declared: &Type, actual: &Type) -> bool {
+        if matches!(
+            declared,
+            Type::Value
+                | Type::Buffer
+                | Type::Thing(_)
+                | Type::File
+                | Type::Time
+                | Type::Timer
+                | Type::Void
+                | Type::Unknown
+        ) {
+            return false;
+        }
+        if matches!(actual, Type::Value | Type::Void | Type::Unknown) {
+            return false;
+        }
+        if matches!((declared, actual), (Type::String, Type::Buffer)) {
+            return false;
+        }
+        // A number and a float are one family, per the designer's ruling
+        // above: neither direction is a mismatch to refuse.
+        if matches!(
+            (declared, actual),
+            (Type::Integer, Type::Float) | (Type::Float, Type::Integer)
+        ) {
+            return false;
+        }
+        !self.treating_types_compatible(declared, actual)
+    }
+
+    /// Bug #65's help line: the two ways out of a mismatch. Declaring the
+    /// name as the type the value actually yields always works; converting
+    /// is only offered where LANGUAGE.md's Basic Conversions table
+    /// (LANGUAGE.md:1902-1918) documents a cast between the two types, so
+    /// the diagnostic never sends an author to a conversion that does not
+    /// exist. `render_value_hint` falls back to a placeholder for shapes it
+    /// cannot write back as source, and a help line containing that
+    /// placeholder would not be pasteable, so those get the prose half only.
+    fn documented_cast_phrase(&self, from: &Type, to: &Type) -> Option<String> {
+        use Type::*;
+        let documented = matches!(
+            (from, to),
+            (Float, Integer)
+                | (Integer, Float)
+                | (Integer, String)
+                | (String, Integer)
+                | (Float, String)
+                | (String, Float)
+                | (Boolean, Integer)
+                | (Integer, Boolean)
+                | (Boolean, String)
+                | (String, Boolean)
+                | (Buffer, String)
+        );
+        documented.then(|| self.typed_phrase(to))
+    }
+
+    /// Bug #65 at a declaration: `a text called n is 5.` - a concretely
+    /// typed slot initialised with a provable value of another type.
+    ///
+    /// Codegen stores whatever the initialiser yields into the slot with no
+    /// conversion and no tag, and the first read takes it for the declared
+    /// type: a number in a `text` was dereferenced as a pointer (SIGSEGV),
+    /// a text in a `number` printed the literal's address, a text in a
+    /// `float` printed `0.0`, and a number in a `float` printed `0.0` too.
+    /// LANGUAGE.md:531-532 fixes a variable's type at its declaration and
+    /// the type lock has enforced that on every write to an already
+    /// declared name since 0.3.0 - `Set n to "x".` is refused - but the
+    /// declaration itself, which is where the type is chosen, was never
+    /// checked at all. LANGUAGE.md:647-667 is the whole reason the 0.3.0
+    /// split happened: "a function pointer, printed as a number, silently".
+    ///
+    /// Anchored on the declaration, like bug #54's
+    /// `check_declared_read_type` and bug #57's
+    /// `check_nothing_initialiser`, and permissive in the same places (see
+    /// `initialiser_type_is_refused`). Returns true iff it reported.
+    pub(crate) fn check_initialiser_type(
+        &mut self,
+        name: &str,
+        declared: &Type,
+        value: &Expr,
+    ) -> bool {
+        let Some(actual) = self.provable_value_type(value) else {
+            return false;
+        };
+        if !self.initialiser_type_is_refused(declared, &actual) {
+            return false;
+        }
+        // `symbol_error_counts` is deliberately not touched, exactly as in
+        // `check_declared_read_type` and `check_nothing_initialiser`: it
+        // indexes WRITE sites, and this error is anchored on the
+        // declaration instead.
+        let mut err = CompileError::new(&format!(
+            "cannot initialise '{}', which is {}, with {}",
+            name,
+            self.typed_phrase(declared),
+            self.typed_phrase(&actual)
+        ));
+        if let Some(loc) = self.find_declaration_location(name) {
+            err = err.with_underline_note(
+                name.len().max(1),
+                &format!(
+                    "this {} is given {}",
+                    self.type_name(declared),
+                    self.typed_phrase(&actual)
+                ),
+            );
+            err = err.with_location(loc);
+        }
+        err = err.with_note_line(&format!(
+            "a variable's type is fixed at its declaration, so '{}' can only be initialised with {}",
+            name,
+            self.typed_phrase(declared)
+        ));
+        let hint = self.render_value_hint(value);
+        let help = if hint.contains("<value>") {
+            format!("declare '{}' as {}", name, self.typed_phrase(&actual))
+        } else {
+            let redeclare = format!(
+                "declare it as {} - `a {} called {} is {}.`",
+                self.typed_phrase(&actual),
+                self.type_name(&actual),
+                name,
+                hint
+            );
+            match self.documented_cast_phrase(&actual, declared) {
+                Some(cast) => format!(
+                    "{} - or convert it explicitly:  a {} called {} is {} as {}.",
+                    redeclare,
+                    self.type_name(declared),
+                    name,
+                    hint,
+                    cast
+                ),
+                None => redeclare,
+            }
+        };
+        err = err.with_help_line(&help);
+        self.errors.push(err);
+        true
+    }
+
+    /// Bug #65 at a call site: `greet with 5.` where `greet` declares `a
+    /// text called who`. The callee stores the argument in that parameter's
+    /// concretely typed slot and reads it as the declared type, so this is
+    /// the declaration case reached through the call - and it faulted the
+    /// same way, on the callee's first read, one frame from the sentence
+    /// that caused it. Same shape as bug #57's `check_nothing_argument`.
+    pub(crate) fn check_argument_type(
+        &mut self,
+        function: &str,
+        param_name: &str,
+        param_type: &Type,
+        arg: &Expr,
+    ) -> bool {
+        let Some(actual) = self.provable_value_type(arg) else {
+            return false;
+        };
+        if !self.initialiser_type_is_refused(param_type, &actual) {
+            return false;
+        }
+        let mut err = CompileError::new(&format!(
+            "cannot pass {} to '{}', which '{}' declares as {}",
+            self.typed_phrase(&actual),
+            param_name,
+            function,
+            self.typed_phrase(param_type)
+        ));
+        let occurrence = *self.symbol_error_counts.get(param_name).unwrap_or(&0);
+        if let Some(loc) = self.find_symbol_location(param_name, occurrence) {
+            err = err.with_underline_note(
+                param_name.len().max(1),
+                &format!("this parameter is {}", self.typed_phrase(param_type)),
+            );
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(param_name.to_string(), occurrence + 1);
+        err = err.with_note_line(&format!(
+            "a parameter's type is fixed by the signature, so '{}' can only be given {}",
+            param_name,
+            self.typed_phrase(param_type)
+        ));
+        let hint = self.render_value_hint(arg);
+        let help = match self.documented_cast_phrase(&actual, param_type) {
+            Some(cast) if !hint.contains("<value>") => format!(
+                "convert it at the call site - `{} as {}` - or declare '{}' as {}",
+                hint,
+                cast,
+                param_name,
+                self.typed_phrase(&actual)
+            ),
+            _ => format!(
+                "pass {} - or declare '{}' as {}",
+                self.typed_phrase(param_type),
+                param_name,
+                self.typed_phrase(&actual)
+            ),
+        };
+        err = err.with_help_line(&help);
+        self.errors.push(err);
+        true
+    }
+
+    /// Bug #65 at a return: `Return a text, 5.` The caller reads the result
+    /// as the declared type, so a text return handed back the literal's
+    /// address for `Print` to dereference. Same shape as bug #57's
+    /// `check_nothing_return`, caret on the signature line for the same
+    /// reason: that is where the return type is declared, and where the
+    /// author changes it.
+    pub(crate) fn check_return_type(&mut self, declared: &Type, value: &Expr) -> bool {
+        let Some(actual) = self.provable_value_type(value) else {
+            return false;
+        };
+        if !self.initialiser_type_is_refused(declared, &actual) {
+            return false;
+        }
+        let mut err = CompileError::new(&format!(
+            "cannot return {} from a function that returns {}",
+            self.typed_phrase(&actual),
+            self.typed_phrase(declared)
+        ));
+        if let Some(function) = self.current_function_name.clone() {
+            let occurrence = *self.symbol_error_counts.get(&function).unwrap_or(&0);
+            if let Some(loc) = self.find_symbol_location(&function, occurrence) {
+                err = err.with_underline_note(
+                    function.len().max(1),
+                    &format!("this function returns {}", self.typed_phrase(declared)),
+                );
+                err = err.with_location(loc);
+            }
+            self.symbol_error_counts.insert(function, occurrence + 1);
+        }
+        err = err.with_note_line(&format!(
+            "a function's return type is fixed by its signature, so it can only hand back {}",
+            self.typed_phrase(declared)
+        ));
+        let hint = self.render_value_hint(value);
+        let help = match self.documented_cast_phrase(&actual, declared) {
+            Some(cast) if !hint.contains("<value>") => format!(
+                "convert it explicitly:  Return {}, {} as {}.",
+                self.typed_phrase(declared),
+                hint,
+                cast
+            ),
+            _ => format!(
+                "return {} - or declare the return as {}",
+                self.typed_phrase(declared),
+                self.typed_phrase(&actual)
+            ),
+        };
+        err = err.with_help_line(&help);
         self.errors.push(err);
         true
     }

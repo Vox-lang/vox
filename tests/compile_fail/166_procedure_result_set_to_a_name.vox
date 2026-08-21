@@ -1,0 +1,8 @@
+(Bug #63 through `Set`, which is a write like the declaration form - and
+ there is nothing here to write.)
+
+To ping. Print "pong".
+
+a number called answer is 0.
+Set answer to ping.
+Print answer.

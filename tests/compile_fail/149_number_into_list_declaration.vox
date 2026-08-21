@@ -1,0 +1,7 @@
+(Bug #65 into a list. The number became the list's header address, so the
+ first read walked a list structure at address 5: segfault. A list is written
+ as a list literal - LANGUAGE.md's `[1, 2]` - and there is no conversion from
+ a number to one.)
+
+a list called items is 5.
+Print items.

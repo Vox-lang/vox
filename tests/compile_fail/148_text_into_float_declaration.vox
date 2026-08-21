@@ -1,0 +1,7 @@
+(Bug #65's quiet half. A text into a float did not crash and did not print an
+ address: it printed 0.0, the wrong answer that looks completely plausible.
+ LANGUAGE.md:1911 gives `"3.14" as a float` for text that is meant to be
+ parsed.)
+
+a float called ratio is "abc".
+Print ratio.

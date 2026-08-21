@@ -705,7 +705,10 @@ impl CodeGenerator {
     /// - a value-returning function call (the callee leaves r11=tag; `call`
     ///   and the epilogue do not clobber it), and
     /// - a freshly-read mixed-list element (`ElementAccess`, or `First`/`Last`
-    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11.
+    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11, and
+    /// - a `treating` clause over a runtime-tagged subject, which carries the
+    ///   subject's own tag (or the replacement's, when the substitution fires)
+    ///   through to r11 — see `treating_dispatches_on_runtime_tag`.
     /// Homogeneous reads never reach this question: `emit_time_expr_tag`
     /// returns their static tag (`Some`), so the caller never falls through to
     /// the no-slot path that consults this predicate.
@@ -740,8 +743,41 @@ impl CodeGenerator {
                 self.mixed_lists.contains(object)
                     || self.list_element_types.get(object) == Some(&VarType::Mixed)
             }
+            Expr::TreatingAs { value, match_value, replacement } => {
+                self.treating_dispatches_on_runtime_tag(value, match_value, replacement)
+            }
             _ => false,
         }
+    }
+
+    /// Whether a `treating` clause must dispatch on its subject's runtime tag
+    /// rather than on a static type (bug #59).
+    ///
+    /// A `treating` subject is the loop variable, and over a mixed list, a
+    /// map's values, or a `value` it has no static type to dispatch on — only
+    /// the per-slot tag LANGUAGE.md:2226-2228 promises ("every element prints
+    /// and reads back as what it is"). Reporting the subject's static type
+    /// there made the comparison a raw pointer `cmp` (so a text element never
+    /// matched a text match) and left the result untagged (so Print rendered a
+    /// text element's address as an integer) — for every element, including
+    /// the ones the clause never matched.
+    ///
+    /// Both the match and the replacement must carry a statically known tag:
+    /// the match's tag is what the subject's tag is compared against, and the
+    /// replacement's is the tag the result carries when the substitution
+    /// fires. Without both there is no tag to dispatch on, and the static path
+    /// stands. This predicate is the single condition under which
+    /// `generate_expr` emits the tagged path, so it is also exactly when the
+    /// result leaves its tag in r11.
+    pub(crate) fn treating_dispatches_on_runtime_tag(
+        &self,
+        value: &Expr,
+        match_value: &Expr,
+        replacement: &Expr,
+    ) -> bool {
+        self.runtime_tag_source(value).is_some()
+            && self.emit_time_expr_tag(match_value).is_some()
+            && self.emit_time_expr_tag(replacement).is_some()
     }
 
 }

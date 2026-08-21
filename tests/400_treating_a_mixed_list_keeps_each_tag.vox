@@ -1,0 +1,25 @@
+(Bug #59. A `treating` clause over a mixed list must keep each element's
+ per-slot runtime tag. LANGUAGE.md:2226-2228 promises that a mixed list's
+ "elements carry a small per-slot type tag at runtime, so every element
+ prints and reads back as what it is", and :2236 names iteration among the
+ reads that "respect each element's actual type"; :424 replaces an element
+ only "if the loop variable equals <match>". Wrapping the loop variable in
+ `treating` used to discard the tag and print every element as an integer,
+ so a text came out as its .rodata address - even the elements the clause
+ never matched.)
+
+(The match is text and one element is text: it fires on that element and
+ leaves the number alone.)
+print each item from [1, "a"] treating "a" as "b".
+
+(The match is a number and neither element equals it: nothing fires and
+ both elements come through as what they are.)
+print each item from [1, "a"] treating 98 as 31.
+
+(The control - the same list with no clause at all - which was already
+ correct and must stay correct.)
+print each item from [1, "a"].
+
+(The match is a number and the number element equals it: it fires on the
+ number, and the text it does not match still prints as text.)
+print each item from [1, "a"] treating 1 as 9.

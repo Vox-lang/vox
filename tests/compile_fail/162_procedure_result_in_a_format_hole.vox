@@ -1,0 +1,7 @@
+(Bug #63 in a format hole. An interpolation renders whatever type it is told
+ the value has; a call with no result leaves the hole holding the return
+ register.)
+
+To shout with a number called volume. Print volume.
+
+Print "shouted {shout of 3}".

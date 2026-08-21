@@ -1,0 +1,7 @@
+(Bug #65 from a variable rather than a literal. `count` took the pointer that
+ `written` holds and printed it as a decimal number - the same silent wrong
+ answer, one indirection further from the literal that caused it.)
+
+a text called written is "5".
+a number called count is written.
+Print count.

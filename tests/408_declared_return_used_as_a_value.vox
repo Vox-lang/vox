@@ -1,0 +1,33 @@
+(Bugs #62/#63's second control: a function that DOES declare what it returns
+ is readable in every position the fix refuses for one that returns nothing -
+ a declaration, a print, a list slot, a map value, a format hole (which spells a call the `of` way - a bare name in a hole
+ names a variable), a `value`,
+ a comparison, an argument to another call, and a `Set`. The rejection is
+ keyed on the absence of a result, so every one of these must still compile
+ and still answer.)
+
+To five. Return a number, 5.
+
+To 'double' with a number called n. Return a number, n multiply 2.
+
+a number called answer is five.
+Print answer.
+Print five.
+
+a list called notes is [five].
+Print notes.
+
+a map called readings is {"first": five}.
+Print readings.
+
+Print "twice five is {'double' of five}".
+
+a value called held is five.
+Print held.
+
+If five is 5, Print "compared".
+
+Print 'double' of five.
+
+Set answer to five.
+Print answer.

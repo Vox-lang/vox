@@ -1,0 +1,8 @@
+(Bug #63 handed to another call. The argument slot is a value position like
+ any other, and passing a result that does not exist puts the return
+ register into 'double's parameter.)
+
+To ping. Print "pong".
+To 'double' with a number called n. Return a number, n add n.
+
+Print 'double' of ping.

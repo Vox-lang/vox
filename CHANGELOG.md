@@ -354,6 +354,211 @@ adheres to [Semantic Versioning](https://semver.org/).
   resizing the buffer leave the text exactly as it was. Found by the
   vox-41 fix worker probing sibling forms of bug #41.
 
+
+- **A `treating` clause over a mixed list keeps each element's runtime
+  tag** ([#59](docs/BUGS_FOUND.md)) — `print each item from [1, "a"]
+  treating "a" as "b".` printed `1` then `4198536`, the text's own
+  address; so did `treating 98 as 31`, and so did `treating 1 as 9`,
+  which substituted the number correctly and then printed the `"a"` it
+  had not touched as a pointer. The same list with no clause printed
+  `1` then `a`. LANGUAGE.md promises a mixed list's elements "carry a
+  small per-slot type tag at runtime, so every element prints and reads
+  back as what it is" (:2226-2228) and names iteration among the reads
+  that respect it (:2236), while the clause itself replaces an element
+  only "if the loop variable equals `<match>`" (:424) — so an element the
+  clause never matches must print unchanged. Wrapping the loop variable
+  in `treating` reported the subject's static type, which a mixed list
+  does not have: the comparison became a raw pointer `cmp` (so a text
+  element never matched a text match) and the result reached Print
+  untagged (so it was rendered as an integer). Where the subject carries
+  a runtime tag, the clause now dispatches on it — a differing tag means
+  the substitution cannot fire and nothing is read through the match, an
+  agreeing tag compares text by bytes and everything else in registers,
+  and a replacement that fires carries its own tag. The value and its tag
+  come out under the same contract a bare element read has, so Print,
+  `value` parameter passing and an `is a` guard downstream all see what
+  the element really is. This is the runtime half of #55, which rejected
+  the provable mismatch and left the mixed list to the runtime; a subject
+  with a static type keeps the static path untouched. Regression tests
+  `tests/400_treating_a_mixed_list_keeps_each_tag.vox` through
+  `406_treating_survives_an_is_a_guard_downstream.vox`, proven to print
+  pointers on 0.4.8+#49-#58 and to pass after, with #55's
+  `359`/`360` unchanged as controls. Found by the #55 fix worker
+  (REPORT-55 §6), master-reproduced.
+
+- **`{f:.N}` prints N correctly-rounded decimal places for any N**
+  ([#60](docs/BUGS_FOUND.md)) — `{pi:.17}` was right, `{pi:.18}` printed
+  `3.141589999999999872` where the double's exact expansion says
+  `…883`, `{pi:.19}` printed `4.-8584100000000001280` — a wrong integer
+  part with a `-` inside the fraction — and from `{pi:.20}` the digits
+  were `3.0-9223372036854775808`, `i64::MIN` spliced in whole. The same
+  sentinel was the integer part of every value at or beyond 2^63, so
+  `{big:.2}` on 1e22 printed
+  `-9223372036854775808.-9223372036854775808`. LANGUAGE.md:3106
+  documents "N decimal places" with no bound on N, and a double — being
+  a binary fraction — always has an exact finite decimal expansion to
+  print them from. The old routine scaled the whole fraction by 10^N and
+  converted it in one step, three ways and wrong three ways: a
+  `mulsd`-by-10 loop that accumulated rounding error, a 10^N carry
+  threshold built with `imul` that wrapped negative past `i64::MAX`, and
+  a `cvttsd2si` that returns the SSE "integer indefinite" value once its
+  source overflows. Nothing is scaled now: the value is taken apart as
+  `m * 2^e`, an integer part at or above 2^52 comes from the same
+  big-integer digit routine the default float printer uses (so `{f}` and
+  `{f:.N}` agree on every value), and the fraction's digits are produced
+  one at a time by repeated exact halving in decimal. Rounding happens
+  once, on those digits, with an exact tie going to the even digit, as
+  `printf` does — so `{9.9999:.0}` is now `10` where it used to truncate
+  to `9`. Checked digit-for-digit against glibc `printf("%.*f")` over
+  979 value/precision pairs, including the smallest subnormal (1074
+  places), the largest double, the 2^52/2^53/2^63 boundaries and N up to
+  1500. Regression test `tests/410_float_precision_any_places.vox`,
+  proven to print the corrupt bands on 0.4.8 and to pass after. Found by
+  the vox-fuzz literals worker's format-specifier probes (§4 D2),
+  master-reproduced.
+
+- **A pad width is honoured at any size it can be written, and is written
+  a page at a time** ([#61](docs/BUGS_FOUND.md)) — `{n:2147483648}`
+  printed with no padding at all and no diagnostic, because the width
+  was read with `parse::<i32>()` inside an `if let` with no else arm: one
+  past `i32::MAX` the parse failed, the `Err` was dropped, and the spec
+  came out identical to a bare `{n}`. A width that did parse was then
+  padded one `write(2)` per character — about 265 KB/s, which is why
+  `{n:1000000}` took two and a half seconds and `{n:100000000}` took
+  nearly five minutes. LANGUAGE.md:3107-3108 puts no ceiling on a width,
+  and none is intended: a width is a character count, rendered in full.
+  So the count is now read as an `i64` and reaches the printer whatever
+  it is — `{n:2147483648}` pads, in 1.3 s — and a count too large to
+  hold is a compile error naming the limit instead of a silent no-op.
+  The padding is written a 4096-byte page at a time (100 000 000
+  characters: 283 s before, 0.065 s after), through a writer that
+  resumes after a short write. The same parse fed the zero-pad and the
+  hex, binary and octal width forms, and the same per-character loop was
+  in all four padded printers; `{f:.N}` had the identical dropped `Err`
+  on its precision. All of them are fixed together. Regression tests
+  `tests/411_pad_width_any_size.vox`,
+  `tests/compile_fail/169_pad_width_past_what_vox_can_count.vox`,
+  `170_decimal_precision_past_what_vox_can_count.vox` and four codegen
+  tests that pin the emitted width without writing two billion spaces.
+  Found by the vox-fuzz literals worker's format-specifier probes (§4
+  D3), master-reproduced and root-caused against source.
+
+- **A `.lib` entry with no `, returning` clause can no longer be read as a
+  value** ([#62](docs/BUGS_FOUND.md)) — `a number called n is greet.`
+  against a library whose Table of Contents says `To greet.` compiled
+  clean and answered `1`, the leftover in the return register from a
+  function that never set it. LANGUAGE.md:4963-4965 says a missing
+  `returning` clause "means the function returns nothing", and step 5 of
+  consuming a library (LANGUAGE.md:4990) promises calls "type-check like
+  any other function" — a promise the parameter side already kept (arity
+  and argument types are both checked at the call site) and the result
+  side did not, on the identical `see`. Reading such a call's result is
+  now a compile error naming the entry, pointing at the use, and offering
+  both ways out: declare the return in the `.lib`, or call the function as
+  a statement. Statement calls of a void export — the reason to export one
+  — are untouched. Regression test `see/void-result` in `test.sh` (A4.5).
+  Found by the vox-fuzz libraries claim ledger (Discrepancy 4) and filed
+  on the language designer's ruling.
+
+- **A procedure's non-existent result can no longer be used as a value**
+  ([#63](docs/BUGS_FOUND.md)) — `To ping. Print "pong".` followed by
+  `print ping.` printed `pong` and then `1`, and `a number called n is
+  ping.` put that same `1` into `n`: not an answer, just whatever the call
+  left behind. The Functions section defines the parameterless procedure
+  (LANGUAGE.md:684-686) and gives it a home as a statement
+  (LANGUAGE.md:779-785), but never hands a value back from a function that
+  returns none — and LANGUAGE.md:656-660 names this exact shape, "a wrong
+  answer that looks like data", as what the language exists to refuse. The
+  analyzer's signature pre-pass now records every `To` with no
+  value-returning `Return` at any depth, and reading one's result — in a
+  declaration, a `print`, a list slot, a map value, a format hole, a
+  `value`, a comparison, an argument to another call, a `Set`, an `Append`
+  or a `Return` — is a compile error naming the function and offering both
+  ways out. A bare `Return.` counts as returning nothing; a function that
+  does return a value without declaring its type is a different bug (#45)
+  and is untouched here. Calling a procedure as a statement stays legal.
+  Regression tests `tests/compile_fail/158_procedure_result_in_a_declaration.vox`
+  through `168_bare_return_result_used.vox`, plus the passing controls
+  `tests/407_procedure_called_as_a_statement.vox` and
+  `tests/408_declared_return_used_as_a_value.vox`. Found by the #45 fix
+  worker while closing #45.
+
+- **`the h's descriptor` reads the property, like `h's descriptor`
+  always did** ([#64](docs/BUGS_FOUND.md)) — `the` is only an article
+  before a variable name (LANGUAGE.md:1857, :523, :887), so the two
+  possessive spellings are one reading. They were two lists: the parser
+  resolved `name's property` in one arm of `parse_primary` and `the
+  name's property` in another, each with its own hand-written property
+  arms, and the second knew only the time and timer properties plus
+  `size`/`length`/`capacity`/`empty`/`full`. Every file property but
+  `size`, both list-element properties, a map's `keys`/`values` and its
+  key read, all seven number properties and a buffer's `type` answered
+  `Expected property name` behind the article — while the *quoted*
+  timer names (`t's 'start time'`) and the misspelled-`arguments`
+  suggestion had drifted the other way and worked only *with* it. Both
+  spellings now call one `parse_possessive_tail`, which holds the
+  specials, the typo diagnostic, the map-key read, every property arm,
+  #38's `exists` explanation, the `start time` two-word follower and
+  the duration unit — so a property is added or diagnosed in exactly one
+  place, the lesson #51 and #58 already taught about a second copy of a
+  list. `the` before a reserved word is untouched and still rejected:
+  `arguments`, `environment` and `current time` are not variable names,
+  and the manual gives them their own `the`-led phrases. Regression
+  tests `tests/420_the_possessive_reads_file_properties.vox` through
+  `424_the_possessive_on_numbers_and_timers.vox` and
+  `tests/compile_fail/171_the_possessive_file_handle_exists.vox`, all
+  six proven to fail against the previous tree. Found by the #38 fix
+  worker probing the file-property surface, master-confirmed.
+
+- **A declaration whose initializer is the wrong type is a compile error
+  instead of a segfault or a wrong value** ([#65](docs/BUGS_FOUND.md)) —
+  `a text called n is 5.` followed by `Print n.` dereferenced the literal
+  5 as a text pointer and crashed (139); `a number called n is "get
+  five".` printed `4198488`, the string's own address, which is
+  LANGUAGE.md:647-667's worked example still printing the number the
+  manual says it no longer prints. A boolean took the same pointer, a
+  text into a float silently answered `0.0`, a number into a list
+  segfaulted, and a text into a map printed `{}`. The type lock has
+  enforced LANGUAGE.md:531-532 — "**A variable's type is fixed at its
+  declaration and never changes**" — on every write to an
+  already-declared name since 0.3.0, so `Set n to "x".` was refused,
+  but nothing checked the declaration itself, which is where the type is
+  chosen. `check_initialiser_type` now applies the lock's own
+  compatibility rule at the declaration, and `check_argument_type` /
+  `check_return_type` close the identical hole at a call's argument and
+  at a return (`greet with 5.` on a text parameter, `Return a text, 5.`)
+  — the three sites bug #57 already covered for `nothing`. The
+  diagnostic names both types and the two ways out: redeclare, or the
+  cast LANGUAGE.md's Basic Conversions table documents. Deliberately
+  untouched: a `value` destination or source, a buffer's content write,
+  the `file`/`time`/`timer` handles whose documented initializers are of
+  another type (LANGUAGE.md:503-519 — `a file called source is
+  "input.txt".`), a `thing` copy, and a buffer read into a text without
+  the cast, which is bug #51's still-open question. Regression tests
+  `tests/compile_fail/145`–`157`, all thirteen proven to
+  compile-and-misbehave on 9734e5d, plus the passing controls
+  `tests/395_declaration_initialiser_types_that_agree.vox` and
+  `tests/396_mistyped_initialisers_written_correctly.vox`. Found by the
+  #51 fix worker and by the vox-fuzz names-and-strings claim ledger
+  (discrepancy D1).
+
+- **`a float called ratio is 3.` holds 3.0 instead of 0.0**
+  ([#65](docs/BUGS_FOUND.md)) — a whole number into a float stored the
+  integer's raw bits, which the float slot then read as 1.5e-323 and
+  printed as `0.0`; `ratio add 1.0` answered `1.0` and `ratio multiply
+  2.0` answered `0.0`. Per the language designer's ruling — "in human
+  language we call 1 a number and pi a number; it should be the same in
+  Vox" — a number and a float are one family, so the declaration converts
+  rather than refusing, emitting the same two instructions `3 as a float`
+  already emitted. The analyzer also stops relabelling a declared float
+  from its initializer's shape, which is why `a float called f is 3.`
+  followed by `Set f to 4.0.` used to answer "cannot assign float to 'f',
+  which is a number" and now works. `a number called n is 3.5.` keeps its
+  3.5, unchanged. The type lock still refuses `Set f to 3.` and `Set n to
+  3.5.` one line later; that is the designer's own static-int64 gap, left
+  with them, along with the float parameter and float return that still
+  misread a whole number (both recorded under #65).
+
 ## [0.4.8] - 2026-08-20
 
 ### Fixed

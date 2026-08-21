@@ -1,0 +1,6 @@
+(Bug #65 into a map, silently. The text's address became the map's, and the
+ map printed as `{}` - an empty map that was never empty and never a map. No
+ conversion from text to a map exists; a map is written `{"bo": 42}`.)
+
+a map called ages is "bo".
+Print ages.

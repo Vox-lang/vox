@@ -1,0 +1,4 @@
+cannot pass a number to 'who', which 'greet' declares as text
+156_number_as_a_text_argument.vox:6:29
+note: a parameter's type is fixed by the signature, so 'who' can only be given text
+help: convert it at the call site - `5 as text` - or declare 'who' as a number

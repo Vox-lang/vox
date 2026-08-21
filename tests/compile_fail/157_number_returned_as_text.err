@@ -1,0 +1,4 @@
+cannot return a number from a function that returns text
+157_number_returned_as_text.vox:6:5
+note: a function's return type is fixed by its signature, so it can only hand back text
+help: convert it explicitly:  Return text, 5 as text.

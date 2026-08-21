@@ -659,6 +659,29 @@ impl CodeGenerator {
                             self.generate_expr_as_text(val);
                         } else {
                             self.generate_expr(val);
+                            // Bug #65, the language designer's number/float
+                            // ruling: `a float called ratio is 3.` takes the 3.
+                            // The slot is already labelled `VarType::Float` by
+                            // the declaration above, so every later read renders
+                            // it as a double - and storing the integer's raw bits
+                            // made that read answer `0.0` (3 as an IEEE-754 bit
+                            // pattern is 1.5e-323). Convert instead, with the
+                            // same two instructions `<expr> as a float` emits,
+                            // and only for an initialiser codegen can see is an
+                            // integer: a proven float, a text, a buffer, a
+                            // collection or a `value` (Mixed) all answer
+                            // something other than `Integer` here and are left
+                            // exactly as they were. (A text target cannot be a
+                            // float, so the two branches never overlap.)
+                            if matches!(var_type, Some(Type::Float))
+                                && !self.is_float_expr(val)
+                                && self.infer_expr_type(val) == Some(VarType::Integer)
+                            {
+                                self.emit_indent("; Bug #65: integer initialiser into a float");
+                                self.emit_indent("cvtsi2sd xmm0, rax");
+                                self.emit_indent("XMM0_TO_RAX");
+                                self.uses_floats = true;
+                            }
                         }
                         self.emit_store_rax_to_target(&target, &format!("{}", name));
                         // A declared `value` stores its runtime tag alongside

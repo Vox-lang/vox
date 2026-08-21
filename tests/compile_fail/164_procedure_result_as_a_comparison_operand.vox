@@ -1,0 +1,6 @@
+(Bug #63 as a comparison operand. The comparison read the return register and
+ branched on it, so the program took a path decided by a leftover.)
+
+To ping. Print "pong".
+
+If ping is 1, Print "took the branch".

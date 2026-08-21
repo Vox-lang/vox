@@ -221,6 +221,7 @@ use flags::FlagSchemaRuntime;
 mod syscalls;
 mod buffers;
 mod format;
+pub(crate) use format::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
 mod vars;
 mod functions;
 mod tags;
@@ -334,12 +335,19 @@ enum IntegerBase {
     Octal,
 }
 
+/// A `{value:SPEC}` clause, read. Both counts are i64 because both render
+/// literally - `width` characters of padding, `precision` decimal places -
+/// and nothing in LANGUAGE.md:3101-3119 caps either one, so the only limit
+/// is the largest count the runtime can hold. They were i32, and the parse
+/// that filled them dropped its `Err` on the floor: `{n:2147483648}` built
+/// the same spec as a bare `{n}` and printed with no padding and no
+/// diagnostic (docs/BUGS_FOUND.md #61).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FormatSpec {
-    width: Option<i32>,
+    width: Option<i64>,
     zero_pad: bool,
     base: IntegerBase,
-    precision: Option<i32>,
+    precision: Option<i64>,
 }
 
 /// Outcome of resolve_format_variable - how a `{name}` format part's value

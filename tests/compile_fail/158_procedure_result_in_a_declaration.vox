@@ -1,0 +1,11 @@
+(Bug #63. A `To` with no `Return` at all answers with nothing -
+ LANGUAGE.md:684-686 defines exactly this shape, and the Functions section
+ never gives it a result to read. Before this, the declaration took whatever
+ the call left in the return register and called it a number: it printed 1, a
+ wrong answer that looks like data - the very thing LANGUAGE.md:656-660 says
+ the language exists to refuse.)
+
+To ping. Print "pong".
+
+a number called answer is ping.
+Print answer.

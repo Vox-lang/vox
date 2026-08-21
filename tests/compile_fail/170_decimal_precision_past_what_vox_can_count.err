@@ -1,0 +1,3 @@
+a decimal precision of 18446744073709551616 is more than Vox can count to - the largest is 9223372036854775807 decimal places
+170_decimal_precision_past_what_vox_can_count.vox:8:12
+help: every one of those decimal places is written out, so a large decimal precision is a large amount of output - but it still has to be a count Vox can hold. Write 9223372036854775807 or less.

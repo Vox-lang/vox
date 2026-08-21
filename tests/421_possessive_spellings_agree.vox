@@ -1,0 +1,60 @@
+(Bug #64: the bare possessive and the `the` possessive are two spellings
+ of one reading, so every property must answer the same under both. They
+ did not: the `the` spelling had its own short list of properties, and a
+ file, list, map or number property outside it was a parse error. Each
+ pair below reads the same property twice, once per spelling.)
+
+open a file for writing called setup at "/tmp/vox_test_spellings_agree.txt".
+Write "twelve bytes" to setup.
+Close setup.
+
+open a file for reading called handle at "/tmp/vox_test_spellings_agree.txt".
+
+If handle's size is equal to the handle's size then,
+    Print "size: agree".
+If handle's descriptor is equal to the handle's descriptor then,
+    Print "descriptor: agree".
+If handle's readable is equal to the handle's readable then,
+    Print "readable: agree".
+If handle's writable is equal to the handle's writable then,
+    Print "writable: agree".
+If handle's modified is equal to the handle's modified then,
+    Print "modified: agree".
+If handle's accessed is equal to the handle's accessed then,
+    Print "accessed: agree".
+If handle's permissions is equal to the handle's permissions then,
+    Print "permissions: agree".
+
+Close handle.
+Delete the file "/tmp/vox_test_spellings_agree.txt".
+
+a list called names is ["Alice", "Bob", "Charlie"].
+If names's length is equal to the names's length then,
+    Print "list length: agree".
+If names's first is equal to the names's first then,
+    Print "list first: agree".
+If names's last is equal to the names's last then,
+    Print "list last: agree".
+
+a map called person is {"name": "Alice", "age": 30}.
+If person's "name" is equal to the person's "name" then,
+    Print "map key: agree".
+If person's size is equal to the person's size then,
+    Print "map size: agree".
+
+a number called temperature is -7.
+If temperature's absolute is equal to the temperature's absolute then,
+    Print "absolute: agree".
+If temperature's sign is equal to the temperature's sign then,
+    Print "sign: agree".
+If temperature's odd is equal to the temperature's odd then,
+    Print "odd: agree".
+If temperature's negative is equal to the temperature's negative then,
+    Print "negative: agree".
+
+Create a buffer called payload with size 16.
+Set byte 1 of payload to 65.
+If payload's capacity is equal to the payload's capacity then,
+    Print "capacity: agree".
+If payload's full is equal to the payload's full then,
+    Print "full: agree".

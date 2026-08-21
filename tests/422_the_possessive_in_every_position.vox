@@ -1,0 +1,36 @@
+(Bug #64: `the` is an article, not a construct, so a possessive spelled
+ with it belongs everywhere an expression does. These are the positions a
+ program actually reads a file property from: an initializer, a `Set`, a
+ condition, a format hole, a collection literal, an arithmetic operand
+ and a call argument.)
+
+To 'describe the size' with a number called 'how many'.
+    Print "argument: {'how many'} bytes".
+
+open a file for writing called setup at "/tmp/vox_test_the_positions.txt".
+Write "abcdefghij" to setup.
+Close setup.
+
+open a file for reading called source at "/tmp/vox_test_the_positions.txt".
+
+a number called 'byte count' is the source's size.
+Print "initializer: {'byte count'}".
+
+Set 'byte count' to the source's permissions.
+If 'byte count' is greater than 0 then,
+    Print "set: a mode".
+
+If the source's size is equal to 10 then,
+    Print "condition: 10".
+
+Print "format hole: {the source's size}".
+
+a list called facts is [the source's size, the source's readable].
+Print "collection literal: {facts}".
+
+Print "arithmetic: {the source's size add 1}".
+
+'describe the size' of the source's size.
+
+Close source.
+Delete the file "/tmp/vox_test_the_positions.txt".

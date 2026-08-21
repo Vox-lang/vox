@@ -1,0 +1,1 @@
+a file handle has no `exists` property - a handle you hold is already open; to test whether a path can be opened, open it inside an `On error` handler (see the File Properties section)

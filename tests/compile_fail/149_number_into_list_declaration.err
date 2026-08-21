@@ -1,0 +1,4 @@
+cannot initialise 'items', which is a list, with a number
+149_number_into_list_declaration.vox:6:15
+note: a variable's type is fixed at its declaration, so 'items' can only be initialised with a list
+help: declare it as a number - `a number called items is 5.`

@@ -1,0 +1,79 @@
+(Bug #60 - `{f:.N}` corrupted its decimals from N=18 and spliced a literal
+ i64::MIN into them from N=20. The three bands had three separate causes,
+ all of them "scale the whole fraction by 10^N and convert it in one go":
+ a mulsd-by-10 loop that accumulated rounding error (N=18), a 10^N carry
+ threshold built with imul that wrapped negative (N=19), and cvttsd2si
+ returning the SSE integer-indefinite value once the scaled fraction went
+ past i64::MAX (N>=20). The same cvttsd2si took the integer part, so every
+ magnitude at or beyond 2^63 printed that sentinel as its integer part too.
+
+ Every line below is glibc's printf("%.*f") for the same double, digit for
+ digit - the manual promises "N decimal places" with no bound on N
+ (LANGUAGE.md:3106), and a double always has an exact finite decimal
+ expansion to print them from.)
+
+a float called 'pi' is 3.14159.
+
+(The three bands: correct through 17, wrong from 18, a bad
+ integer part at 19, i64::MIN spliced in from 20.)
+Print "pi to 0: {pi:.0}".
+Print "pi to 1: {pi:.1}".
+Print "pi to 15: {pi:.15}".
+Print "pi to 16: {pi:.16}".
+Print "pi to 17: {pi:.17}".
+Print "pi to 18: {pi:.18}".
+Print "pi to 19: {pi:.19}".
+Print "pi to 20: {pi:.20}".
+Print "pi to 30: {pi:.30}".
+Print "pi to 50: {pi:.50}".
+
+(A negative keeps its sign and rounds by magnitude.)
+a float called 'chill' is -3.14159.
+Print "chill to 0: {chill:.0}".
+Print "chill to 2: {chill:.2}".
+Print "chill to 18: {chill:.18}".
+Print "chill to 20: {chill:.20}".
+
+(Zero has no digits to round, at any precision.)
+a float called 'nought' is 0.0.
+Print "nought to 0: {nought:.0}".
+Print "nought to 1: {nought:.1}".
+Print "nought to 20: {nought:.20}".
+
+(Past 2^53 a double has no fraction left, and past 2^63 the old
+ integer-part conversion returned the same i64::MIN sentinel.)
+a float called 'hundred quadrillion' is 100000000000000000.0.
+Print "100000000000000000 to 0: {hundred quadrillion:.0}".
+Print "100000000000000000 to 2: {hundred quadrillion:.2}".
+Print "100000000000000000 to 20: {hundred quadrillion:.20}".
+a float called 'ten sextillion' is 10000000000000000000000.0.
+Print "10000000000000000000000 to 0: {ten sextillion:.0}".
+Print "10000000000000000000000 to 3: {ten sextillion:.3}".
+
+(Rounding: up, down, and a carry that lengthens the integer part.)
+a float called 'just over' is 2.675.
+Print "2.675 to 2: {just over:.2}".
+a float called 'nearly ten' is 9.9999.
+Print "9.9999 to 3: {nearly ten:.3}".
+Print "9.9999 to 0: {nearly ten:.0}".
+a float called 'three quarters up' is 3.9.
+Print "3.9 to 0: {three quarters up:.0}".
+
+(An exact half - the only case where a rounding rule is visible -
+ goes to the even digit, which is what printf does.)
+a float called 'half' is 0.5.
+Print "0.5 to 0: {half:.0}".
+a float called 'two and a half' is 2.5.
+Print "2.5 to 0: {two and a half:.0}".
+a float called 'one and a half' is 1.5.
+Print "1.5 to 0: {one and a half:.0}".
+a float called 'an eighth' is 0.125.
+Print "0.125 to 2: {an eighth:.2}".
+a float called 'three eighths' is 0.375.
+Print "0.375 to 2: {three eighths:.2}".
+
+(Every place of the exact expansion, and then the zeros that
+ follow it - the value has ended, it has not run out of accuracy.)
+a float called 'a tenth' is 0.1.
+Print "0.1 to 55: {a tenth:.55}".
+Print "0.1 to 60: {a tenth:.60}".

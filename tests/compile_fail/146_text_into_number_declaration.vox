@@ -1,0 +1,9 @@
+(Bug #65, and LANGUAGE.md:647-667's own worked example. The manual says this
+ program "is now a compile error" - but only the quoted NAME was rejected in
+ 0.3.0, never the string in value position. With the name written as an
+ identifier the sentence compiled again and printed the literal's address:
+ "a function pointer, printed as a number, silently", which is the exact
+ shape the 0.3.0 split was written to kill.)
+
+a number called x is "get five".
+Print x.

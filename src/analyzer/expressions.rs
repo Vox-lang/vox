@@ -97,7 +97,7 @@ impl Analyzer {
     /// Two imports exporting the same name are ambiguous by identity — a
     /// re-see of the SAME <lib,version> is one import, but two different
     /// libraries, or two versions of one library, are two.
-    fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
+    pub(crate) fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
         let mut providers: Vec<&crate::lib_file::ImportedFunction> = Vec::new();
         for imp in &self.imports {
             if imp.name != name {
@@ -173,15 +173,28 @@ impl Analyzer {
                 // Bug #57: `nothing` handed to a concretely-typed parameter.
                 // The callee stores it in that parameter's slot and reads it
                 // as the declared type, so a `text` parameter took a null
-                // pointer and faulted on the callee's first read.
-                Some((param_name, param_type)) if matches!(arg, Expr::NothingLit) => {
+                // pointer and faulted on the callee's first read. Bug #65 is
+                // the same hole for every other provable type - `greet with
+                // 5.` on `a text called who` faulted identically - and is
+                // checked only when the `nothing` check has not already
+                // reported, so one argument never earns two diagnostics.
+                //
+                // A `value` parameter is the documented home for both, so
+                // both checks leave it alone. An IMPORTED function's
+                // arguments are deliberately skipped here: `check_function_call`
+                // has already routed those through `validate_import_call_args`,
+                // whose own type check would otherwise report the same
+                // mismatch a second time.
+                Some((param_name, param_type)) => {
                     let (param_name, param_type) = (param_name.clone(), param_type.clone());
-                    // A `value` parameter is `nothing`'s documented home, so
-                    // this reports on it and leaves it alone.
-                    self.check_nothing_argument(name, &param_name, &param_type, arg);
+                    if !self.check_nothing_argument(name, &param_name, &param_type, arg)
+                        && self.is_local_function(name)
+                    {
+                        self.check_argument_type(name, &param_name, &param_type, arg);
+                    }
                     self.analyze_expr(arg);
                 }
-                _ => self.analyze_expr(arg),
+                None => self.analyze_expr(arg),
             }
         }
     }
@@ -193,7 +206,7 @@ impl Analyzer {
     /// matches the definition) or a single unambiguous import. A name that is
     /// a variable in scope is decided by the caller *before* consulting this;
     /// a variable shadows a same-named zero-arg function.
-    fn is_zero_arg_function(&self, name: &str) -> bool {
+    pub(crate) fn is_zero_arg_function(&self, name: &str) -> bool {
         if self.is_local_function(name) {
             return self.function_param_counts.get(&self.func_key(name)) == Some(&0);
         }
@@ -359,6 +372,44 @@ impl Analyzer {
         }
     }
 
+    /// The `SPEC` in `{value:SPEC}` names a count - `{x:N}` characters of
+    /// padding, `{f:.N}` decimal places. LANGUAGE.md:3101-3119 puts no
+    /// ceiling on either, and none is intended: a width renders literally,
+    /// so a huge one is simply a huge amount of output. The one count that
+    /// cannot be honoured is one too large for the compiler to hold, and
+    /// that has to be *said*. Reading the width with a 32-bit parse and
+    /// discarding the `Err` is what made `{n:2147483648}` compile to the
+    /// same code as a bare `{n}` - no padding, no diagnostic, and a cliff
+    /// between two adjacent literals (docs/BUGS_FOUND.md #61).
+    pub(crate) fn check_format_spec(&mut self, format: Option<&str>) {
+        let Some(fault) = read_format_spec(format).1 else {
+            return;
+        };
+        let (subject, unit, digits) = match &fault {
+            FormatSpecFault::WidthTooLarge(digits) => ("pad width", "characters", digits),
+            FormatSpecFault::PrecisionTooLarge(digits) => {
+                ("decimal precision", "decimal places", digits)
+            }
+        };
+        let mut err = CompileError::new(&format!(
+            "a {} of {} is more than Vox can count to - the largest is {} {}",
+            subject, digits, FORMAT_MAX_COUNT, unit
+        ));
+        // Two spec faults writing the same digits are two errors, each
+        // pointing at its own `{...}` - the same occurrence bookkeeping
+        // `push_error_with_hint` does for a repeated symbol.
+        let occurrence = *self.symbol_error_counts.get(digits).unwrap_or(&0);
+        if let Some(loc) = self.find_symbol_location(digits, occurrence) {
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(digits.to_string(), occurrence + 1);
+        err = err.with_help_line(&format!(
+            "every one of those {} is written out, so a large {} is a large amount of output - but it still has to be a count Vox can hold. Write {} or less.",
+            unit, subject, FORMAT_MAX_COUNT
+        ));
+        self.errors.push(err);
+    }
+
     /// Every interpolation of one format string. `whole_things_render` says
     /// whether this string's sink can render a whole thing: `Print` writes
     /// the fields straight out (plan 310 §7), while every other sink builds
@@ -367,7 +418,8 @@ impl Analyzer {
         self.deps.uses_strings = true;
         for part in parts {
             match part {
-                FormatPart::Expression { expr, .. } => {
+                FormatPart::Expression { expr, format } => {
+                    self.check_format_spec(format.as_deref());
                     // `"{span's start}"` - a chain ending on a nested thing
                     // parses as an expression part, and renders exactly as
                     // the thing it names does.
@@ -381,7 +433,8 @@ impl Analyzer {
                     // undeclared return type tells it nothing.
                     self.reject_untyped_call_result(expr, UntypedPosition::Interpolation);
                 }
-                FormatPart::Variable { name, .. } => {
+                FormatPart::Variable { name, format } => {
+                    self.check_format_spec(format.as_deref());
                     if name.is_empty() {
                         // BUGS_FOUND #10: a bare or unmatched `{` in a
                         // string literal. The format parser found a `{`
@@ -652,6 +705,11 @@ impl Analyzer {
                 self.deps.uses_funcs = true; // Track that functions are used
                 self.check_function_call(name, args);
                 self.analyze_call_arguments(name, args);
+                // Bugs #62/#63: reaching this arm at all means the call's
+                // result is being read - a call run for its effect alone is
+                // `Statement::FunctionCall` and never comes through here. A
+                // function that returns nothing has no result to read.
+                self.reject_void_call_result(name);
                 // A call returning a whole thing is a copy source, not a
                 // value: this is a position that wants one value, and a thing
                 // has none (plan 310 §5). `analyze_thing_source` is the path
@@ -805,6 +863,9 @@ impl Analyzer {
                     if self.is_zero_arg_function(name) {
                         self.deps.uses_funcs = true;
                         self.check_function_call(name, &[]);
+                        // Bugs #62/#63: the bare-name call form, in the same
+                        // value position as the `of`-form arm above.
+                        self.reject_void_call_result(name);
                     } else if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
                         // Don't report as unknown variable if it might be a
                         // keyword typo (that will be caught by check_for_typos)

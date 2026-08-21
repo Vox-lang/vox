@@ -187,7 +187,14 @@ impl Analyzer {
                     // read is settled here too, for the same reason - a call
                     // above the definition must be judged the same as one
                     // below it.
-                    self.record_untyped_result_function(key, return_type, body);
+                    self.record_untyped_result_function(key.clone(), return_type, body);
+                    // Bug #63: whether a call has a result at all is settled
+                    // here too, for the same reason - a call above the
+                    // definition must be judged the same as one below it.
+                    // Two independent questions about the same definition:
+                    // #45 asks whether the result has a type to read, #63
+                    // whether there is a result at all.
+                    self.record_procedure(key, return_type, body);
                 }
                 Statement::FlagSchemaDecl { name, value_type, .. } => {
                     self.flag_variables.insert(
@@ -599,15 +606,25 @@ impl Analyzer {
                 // checked here because the type lock below only guards
                 // writes to an ALREADY-declared name, and this is the
                 // declaration itself.
+                let mut initialiser_refused = false;
                 if let (Some(vt), Some(v)) = (var_type.as_ref(), value.as_ref()) {
-                    self.check_declared_read_type(name, vt, v);
+                    initialiser_refused = self.check_declared_read_type(name, vt, v);
                     // Bug #57: `a text called t is nothing.` (and the
                     // `Set`/`Create ... to nothing.` spellings, which parse
                     // into this same statement). Checked here for the same
                     // reason as the read above - the type lock guards writes
                     // to an already-declared name, and this is the
                     // declaration itself.
-                    self.check_nothing_initialiser(name, vt, v);
+                    initialiser_refused |= self.check_nothing_initialiser(name, vt, v);
+                    // Bug #65: every other provable mismatch - `a text
+                    // called n is 5.`, `a number called n is "get five".`,
+                    // `a list called items is 5.` - which the two checks
+                    // above left to the declaration's own (absent) type
+                    // check. Runs only when neither has already reported,
+                    // so one mistake never earns two diagnostics.
+                    if !initialiser_refused {
+                        initialiser_refused = self.check_initialiser_type(name, vt, v);
+                    }
                 }
                 // Track the scalar category (number/float/text/boolean) for
                 // the arithmetic type check. Numeric/boolean declarations are
@@ -617,9 +634,42 @@ impl Analyzer {
                 // function-call or property initializer of unknown type might
                 // return a number, and pinning it as text would wrongly reject
                 // later arithmetic on it.
-                if let Some(vt) = var_type {
+                if initialiser_refused {
+                    // Poison the tracked category after reporting, exactly
+                    // as `check_type_lock` does for a rejected assignment:
+                    // the declaration was refused, so recording either type
+                    // would make later uses of `name` in this same
+                    // (already-failing) compile cascade a second, confusing
+                    // error out of the mistake just reported - `a number
+                    // called n is "x". Set n to 5.` used to answer "cannot
+                    // assign number to 'n', which is a text", naming a type
+                    // nobody wrote.
+                    self.scalar_types.remove(name);
+                } else if let Some(vt) = var_type {
                     match vt {
-                        Type::Integer | Type::Float | Type::Boolean => {
+                        // A declared float stays a float. Codegen labels the
+                        // slot `VarType::Float` from the declaration and
+                        // converts an integer initialiser into it at the
+                        // store (bug #65, the designer's number/float
+                        // ruling), so relabelling the name a number off the
+                        // initialiser's shape is a disagreement with what is
+                        // actually in the slot: it is what made `a float
+                        // called f is 3.` followed by `Set f to 4.0.` answer
+                        // "cannot assign float to 'f', which is a number",
+                        // naming a type nobody wrote, while letting `Set f to
+                        // 4.` through. Every other initialiser type is still
+                        // read off the value, exactly as before.
+                        Type::Float => {
+                            let t = match value
+                                .as_ref()
+                                .and_then(|v| self.arithmetic_operand_type(v))
+                            {
+                                Some(Type::Integer) | None => Type::Float,
+                                Some(other) => other,
+                            };
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        Type::Integer | Type::Boolean => {
                             let t = value
                                 .as_ref()
                                 .and_then(|v| self.arithmetic_operand_type(v))
@@ -1039,13 +1089,19 @@ impl Analyzer {
                     // Bug #57: `Return text, nothing.` The caller reads the
                     // result as the declared type, so a text return handed
                     // back a null pointer to dereference and a number return
-                    // quietly answered 0.
-                    (Some(ref declared), Some(v)) if Analyzer::nothing_is_refused_for(declared) => {
+                    // quietly answered 0. Bug #65 is the same hole for every
+                    // other provable type - `Return a text, 5.` handed back
+                    // the literal's address - and is checked only when the
+                    // `nothing` check has not already reported, so one
+                    // Return never earns two diagnostics.
+                    (Some(ref declared), Some(v)) => {
                         let declared = declared.clone();
-                        self.check_nothing_return(&declared, v);
+                        if !self.check_nothing_return(&declared, v) {
+                            self.check_return_type(&declared, v);
+                        }
                         self.analyze_expr(v);
                     }
-                    (_, Some(v)) => self.analyze_expr(v),
+                    (None, Some(v)) => self.analyze_expr(v),
                     (_, None) => {}
                 }
             }

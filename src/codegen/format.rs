@@ -185,76 +185,14 @@ impl CodeGenerator {
         }
     }
 
+    /// Read a `{value:SPEC}` clause for codegen. Any fault the reader found
+    /// is dropped here on purpose: the analyzer has already refused the
+    /// program (`check_format_spec`), and the spec the reader returns
+    /// alongside a fault is saturated rather than emptied, so even a path
+    /// that reached codegen unanalyzed renders the largest width Vox can
+    /// count to instead of silently rendering none.
     pub(crate) fn parse_format_spec(&self, fmt: Option<&str>) -> FormatSpec {
-        match fmt {
-            None => FormatSpec {
-                width: None,
-                zero_pad: false,
-                base: IntegerBase::Decimal,
-                precision: None,
-            },
-            Some(fmt_str) => {
-                let mut spec = FormatSpec {
-                    width: None,
-                    zero_pad: false,
-                    base: IntegerBase::Decimal,
-                    precision: None,
-                };
-                
-                // Check for precision format first (starts with '.')
-                if fmt_str.starts_with('.') {
-                    // Float precision format like .2, .4, etc.
-                    if let Some(precision) = fmt_str.strip_prefix('.').and_then(|s| s.parse::<i32>().ok()) {
-                        spec.precision = Some(precision);
-                    }
-                    return spec;
-                }
-                
-                // Parse width and zero padding
-                let mut remaining = fmt_str;
-                let mut has_width = false;
-                
-                // Check if it starts with digit or '0' for width/padding
-                if remaining.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) {
-                    let zero_pad = remaining.starts_with('0');
-                    let width_str = if zero_pad {
-                        remaining.trim_start_matches('0')
-                    } else {
-                        remaining
-                    };
-                    
-                    // Extract digits for width
-                    let width_end = width_str.chars().take_while(|c| c.is_ascii_digit()).count();
-                    if width_end > 0 {
-                        let width_digits = &width_str[..width_end];
-                        if let Ok(width) = width_digits.parse::<i32>() {
-                            spec.width = Some(width);
-                            spec.zero_pad = zero_pad;
-                            has_width = true;
-                            remaining = &fmt_str[if zero_pad { 1 + width_end } else { width_end }..];
-                        }
-                    }
-                }
-                
-                // Parse base specifier from remaining characters
-                if !remaining.is_empty() {
-                    match remaining {
-                        "x" => spec.base = IntegerBase::HexLower,
-                        "X" => spec.base = IntegerBase::HexUpper,
-                        "b" => spec.base = IntegerBase::Binary,
-                        "o" => spec.base = IntegerBase::Octal,
-                        _ => {
-                            // If we parsed a width but no base, treat as decimal
-                            if has_width {
-                                spec.base = IntegerBase::Decimal;
-                            }
-                        }
-                    }
-                }
-                
-                spec
-            }
-        }
+        read_format_spec(fmt).0
     }
 
     pub(crate) fn emit_formatted_value(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
@@ -428,4 +366,140 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// The largest count a `{value:SPEC}` clause can name. A width is a number
+/// of characters and a precision a number of decimal places; both are
+/// rendered literally and neither is capped by the manual, so the limit is
+/// simply the largest count the runtime can hold and count down.
+pub(crate) const FORMAT_MAX_COUNT: i64 = i64::MAX;
+
+/// A count in a `{value:SPEC}` clause that the compiler read but cannot
+/// honour as written. Carries the digits the author actually wrote, so the
+/// diagnostic can quote them and the caret can find them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FormatSpecFault {
+    /// `{x:N}` or `{x:0N}` with N past `FORMAT_MAX_COUNT` characters.
+    WidthTooLarge(String),
+    /// `{f:.N}` with N past `FORMAT_MAX_COUNT` decimal places.
+    PrecisionTooLarge(String),
+}
+
+/// Read the text after the `:` in `{value:SPEC}`.
+///
+/// Returns the spec every sink formats from, and - separately - whatever
+/// the author wrote that it could not honour. A too-large count still comes
+/// back saturated to `FORMAT_MAX_COUNT` rather than absent, because every
+/// caller of this function renders from the spec alone: an absent width is
+/// indistinguishable from a width that was never written, which is exactly
+/// how `{n:2147483648}` came to print with no padding and no diagnostic
+/// (docs/BUGS_FOUND.md #61). The fault is what the analyzer turns into the
+/// error the author actually sees.
+///
+/// A count that is not all digits (`{x:.2z}`) is not a fault - it is not a
+/// count at all, and is left alone for the base-specifier match below,
+/// exactly as before.
+pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatSpecFault>) {
+    let mut spec = FormatSpec {
+        width: None,
+        zero_pad: false,
+        base: IntegerBase::Decimal,
+        precision: None,
+    };
+    let Some(fmt_str) = fmt else {
+        return (spec, None);
+    };
+
+    // Check for precision format first (starts with '.')
+    if fmt_str.starts_with('.') {
+        // Float precision format like .2, .4, etc.
+        let digits = &fmt_str[1..];
+        return match read_count(digits) {
+            CountRead::None => (spec, None),
+            CountRead::Count(n) => {
+                spec.precision = Some(n);
+                (spec, None)
+            }
+            CountRead::TooLarge => {
+                spec.precision = Some(FORMAT_MAX_COUNT);
+                (spec, Some(FormatSpecFault::PrecisionTooLarge(digits.to_string())))
+            }
+        };
+    }
+
+    // Parse width and zero padding
+    let mut remaining = fmt_str;
+    let mut has_width = false;
+    let mut fault = None;
+
+    // Check if it starts with digit or '0' for width/padding
+    if remaining.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) {
+        let zero_pad = remaining.starts_with('0');
+        let width_str = if zero_pad {
+            remaining.trim_start_matches('0')
+        } else {
+            remaining
+        };
+
+        // Extract digits for width
+        let width_end = width_str.chars().take_while(|c| c.is_ascii_digit()).count();
+        if width_end > 0 {
+            let width_digits = &width_str[..width_end];
+            let width = match read_count(width_digits) {
+                CountRead::Count(n) => Some(n),
+                CountRead::TooLarge => {
+                    fault = Some(FormatSpecFault::WidthTooLarge(width_digits.to_string()));
+                    Some(FORMAT_MAX_COUNT)
+                }
+                CountRead::None => None,
+            };
+            if let Some(width) = width {
+                spec.width = Some(width);
+                spec.zero_pad = zero_pad;
+                has_width = true;
+                let consumed = fmt_str.len() - width_str.len() + width_end;
+                remaining = &fmt_str[consumed..];
+            }
+        }
+    }
+
+    // Parse base specifier from remaining characters
+    if !remaining.is_empty() {
+        match remaining {
+            "x" => spec.base = IntegerBase::HexLower,
+            "X" => spec.base = IntegerBase::HexUpper,
+            "b" => spec.base = IntegerBase::Binary,
+            "o" => spec.base = IntegerBase::Octal,
+            _ => {
+                // If we parsed a width but no base, treat as decimal
+                if has_width {
+                    spec.base = IntegerBase::Decimal;
+                }
+            }
+        }
+    }
+
+    (spec, fault)
+}
+
+enum CountRead {
+    /// Not a count at all (empty, or something other than digits follows).
+    None,
+    Count(i64),
+    /// All digits, but more of them than `FORMAT_MAX_COUNT` can hold.
+    TooLarge,
+}
+
+/// A count in a format spec is written as plain digits and nothing else, so
+/// once the string is known to be all digits the only way it can fail to
+/// parse is by being too large - which is the case that must not be
+/// mistaken for "no count was written".
+fn read_count(digits: &str) -> CountRead {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return CountRead::None;
+    }
+    match digits.parse::<i64>() {
+        Ok(n) => CountRead::Count(n),
+        Err(_) => CountRead::TooLarge,
+    }
 }

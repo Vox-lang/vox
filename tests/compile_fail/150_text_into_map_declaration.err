@@ -1,0 +1,4 @@
+cannot initialise 'ages', which is a map, with text
+150_text_into_map_declaration.vox:5:14
+note: a variable's type is fixed at its declaration, so 'ages' can only be initialised with a map
+help: declare it as text - `a text called ages is "bo".`

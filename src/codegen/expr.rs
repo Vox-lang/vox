@@ -356,6 +356,98 @@ impl CodeGenerator {
         self.emit(&format!("{}:", done_label));
     }
 
+    /// `treating <match> as <replacement>` over a subject that carries a
+    /// runtime type tag (bug #59). The subject is the loop variable, and over
+    /// a mixed list, a map's values, or a `value` it has no static type: the
+    /// only truth about what it holds is the per-slot tag. So the tag decides
+    /// the comparison, and the result carries a tag of its own.
+    ///
+    /// Three answers, in the order the hardware finds them:
+    ///
+    /// 1. The subject's tag differs from the match's — a text element under a
+    ///    number match, say. Different types can never be equal, so the
+    ///    substitution does not fire and the element comes through untouched,
+    ///    still wearing its own tag. Nothing is read through the match, which
+    ///    is what kept #55's mismatched clause from dereferencing 98 as a
+    ///    `char*`; here the tags say so outright rather than the static types.
+    /// 2. The tags agree but the values differ — the element is text and the
+    ///    match is text, but not the same text. Text compares by bytes
+    ///    (`_str_eq`), everything else in registers. Again: untouched element,
+    ///    own tag. This is the half the old pointer `cmp` got wrong, so
+    ///    `treating "a" as "b"` never fired on a mixed list's `"a"`.
+    /// 3. The tags agree and the values are equal — the substitution fires and
+    ///    the result is the replacement, tagged as the replacement.
+    ///
+    /// Leaves the value in rax and its tag in r11, the same contract a mixed
+    /// element read has (`expr_leaves_tag_in_r11`), so Print and the append
+    /// and value-passing paths dispatch on it exactly as they do for a bare
+    /// read of the loop variable.
+    fn generate_treating_on_tagged_subject(
+        &mut self,
+        value: &Expr,
+        match_value: &Expr,
+        replacement: &Expr,
+    ) {
+        let skip_label = self.new_label("treating_tagged_skip");
+        let done_label = self.new_label("treating_tagged_done");
+        let tag_source = self
+            .runtime_tag_source(value)
+            .expect("the tagged path is only taken for a subject that has a tag");
+        let match_tag = self
+            .emit_time_expr_tag(match_value)
+            .expect("the tagged path is only taken for a statically tagged match");
+        let replacement_tag = self
+            .emit_time_expr_tag(replacement)
+            .expect("the tagged path is only taken for a statically tagged replacement");
+
+        self.generate_expr(value);
+        if let Some(operand) = tag_source.shadow_operand() {
+            self.emit_indent(&format!(
+                "movzx r11, byte {}  ; subject tag (shadow slot)", operand
+            ));
+        }
+        // Both halves go on the stack: r11 survives only until the next call,
+        // and the comparison below can be one (`_str_eq`).
+        self.emit_indent("push rax  ; subject value");
+        self.emit_indent("push r11  ; subject tag");
+
+        self.emit_indent(&format!("cmp r11, {}  ; subject tag == match tag?", match_tag));
+        self.emit_indent(&format!(
+            "jne {}  ; different types can never be equal", skip_label
+        ));
+
+        if match_tag == TAG_STRING {
+            // Same tag means the subject really is a pointer to bytes, so
+            // comparing by content is safe here in a way it never was on the
+            // static path.
+            self.generate_expr(match_value);
+            self.emit_indent("mov rsi, rax  ; match text");
+            self.emit_indent("mov rdi, [rsp+8]  ; subject text");
+            self.emit_indent("call _str_eq");
+            self.emit_indent("test rax, rax");
+            self.emit_indent(&format!("jz {}", skip_label));
+            self.uses_strings = true;
+        } else {
+            self.generate_expr(match_value);
+            self.emit_indent("mov rbx, rax  ; match value");
+            self.emit_indent("mov rax, [rsp+8]  ; subject value");
+            self.emit_indent("cmp rax, rbx");
+            self.emit_indent(&format!("jne {}", skip_label));
+        }
+
+        // Fired: the replacement brings its own tag.
+        self.emit_indent("add rsp, 16  ; discard the saved subject");
+        self.generate_expr(replacement);
+        self.emit_indent(&format!("mov r11, {}  ; replacement tag", replacement_tag));
+        self.emit_indent(&format!("jmp {}", done_label));
+
+        // Did not fire: the element as it was, tag and all.
+        self.emit(&format!("{}:", skip_label));
+        self.emit_indent("pop r11  ; subject tag");
+        self.emit_indent("pop rax  ; subject value");
+        self.emit(&format!("{}:", done_label));
+    }
+
     pub(crate) fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -1668,6 +1760,14 @@ impl CodeGenerator {
             }
             
             Expr::TreatingAs { value, match_value, replacement } => {
+                // A subject with no static type to dispatch on - a mixed-list
+                // loop variable, a map value, a `value` - keeps its runtime
+                // tag through the clause instead (bug #59).
+                if self.treating_dispatches_on_runtime_tag(value, match_value, replacement) {
+                    self.generate_treating_on_tagged_subject(value, match_value, replacement);
+                    return;
+                }
+
                 // Inline substitution: if value == match_value, use replacement
                 let skip_label = self.new_label("treating_skip");
                 let done_label = self.new_label("treating_done");

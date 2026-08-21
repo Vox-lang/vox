@@ -1,0 +1,29 @@
+(Bug #64: the `the` spelling knew `length`, `size` and `empty` but not
+ `first`, `last`, `keys`, `values` or a map key, so half a collection's
+ documented surface was a parse error behind the article. Every List
+ Properties and Map Properties row, read through `the`.)
+
+a list called names is ["Alice", "Bob", "Charlie"].
+
+Print "length: {the names's length}".
+Print "size: {the names's size}".
+Print "empty: {the names's empty}".
+Print "first: {the names's first}".
+Print "last: {the names's last}".
+
+a list called 'no names' is [].
+Print "empty list: {the 'no names''s empty}".
+
+a map called person is {"name": "Alice", "age": 30}.
+
+Print "keys: {the person's keys}".
+Print "values: {the person's values}".
+a text called who is the person's "name".
+Print "by key: {who}".
+Print "map size: {the person's size}".
+Print "map empty: {the person's empty}".
+
+(A quoted name is the same name, so the article reads it the same way.)
+a list called 'the guest list' is ["Dana", "Eli"].
+Print "quoted first: {the 'the guest list''s first}".
+Print "quoted last: {the 'the guest list''s last}".

@@ -1,0 +1,13 @@
+length: 3
+size: 3
+empty: 0
+first: Alice
+last: Charlie
+empty list: 1
+keys: ["name", "age"]
+values: ["Alice", 30]
+by key: Alice
+map size: 2
+map empty: 0
+quoted first: Dana
+quoted last: Eli
