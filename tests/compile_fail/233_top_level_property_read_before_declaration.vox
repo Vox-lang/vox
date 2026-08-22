@@ -1,0 +1,7 @@
+(Bug #79 through a property read. `label's size` reaches the property
+ arm, which called the name unknown - the wrong word for a name the
+ compiler has already proved exists. The read is too early; the way out
+ is to move a line, not to fix a spelling.)
+
+Print label's size.
+a text called label is "hello".

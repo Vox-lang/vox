@@ -1,0 +1,21 @@
+(Bug #67 — a DECLARED return type printed directly. Declaring the return type
+ is the first way out #45's diagnostic offers, so every one of the eleven
+ types has to come back through the formatter that type deserves. Before the
+ fix, float printed its IEEE-754 bit pattern and map and buffer printed a heap
+ address; the other four rows were already right and are here to stay right.)
+
+To 'give text'. Return a text, "hi".
+To 'give boolean'. Return a boolean, yes.
+To 'give list'. Return a list, [1, 2].
+To 'give number'. Return a number, 7.
+To 'give float'. Return a float, 2.5.
+To 'give map'. Return a map, {"ann": 30}.
+To 'give buffer'. a buffer called made is 16 bytes in size. Copy "bytes" to made. Return a buffer, made.
+
+Print 'give text'.
+Print 'give boolean'.
+Print 'give list'.
+Print 'give number'.
+Print 'give float'.
+Print 'give map'.
+Print 'give buffer'.

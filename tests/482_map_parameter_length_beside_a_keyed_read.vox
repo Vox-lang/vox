@@ -1,0 +1,16 @@
+(Bug #76, the symptom that did link: a keyed read in the same sentence
+ pulls the file runtime in, so THIS program assembled — and then
+ `'s length` answered `-1`, which is what `_file_size` returns for
+ something that is not a file. A wrong value with no crash and no
+ diagnostic, bug #58's shape. Kept apart from 476 and 477 because those
+ two could not assemble at all before the fix, so neither of them can pin
+ the `-1`.)
+
+To 'count the entries beside a lookup' with a map called grades.
+    Print grades's length,
+    Print grades's "ada",
+    Print grades's empty.
+
+A map called 'the class' is {"ada": 1, "bea": 2}.
+'count the entries beside a lookup' of 'the class'.
+Exit 0.

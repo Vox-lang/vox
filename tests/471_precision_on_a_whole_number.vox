@@ -1,0 +1,46 @@
+(Bug #71 - a precision specifier used to be applied before the value's type
+ was ever consulted, so `{n:.2}` on a number read the integer's 64 bits as
+ an IEEE-754 double and printed `0.00`. 255's bits are 1.26e-321, which
+ rounds to 0.00 at two places; every whole number below about 2^62 printed
+ `0.00` the same way, which is why the wrong answer never looked like a bit
+ pattern.
+
+ LANGUAGE.md:3175 writes the rule of `{var:.N}` with no type attached, and
+ the designer's number/float ruling recorded on #65 makes a whole number a
+ member of the same family, so a count of decimal places applies to one:
+ 255 to two places is 255.00.
+
+ The big-number rows are the reason this is rendered as the integer, a
+ point and N zeros rather than by converting to a double first. 2^53+1 and
+ i64::MAX have no exact double, so a conversion would print
+ 9007199254740992.00 and 9223372036854775808.0 - rounding a value on its
+ way to being printed "exactly, correctly rounded", which is #34's defect.
+ Digits-then-zeros is exact for every i64.
+
+ The last row is LANGUAGE.md:3226's promise that a specifier renders the
+ same in every sink: the text built from the same hole must read the same
+ as the printed one.)
+a number called n is 255.
+a float called ratio is 2.5.
+a boolean called ready is true.
+
+Print "{n:.2}".
+Print "{n:.0}".
+Print "{n:.5}".
+Print "{ratio:.2}".
+Print "{ready:.2}".
+
+a number called owed is 0 subtract 5.
+Print "{owed:.2}".
+
+a number called nought is 0.
+Print "{nought:.3}".
+
+a number called 'no double holds this' is 9007199254740993.
+Print "{no double holds this:.2}".
+
+a number called largest is 9223372036854775807.
+Print "{largest:.1}".
+
+a text called built is "{n:.2}".
+Print "{built}".

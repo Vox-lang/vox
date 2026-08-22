@@ -1,0 +1,4 @@
+cannot initialise 'halves', which is text, with a boolean
+189_number_even_into_a_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'halves' can only be initialised with text
+help: declare it as a boolean - `a boolean called halves is gauge's even.` - or convert it explicitly:  a text called halves is gauge's even as text.

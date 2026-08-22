@@ -1,0 +1,15 @@
+(Bug #69's replacement half. The tag the result carries when the
+ substitution fires is the replacement's own, so a `value` replacement hands
+ over its runtime tag exactly as a literal hands over its static one.)
+
+a value called swap is "X".
+print each item from [1, "-"] treating "-" as swap.
+
+(A value on both sides of the clause.)
+a value called probe is "-".
+print each item from [1, "-"] treating probe as swap.
+
+(The replacement's tag really is the one that comes out: a value holding a
+ number, substituted into a mixed list, prints as the number it is.)
+a value called nine is 9.
+print each item from [1, "-"] treating "-" as nine.

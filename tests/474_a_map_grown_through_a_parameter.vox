@@ -1,0 +1,38 @@
+(Bug #75, the map half. LANGUAGE.md's Maps section makes the store-back an
+ explicit promise - "The map may reallocate on growth, so the returned
+ pointer is stored back into the variable automatically" - and a parameter
+ is a variable. It was not: a map grown through a `map` parameter stopped
+ at eight entries, the size `_map_insert` gives a fresh map.)
+
+To 'store into' with a map called holder and a text called label.
+    Set holder's "{label}" to 1.
+
+To 'set to two' with a map called holder and a text called label.
+    Set holder's "{label}" to 2.
+
+a map called m is {"seed": 0}.
+a number called n is 0.
+While n is less than 20,
+    'store into' of m and "k{n}",
+    Set n to n add 1.
+Print "one entry, 20 calls: {m's length}".
+
+(The entries are real, not just a count: the last one written reads back,
+ and so does the one the literal seeded.)
+a number called seeded is m's "seed".
+a number called nineteenth is m's "k19".
+Print "seed: {seeded}".
+Print "k19: {nineteenth}".
+
+(Replacing an existing key through the parameter still replaces rather than
+ grows - the store-back must not turn an insert into a duplicate.)
+'set to two' of m and "k3".
+a number called third is m's "k3".
+Print "after replace: {m's length}".
+Print "k3: {third}".
+
+(A map that never outgrows its first block was always right, and stays right.)
+a map called small is {"a": 1}.
+'store into' of small and "b".
+'store into' of small and "c".
+Print "small: {small's length}".

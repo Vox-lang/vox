@@ -180,7 +180,7 @@ impl Analyzer {
             name.to_string(),
         ];
         let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
-        let found = self.find_pattern_location(name, &patterns, occurrence, definition_line, false);
+        let found = self.find_pattern_location(name, &patterns, occurrence, definition_line, false, false);
         self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
         found
     }

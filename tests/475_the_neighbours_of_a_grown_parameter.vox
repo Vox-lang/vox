@@ -1,0 +1,94 @@
+(Bug #75's controls: every neighbouring shape that was already right, kept
+ right by the fix. Each row here answered correctly before the store-back
+ through a collection parameter existed, and must still.)
+
+(Reading a list parameter - the direction that never needed a pointer back.)
+To 'the size of' with a list called items. Return a number, items's length.
+
+(An in-place write through a parameter: no realloc, so nothing moves. This
+ is the behaviour that proves a collection parameter is a reference, not a
+ copy - LANGUAGE.md's things are copies, its collections carry references.)
+To 'blank the first of' with a list called items.
+    Set element 1 of items to "CHANGED".
+
+(The nearest working neighbour the manual already offered: hand the
+ collection back and assign it. Still the shape a caller may write.)
+To 'one more onto' with a list called items.
+    append "x" to items.
+    Return a list, items.
+
+(Growth into a global from inside a function, which reads the global mirror
+ rather than a parameter.)
+a list called tally is ["a"].
+To 'add to the tally'.
+    append "x" to tally.
+
+a list called long is ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"].
+Print "read a parameter: {'the size of' of long}".
+
+a list called two is ["a", "b"].
+'blank the first of' of two.
+Print "in-place write: {element 1 of two}".
+
+a list called handed is ["a"].
+a number called n is 0.
+While n is less than 20,
+    Set handed to 'one more onto' of handed,
+    Set n to n add 1.
+Print "returned and assigned: {handed's length}".
+
+a number called t is 0.
+While t is less than 20,
+    'add to the tally',
+    Set t to t add 1.
+Print "into a global: {tally's length}".
+
+(Top-level growth, the case that was always right because the store-back
+ landed in the variable itself.)
+a list called direct is ["a"].
+a number called d is 0.
+While d is less than 20,
+    append "x" to direct,
+    Set d to d add 1.
+Print "at the top level: {direct's length}".
+
+a map called counts is {"seed": 0}.
+a number called c is 0.
+While c is less than 20,
+    Set counts's "k{c}" to 1,
+    Set c to c add 1.
+Print "a map at the top level: {counts's length}".
+
+(A list a function grows through a parameter is still the caller's list
+ afterwards, so the top level can keep growing it the ordinary way.)
+To 'add one to' with a list called items.
+    append "x" to items.
+
+a list called shared is ["a"].
+'add one to' of shared.
+'add one to' of shared.
+append "z" to shared.
+Print "both ways: {shared's length}".
+Print "last: {shared's last}".
+
+(Reading a collection parameter the other ways round: iteration still walks
+ the caller's list, and a collection past the sixth argument word - where the
+ address travels on the stack rather than in a register - arrives and grows
+ like any other.)
+To 'show' with a list called items.
+    For each item in items,
+        Print "item: {item}".
+
+To 'many' with a number called one and a number called two and a number called three and a number called four and a number called five and a list called items and a number called six.
+    append "x" to items,
+    Set six to one add two add three add four add five add six.
+
+a list called pair is ["a", "b"].
+'show' of pair.
+
+a list called seventh is ["a"].
+a number called s is 0.
+While s is less than 20,
+    'many' of 1 and 2 and 3 and 4 and 5 and seventh and 6,
+    Set s to s add 1.
+Print "past the sixth word: {seventh's length}".

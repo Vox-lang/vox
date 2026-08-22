@@ -1,0 +1,6 @@
+(Bug #74 on a time property. LANGUAGE.md's Time Properties table types
+ `year` Number; read into a text, Print dereferenced 2026 as a pointer.)
+
+Get current time into now.
+a text called stamped is now's year.
+Print stamped.

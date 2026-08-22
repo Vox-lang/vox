@@ -381,31 +381,226 @@ impl Analyzer {
     /// discarding the `Err` is what made `{n:2147483648}` compile to the
     /// same code as a bare `{n}` - no padding, no diagnostic, and a cliff
     /// between two adjacent literals (docs/BUGS_FOUND.md #61).
+    ///
+    /// The other count that cannot be honoured is one written beside a
+    /// second count: `{f:8.2}` asks to pad AND to set decimal places, and
+    /// Vox has no primitive that does both. That silently printed `2.5` -
+    /// neither the width nor a precision that prints `2.50` on its own -
+    /// until #85 made the reader see the pair and this say it.
     pub(crate) fn check_format_spec(&mut self, format: Option<&str>) {
         let Some(fault) = read_format_spec(format).1 else {
             return;
         };
-        let (subject, unit, digits) = match &fault {
-            FormatSpecFault::WidthTooLarge(digits) => ("pad width", "characters", digits),
-            FormatSpecFault::PrecisionTooLarge(digits) => {
-                ("decimal precision", "decimal places", digits)
-            }
+        // Every fault names what was written, what Vox will not do with
+        // it, and the way out; they differ only in what the spec's own
+        // text supplies to each.
+        // `symbol` is what the caret sits on - the count, or both counts.
+        // `written` is the whole spec clause as it appears after the `:`,
+        // which is what the search anchors on; the two differ only for a
+        // precision, whose leading `.` belongs to the clause and not under
+        // the caret.
+        let count_past_the_limit = |subject: &str, unit: &str, written: String, digits: &str| {
+            (
+                format!(
+                    "a {} of {} is more than Vox can count to - the largest is {} {}",
+                    subject, digits, FORMAT_MAX_COUNT, unit
+                ),
+                digits.to_string(),
+                written,
+                format!(
+                    "every one of those {} is written out, so a large {} is a large amount of output - but it still has to be a count Vox can hold. Write {} or less.",
+                    unit, subject, FORMAT_MAX_COUNT
+                ),
+            )
         };
-        let mut err = CompileError::new(&format!(
-            "a {} of {} is more than Vox can count to - the largest is {} {}",
-            subject, digits, FORMAT_MAX_COUNT, unit
-        ));
-        // Two spec faults writing the same digits are two errors, each
+        let (message, symbol, written, help) = match &fault {
+            FormatSpecFault::WidthTooLarge(digits) => {
+                count_past_the_limit("pad width", "characters", digits.clone(), digits)
+            }
+            FormatSpecFault::PrecisionTooLarge(digits) => count_past_the_limit(
+                "decimal precision",
+                "decimal places",
+                format!(".{}", digits),
+                digits,
+            ),
+        };
+        let mut err = CompileError::new(&message);
+        // Two spec faults writing the same text are two errors, each
         // pointing at its own `{...}` - the same occurrence bookkeeping
         // `push_error_with_hint` does for a repeated symbol.
-        let occurrence = *self.symbol_error_counts.get(digits).unwrap_or(&0);
-        if let Some(loc) = self.find_symbol_location(digits, occurrence) {
+        let occurrence = *self.symbol_error_counts.get(&symbol).unwrap_or(&0);
+        // Anchor on the spec's own `:` so the scan keeps its comment
+        // exclusion and still reaches into the text literal a format spec
+        // lives in. Searching for the bare count found it in neither, and
+        // the last-resort mention scan then put the caret on the first
+        // matching text anywhere in the file - a fixture's own header
+        // comment quoting the spec it tests, which is #46's miss exactly
+        // (docs/BUGS_FOUND.md #85). The fallback stays for a spec that
+        // reached here from something other than a `{name:SPEC}` clause.
+        let location = self
+            .find_pattern_location(&symbol, &[format!(":{}", written)], occurrence, None, false, true)
+            .or_else(|| self.find_symbol_location(&symbol, occurrence));
+        if let Some(loc) = location {
             err = err.with_location(loc);
         }
-        self.symbol_error_counts.insert(digits.to_string(), occurrence + 1);
+        self.symbol_error_counts.insert(symbol, occurrence + 1);
+        err = err.with_help_line(&help);
+        self.errors.push(err);
+    }
+
+    /// Bug #71: a `{value:SPEC}` clause whose specifier the value's type
+    /// cannot answer.
+    ///
+    /// A width asks nothing of a type - every rendering is some number of
+    /// characters long - and v0.4.7 settled that a width on a float or a
+    /// text renders the value and drops the padding (#36). The other two
+    /// specifiers do ask something:
+    ///
+    /// - `{v:.N}` names N places in a NUMBER's decimal expansion. A text or
+    ///   a buffer has no expansion, so there is no such thing as one of its
+    ///   decimal places.
+    /// - `{v:x}` / `:X` / `:b` / `:o` write a WHOLE number in another base.
+    ///   A text has no base. Neither has a float: 2.5 has no digits in base
+    ///   16 that Vox defines, and rendering the ones it has would mean
+    ///   dropping the fraction, which is a loss the author has to ask for.
+    ///
+    /// Unanswerable used to mean the integer routine ran anyway on whatever
+    /// the slot held: `{n:.2}` printed the integer's bits read as a double
+    /// (`0.00`) and `{t:x}` printed the string's ADDRESS, which is an
+    /// information leak as well as a wrong answer. Codegen no longer
+    /// reinterprets anything (`emit_formatted_value`), so the value would
+    /// now be right and the specifier silently dropped; that is the mildest
+    /// wrong rather than none, and this compiler says so instead - the same
+    /// judgement #45, #62, #63 and #65 make about a category error the
+    /// compiler can see. The way out is named in the help line, because
+    /// there always is one: cast the value, or drop the specifier.
+    ///
+    /// Deliberately silent where nothing is provable. A `value` is dynamic
+    /// (its tag is not known until runtime) and renders through its own
+    /// tag dispatch, which honours no specifier at all; a list or a map
+    /// renders as its elements and ignores the specifier the same way; and
+    /// an expression whose type cannot be proven answers `None`, which
+    /// means allow, exactly as every other check in this analyzer treats
+    /// an unproven type.
+    pub(crate) fn check_format_spec_against_type(
+        &mut self,
+        format: Option<&str>,
+        label: &str,
+        subject: Option<&Expr>,
+        ty: Option<&Type>,
+    ) {
+        let ask = read_format_spec_ask(format);
+        let Some(ty) = ty else {
+            return;
+        };
+        let (asked_for, needs) = match ask {
+            FormatSpecAsk::AnyType => return,
+            FormatSpecAsk::DecimalPlaces(places) => {
+                if !matches!(ty, Type::String | Type::Buffer) {
+                    return;
+                }
+                (
+                    format!("to {} decimal places", places),
+                    "`:.N` writes a number to N decimal places",
+                )
+            }
+            FormatSpecAsk::Base(base) => {
+                if !matches!(ty, Type::String | Type::Buffer | Type::Float) {
+                    return;
+                }
+                (
+                    format!("in {}", base),
+                    "`:x`, `:X`, `:b` and `:o` write a whole number in another base",
+                )
+            }
+        };
+        // `operand_label` answers a name for the shapes it can write back
+        // and "this value" for the rest - an arithmetic hole, a call
+        // result. A name is quoted and is pasteable into the help; the
+        // generic label is neither, so it is neither quoted nor pasted.
+        let named = self.is_variable_available(label);
+        let mut err = CompileError::new(&format!(
+            "cannot render {}, which is {}, {}",
+            if named {
+                format!("'{}'", label)
+            } else {
+                label.to_string()
+            },
+            self.typed_phrase(ty),
+            asked_for
+        ));
+        // The caret goes on the offending hole - the name inside the braces
+        // of the `{name:SPEC}` that was written, not the declaration and not
+        // the string literal that holds it (#46). The pattern is the hole's
+        // own source text, so `{ratio:b}` anchors on the `:b` hole even when
+        // the same name is rendered plainly a line above; and counting
+        // occurrences of THAT pattern, not of the bare name, is what puts
+        // two identical holes on two different carets.
+        // A hole with no name of its own is anchored on the first name
+        // INSIDE it - `{ratio multiply 2.0:x}` points at `ratio` - which is
+        // the start of the offending hole even though the whole hole cannot
+        // be written back as a pattern.
+        let anchor = if named {
+            Some(label.to_string())
+        } else {
+            subject.and_then(first_named_operand)
+        };
+        if let Some(anchor) = anchor {
+            let hole = if named {
+                format!("{{{}:{}", anchor, format.unwrap_or_default())
+            } else {
+                format!("{{{}", anchor)
+            };
+            let occurrence = *self.symbol_error_counts.get(&hole).unwrap_or(&0);
+            let located = self
+                .find_pattern_location(&anchor, &[hole.clone()], occurrence, None, false, true)
+                .or_else(|| self.find_symbol_location(&anchor, occurrence));
+            if let Some(loc) = located {
+                err = err.with_location(loc);
+            }
+            self.symbol_error_counts.insert(hole, occurrence + 1);
+        }
+        err = err.with_note_line(&format!(
+            "{}, and {} is not one",
+            needs,
+            self.typed_phrase(ty)
+        ));
+        // A buffer holds bytes, and LANGUAGE.md's Basic Conversions table
+        // has no buffer-to-number cast to send anyone to, so it is offered
+        // the cast that does exist. A text and a float both convert
+        // directly.
+        let (convert, plainly) = match ty {
+            _ if !named => (
+                // A cast cannot be written inside an expression hole - the
+                // braces a whole-expression cast needs (LANGUAGE.md:1860)
+                // are the hole's own - so the way out is a named number,
+                // computed once and rendered.
+                "work it out into a number first - `a number called total is {...} as a number.` - and render that"
+                    .to_string(),
+                "the value itself".to_string(),
+            ),
+            Type::Buffer => (
+                format!(
+                    "read it out first - `a text called contents is \"{{{}}}\".` - then convert that",
+                    label
+                ),
+                format!("`{{{}}}`", label),
+            ),
+            // The specifier is quoted back exactly as it was written, so
+            // `{n:04x}` is answered with `{n as a number:04x}` and not with
+            // a rewrite that quietly drops the author's width.
+            _ => (
+                format!(
+                    "convert it first - `{{{} as a number:{}}}`",
+                    label,
+                    format.unwrap_or_default()
+                ),
+                format!("`{{{}}}`", label),
+            ),
+        };
         err = err.with_help_line(&format!(
-            "every one of those {} is written out, so a large {} is a large amount of output - but it still has to be a count Vox can hold. Write {} or less.",
-            unit, subject, FORMAT_MAX_COUNT
+            "{}, or drop the specifier to render {}",
+            convert, plainly
         ));
         self.errors.push(err);
     }
@@ -432,6 +627,17 @@ impl Analyzer {
                     // whatever type it is told the value has, and an
                     // undeclared return type tells it nothing.
                     self.reject_untyped_call_result(expr, UntypedPosition::Interpolation);
+                    // Bug #71: and a specifier the proven type cannot
+                    // answer. `provable_value_type` answers None for
+                    // anything it cannot settle, which this check reads as
+                    // "allow" - so an unproven expression keeps rendering
+                    // exactly as it did.
+                    self.check_format_spec_against_type(
+                        format.as_deref(),
+                        &self.operand_label(expr),
+                        Some(expr),
+                        self.provable_value_type(expr).as_ref(),
+                    );
                 }
                 FormatPart::Variable { name, format } => {
                     self.check_format_spec(format.as_deref());
@@ -473,6 +679,17 @@ impl Analyzer {
                         if !whole_things_render {
                             self.push_whole_thing_not_interpolable(name, &thing);
                         }
+                    } else {
+                        // Bug #71: `{t:x}` on a text used to print the
+                        // string's address. Only reached once the name is
+                        // known to exist and is not a whole thing, so an
+                        // unknown name still reports only that.
+                        self.check_format_spec_against_type(
+                            format.as_deref(),
+                            name,
+                            None,
+                            self.named_value_type(name).as_ref(),
+                        );
                     }
                 }
                 FormatPart::Literal(_) => {}
@@ -1006,4 +1223,33 @@ impl Analyzer {
         }
     }
 
+}
+
+/// The first variable name mentioned inside an expression, for anchoring a
+/// caret on a format hole that has no name of its own (docs/BUGS_FOUND.md
+/// #71). `{ratio multiply 2.0:x}` cannot be written back as a source
+/// pattern, but `ratio` is where the hole starts, and pointing at the start
+/// of the offending hole beats pointing nowhere - which in this renderer
+/// also costs the `note:` and `help:` lines.
+///
+/// Left-to-right and shallow on purpose: the leftmost name is the one the
+/// reader's eye lands on. Shapes that carry no name answer `None`, and so
+/// does an expression made only of literals, which simply gets no caret.
+fn first_named_operand(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Identifier(name) => Some(name.clone()),
+        Expr::StringLit(name) => Some(name.clone()),
+        Expr::BinaryOp { left, right, .. } => {
+            first_named_operand(left).or_else(|| first_named_operand(right))
+        }
+        Expr::UnaryOp { operand, .. } => first_named_operand(operand),
+        Expr::Cast { value, .. } => first_named_operand(value),
+        Expr::PropertyAccess { object, .. } => Some(object.clone()),
+        Expr::MapAccess { map, .. } => Some(map.clone()),
+        Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
+            first_named_operand(list)
+        }
+        Expr::FunctionCall { name, .. } => Some(name.clone()),
+        _ => None,
+    }
 }

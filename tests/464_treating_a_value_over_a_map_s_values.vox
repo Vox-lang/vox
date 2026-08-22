@@ -1,0 +1,11 @@
+(Bug #69 over a map. A map's values are runtime-tagged the way a mixed
+ list's slots are (LANGUAGE.md:2409-2411), so a `value` in the clause has a
+ tag on both sides of the comparison here too.)
+
+a map called person is {"name": "Ada", "age": 36}.
+
+a value called probe is "Ada".
+print each detail from person's values treating probe as "Grace".
+
+a value called age is 36.
+print each detail from person's values treating age as 37.

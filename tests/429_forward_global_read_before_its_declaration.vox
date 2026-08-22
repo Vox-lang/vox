@@ -1,0 +1,22 @@
+(Bug #66's other edge: with the read inside the function now typed by the
+ declaration below it, a call placed ABOVE that declaration reads the global
+ mirror while it still holds the zero it starts life with - and a text, list,
+ map or buffer read as its own type would dereference that zero. Frame setup
+ writes each pointer type's empty value first, which is #25's rule for a name
+ whose declaring path may not have run. The first call is uninformative; the
+ second, after the declarations, answers properly.)
+
+To 'show all'.
+    Print label.
+    Print items.
+    Print scores.
+    Print payload.
+
+'show all'.
+
+a text called label is "hello".
+a list called items is [1, 2, 3].
+a map called scores is {"a": 1}.
+a buffer called payload is "ABC".
+
+'show all'.

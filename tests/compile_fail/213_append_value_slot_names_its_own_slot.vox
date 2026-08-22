@@ -1,0 +1,8 @@
+(Bug #77: the append slot reads one general primary now, but it keeps its
+ own arm list so a token that cannot start a value is still diagnosed as
+ the append slot's problem - "Expected value to append", caret on the
+ offending token - rather than falling through to the general parser's
+ "expected a statement".)
+
+a list called xs is [1].
+append , to xs.

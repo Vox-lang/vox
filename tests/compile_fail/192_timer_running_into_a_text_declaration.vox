@@ -1,0 +1,9 @@
+(Bug #74 on a timer property. LANGUAGE.md's Timer Properties table types
+ `running` Boolean. Its neighbours `duration` and `elapsed` are a Duration -
+ read only through a unit cast - and stay unproven, which is why this case
+ names `running` and not one of those.)
+
+a timer called clock.
+Start clock.
+a text called ticking is clock's running.
+Print ticking.

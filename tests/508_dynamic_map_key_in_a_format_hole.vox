@@ -1,0 +1,31 @@
+(Bug #81: the format-hole scanner stopped at the first `}` it met, blind to
+ any quoted string inside the hole. A map read with a dynamic key
+ (LANGUAGE.md:2400) inside a hole (LANGUAGE.md:3147) therefore ended halfway
+ through the key, and the leftover `"` and `}` — the hole's own punctuation —
+ spilled into the output with no error. A key holding a brace was read as the
+ empty key and quietly returned the wrong value.)
+
+a map called scores is {"ada": 10, "grace": 20}.
+a text called player is "ada".
+
+(The dynamic key. The hole ends at its own brace, not at the key's.)
+Print "[{scores's \"{player}\"}]".
+
+(The static key, which was always right, still is.)
+Print "[{scores's \"grace\"}]".
+
+(Text either side of the hole stays where it was written.)
+Print "score for {player} is [{scores's \"{player}\"}] today".
+
+(Two dynamic keys in one string, each ending at its own brace.)
+a text called other is "grace".
+Print "[{scores's \"{player}\"}] and [{scores's \"{other}\"}]".
+
+(A key that contains the hole's own punctuation is still just a key.)
+a map called punctuated is {"}": 1, "a}b": 3}.
+Print "close: {punctuated's \"}\"}".
+Print "both: {punctuated's \"a}b\"}".
+
+(The nearest working neighbour: read the key out first. Unchanged.)
+a number called got is scores's "{player}".
+Print "[{got}]".

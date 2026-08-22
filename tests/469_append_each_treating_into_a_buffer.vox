@@ -1,0 +1,15 @@
+(Bug #70 over a buffer destination: the clause is carried into a buffer
+ append too. The analyzer judges such an append by the clause's subject -
+ the parity #59 set, where a `treating`-wrapped read reports what a bare
+ read of the same subject reports.)
+
+a list called names is ["ann", "-"].
+
+a buffer called built is 64 bytes.
+append each name from names treating "-" as "anon" to built.
+print built as text.
+
+(The control: without the clause the same append is unchanged)
+a buffer called plain is 64 bytes.
+append each name from names to plain.
+print plain as text.

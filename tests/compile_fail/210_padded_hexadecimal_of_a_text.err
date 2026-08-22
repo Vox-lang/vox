@@ -1,0 +1,3 @@
+cannot render 'label', which is text, in hexadecimal
+note: `:x`, `:X`, `:b` and `:o` write a whole number in another base, and text is not one
+help: convert it first - `{label as a number:04x}`, or drop the specifier to render `{label}`

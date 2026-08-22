@@ -1,0 +1,10 @@
+(Compile-fail: bug #84. `it's` sat in the keyword table as a spelling of
+ `is`. It is not one, and it is the reason the contraction rule admits
+ only the two spellings LANGUAGE.md documents: `it` is an ordinary
+ identifier, so `print it's length.` is the possessive on a variable
+ called `it` and prints a length today - see
+ tests/427_apostrophe_meanings_unchanged.vox. Waking `it's` would have
+ taken that possessive away.)
+
+a number called n it's 5.
+print n.

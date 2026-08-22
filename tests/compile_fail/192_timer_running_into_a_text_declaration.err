@@ -1,0 +1,4 @@
+cannot initialise 'ticking', which is text, with a boolean
+192_timer_running_into_a_text_declaration.vox:8:15
+note: a variable's type is fixed at its declaration, so 'ticking' can only be initialised with text
+help: declare it as a boolean - `a boolean called ticking is clock's running.` - or convert it explicitly:  a text called ticking is clock's running as text.

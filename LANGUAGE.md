@@ -1,6 +1,6 @@
 # Vox Language Specification
 
-**Version 0.4.9**
+**Version 0.4.10**
 
 This document defines the syntax and semantics of Vox (sentence based code).
 
@@ -417,11 +417,22 @@ print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
 process of each filename from files treating "-" as "/dev/stdin".
+
+(Append with substitution - the clause goes with the `each` clause, before
+ the `to <destination>`)
+append each name from names treating "" as "Anonymous" to cleaned.
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
 
 If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration.
+
+Equality is by type as well as by value: a `<match>` whose type differs from
+the element's never fires, and that element comes through unchanged — and
+where the compiler can prove the mismatch, it says so at compile time
+instead. Where the element, the `<match>` or the `<replacement>` is a
+`value`, the runtime tag it carries is what the comparison reads, and a
+substitution that fires hands the `<replacement>`'s own type out with it.
 
 ---
 
@@ -518,6 +529,21 @@ the same type resolver:
   Give them a value with the first canonical form instead: `a file called
   source is "input.txt".` / `a time called now is current time.`
 
+### Declaration Order
+
+Top-level statements run in the order they are written, so a variable must be
+declared **above** the code that reads it. Reading a top-level variable before
+its own declaration is a compile-time error:
+
+```
+Print label.                     (compile error: 'label' is used before it is declared)
+a text called label is "hello".
+```
+
+A function body is the exception, and for the same reason: a function runs
+when it is **called**, not where it is written, so a body may name a global
+declared further down the file — see [Function Scope](#function-scope).
+
 ### Assignment (Existing Variable)
 
 Use `the` to reference an existing variable:
@@ -596,12 +622,16 @@ If 1 is equal to 2,
 
 **What this doesn't catch.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
-list/map whose element type is provably uniform, ...). A value coming from
-a function call, an unprovable list/map read (a map literal with mixed
-value types, for instance), or anything else the compiler can't classify at
-compile time is allowed through unchecked, exactly as it was before this
-rule. This closes a large, concrete class of bugs — a variable's compiler-
-tracked type disagreeing with what it actually holds at runtime, which
+list/map whose element type is provably uniform, a `'s <property>` read
+whose property has the same type whatever it is read from — every property
+in the tables under [Object Properties](#object-properties) except
+`first`, `last`, `absolute`, `duration` and `elapsed`, whose type follows
+the thing they are read from — ...). A value coming from a function call,
+an unprovable list/map read (a map literal with mixed value types, for
+instance), or anything else the compiler can't classify at compile time is
+allowed through unchecked, exactly as it was before this rule. This closes
+a large, concrete class of bugs — a variable's compiler-tracked type
+disagreeing with what it actually holds at runtime, which
 previously produced a wrong number on screen at best and a segfault at
 worst — not every possible source of type confusion, and it says nothing
 about type agreement across a `.lib` import boundary (a library's declared
@@ -702,7 +732,13 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 
 ### Function Scope
 
-- Variables declared at top level are global and can be used inside functions.
+- Variables declared at top level are global and can be used inside functions —
+  including inside a function written **above** the declaration, because the
+  body runs when it is called, and it reads the global as its declared type
+  either way. A function that runs *before* the declaration has been reached
+  reads the type's empty value — `""`, `[]`, `{}`, an empty buffer, `0`, `0.0`,
+  `false` — never the value the declaration will go on to store. Top-level code
+  has no such licence: see [Declaration Order](#declaration-order).
 - Variables declared inside a function are local to that function and are not available at top level.
 - Referencing an unknown variable inside a function is a compile-time error.
 - Assigning to a top-level variable inside a function (`Set g to ...` /
@@ -741,18 +777,60 @@ To 'contains token' of a buffer called hay and a text called devname.
 Key points:
 
 - Buffer parameters support `'s size`/`'s empty`/`'s full` and byte
-  access; list parameters support `'s length`/element access; file
-  parameters support file properties.
+  access; list parameters support `'s length`/element access; map
+  parameters support `'s length`/`'s empty`/`'s keys`/`'s values` and
+  keyed access, and print as a whole map (`print holder.`, `"{holder}"`);
+  file parameters support file properties.
+- A `buffer` parameter **is** the caller's buffer, and stays the caller's
+  buffer across a growth: an `append`, a `resize`, or a byte written past
+  the current capacity moves the block, and the caller's variable follows
+  it there. Declaring a buffer of the same name inside the function names
+  a different buffer from that point on and leaves the caller's alone;
+  `Set <parameter> to ...` is not a rebinding — on a buffer it copies
+  bytes into the buffer the parameter already names, so the caller sees
+  the new bytes.
 - Buffers declared **inside** a function body work with every
   initializer form, including format strings (`is " {devname}\n"`).
 - A function call's declared return type is tracked through
   assignment: reassigning an existing variable from a call
   (`the label is classify of n.`) preserves the correct type.
 
-(All three of the above were fixed in v0.1.16 - in earlier versions,
-buffer-typed parameters and function-local buffer declarations with
-initializers were rejected by the analyzer, and reassignment from a
-function call silently corrupted the variable's tracked type.)
+(Buffer parameters, function-local buffer declarations with initializers,
+and reassignment from a function call were fixed in v0.1.16 - in earlier
+versions the first two were rejected by the analyzer and the third silently
+corrupted the variable's tracked type. The buffer-parameter rule above is
+newer: see docs/BUGS_FOUND.md #90.)
+
+#### A collection parameter is the caller's collection
+
+A `list` or `map` parameter names the caller's collection, not a copy of
+it. Whatever the function does to it - setting an element, appending,
+inserting a key, growing it past whatever size it started at - is what the
+caller's variable holds when the call returns, however many calls deep the
+collection was passed:
+
+```
+To 'add one to' with a list called items.
+    append "x" to items.
+
+a list called xs is ["a"].
+'add one to' of xs.
+'add one to' of xs.
+Print xs's length.    (prints: 3)
+```
+
+This is the opposite of a `thing` parameter, which **is** a copy (see
+[Things](#things) below): a thing has no reference to share, and a
+collection is nothing but one. Only a variable can be written back to - a
+collection built at the call itself (`'the size of' of [1, 2, 3]`) has
+nowhere to return growth to, so the function may read and grow it freely
+but the growth goes nowhere once the call ends.
+
+(Before v0.4.10 a collection grown through a parameter stopped at the size
+its literal happened to allocate, and every append past that was silently
+dropped: docs/BUGS_FOUND.md #75. An **exported** function's parameters
+changed shape to fix it, so a `.so` with a `list` or `map` parameter and
+the programs that `see` it must be built by the same version of Vox.)
 
 ### Function Calls
 
@@ -1619,6 +1697,19 @@ To 'take a reading'.
    Move the definition above the block it is written in)
 ```
 
+The ordering rule is about the **definition**, not about an instance of
+it. A definition stands above every use of its name; an instance is an
+ordinary top-level variable, so it obeys the ordinary rule instead —
+"variables declared at top level are global and can be used inside
+functions", wherever on the page the declaration is written:
+
+```vox fragment
+To 'show it'.
+  Print origin's x.      (reads the global declared below)
+
+a point called origin.
+```
+
 ### Cross-file definitions
 
 A thing defined in one file is usable from another via `see` (the
@@ -1890,6 +1981,20 @@ the list is empty
 not <condition>                ; true if condition is false
 ```
 
+`not` takes the whole condition after it, exactly as the fence above says
+and exactly as English does: `If not heat is limit then,` reads "if it is
+not the case that heat is limit", never "if the negation of heat is
+limit". So `not` binds looser than every comparison and property check,
+and tighter than `and` and `or` — `not heat is 4 and limit is 6` is
+`{not (heat is 4)} and (limit is 6)`. A `not` in front of a boolean is
+that same rule with the shortest condition: `If not door_open then,`.
+
+**A `not` always answers a boolean**, whatever it is applied to: `not 5` and
+`not greeting` are booleans, not a number and a text. On a text, list, map or
+buffer, `not` tests the value's pointer — which a declared variable always
+has — so it answers false whether or not the collection holds anything. Ask
+about contents with `is empty` (see Property Checks above), never with `not`.
+
 ### Plural Comparisons with `are`
 
 Test multiple variables against the same value using comma-separated subjects:
@@ -1962,6 +2067,22 @@ never changes what the sentence does. This does not loosen type
 immutability: `line` is text before the write and text after it, and every
 *other* mismatched write is still the compile error described under "Type
 Immutability".
+
+A `value` slot is one of those slots. A buffer written into a `value` — by
+declaration, by `Set`, by `the ... is`, as a `value` argument, or by
+`Return a value` — arrives as text and reports `Text (dynamic)`, carrying
+the same independent copy of the buffer's bytes. A `value` never holds a
+buffer as a buffer; there is no `Buffer (dynamic)` tag.
+
+**A float read from text is the same double as the literal.** `"0.88" as
+a float` and the literal `0.88` are one value, and comparing them with
+`is` finds them equal: the runtime reads a decimal exactly the way the
+compiler reads one written in the source. The guarantee covers up to
+eighteen significant digits with the point up to twenty-two places away
+from them - wider than a `float` can tell apart - and a longer decimal
+is read as the nearest float those eighteen digits describe. This is
+what lets a number read from a file, an argument or an environment
+variable be compared against a literal in the same program.
 
 **Radix (Base) Conversions:**
 
@@ -2374,15 +2495,12 @@ on error print "cyclic".
  `...`, then 64 closing brackets, then `cyclic`)
 ```
 
-Two limitations remain for this stage. Extracting a child with `element N
+One limitation remains for this stage. Extracting a child with `element N
 of` yields a *reference* to the child list, not a copy: if the parent is
 later grown by appending enough elements to force a reallocation, a child
 extracted before that reallocation may point at freed memory. Extract a
 child after the parent has finished growing, or copy it element-by-element.
-And the *expression* form of format interpolation — `print "{element 2 of
-nested}"` — has no runtime-tag dispatch, so a nested list does not render
-there; use the *variable* form `print "{nested}"` (or `print element 2 of
-nested.`) instead. See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
 ### Maps
 
@@ -2409,7 +2527,10 @@ print person's "age".    (prints: 36)
 
 Insert or replace an entry with `Set map's "key" to value` (mirroring
 `Set element N of list to …`). The map may reallocate on growth, so the
-returned pointer is stored back into the variable automatically:
+returned pointer is stored back into the variable automatically - including
+when the variable is a `map` parameter, in which case the caller's map is
+what grows (see [A collection parameter is the caller's
+collection](#a-collection-parameter-is-the-callers-collection)):
 
 ```
 set person's "age" to 37.
@@ -2426,10 +2547,20 @@ for each key in person's keys, print key.   (prints: name, then age)
 for each v in person's values, print v.     (prints: Ada, then 37)
 ```
 
-A missing key does not crash: the lookup yields 0 and sets the error
-flag, so an `on error` handler can react. Note this is deliberately *not*
-the same as a key that holds [`nothing`](#nothing-the-absent-value) — "no
-such key" stays distinguishable from "the key is set to nothing":
+A missing key does not crash: the lookup sets the error flag, so an `on
+error` handler can react, and yields a value the destination can hold.
+Where the compiler can prove the key is absent — a map literal it can see
+all of — the read is the **number** 0 whatever the map's values are, so
+read it into a `number` (a `float` or a `boolean` holds 0 too), and a
+`text`, `list` or `map` destination is refused with a diagnostic naming
+the key. Where it cannot prove it — a dynamic key, or a map an `Append`, a
+`Set`, an alias or a call can reach — the read yields the destination's
+default value from the table under [Two Canonical
+Forms](#two-canonical-forms): `0` for a `number`, the empty text for a
+`text`, `[]` for a `list`, `{}` for a `map`, so no read ever dereferences
+a null pointer. Note this is deliberately *not* the same as a key that
+holds [`nothing`](#nothing-the-absent-value) — "no such key" stays
+distinguishable from "the key is set to nothing":
 
 ```
 print person's "nope".    (prints: 0)
@@ -2667,6 +2798,10 @@ print v's type.          (prints: Number (dynamic))
 
 This is a display helper for debugging and logging; type tests still belong in the `is a <type>` predicate.
 
+The list is the whole list: those seven are every tag a `value` can carry.
+A buffer put into a `value` is converted to text on the way in (see "Type
+Casting"), so it reads back as `Text (dynamic)`.
+
 **Retyping a statically-typed variable is a compile error.** `n is a
 text.` is only valid when `n` was declared as a `value`; for a `number`
 variable the compiler reports the actual declared type and points at the
@@ -2808,9 +2943,11 @@ floats and numbers as usual. Empty lists print `[]`. A nested list
 element renders recursively with the same rules (see Nested Lists above),
 so `[1, [2, 3], "four"]` prints with inner brackets intact. A map element
 (or a whole map) renders as `{"key": value, …}` via `_map_print` (see Maps
-above). The same rendering appears inside the *variable* form of `{...}`
-format interpolation (`print "{xs}"`); the *expression* form (`print
-"{element 2 of xs}"`) does not dispatch on a nested element's runtime tag.
+above). The same rendering appears inside `{...}` format interpolation, in
+both its forms and in every sink: the *variable* form (`print "{xs}"`) and
+the *expression* form (`print "{element 2 of xs}"`) each dispatch on the
+element's runtime tag, so an element renders in a hole exactly as it does
+printed as a statement.
 
 ### List Properties
 
@@ -2852,7 +2989,12 @@ Print element i of nums.   (prints 20)
 ```
 
 **Bounds checking:**
-- Out-of-bounds access sets an error flag and returns 0
+- Out-of-bounds access sets an error flag. Where the compiler can prove the
+  index is past the end, it returns the **number** 0 whatever the list's
+  elements are, so read it into a `number`; where it cannot, it returns the
+  destination's default value from the table under [Two Canonical
+  Forms](#two-canonical-forms) — `0` for a `number`, the empty text for a
+  `text`, `[]` for a `list`, `{}` for a `map`
 - Errors can be caught with `On error`
 
 ```
@@ -2880,11 +3022,22 @@ Use `copy <source_buffer> to <destination_buffer>` to replace destination buffer
 Use `clear <buffer>` to reset a buffer to empty while preserving capacity.
 
 **Key features:**
-- **Dynamic growth**: Lists automatically allocate more memory as needed
+- **Dynamic growth**: Lists automatically allocate more memory as needed,
+  wherever the list is named from - a variable, a global, or a `list`
+  parameter naming the caller's list
 - **Mixed types**: Appends of different types are allowed in any order; each
   element is printed by its own type, never by the list's (see Printing a
   List above)
-- **Works with any value**: integers, strings, booleans, variables, expressions
+- **Works with any value**: integers — a negative literal included, `append
+  -5 to nums.` — floats, strings, booleans, `nothing`, variables, function
+  calls, arithmetic, and the collection reads `element N of <list>`, `byte N
+  of <buffer>` and `<name>'s <property>`
+- **`to` is the separator, not an operator.** The value ends at the `to` that
+  names the destination, so a value that would otherwise read `to` as a word
+  of its own — a call written `'twice' to i` — is written in braces:
+  `append {'twice' to i} to nums.` Braces hand the enclosed tokens to the
+  general expression parser, exactly as they do in a value slot elsewhere
+  (`append {i multiply i} to squares.`).
 
 **Examples:**
 
@@ -3117,11 +3270,22 @@ print each name from names treating "" as "Anonymous".
 
 (Call function with substitution)
 process of each filename from files treating "-" as "/dev/stdin".
+
+(Append with substitution - the clause goes with the `each` clause, before
+ the `to <destination>`)
+append each name from names treating "" as "Anonymous" to cleaned.
 ```
 
 **Syntax:** `... each <var> from <collection> treating <match> as <replacement>, ...`
 
 If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration.
+
+Equality is by type as well as by value: a `<match>` whose type differs from
+the element's never fires, and that element comes through unchanged — and
+where the compiler can prove the mismatch, it says so at compile time
+instead. Where the element, the `<match>` or the `<replacement>` is a
+`value`, the runtime tag it carries is what the comparison reads, and a
+substitution that fires hands the `<replacement>`'s own type out with it.
 
 ---
 
@@ -3180,7 +3344,47 @@ compile error naming the limit, not a width that quietly does nothing. A
 precision past the value's exact decimal expansion pads with zeros, since the
 expansion has ended and not because accuracy has run out: a float is a
 binary fraction, so it always has an exact finite expansion, and `{pi:.50}`
-prints all fifty places of it.
+prints all fifty places of it. A whole number has an exact expansion too —
+itself, then zeros — so `{n:.2}` on `a number called n is 255.` prints
+`255.00`, and prints it exactly for every number Vox can hold.
+
+**A specifier has to be one the value's type can answer.** A width asks
+nothing of a type: every rendering is some number of characters long, so
+`{var:N}` is accepted whatever `var` is (on a `float` or a `text` the value
+is rendered and the padding is not applied yet). The other two do ask
+something, and asking it of the wrong type is a compile error naming the way
+out, not a wrong answer:
+
+- `{var:.N}` counts places in a **number's** decimal expansion. A `number`,
+  a `float` and a `boolean` have one; a `text` or a `buffer` does not.
+- `{var:x}`, `{var:X}`, `{var:b}` and `{var:o}` write a **whole number** in
+  another base. A `number` and a `boolean` are whole numbers. A `float` is
+  not — `{ratio:b}` is refused rather than quietly dropping the fraction, so
+  write `{ratio as a number:b}` when that is what you meant — and neither is
+  a `text` or a `buffer`.
+
+Inside an *expression* hole the cast has nowhere to go — the braces a
+whole-expression cast needs are the hole's own — so work the value out into
+a number first and render that:
+
+```
+a float called ratio is 2.5.
+a number called total is {ratio multiply 2.0} as a number.
+Print "{total:x}".                (0x5)
+```
+
+A `value`, a `list` and a `map` render through their own routines, which
+ignore a specifier and print the value; a `value`'s type is not known until
+it runs, so there is nothing to check.
+
+The two compose: `{var:8.2}` asks for two decimal places, padded out to
+eight characters. The precision decides the digits and the width decides the
+padding, and each is honoured wherever there is something to honour it with —
+the same rule the width follows on its own. So `{n:8.2}` on `a number called
+n is 255.` prints `  255.00`, and `{n:08.2}` prints `00255.00`; on a `float`
+the places are printed and the padding is not, because there is no float
+padder yet — exactly as a bare `{f:8}` prints the float unpadded. (A width
+composes with a radix too, which is the `{var:04x}` row above.)
 
 #### Expressions in Format Strings
 
@@ -3225,7 +3429,9 @@ directory called "{base}/{name}"`), `treating` clauses, and function
 arguments. All sinks share one name resolver, so special names like
 `{arguments's first}` and `{current time's hour}`, format specifiers,
 and the `0x`/`0o` hex/octal prefixes render identically whether the
-result is printed, written to a file, or built into a buffer.
+result is printed, written to a file, or built into a text or a
+buffer - a float's precision included: `{ratio:.2}` reads `2.50` in
+every one of them.
 
 #### Declarations in Branches (v0.1.21)
 
@@ -3311,6 +3517,23 @@ a buffer called large is 8192 bytes in size.
 - Useful when you need predictable memory usage
 - User programs can check buffer length to detect truncation
 - Automatically freed on program exit
+
+**The size bound.** A fixed buffer's size must be between 1 and 1073741824
+bytes (1 GiB), and the bound holds however the size is written - a literal,
+a name, or a number the program only works out as it runs:
+
+- A size the compiler can see is refused where it is written, whether that
+  is the literal `a buffer called small is 0 bytes in size.` or a name
+  whose value is fixed for the whole program.
+- A size only run time can decide - one read from an argument, a file or a
+  calculation - is refused when it is asked for. The buffer is made with no
+  capacity and the error flag is raised, so `On error` catches it and the
+  program carries on, exactly as it does for a fixed buffer that has become
+  full.
+
+A size of 0 is refused because a buffer with no fixed capacity is a
+*dynamic* buffer, which is declared with no size at all: `a buffer called
+small.`
 
 **Truncation Behavior:**
 When reading into a fixed buffer that becomes full:
@@ -3566,7 +3789,12 @@ Print nums's last.         (prints 30)
 ```
 
 **Bounds Checking:**
-- Out-of-bounds access sets an error flag and returns 0
+- Out-of-bounds access sets an error flag. Where the compiler can prove the
+  index is past the end, it returns the **number** 0 whatever the list's
+  elements are, so read it into a `number`; where it cannot, it returns the
+  destination's default value from the table under [Two Canonical
+  Forms](#two-canonical-forms) — `0` for a `number`, the empty text for a
+  `text`, `[]` for a `list`, `{}` for a `map`
 - Errors can be caught with `On error`
 
 **Example with error handling:**
@@ -4661,6 +4889,15 @@ Print the user.
 | Or | `or` |
 | Not | `not`, `isn't`, `aren't` |
 
+`isn't` and `aren't` are contractions, and each stands for **two** words:
+`isn't` is `is not`, `aren't` is `are not`. Write them exactly where the
+spelled-out pair belongs — `If v1 isn't v2 then,` is `If v1 is not v2 then,`
+— and write a bare `not` everywhere no `is`/`are` belongs. These two are the
+only contractions in Vox: everywhere else an apostrophe is the possessive
+marker, a quoted name, or a character literal, and a word like `don't` or
+`it's` is not Vox (`it's length` is the possessive on a variable called
+`it`). See [Names and strings](#names-and-strings).
+
 ### Bitwise Operators
 
 | Operator | Keywords |
@@ -5319,7 +5556,7 @@ var_decl    ::= ("a" | "an") type "called" name "is" expr "."
 assignment  ::= "the" name "is" expr "."
 
 append_stmt ::= "append" expr "to" name "."
-              | "append" "each" name "from" expr "to" name ("treating" expr "as" expr)? "."
+              | "append" "each" name "from" expr ("treating" expr "as" expr)? "to" name "."
 
 func_def    ::= "To" identifier (("with" | "of") params)? "." "Return" "a" type "," expr "."
 params      ::= param ("and" param)*
@@ -5354,9 +5591,11 @@ print_stmt  ::= "Print" expr ("," "but if" condition "print" expr)* "."
 
 loop_expansion ::= "each" name "from" expr ("treating" expr "as" expr)?
 
+condition   ::= expr
 expr        ::= or_expr
 or_expr     ::= and_expr ("or" and_expr)*
-and_expr    ::= comparison ("and" comparison)*
+and_expr    ::= not_expr ("and" not_expr)*
+not_expr    ::= "not" not_expr | comparison
 comparison  ::= additive (comp_op additive)?
 additive    ::= multiplicative ((add | subtract) multiplicative)*
 multiplicative ::= primary ((multiply | times | divide | modulo) primary)*

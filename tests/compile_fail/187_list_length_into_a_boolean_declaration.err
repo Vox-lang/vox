@@ -1,0 +1,4 @@
+cannot initialise 'done', which is a boolean, with a number
+187_list_length_into_a_boolean_declaration.vox:5:18
+note: a variable's type is fixed at its declaration, so 'done' can only be initialised with a boolean
+help: declare it as a number - `a number called done is counts's length.` - or convert it explicitly:  a boolean called done is counts's length as a boolean.

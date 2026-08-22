@@ -698,18 +698,20 @@ impl Parser {
                         }
                     }
 
-                    // Validate that the size expression is a positive integer literal
-                    // or constant variable. This is critical for memory safety.
+                    // Validate the size where it can be decided here: an
+                    // integer literal. A named size is decided by the
+                    // analyzer (where its value and type are known) and by
+                    // codegen (which guards what neither can prove) - bug
+                    // #78. The bound itself is critical for memory safety.
                     match &expr {
                         Expr::IntegerLit(n) => {
-                            if *n <= 0 {
+                            if *n < MIN_BUFFER_SIZE {
                                 return Err(self.error_invalid_buffer_size(
                                     &name,
                                     "Buffer size must be a positive integer",
                                     "a buffer called buf is 1024 bytes."
                                 ));
                             }
-                            const MAX_BUFFER_SIZE: i64 = 1024 * 1024 * 1024; // 1 GB limit
                             if *n > MAX_BUFFER_SIZE {
                                 return Err(self.error_invalid_buffer_size(
                                     &name,
@@ -719,7 +721,14 @@ impl Parser {
                             }
                         }
                         Expr::Identifier(_var_name) => {
-                            // Allow variable references for size - validated at compile time
+                            // A named size is not decidable here - the parser
+                            // knows no values and no types. It is measured
+                            // against the same MIN/MAX by the analyzer where
+                            // the value is fixed for the whole program, and
+                            // guarded at run time by codegen where it is not
+                            // (bug #78). This arm used to claim a validation
+                            // that existed nowhere, which is how a `-1`-byte
+                            // buffer was accepted.
                         }
                         _ => {
                             return Err(self.error_invalid_buffer_size(

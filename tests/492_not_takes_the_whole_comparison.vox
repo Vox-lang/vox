@@ -1,0 +1,40 @@
+(Bug #83: `not` was only a primary operator, so `If not heat is limit then,`
+ compiled as `(not heat) is limit` - `0 is 6` - and the guard was false
+ whatever the operands. LANGUAGE.md writes the operator as
+ `not <condition>`, so `not` takes scope over the whole comparison after
+ it, exactly as English does: "if it is not the case that heat is limit".)
+
+a number called heat is 3.
+a number called limit is 6.
+a list called readings is [].
+
+If not heat is limit then,
+    Print "equality: fires".
+Otherwise,
+    Print "equality: silent".
+
+If not heat is greater than 5 then,
+    Print "ordering: fires".
+Otherwise,
+    Print "ordering: silent".
+
+If not readings is empty then,
+    Print "emptiness: fires".
+Otherwise,
+    Print "emptiness: silent".
+
+(A property reads the same under either binding, so it is pinned here to
+ keep it that way.)
+If not heat is even then,
+    Print "property: fires".
+Otherwise,
+    Print "property: silent".
+
+(The negation is of the comparison, so an equal pair is silent and an
+ unequal pair fires - the operands decide the answer, which was the whole
+ complaint.)
+a number called depth is 3.
+If not heat is depth then,
+    Print "equal pair: fires".
+Otherwise,
+    Print "equal pair: silent".

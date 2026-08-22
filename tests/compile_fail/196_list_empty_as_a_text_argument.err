@@ -1,0 +1,4 @@
+cannot pass a boolean to 'word', which 'shout' declares as text
+196_list_empty_as_a_text_argument.vox:3:31
+note: a parameter's type is fixed by the signature, so 'word' can only be given text
+help: convert it at the call site - `counts's empty as text` - or declare 'word' as a boolean

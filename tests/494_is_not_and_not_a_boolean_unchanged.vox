@@ -1,0 +1,44 @@
+(Bug #83 regression guard: the three spellings that were already right
+ before `not` was given the comparison must stay right. `is not` is the
+ comparison operator and is untouched; `not` in front of a boolean, and
+ `not` in a printed value, still take the primary next to them.)
+
+a number called heat is 3.
+a number called limit is 6.
+a list called readings is [].
+a boolean called door_open is false.
+a boolean called alarm_armed is true.
+
+(The `is not` spellings from the register entry's neighbour table.)
+If heat is not limit then,
+    Print "is not: fires".
+Otherwise,
+    Print "is not: silent".
+
+If heat is not greater than 5 then,
+    Print "is not greater: fires".
+Otherwise,
+    Print "is not greater: silent".
+
+If readings is not empty then,
+    Print "is not empty: fires".
+Otherwise,
+    Print "is not empty: silent".
+
+(`not` in front of a boolean is a whole condition on its own.)
+If not door_open then,
+    Print "not a boolean: fires".
+Otherwise,
+    Print "not a boolean: silent".
+
+If not alarm_armed then,
+    Print "not a true boolean: fires".
+Otherwise,
+    Print "not a true boolean: silent".
+
+(In value position `not` is still the primary operator it always was.)
+Print not door_open.
+Print not alarm_armed.
+
+a boolean called door_shut is not door_open.
+Print "stored negation: {door_shut}".

@@ -1,0 +1,38 @@
+(Bug #77: `multiply` and `times` are two spellings of one operator, but
+ two tokens, because `Repeat N times` claims the second. The append
+ slot's operator list carried only the first, so `append v1 times v2 to
+ l1.` reported "Expected 'to' after value in append statement" with the
+ `to` written right there. All fifteen documented spellings now read the
+ same in the append slot as everywhere else.)
+
+a number called v1 is 12.
+a number called v2 is 4.
+a list called xs is [].
+
+append v1 times v2 to xs.
+append v1 multiply v2 to xs.
+append v1 add v2 to xs.
+append v1 plus v2 to xs.
+append v1 subtract v2 to xs.
+append v1 minus v2 to xs.
+append v1 divide v2 to xs.
+append v1 modulo v2 to xs.
+append v1 mod v2 to xs.
+append v1 remainder v2 to xs.
+append v1 bit-and v2 to xs.
+append v1 bit-or v2 to xs.
+append v1 bit-xor v2 to xs.
+append v1 bit-shift-left v2 to xs.
+append v1 bit-shift-right v2 to xs.
+
+(`times` binds like `multiply`: multiplication before addition.)
+append v1 add v2 times 2 to xs.
+
+Repeat 3 times, append -1 to xs.
+
+Print "{xs's length} values".
+Print element 1 of xs.
+Print element 2 of xs.
+Print element 16 of xs.
+Print element 19 of xs.
+Exit 0.

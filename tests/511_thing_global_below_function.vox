@@ -1,0 +1,17 @@
+(Bug #80: a thing instance declared BELOW a function is readable inside it.
+ LANGUAGE.md: "Variables declared at top level are global and can be used
+ inside functions" - and attaches no ordering condition to that. Only a
+ thing DEFINITION has to stand above its uses, and it does here.)
+
+A thing called point has
+  a number called x is 7,
+  a number called y is 9.
+
+To 'show all'.
+  Print origin's x.
+  Print origin's y.
+
+a point called origin.
+
+'show all'.
+Exit 0.

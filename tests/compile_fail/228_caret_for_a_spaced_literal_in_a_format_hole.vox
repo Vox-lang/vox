@@ -1,0 +1,7 @@
+(Bug #89 where no `{3.14` exists to find it by: a hole's content is
+ trimmed, so the spaced spelling reports the same unknown variable while
+ the interpolation pattern matches nothing. The caret still belongs inside
+ the hole, on the literal as written.)
+
+a float called f is 3.14.
+Print "{ 3.14 :.2}".

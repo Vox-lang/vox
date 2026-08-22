@@ -1,0 +1,7 @@
+(The legal neighbour of compile_fail/173 and #89: the same number written
+ both as a literal and as a declared variable. Naming the variable in the
+ hole is what LANGUAGE.md:3169 asks for, and it still compiles and prints.)
+
+a float called f is 3.14.
+Print "{f:.2}".
+Print "{f:.17}".

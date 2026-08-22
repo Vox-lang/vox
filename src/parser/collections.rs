@@ -36,29 +36,31 @@ impl Parser {
         Ok(Statement::BufferResize { name, new_size })
     }
 
-    /// Parse one value in append position (literal, identifier, function
-    /// call, or braced expression). We must be careful not to consume 'to',
-    /// which is the append separator. A quoted name followed by of/with/on is
-    /// a function call (`append "f" of x to items`); `to` is NOT a call
-    /// trigger here, unlike the general expression parser, so that
-    /// `append "s" to items` stays an append of the literal string "s".
+    /// Parse one value in append position - any primary the language has,
+    /// read with `to` reserved, because `to` is the append separator and
+    /// must not be consumed as part of the value. A quoted name followed
+    /// by of/with/on is a function call (`append "f" of x to items`); `to`
+    /// is NOT a call trigger here, unlike the general expression parser,
+    /// so that `append "s" to items` stays an append of the literal "s".
     /// Braces force the general expression parser for the enclosed tokens
     /// (`append {i multiply i} to s`), matching how braces put an expression
     /// into a value slot elsewhere in Vox.
+    ///
+    /// BUGS_FOUND #77: every arm below the string literal used to be written
+    /// out here - a hand-rolled copy of `parse_primary` that had fallen
+    /// behind it. A leading `-`, `nothing`, `element N of L`, `byte N of b`
+    /// and every `'s` possessive were value forms the copy had never
+    /// learned, so `append -5 to xs.` answered "Expected value to append"
+    /// while `append {-5} to xs.` - the same tokens, routed to
+    /// `parse_primary` - compiled. They read one primary now, so a value
+    /// form is added or diagnosed in exactly one place (the lesson of #64).
+    /// The separator protection is unchanged: it lives in
+    /// `suppress_to_connector`, which `parse_primary_reserving` sets for the
+    /// whole subtree, not in the arm list. The arm list stays explicit so a
+    /// token that cannot start a value still gets the append slot's own
+    /// diagnostic rather than the general parser's "expected a statement".
     pub(crate) fn parse_append_value_primary(&mut self) -> Result<Expr, Box<CompileError>> {
         match self.current().clone() {
-            Token::OpenBrace => self.parse_primary(),
-            Token::IntegerLiteral(n) => {
-                self.advance();
-                Ok(Expr::IntegerLit(n))
-            }
-            Token::IntegerLiteralOverflow(raw) => {
-                Err(self.integer_literal_overflow_error(&raw))
-            }
-            Token::FloatLiteral(n) => {
-                self.advance();
-                Ok(Expr::FloatLit(n))
-            }
             Token::StringLiteral(s) => {
                 // Plan 270 §S1.5: a string literal is data, not a name, so it
                 // cannot be a callee. Capture the literal's location now (before
@@ -85,44 +87,23 @@ impl Parser {
                     Ok(resolved)
                 }
             }
-            Token::True => {
-                self.advance();
-                Ok(Expr::BoolLit(true))
-            }
-            Token::False => {
-                self.advance();
-                Ok(Expr::BoolLit(false))
-            }
-            Token::Identifier(name) => {
-                self.advance();
-                self.skip_noise();
-                // A bare or quoted callee with `of/with/on` is a call (plan 270
-                // G1). `to` is the append separator here, so it is NOT treated
-                // as a call connector (else `append f to x to items` could
-                // never resolve). The suppression also covers this call's own
-                // arguments (e.g. `append id of item to out`) — otherwise the
-                // last argument would greedily read `to out` as its own call
-                // tail via the generic `allow_to: true` path, leaving no `to`
-                // for the append statement itself.
-                let saved_suppress = self.suppress_to_connector;
-                self.suppress_to_connector = true;
-                let call = self.parse_call_tail(name.clone(), false);
-                self.suppress_to_connector = saved_suppress;
-                if let Some(call) = call? {
-                    return Ok(call);
-                }
-                Ok(Expr::Identifier(name))
-            }
-            Token::The => {
-                self.advance();
-                self.skip_noise();
-                if let Token::Identifier(name) = self.current().clone() {
-                    self.advance();
-                    Ok(Expr::Identifier(name))
-                } else {
-                    Err(self.err("Expected identifier after 'the' in append"))
-                }
-            }
+            // One primary, with `to` reserved for the append separator.
+            // Reserving it is what keeps a bare name from reading the
+            // separator as its own call connector (`append id of item to
+            // out`), and it covers the whole subtree, so an index's list
+            // (`element 1 of ys to xs`) is protected by the same flag.
+            Token::OpenBrace
+            | Token::Minus
+            | Token::IntegerLiteral(_)
+            | Token::IntegerLiteralOverflow(_)
+            | Token::FloatLiteral(_)
+            | Token::True
+            | Token::False
+            | Token::Nothing
+            | Token::Element
+            | Token::Byte
+            | Token::Identifier(_)
+            | Token::The => self.parse_primary_reserving(true, false),
             _ => Err(self.err("Expected value to append")),
         }
     }
@@ -140,6 +121,14 @@ impl Parser {
                 Token::Add => (BinaryOperator::Add, 1),
                 Token::Subtract => (BinaryOperator::Subtract, 1),
                 Token::Multiply => (BinaryOperator::Multiply, 2),
+                // BUGS_FOUND #77: `multiply` and `times` are two spellings of
+                // one operator (LANGUAGE.md's operator table) but two tokens,
+                // because `Repeat N times` claims the second. This list had
+                // only the first, so `append v1 times v2 to l1.` stopped at
+                // `times` and reported "Expected 'to' after value" with the
+                // `to` written right there. The list now matches
+                // `parse_multiplicative`'s exactly.
+                Token::Times => (BinaryOperator::Multiply, 2),
                 Token::Divide => (BinaryOperator::Divide, 2),
                 Token::Modulo => (BinaryOperator::Modulo, 2),
                 Token::BitAnd => (BinaryOperator::BitAnd, 3),
@@ -171,7 +160,7 @@ impl Parser {
         self.skip_noise();
         
         // Check for loop expansion: "append each X from Y to Z"
-        if let Some((variable, collection, _treating)) = self.try_parse_each_from(true)? {
+        if let Some((variable, collection, treating)) = self.try_parse_each_from(true)? {
             // `append` has one source value slot, so a grid of two or more
             // `each` clauses is an arity error, not a multi-source append
             // (plan 320 rule 12). The separator `to` must follow the single
@@ -201,13 +190,41 @@ impl Parser {
                 }
                 _ => return Err(self.err("Expected list name after 'to'")),
             };
-            
-            // Create the append statement for loop body
+
+            // A `treating` clause written here, after the destination, is in
+            // the wrong place: it substitutes for the loop variable, so it
+            // belongs to the `each ... from ...` clause that binds the
+            // variable (`loop_expansion`, LANGUAGE.md), which is where
+            // `print`/`open`/a call all spell it. Left to fall through it
+            // reached the top level as "Expected a statement, got Treating",
+            // which named neither the clause nor the way out (BUGS_FOUND #70;
+            // diagnostic in the #45/#62/#63 family, caret on the offending
+            // token per #46).
+            self.skip_noise();
+            if *self.current() == Token::Treating {
+                let mut err = *self.err(
+                    "A `treating` clause belongs to the `each` clause, not after the append destination"
+                );
+                err = err
+                    .with_underline_note(
+                        "treating".chars().count(),
+                        "this substitutes for the loop variable, so it goes where the variable is bound",
+                    )
+                    .with_help_line(&format!(
+                        "write `append each {} from <collection> treating <match> as <replacement> to {}.`",
+                        variable, list_name
+                    ));
+                return Err(Box::new(err));
+            }
+
+            // Create the append statement for loop body. A `treating` clause
+            // on the `each` wraps the loop variable exactly as it does in
+            // `print each ... treating ...` and `open ... at each ...`.
             let append_stmt = Statement::ListAppend {
                 list: list_name,
-                value: Expr::Identifier(variable.clone()),
+                value: Self::each_arg_expr(&variable, &treating),
             };
-            
+
             return self.wrap_in_loop_expansion(variable, collection, append_stmt);
         }
         

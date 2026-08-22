@@ -111,7 +111,18 @@ impl Analyzer {
             // initializer, an empty literal, or a literal with mixed value
             // types falls through to `None`, same "can't prove it, allow
             // it" policy as everywhere else in this function.
-            Expr::MapAccess { map, .. } => self.map_value_type.get(map).cloned(),
+            Expr::MapAccess { map, .. } => {
+                // Bug #72: a read of a key the map's literal provably does
+                // NOT have yields the number 0 (LANGUAGE.md:2429), not a
+                // value of the map's type - the value type is what the read
+                // would have yielded had the key been there. Asked first,
+                // because it is the one case where the map's own value type
+                // is the wrong answer.
+                if self.absent_read_reason(expr).is_some() {
+                    return Some(Type::Integer);
+                }
+                self.map_value_type.get(map).cloned()
+            }
             // Bug #54: a read of one element out of a collection. The type
             // is the element type when the list's own literal initializer
             // proved one (`list_element_type`) and nothing can widen the
@@ -119,6 +130,14 @@ impl Analyzer {
             // same policy the `MapAccess` arm above follows. A byte is a
             // number by construction, whatever buffer it came out of.
             Expr::ElementAccess { list, .. } | Expr::ListAccess { list, .. } => {
+                // Bug #72, as for `MapAccess` above: an index the list's
+                // literal provably does not reach reads 0
+                // (LANGUAGE.md:2855), whatever the elements are - which is
+                // why this is asked even for a mixed literal, where no
+                // element type is provable at all.
+                if self.absent_read_reason(expr).is_some() {
+                    return Some(Type::Integer);
+                }
                 match list.as_ref() {
                     Expr::Identifier(name) => self.list_element_type_of(name),
                     _ => None,
@@ -126,10 +145,86 @@ impl Analyzer {
             }
             Expr::PropertyAccess { object, property: ObjectProperty::First }
             | Expr::PropertyAccess { object, property: ObjectProperty::Last } => {
+                // Bug #72: `xs's first` on a list whose literal is empty is
+                // the same miss as an out-of-range index.
+                if self.absent_read_reason(expr).is_some() {
+                    return Some(Type::Integer);
+                }
                 self.list_element_type_of(object)
             }
+            // Bug #74: every OTHER property read used to fall to `_ =>
+            // None` below, so `a text called t is xs's length.` proved
+            // nothing, #65's declaration and argument checks stayed silent,
+            // and codegen stored a list length in a text slot for the first
+            // read to dereference. `property_value_type` answers for the
+            // properties whose type is fixed by construction, the way the
+            // `ByteAccess` arm below is; the ones whose type follows their
+            // base keep answering None.
+            Expr::PropertyAccess { property, .. } => Self::property_value_type(property),
             Expr::ByteAccess { .. } => Some(Type::Integer),
             _ => None,
+        }
+    }
+
+    /// Bug #74: the type a `'s <property>` read yields, for the properties
+    /// whose answer is the same type whatever the base is - `xs's length`
+    /// is a number on a list, a map, a buffer and a file alike, which is
+    /// what the manual's four property tables say and what codegen emits.
+    /// `None` is the same "can't prove it, allow it" answer the rest of
+    /// `arithmetic_operand_type` gives, and it is what the properties whose
+    /// type follows their BASE get: `first`/`last` are the list's element
+    /// type (`list_element_type_of` resolves those in the arm above), and
+    /// `absolute` is a float for a float. A timer's `duration`/`elapsed`
+    /// are a Duration - not a `Type`, and read only through a unit cast
+    /// (LANGUAGE.md's Timer Properties table) - so they stay unproven too.
+    fn property_value_type(property: &ObjectProperty) -> Option<Type> {
+        match property {
+            // Measurements. LANGUAGE.md's List, Buffer, File, Time and
+            // Timer property tables all type these Number, and every one
+            // of them leaves codegen with a plain integer in rax.
+            ObjectProperty::Size
+            | ObjectProperty::Capacity
+            | ObjectProperty::Descriptor
+            | ObjectProperty::Modified
+            | ObjectProperty::Accessed
+            | ObjectProperty::Permissions
+            | ObjectProperty::Sign
+            | ObjectProperty::Hour
+            | ObjectProperty::Minute
+            | ObjectProperty::Second
+            | ObjectProperty::Day
+            | ObjectProperty::Month
+            | ObjectProperty::Year
+            | ObjectProperty::Unix
+            | ObjectProperty::StartTime
+            | ObjectProperty::EndTime => Some(Type::Integer),
+            // Questions. The same tables type these Boolean, and codegen
+            // leaves 0 or 1 in rax for each.
+            ObjectProperty::Empty
+            | ObjectProperty::Full
+            | ObjectProperty::Readable
+            | ObjectProperty::Writable
+            | ObjectProperty::Even
+            | ObjectProperty::Odd
+            | ObjectProperty::Positive
+            | ObjectProperty::Negative
+            | ObjectProperty::Zero
+            | ObjectProperty::Running => Some(Type::Boolean),
+            // A map's keys and values are freshly built lists. The element
+            // type is deliberately not claimed here - a list is all
+            // `treating_types_compatible` asks a list destination for.
+            ObjectProperty::Keys | ObjectProperty::Values => {
+                Some(Type::List(Box::new(Type::Unknown)))
+            }
+            // The universal property reports the variable's declared type
+            // as text ("Number (static)").
+            ObjectProperty::Type => Some(Type::String),
+            // Typed by their base, not by the property.
+            ObjectProperty::First
+            | ObjectProperty::Last
+            | ObjectProperty::Absolute
+            | ObjectProperty::Duration
+            | ObjectProperty::Elapsed => None,
         }
     }
 
@@ -538,6 +633,160 @@ impl Analyzer {
         self.list_element_type.get(name).cloned()
     }
 
+    /// How many elements `name`'s own literal initializer wrote, or `None`
+    /// when the length is no longer provable. The guard is
+    /// `list_element_type_of`'s, for the same reason: an `Append` makes the
+    /// list longer, so "index N is past the end" only holds while nothing
+    /// in the program can grow or alias it (bug #72).
+    pub(crate) fn list_literal_len_of(&self, name: &str) -> Option<usize> {
+        if self.functions_widen_lists || self.widened_lists.contains(name) {
+            return None;
+        }
+        self.list_literal_len.get(name).copied()
+    }
+
+    /// The complete key set `name`'s own map literal wrote, or `None` when
+    /// it is not provable - no literal initializer, a key that was not a
+    /// string literal, some `Set <name>'s "k" to <value>.` that can insert
+    /// into it, some function that inserts into a map it was handed, or a
+    /// copy/call that can alias it. `widened_lists` answers that last one
+    /// for maps as well as lists: the scan behind it is name-keyed and
+    /// type-blind, so it collects every name copied into or out of a
+    /// variable, returned, or passed to a call (bug #72).
+    pub(crate) fn map_literal_keys_of(&self, name: &str) -> Option<&HashSet<String>> {
+        if self.functions_write_map_keys
+            || self.map_key_writers.contains(name)
+            || self.widened_lists.contains(name)
+        {
+            return None;
+        }
+        self.map_literal_keys.get(name)
+    }
+
+    /// Bug #72: whether the number 0 that an absent read yields fits a slot
+    /// declared as `declared`.
+    ///
+    /// A `number` holds 0. A `float` holds it as +0.0 - the same bit
+    /// pattern, and the declaration check already rules a number and a
+    /// float "one family" (`initialiser_type_is_refused`). A `boolean`
+    /// holds it as false: Vox represents a boolean as 0/1 and prints it
+    /// that way, and `examples/lists.vox` has read an out-of-range element
+    /// into a boolean since long before this entry.
+    ///
+    /// A `text`, `list` or `map` slot holds a POINTER, and 0 as an address
+    /// is the segfault this entry is about. Those are the only
+    /// destinations a proven miss is refused into. (`value`, `buffer` and
+    /// `thing` never reach here - `check_declared_read_type` excuses them
+    /// before any of this.)
+    fn absent_zero_fits(declared: &Type) -> bool {
+        matches!(declared, Type::Integer | Type::Float | Type::Boolean)
+    }
+
+    /// Bug #72: true when `value` is a read the collection's own literal
+    /// proves MISSES and `declared` is a slot that can hold the number 0
+    /// such a read yields.
+    ///
+    /// Every declaration-shaped check consults this one predicate - #54's
+    /// read check (`check_declared_read_type`), the type lock
+    /// (`check_type_lock`), and #65's initialiser, argument and return
+    /// checks - so a proven miss is judged in exactly one place. Without
+    /// it, typing the miss `number` (which it is) would newly refuse the
+    /// `boolean` and `float` destinations that have always compiled and
+    /// always answered `false` and `0.0` - including
+    /// `examples/lists.vox:27`.
+    pub(crate) fn absent_read_fits(&self, declared: &Type, value: &Expr) -> bool {
+        Self::absent_zero_fits(declared) && self.absent_read_reason(value).is_some()
+    }
+
+    /// Bug #72: whether a collection read provably asks for something the
+    /// collection's own literal does not contain - a map key the literal
+    /// never wrote, or a list index past the literal's last element - and
+    /// if so, why, phrased for the diagnostic's `note:` line.
+    ///
+    /// The manual says what such a read yields, and it is not a value of
+    /// the collection's type. LANGUAGE.md:2429: "A missing key does not
+    /// crash: the lookup yields the number 0 and sets the error flag".
+    /// LANGUAGE.md:2857: "Out-of-bounds access sets an error flag and
+    /// returns the number 0". It writes the shape itself twice -
+    /// `a number called x is m's "never_set".`
+    /// (:2758) and `a number called bad is element 100 of items.` (:2863) -
+    /// and both times the destination is a `number`, because 0 is a number.
+    ///
+    /// So where absence is provable the read's static type is `number`,
+    /// whatever the collection holds. Without this, `arithmetic_operand_type`
+    /// answered with the collection's value type, which made #54's check
+    /// refuse the manual's own idiom into a `number` and recommend the
+    /// `text` spelling - the one destination that then dereferences 0 as a
+    /// pointer and segfaults.
+    ///
+    /// Provable means all of: the collection was declared with a literal
+    /// whose keys (or length) are known; the key or index written in the
+    /// read is itself a literal; and nothing in the whole program can add
+    /// to the collection or alias it. Anything less answers `None`, which
+    /// leaves the behaviour exactly as it was - the same "can't prove it,
+    /// allow it" policy as everywhere else in this file.
+    ///
+    /// The literal shapes themselves come from
+    /// `collect_literal_collection_shapes`, which runs before the walk and
+    /// offers a shape only for a name the program declares exactly once -
+    /// see its doc comment for why an absence proof, unlike #54's element
+    /// type, cannot be recorded as the walk reaches each declaration.
+    pub(crate) fn absent_read_reason(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::MapAccess { map, key } => {
+                let Expr::StringLit(key) = key.as_ref() else {
+                    return None;
+                };
+                let keys = self.map_literal_keys_of(map)?;
+                if keys.contains(key.as_str()) {
+                    return None;
+                }
+                Some(format!(
+                    "map '{}' has no key \"{}\", and a missing key yields the number 0 \
+and sets the error flag",
+                    map, key
+                ))
+            }
+            Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => {
+                let Expr::Identifier(name) = list.as_ref() else {
+                    return None;
+                };
+                let Expr::IntegerLit(n) = index.as_ref() else {
+                    return None;
+                };
+                let len = self.list_literal_len_of(name)?;
+                // Lists are 1-indexed (LANGUAGE.md's element access), so
+                // anything below 1 is as out of range as anything past the
+                // end.
+                if *n >= 1 && (*n as u64) <= len as u64 {
+                    return None;
+                }
+                Some(format!(
+                    "list '{}' has {} element{}, so element {} is out of range, and an \
+out-of-range read yields the number 0 and sets the error flag",
+                    name,
+                    len,
+                    if len == 1 { "" } else { "s" },
+                    n
+                ))
+            }
+            Expr::PropertyAccess {
+                object,
+                property: ObjectProperty::First | ObjectProperty::Last,
+            } => {
+                if self.list_literal_len_of(object)? != 0 {
+                    return None;
+                }
+                Some(format!(
+                    "list '{}' is empty, so there is nothing to read, and the read \
+yields the number 0 and sets the error flag",
+                    object
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// The single provable value type shared by every pair in a map
     /// literal (keys are always text and don't factor in), or `None` for
     /// an empty map, a mixed one, or a value that isn't a simple literal.
@@ -579,6 +828,58 @@ impl Analyzer {
         }
     }
 
+    /// Bug #74: how to spell a property back as Vox source, for
+    /// `render_value_hint`. One word each, except `size`/`length`, which
+    /// are the same property under two names: the manual leads with
+    /// `length` for a list and a map (and calls `'s length` the canonical
+    /// possessive) and with `size` for a buffer and a file, so the hint is
+    /// spelled the way the author's own base is documented rather than
+    /// swapping their word for its synonym.
+    fn property_word(&self, object: &str, property: &ObjectProperty) -> &'static str {
+        match property {
+            ObjectProperty::Size => {
+                if self.is_list_variable(object) || self.is_map_variable(object) {
+                    "length"
+                } else {
+                    "size"
+                }
+            }
+            ObjectProperty::Capacity => "capacity",
+            ObjectProperty::Empty => "empty",
+            ObjectProperty::Full => "full",
+            ObjectProperty::Descriptor => "descriptor",
+            ObjectProperty::Modified => "modified",
+            ObjectProperty::Accessed => "accessed",
+            ObjectProperty::Permissions => "permissions",
+            ObjectProperty::Readable => "readable",
+            ObjectProperty::Writable => "writable",
+            ObjectProperty::First => "first",
+            ObjectProperty::Last => "last",
+            ObjectProperty::Keys => "keys",
+            ObjectProperty::Values => "values",
+            ObjectProperty::Absolute => "absolute",
+            ObjectProperty::Sign => "sign",
+            ObjectProperty::Even => "even",
+            ObjectProperty::Odd => "odd",
+            ObjectProperty::Positive => "positive",
+            ObjectProperty::Negative => "negative",
+            ObjectProperty::Zero => "zero",
+            ObjectProperty::Hour => "hour",
+            ObjectProperty::Minute => "minute",
+            ObjectProperty::Second => "second",
+            ObjectProperty::Day => "day",
+            ObjectProperty::Month => "month",
+            ObjectProperty::Year => "year",
+            ObjectProperty::Unix => "unix",
+            ObjectProperty::Duration => "duration",
+            ObjectProperty::Elapsed => "elapsed",
+            ObjectProperty::StartTime => "start time",
+            ObjectProperty::EndTime => "end time",
+            ObjectProperty::Running => "running",
+            ObjectProperty::Type => "type",
+        }
+    }
+
     /// Render a value expression back into Vox source syntax, for the
     /// "help: convert it explicitly" suggestion. Only handles the simple
     /// literal/identifier shapes that are common in a mismatched assignment;
@@ -617,11 +918,23 @@ impl Analyzer {
                 self.render_value_hint(index),
                 self.render_value_hint(buffer)
             ),
-            Expr::PropertyAccess { object, property: ObjectProperty::First } => {
-                format!("{}'s first", object)
-            }
-            Expr::PropertyAccess { object, property: ObjectProperty::Last } => {
-                format!("{}'s last", object)
+            // Bug #74 widened this from `first`/`last` to every property,
+            // because #74 widened what the oracle can prove: without it the
+            // help line for `a text called t is xs's length.` read `t is
+            // <value> as text.`, which is not source anyone can paste.
+            // `current time's hour` parses with a synthetic object name, so
+            // it is spelled back the way it was written, and a multi-word
+            // name gets the quotes it needs to be a name at all
+            // (`'job timer''s start time`).
+            Expr::PropertyAccess { object, property } => {
+                let base = if object == "_current_time" {
+                    "current time".to_string()
+                } else if object.contains(char::is_whitespace) {
+                    format!("'{}'", object)
+                } else {
+                    object.clone()
+                };
+                format!("{}'s {}", base, self.property_word(object, property))
             }
             Expr::MapAccess { map, key } => {
                 format!("{}'s {}", map, self.render_value_hint(key))
@@ -676,6 +989,13 @@ impl Analyzer {
         let Some(actual) = self.arithmetic_operand_type(value) else {
             return false;
         };
+        // Bug #72: a read the collection's own literal proves MISSES yields
+        // the number 0, not a value of the collection's type - so it is
+        // judged by what can hold 0, not by whether `number` happens to be
+        // the destination's spelling. See `absent_zero_fits`.
+        if self.absent_read_fits(declared, value) {
+            return false;
+        }
         if matches!(actual, Type::Value) || self.treating_types_compatible(declared, &actual) {
             return false;
         }
@@ -692,12 +1012,35 @@ impl Analyzer {
             self.type_name(&actual),
             self.read_source_label(value)
         ));
+        // Bug #72: the read provably MISSES - an absent map key, an index
+        // past the literal's end, a `first` on an empty literal. It still
+        // yields a number, so it is still refused into a text/list/map
+        // slot, but the reason is not "the collection holds numbers" and
+        // the help line must not send the author to the destination type
+        // that dereferences 0 as a pointer. Say what actually happens, and
+        // point at the destination the manual itself uses for this idiom
+        // (LANGUAGE.md:2756, :2859).
+        let absent = self.absent_read_reason(value);
+        let underline = match &absent {
+            Some(_) => "this reads the number 0".to_string(),
+            None => format!("this reads {}", self.typed_phrase(&actual)),
+        };
         if let Some(loc) = self.find_declaration_location(name) {
-            err = err.with_underline_note(
-                name.len().max(1),
-                &format!("this reads {}", self.typed_phrase(&actual)),
-            );
+            err = err.with_underline_note(name.len().max(1), &underline);
             err = err.with_location(loc);
+        }
+        if let Some(reason) = &absent {
+            err = err.with_note_line(reason);
+            let hint = self.render_value_hint(value);
+            if !hint.contains("<value>") {
+                err = err.with_help_line(&format!(
+                    "declare it as a number - `a number called {} is {}.` - and catch \
+the miss with `on error`",
+                    name, hint
+                ));
+            }
+            self.errors.push(err);
+            return true;
         }
         err = err.with_note_line(&format!(
             "the read yields a {}, and '{}' is declared as a {}",
@@ -1096,6 +1439,11 @@ explicitly:  a {} called {} is {} as {}.",
         let Some(actual) = self.provable_value_type(value) else {
             return false;
         };
+        // Bug #72: a proven miss yields the number 0, and a number, float
+        // or boolean slot holds it - see `absent_read_fits`.
+        if self.absent_read_fits(declared, value) {
+            return false;
+        }
         if !self.initialiser_type_is_refused(declared, &actual) {
             return false;
         }
@@ -1169,6 +1517,10 @@ explicitly:  a {} called {} is {} as {}.",
         let Some(actual) = self.provable_value_type(arg) else {
             return false;
         };
+        // Bug #72, as in `check_initialiser_type`.
+        if self.absent_read_fits(param_type, arg) {
+            return false;
+        }
         if !self.initialiser_type_is_refused(param_type, &actual) {
             return false;
         }
@@ -1224,6 +1576,10 @@ explicitly:  a {} called {} is {} as {}.",
         let Some(actual) = self.provable_value_type(value) else {
             return false;
         };
+        // Bug #72, as in `check_initialiser_type`.
+        if self.absent_read_fits(declared, value) {
+            return false;
+        }
         if !self.initialiser_type_is_refused(declared, &actual) {
             return false;
         }
@@ -1370,6 +1726,11 @@ explicitly:  a {} called {} is {} as {}.",
         // (LANGUAGE.md:531-532) is untouched: `t` is text before the write
         // and text after it.
         if matches!(declared, Type::String) && matches!(actual, Type::Buffer) {
+            return false;
+        }
+        // Bug #72, the assignment spelling of the same read - see
+        // `check_declared_read_type`.
+        if self.absent_read_fits(&declared, value) {
             return false;
         }
         if self.treating_types_compatible(&declared, &actual) {
@@ -1607,4 +1968,157 @@ explicitly:  a {} called {} is {} as {}.",
         }
     }
 
+    /// Bug #78: the size a buffer declaration asks for, checked against the
+    /// bound the manual states under "Fixed-Size Buffers" - at least one
+    /// byte, at most 1 GiB.
+    ///
+    /// The bound existed before this check, but only in the parser's
+    /// literal arm, so it was a rule about a SPELLING rather than about a
+    /// size: `a buffer called b is wanted bytes in size.` walked past it
+    /// whatever `wanted` held, and `Create a buffer called b with capacity
+    /// 1073741825.` was never bounded at all. Both reached
+    /// `_alloc_buffer_sized` unchecked - a negative size reported a
+    /// negative capacity (the shape of #58), and one past what mmap can map
+    /// stored a null buffer pointer that the next read dereferenced.
+    ///
+    /// Three things are refused here, each only where the compiler can
+    /// prove it:
+    ///
+    /// - a literal size past the ceiling in a spelling the parser does not
+    ///   check (`Create ... with size N`),
+    /// - a named size whose value is fixed for the whole program
+    ///   (`collect_constant_numbers`) and outside the bound,
+    /// - a named size of a type that is not a whole number of bytes - a
+    ///   text sized the buffer by its address, and a float by its bit
+    ///   pattern, which faulted.
+    ///
+    /// What is NOT refused: `Expr::IntegerLit(0)`. That is not the author
+    /// writing `0` - the parser gives every sizeless buffer (`a buffer
+    /// called b.`, `Create a buffer called b.`) exactly that AST, so the
+    /// two are indistinguishable here, and a literal `0 bytes` is already
+    /// refused where they can be told apart, in the parser. A size the
+    /// compiler cannot prove either way is not refused either: codegen
+    /// guards that one at run time.
+    pub(crate) fn check_buffer_size(&mut self, buffer: &str, size: &Expr) {
+        match size {
+            // The dynamic-buffer AST, not a size the author wrote.
+            Expr::IntegerLit(0) => {}
+            Expr::IntegerLit(n) => {
+                if *n < MIN_BUFFER_SIZE || *n > MAX_BUFFER_SIZE {
+                    self.push_buffer_size_error(buffer, &n.to_string(), *n, None);
+                }
+            }
+            Expr::Identifier(name) => {
+                let name = name.clone();
+                if let Some(ty) = self.named_value_type(&name) {
+                    if !matches!(ty, Type::Integer | Type::Value | Type::Unknown) {
+                        self.push_buffer_size_type_error(buffer, &name, &ty);
+                        return;
+                    }
+                }
+                if let Some(&value) = self.number_constants.get(&name) {
+                    if value < MIN_BUFFER_SIZE || value > MAX_BUFFER_SIZE {
+                        self.push_buffer_size_error(buffer, &name, value, Some(&name));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The out-of-bound half of `check_buffer_size`. `written` is the size
+    /// exactly as the author spelled it - the digits, or the name - so the
+    /// caret lands on the token they have to change; `value` is what that
+    /// spelling comes to. The help line names the way out, in the family of
+    /// #45/#62/#63: too small means they wanted a dynamic buffer, too large
+    /// means they have to ask for less.
+    fn push_buffer_size_error(
+        &mut self,
+        buffer: &str,
+        written: &str,
+        value: i64,
+        named: Option<&str>,
+    ) {
+        let mut err = CompileError::new(&format!(
+            "cannot give the buffer '{}' a size of {} bytes",
+            buffer, value
+        ));
+        let occurrence = *self.symbol_error_counts.get(written).unwrap_or(&0);
+        let patterns = [
+            format!("{} bytes", written),
+            format!("size {}", written),
+            format!("capacity {}", written),
+            written.to_string(),
+        ];
+        if let Some(loc) = self.find_pattern_location(written, &patterns, occurrence, None, false, false) {
+            let note = match named {
+                Some(name) => format!("'{}' is {} here", name, value),
+                None => "asked for here".to_string(),
+            };
+            err = err.with_underline_note(written.len().max(1), &note);
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(written.to_string(), occurrence + 1);
+        err = err.with_note_line(&format!(
+            "a fixed buffer's size must be between {} and {} bytes (1 GiB)",
+            MIN_BUFFER_SIZE, MAX_BUFFER_SIZE
+        ));
+        err = err.with_help_line(&if value < MIN_BUFFER_SIZE {
+            format!(
+                "for a buffer with no fixed capacity, declare it with no size at all: 'a buffer called {}.'",
+                buffer
+            )
+        } else {
+            format!(
+                "ask for at most {} bytes, and read the rest in further passes through the same buffer",
+                MAX_BUFFER_SIZE
+            )
+        });
+        self.errors.push(err);
+    }
+
+    /// The wrong-type half of `check_buffer_size`. A size is a count of
+    /// bytes; a text sized the buffer by the address of its characters and
+    /// a float by the bits of its mantissa, neither of which the author
+    /// wrote.
+    fn push_buffer_size_type_error(&mut self, buffer: &str, size_name: &str, ty: &Type) {
+        let mut err = CompileError::new(&format!(
+            "cannot size the buffer '{}' from '{}', which is {}",
+            buffer,
+            size_name,
+            self.typed_phrase(ty)
+        ));
+        let occurrence = *self.symbol_error_counts.get(size_name).unwrap_or(&0);
+        let patterns = [
+            format!("{} bytes", size_name),
+            format!("size {}", size_name),
+            format!("capacity {}", size_name),
+            size_name.to_string(),
+        ];
+        if let Some(loc) = self.find_pattern_location(size_name, &patterns, occurrence, None, false, false)
+        {
+            err = err.with_underline_note(
+                size_name.len().max(1),
+                &format!("this is {}", self.typed_phrase(ty)),
+            );
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(size_name.to_string(), occurrence + 1);
+        err = err.with_note_line("a buffer's size is a whole number of bytes");
+        err = err.with_help_line(&match ty {
+            Type::Float => format!(
+                "round it to whole bytes first: 'a number called count is {} as a number.', then size '{}' from count",
+                size_name, buffer
+            ),
+            Type::String => format!(
+                "read the number out of the text first: 'a number called count is {} as a number.', then size '{}' from count",
+                size_name, buffer
+            ),
+            _ => format!(
+                "give the size as a number: 'a number called count is <how many bytes>.', then size '{}' from count",
+                buffer
+            ),
+        });
+        self.errors.push(err);
+    }
 }

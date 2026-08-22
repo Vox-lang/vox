@@ -1,0 +1,4 @@
+(Bug #71: `:X` is the same leak as `:x` with the digits in capitals.)
+
+a text called label is "hi".
+Print "{label:X}".

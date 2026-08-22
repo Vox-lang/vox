@@ -19,6 +19,10 @@ pub struct Lexer<'a> {
     input: Peekable<Chars<'a>>,
     line: usize,
     column: usize,
+    /// The second half of a contraction. `isn't` means `is not` - one word
+    /// but two tokens - so `read_word` returns the head and leaves the tail
+    /// here for `tokenize` to push. `None` for every other word.
+    pending: Option<Token>,
 }
 
 impl<'a> Lexer<'a> {
@@ -27,6 +31,7 @@ impl<'a> Lexer<'a> {
             input: input.chars().peekable(),
             line: 1,
             column: 1,
+            pending: None,
         }
     }
     

@@ -1,0 +1,9 @@
+(Bug #72's guard: a map copied into a second name is one heap object under
+ two names, and a `Set` through either puts the key in. The proof is
+ withheld for both ends of the copy, so #54's rejection still stands.)
+
+a map called guess is {"a": "t"}.
+a map called other is guess.
+Set other's "absent" to "here".
+a number called n is guess's "absent".
+Print n.

@@ -1,0 +1,23 @@
+(docs/BUGS_FOUND.md #90. A buffer argument that is not a variable — a call's
+ result, say — has no caller cell to write back to, so it is given one of its
+ own. The callee is correct for the length of the call, and the growth dies
+ with the temporary, because there is no caller variable for it to reach.
+ What must NOT happen is the callee reading through an address that belongs
+ to nothing.)
+
+To 'a fresh buffer'.
+    a buffer called made is "start".
+    Return a buffer, made.
+
+To 'pad out and measure' with a buffer called sink.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    Print "the callee sees: {sink's size}".
+
+'pad out and measure' of 'a fresh buffer'.
+
+a buffer called kept is 'a fresh buffer'.
+'pad out and measure' of kept.
+Print "the named one kept it: {kept's size}".

@@ -1,0 +1,18 @@
+(Bug #78: the same run-time guard, either side of the bound in one
+ program. -1 bytes used to be accepted and reported `capacity -1` - the
+ shape of bug #58 - while a size within the bound must go on working and
+ must not leave the error flag raised behind it.)
+
+a number called refused is arguments's first as a number.
+a number called wanted is arguments's second as a number.
+
+a buffer called wrong is refused bytes in size.
+On error print "refused: {refused} bytes".
+Print "wrong capacity: {wrong's capacity}".
+
+a buffer called right is wanted bytes in size.
+On error print "this line must not print".
+Print "right capacity: {right's capacity}".
+
+Set right to "hello".
+Print "right holds: {right} ({right's size} bytes)".

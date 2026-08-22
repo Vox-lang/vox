@@ -1,0 +1,51 @@
+(Bug #67 — the position table. #45's control `tests/376` proves a declared
+ return reads back correctly in every position it refuses an undeclared one
+ in, but every line of it returns a text; float, map and buffer were never
+ exercised, and each was wrong in a different subset of these positions. This
+ is 376's float/map/buffer twin.)
+
+To 'give float'. Return a float, 2.5.
+To 'give map'. Return a map, {"ann": 30}.
+To 'give buffer'. a buffer called made is 16 bytes in size. Copy "bytes" to made. Return a buffer, made.
+To 'give float of' with a number called factor. Return a float, 2.5.
+To 'give map of' with a number called factor. Return a map, {"ann": 30}.
+To 'give buffer of' with a number called factor. a buffer called made is 16 bytes in size. Copy "bytes" to made. Return a buffer, made.
+
+(the bare zero-argument spelling — parses as a name, not a call)
+Print 'give float'.
+Print 'give map'.
+Print 'give buffer'.
+
+(the spelling with a connector — parses as a call)
+Print 'give float of' with 1.
+Print 'give map of' with 1.
+Print 'give buffer of' with 1.
+
+(a format hole)
+Print "hole {'give float'} {'give map'} {'give buffer'}".
+
+(a value declaration — the tag has to travel too)
+a value called 'carried measure' is 'give float'.
+Print 'carried measure'.
+a value called 'carried ages' is 'give map'.
+Print 'carried ages'.
+
+(a list slot, and the whole list)
+a list called items is [].
+append 'give float' to items.
+append 'give map' to items.
+Print element 1 of items.
+Print element 2 of items.
+Print items.
+
+(a map slot)
+a map called outer is {}.
+set outer's "inner" to 'give map'.
+Print outer's "inner".
+
+(a text initializer and a buffer sink — the sinks #44 unified)
+a text called captured is "{'give map'}".
+Print captured.
+a buffer called sink is 64 bytes in size.
+Copy "{'give buffer'}" to sink.
+Print sink.

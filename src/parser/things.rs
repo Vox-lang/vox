@@ -686,6 +686,178 @@ impl Parser {
     }
 
     // ---------------------------------------------------------------------
+    // Declarations read ahead of the walk (BUGS_FOUND #80)
+    // ---------------------------------------------------------------------
+
+    /// The token at `at`, for the scans that read the stream directly rather
+    /// than through the cursor.
+    fn token_at(&self, at: usize) -> &Token {
+        self.tokens.get(at).map(|info| &info.token).unwrap_or(&Token::EOF)
+    }
+
+    /// The index of the first token from `at` that is not a newline - the
+    /// same "noise between two words of one construct" the cursor skips.
+    fn past_newlines(&self, at: usize) -> usize {
+        let mut i = at;
+        while matches!(self.token_at(i), Token::Newline) {
+            i += 1;
+        }
+        i
+    }
+
+    /// Register every `a <thing> called <name>` declaration this token stream
+    /// makes outside a function body, before the first statement is parsed.
+    ///
+    /// `thing_vars` is what decides whether `origin's x` reads as a field
+    /// chain, and it used to be filled as declarations were *parsed*, in
+    /// source order. A global thing declared BELOW a function was therefore
+    /// invisible inside it, and the possessive failed as "Expected property
+    /// name" with the caret on the field - a message about the one token that
+    /// was not the problem (BUGS_FOUND #80). LANGUAGE.md attaches no ordering
+    /// condition to a top-level variable: "variables declared at top level are
+    /// global and can be used inside functions". The ordering rule it does
+    /// state is about a thing DEFINITION, and that one still holds - a
+    /// definition is skipped over here, not registered.
+    ///
+    /// The set this walks is the set `collect_thing_vars` walks: the top level
+    /// and the blocks written at it, never a function body's parameters or
+    /// locals, which are registered when that body is parsed and belong to it.
+    /// Keeping the parser's table the same shape as the analyzer's and
+    /// codegen's is the point - three tables describing different sets are
+    /// three answers waiting to disagree.
+    pub(crate) fn register_declared_thing_vars(&mut self) {
+        // Seeded with the definitions already parsed, which is how a `see`n
+        // file's things reach a declaration written in the file that saw it.
+        // Names are added as the scan passes each definition, so a
+        // declaration still only reads a type noun defined above it - the
+        // same rule `try_parse_thing_type_noun` applies during the walk.
+        let mut defined: std::collections::HashSet<String> =
+            self.things.keys().cloned().collect();
+
+        let mut at = 0;
+        let mut opens_statement = true;
+        while at < self.tokens.len() {
+            match self.token_at(at).clone() {
+                Token::Newline => at += 1,
+                Token::Period | Token::Comma | Token::ParagraphBreak => {
+                    opens_statement = true;
+                    at += 1;
+                }
+                // A function's signature and body are not the top level: its
+                // parameters and its locals are registered when the body is
+                // parsed, in the scope they belong to.
+                Token::To if opens_statement => {
+                    at = self.end_of_function(at);
+                    opens_statement = true;
+                }
+                // A definition's entries are fields, not variables: the
+                // `a leg called outbound` inside `A thing called route has`
+                // declares a field of route and nothing named `outbound`.
+                Token::Identifier(ref word)
+                    if word.eq_ignore_ascii_case("thing")
+                        && matches!(self.token_at(self.past_newlines(at + 1)), Token::Called) =>
+                {
+                    if let Token::Identifier(defined_name) =
+                        self.token_at(self.past_newlines(self.past_newlines(at + 1) + 1)).clone()
+                    {
+                        defined.insert(defined_name);
+                    }
+                    at = self.end_of_thing_definition(at);
+                    opens_statement = true;
+                }
+                Token::Identifier(ref word) if defined.contains(word) => {
+                    let called = self.past_newlines(at + 1);
+                    if !matches!(self.token_at(called), Token::Called) {
+                        opens_statement = false;
+                        at += 1;
+                        continue;
+                    }
+                    let name_at = self.past_newlines(called + 1);
+                    if let Token::Identifier(name) = self.token_at(name_at).clone() {
+                        // First declaration wins. The walk that follows
+                        // overwrites each entry as it reaches it, so a name
+                        // declared twice still reads as whichever declaration
+                        // stands above the use - which is what the walk alone
+                        // gave before this existed.
+                        self.thing_vars.entry(name).or_insert_with(|| word.clone());
+                    }
+                    opens_statement = false;
+                    at = name_at + 1;
+                }
+                _ => {
+                    opens_statement = false;
+                    at += 1;
+                }
+            }
+        }
+    }
+
+    /// One past the last token of the function definition opening at `at` (a
+    /// `To` in statement position). Read by the same three rules
+    /// `parse_function_def` closes a body with: the signature ends at its
+    /// period, a body whose first statement is a `Return` is that one
+    /// sentence, and any other body runs to the paragraph break - or to the
+    /// `To`/`Library` that opens the next top-level construct.
+    fn end_of_function(&self, at: usize) -> usize {
+        let mut i = at + 1;
+        while !matches!(
+            self.token_at(i),
+            Token::Period | Token::ParagraphBreak | Token::EOF
+        ) {
+            i += 1;
+        }
+        if matches!(self.token_at(i), Token::Period) {
+            i += 1;
+        }
+
+        // `To 'answer'. Return a number, 3.` - the inline Return closes the
+        // body, so what follows it is top-level again even with no blank line.
+        let head = self.past_newlines(i);
+        if matches!(self.token_at(head), Token::Return) {
+            let mut end = head;
+            while !matches!(
+                self.token_at(end),
+                Token::Period | Token::ParagraphBreak | Token::EOF
+            ) {
+                end += 1;
+            }
+            return if matches!(self.token_at(end), Token::Period) { end + 1 } else { end };
+        }
+
+        let mut opens_statement = true;
+        loop {
+            match self.token_at(i) {
+                Token::EOF | Token::ParagraphBreak => return i,
+                Token::To | Token::Library if opens_statement => return i,
+                Token::Period | Token::Comma => {
+                    opens_statement = true;
+                    i += 1;
+                }
+                Token::Newline => i += 1,
+                _ => {
+                    opens_statement = false;
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// One past the last token of the thing definition opening at `at` (the
+    /// contextual `thing` keyword). A definition is closed by the ordinary
+    /// termination rules - a period after the last entry, or a paragraph
+    /// break - which is what `at_thing_terminator` reads.
+    fn end_of_thing_definition(&self, at: usize) -> usize {
+        let mut i = at;
+        while !matches!(
+            self.token_at(i),
+            Token::Period | Token::ParagraphBreak | Token::EOF
+        ) {
+            i += 1;
+        }
+        if matches!(self.token_at(i), Token::Period) { i + 1 } else { i }
+    }
+
+    // ---------------------------------------------------------------------
     // Declaration position (plan 310 §1, §6, §10)
     // ---------------------------------------------------------------------
 
@@ -1000,9 +1172,23 @@ impl Parser {
                     .iter()
                     .find(|f| f.name == member)
                     .map(|f| f.field_type.clone()),
-                // Unreachable: a `Type::Thing` payload is only ever written
-                // for a name already in the registry.
-                None => return Err(self.err(&format!("Unknown thing '{}'", current))),
+                // The declaration is known (it is what named this type) but
+                // the definition has not been read yet: the thing is defined
+                // BELOW this use. That ordering rule is real - LANGUAGE.md
+                // states that every use stands after the definition it names -
+                // so this is a rejection, and the message says which line to
+                // move (BUGS_FOUND #80, diagnostic in #46's family).
+                None => {
+                    self.pos = member_pos;
+                    return Err(self.err(&format!(
+                        "Thing '{}' is defined below this line\n  \
+                         A thing is defined at the top level, like a function, \
+                         and every use of its name stands after the \
+                         definition.\n  \
+                         Move the definition of '{}' above this line.",
+                        current, current
+                    )));
+                }
             };
 
             let Some(field_type) = field_type else {

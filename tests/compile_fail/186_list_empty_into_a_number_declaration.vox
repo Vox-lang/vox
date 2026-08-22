@@ -1,0 +1,8 @@
+(Bug #74's boolean half. LANGUAGE.md's List Properties table types `empty`
+ Boolean, and `a number called n is true.` has been refused since #65 - so
+ the same value read out of a property is refused the same way, and the help
+ line names the cast that says it on purpose.)
+
+a list called counts is [10, 20, 30].
+a number called drained is counts's empty.
+Print drained.

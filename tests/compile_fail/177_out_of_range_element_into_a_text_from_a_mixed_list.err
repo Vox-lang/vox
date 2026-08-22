@@ -1,0 +1,2 @@
+cannot initialise 'n', which is a text, with a number read out of list 'oddments'
+note: list 'oddments' has 2 elements, so element 5 is out of range, and an out-of-range read yields the number 0 and sets the error flag

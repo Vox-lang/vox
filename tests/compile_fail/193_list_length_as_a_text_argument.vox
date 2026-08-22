@@ -1,0 +1,9 @@
+(Bug #74 at the call site. #65 added the argument check; it consults the same
+ oracle as the declaration check, so both went blind on a property read at the
+ same instant. The callee stores the argument in a text slot and reads it as
+ text, so this faulted one frame from the sentence that caused it.)
+
+To 'shout' with a text called word. Return a text, word.
+
+a list called counts is [10, 20, 30].
+Print 'shout' of counts's length.

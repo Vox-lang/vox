@@ -1,0 +1,25 @@
+(Bug #77: `append -5 to xs.` answered "Expected value to append" while
+ `append {-5} to xs.` - the same tokens, routed to the general primary -
+ compiled. `-` is only ever a sign in Vox; subtraction is spelled
+ `subtract` or `minus`, so there was nothing for the append slot to
+ protect by refusing it.)
+
+a number called n is 5.
+a list called xs is [].
+
+append -5 to xs.
+append -0.5 to xs.
+append -n to xs.
+append -9223372036854775808 to xs.
+
+(The neighbours that already worked, still working.)
+append {-5} to xs.
+append 0 minus 5 to xs.
+
+Print element 1 of xs.
+Print element 2 of xs.
+Print element 3 of xs.
+Print element 4 of xs.
+Print element 5 of xs.
+Print element 6 of xs.
+Exit 0.

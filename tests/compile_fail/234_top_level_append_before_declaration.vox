@@ -1,0 +1,8 @@
+(Bug #79 at its worst. `append` asked what KIND the name was before it
+ asked whether the name was available yet, and both kind sets are filled
+ by the whole-program pre-pass - so this walked straight past the
+ availability check into codegen and SEGFAULTED on a list header that
+ did not exist yet. Order first, kind second.)
+
+append 1 to items.
+a list called items is [].

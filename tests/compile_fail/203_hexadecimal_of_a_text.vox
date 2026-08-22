@@ -1,0 +1,12 @@
+(Bug #71: `{t:x}` used to print the text's ADDRESS in hex - the radix path
+ read the slot's 64 bits as an integer without ever consulting the type.
+ The control that made it unambiguous is two texts holding the same bytes
+ printing two different numbers, which no value-based explanation survives
+ (docs/BUGS_FOUND.md:1952, #36's own words about the width half).
+
+ Hex of a text is not a thing to define, so the compiler says so and names
+ the two ways out - the same judgement #45, #62, #63 and #65 make about a
+ category error the compiler can see.)
+
+a text called first is "hi".
+Print "{first:x}".

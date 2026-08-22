@@ -1,0 +1,26 @@
+(BUGS_FOUND #84: teaching `read_word` to swallow an apostrophe must not
+ disturb the three meanings the scanner already decides at the `'` itself:
+ the possessive marker, the quoted name, and the character literal. The
+ possessives below are on the very names a wider contraction rule would
+ have eaten - `it` and `they`, whose contractions sat in the keyword table
+ as dead code, and the stems `isn` and `aren` themselves.)
+
+a list called it is [4, 5].
+print it's length.
+
+a list called they is [4, 5, 6].
+print they's length.
+
+a list called isn is [1, 2, 3, 4].
+print isn's length.
+
+a list called aren is [1].
+print aren's length.
+
+(A quoted name, possessive through the closing quote)
+a list called 'a long name' is [7, 8].
+print 'a long name's length.
+
+(A character literal, which is an apostrophe pair and not a contraction)
+a number called letter is 'A'.
+print letter.

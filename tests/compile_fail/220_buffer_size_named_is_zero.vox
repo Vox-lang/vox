@@ -1,0 +1,6 @@
+(Bug #78: `a buffer called room is 0 bytes in size.` has always been a
+ compile error. The same zero reached through a name was not.)
+
+a number called wanted is 0.
+a buffer called room is wanted bytes in size.
+Print room's capacity.

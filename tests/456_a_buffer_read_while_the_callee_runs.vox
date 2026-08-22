@@ -1,0 +1,44 @@
+(docs/BUGS_FOUND.md #90 — the window. The store-back has to happen at the
+ reallocation and not when the call returns: between the two, the callee can
+ call another function that reaches the same buffer through its global
+ mirror, and that read must not land in the block that was just freed.
+ Before the fix each watch segfaulted INSIDE the call, after the literal
+ part of its own line had already been printed.
+
+ The second half is the same window one frame deeper: the buffer is grown
+ through a parameter that is itself a parameter, so the new pointer has to
+ reach the buffer's OWNER at the reallocation rather than one return at a
+ time. A watcher called from down there sees it, or it sees freed memory.)
+
+a buffer called transcript is "start".
+a buffer called ledger is "start".
+
+To 'watch the transcript'.
+    Print "the watcher reads: {transcript's size}".
+
+To 'watch the ledger'.
+    Print "the watcher reads: {ledger's size}".
+
+To 'pad out then look' with a buffer called sink.
+    'watch the transcript'.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    'watch the transcript'.
+
+To 'pad out deeper then look' with a buffer called sink.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    'watch the ledger'.
+
+To 'hand it on' with a buffer called sink.
+    'pad out deeper then look' of sink.
+
+'pad out then look' of transcript.
+Print "the caller reads: {transcript's size}".
+
+'hand it on' of ledger.
+Print "the ledger's owner reads: {ledger's size}".

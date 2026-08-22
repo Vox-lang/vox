@@ -1,0 +1,11 @@
+right of and: fires
+left of and: fires
+left of or: fires
+double: silent
+but if: fires
+guarded print: fires
+plural subjects: fires
+returned condition: fires
+loop tick 3
+loop tick 4
+loop tick 5

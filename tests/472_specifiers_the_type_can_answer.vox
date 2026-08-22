@@ -1,0 +1,44 @@
+(Bug #71's other half of the ledger: the rows that were already right and
+ had to stay right when the specifier dispatch was rebuilt to consult the
+ value's type first.
+
+ The radix rows are what a base specifier is FOR - a whole number written
+ in another base - and they are the working neighbour that proves the fix
+ removed a wrong answer rather than the feature. A boolean renders as its
+ 1/0 (LANGUAGE.md:2229), so it is a whole number here too.
+
+ The `value`, list and map rows are the runtime-tagged path, which honours
+ no specifier at all and renders the value: that behaviour is deliberate
+ (#36 records it) and is not something a type check can second-guess, since
+ a `value`'s type is not known until it runs.
+
+ The sink rows are LANGUAGE.md:3226 - the same hole, printed and built into
+ a buffer, has to read the same both times.)
+a number called n is 255.
+a number called eight is 8.
+a boolean called ready is true.
+
+Print "{n:x}".
+Print "{n:X}".
+Print "{n:b}".
+Print "{eight:o}".
+Print "{n:04x}".
+Print "{n:8x}".
+Print "{ready:x}".
+Print "{ready:06}".
+Print "{n:06}".
+Print "{n:6}".
+
+a value called held is 2.5.
+a value called worded is "words".
+Print "{held:06}".
+Print "{worded:x}".
+
+a list called items is [1, 2].
+a map called ages is {"bo": 3}.
+Print "{items:x}".
+Print "{ages:.2}".
+
+a buffer called out is 64 bytes in size.
+copy "{n:x} {n:06} {n:.2}" to out.
+Print "{out}".

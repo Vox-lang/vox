@@ -1,0 +1,8 @@
+(Bug #70: the `treating` clause belongs to the `each` clause that binds the
+ loop variable, not after the append destination. The grammar summary used
+ to give it in this position; the sentence is now refused by name, with the
+ corrected spelling on the help line.)
+
+a list called names is ["ann", "-"].
+a list called out is [].
+append each name from names to out treating "-" as "anon".

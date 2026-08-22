@@ -1,0 +1,4 @@
+after resize: 5
+and it still reads: 115
+after a far byte write: 9000
+the byte written: 65

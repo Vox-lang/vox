@@ -1,0 +1,4 @@
+cannot initialise 'handle', which is text, with a number
+191_file_descriptor_into_a_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'handle' can only be initialised with text
+help: declare it as a number - `a number called handle is source's descriptor.` - or convert it explicitly:  a text called handle is source's descriptor as text.

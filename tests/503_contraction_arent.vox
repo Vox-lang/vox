@@ -1,0 +1,19 @@
+(BUGS_FOUND #84: `aren't` is the other contraction LANGUAGE.md's Logical
+ Operators table documents. It means `are not`, so it lexes as two tokens
+ and reads in the multi-subject comparison exactly where `are not` does.
+ Each pair prints the same line twice.)
+
+a boolean called p is true.
+a boolean called q is false.
+
+If p, and q aren't false then, print "neither is false". Otherwise, print "one is false".
+If p, and q are not false then, print "neither is false". Otherwise, print "one is false".
+
+a number called x is 4.
+a number called y is 4.
+
+If x, and y aren't 9 then, print "neither is nine". Otherwise, print "one is nine".
+If x, and y are not 9 then, print "neither is nine". Otherwise, print "one is nine".
+
+(Case is not significant here either)
+If x, and y AREN'T 4 then, print "neither is four". Otherwise, print "one is four".

@@ -1,0 +1,16 @@
+(Bug #76 lost a map parameter's properties and its printing, but never its
+ keyed read or its iteration: those were right before the fix and must
+ still be right after it. Pinned here because the fix hoists one type
+ table that four sites shared, and the hoist must not move anything else.)
+
+To 'read every grade' with a map called grades.
+    Print grades's "ada",
+    Print grades's "bea",
+    Print grades's keys,
+    Print grades's values,
+    For each pupil in grades's keys,
+        Print pupil.
+
+A map called 'the class' is {"ada": 1, "bea": 2}.
+'read every grade' of 'the class'.
+Exit 0.

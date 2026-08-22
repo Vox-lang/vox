@@ -62,3 +62,110 @@
         );
     }
 
+
+    #[test]
+    fn isnt_lexes_as_is_then_not() {
+        // BUGS_FOUND #84: `isn't` is a documented spelling of `not`
+        // (LANGUAGE.md, Logical Operators) that `read_word` could never
+        // build - it stopped dead at the apostrophe, so the keyword-table
+        // entry was unreachable. It means `is not`, so it must lex as the
+        // two tokens `parse_comparison` reads, not as a single `Not`:
+        // `v1 not v2` does not parse and never did.
+        assert_eq!(tokens_of("v1 isn't v2"), tokens_of("v1 is not v2"));
+        assert_eq!(
+            tokens_of("v1 isn't v2"),
+            vec![
+                Token::Identifier("v1".to_string()),
+                Token::Is,
+                Token::Not,
+                Token::Identifier("v2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn arent_lexes_as_are_then_not() {
+        // BUGS_FOUND #84: the other documented contraction, on the same
+        // rule. `has_are_ahead` looks for `Token::Are`, so the multi-subject
+        // comparison sees `aren't` exactly where it sees `are not`.
+        assert_eq!(tokens_of("p aren't false"), tokens_of("p are not false"));
+    }
+
+    #[test]
+    fn contractions_are_case_insensitive_like_every_other_keyword() {
+        // BUGS_FOUND #84: the keyword table lowercases the word before
+        // matching, and the contraction rule matches its stem and its `t`
+        // the same way.
+        assert_eq!(tokens_of("v1 ISN'T v2"), tokens_of("v1 isn't v2"));
+        assert_eq!(tokens_of("p AREN'T false"), tokens_of("p aren't false"));
+    }
+
+    #[test]
+    fn possessive_on_it_and_they_survives_the_contraction_rule() {
+        // BUGS_FOUND #84: `it's` and `they're` sat in the keyword table as
+        // spellings of `is` and `are`. Waking them would have swallowed the
+        // possessive on a variable called `it` or `they` - `print it's
+        // length.` prints a length - so they were removed instead. The
+        // contraction rule must leave both apostrophes to the `'` arm.
+        assert_eq!(
+            tokens_of("it's length"),
+            vec![
+                Token::Identifier("it".to_string()),
+                Token::Apostrophe,
+                Token::Identifier("s".to_string()),
+                Token::Identifier("length".to_string()),
+            ]
+        );
+        assert_eq!(
+            tokens_of("they's length"),
+            vec![
+                Token::Identifier("they".to_string()),
+                Token::Apostrophe,
+                Token::Identifier("s".to_string()),
+                Token::Identifier("length".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_contraction_stem_is_still_an_ordinary_name() {
+        // BUGS_FOUND #84: the rule fires only on the whole contraction
+        // followed by a character that cannot continue a word. `isn` and
+        // `aren` stay ordinary names, possessive included, and a word that
+        // merely starts like a contraction is left exactly as it was.
+        assert_eq!(
+            tokens_of("isn's length"),
+            vec![
+                Token::Identifier("isn".to_string()),
+                Token::Apostrophe,
+                Token::Identifier("s".to_string()),
+                Token::Identifier("length".to_string()),
+            ]
+        );
+        assert_eq!(
+            tokens_of("aren"),
+            vec![Token::Identifier("aren".to_string())]
+        );
+        // `isn'ts` is not the contraction, so nothing is consumed for it.
+        assert_eq!(
+            tokens_of("isn'ts"),
+            vec![
+                Token::Identifier("isn".to_string()),
+                Token::Apostrophe,
+                Token::Identifier("ts".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn both_halves_of_a_contraction_report_its_own_column() {
+        // BUGS_FOUND #84: one word, two tokens. A caret under either half
+        // has to land on the word the author actually wrote, so both carry
+        // the contraction's line and column.
+        let mut lexer = Lexer::new("If v1 isn't v2");
+        let tokens = lexer.tokenize();
+        let is = tokens.iter().find(|t| t.token == Token::Is).unwrap();
+        let not = tokens.iter().find(|t| t.token == Token::Not).unwrap();
+        assert_eq!((is.line, is.column), (1, 7));
+        assert_eq!((not.line, not.column), (1, 7));
+    }

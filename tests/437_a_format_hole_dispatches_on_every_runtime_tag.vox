@@ -1,0 +1,24 @@
+(Regression test for bug #68: the format hole's tag dispatch must cover
+ every tag a slot can carry, not just the ones the headline repro used.
+ A list holding one of each kind reads back through a hole and through the
+ statement form, and the two must agree for all seven.
+
+ Acceptance: number, text, decimal, boolean, nested list, map and nothing
+ each render the same in a hole as they do printed directly.)
+
+a list called 'one of each kind' is [1, "two", 3.5, yes, [6, 7], {"k": 8}, nothing].
+
+Print "{element 1 of 'one of each kind'}".
+Print element 1 of 'one of each kind'.
+Print "{element 2 of 'one of each kind'}".
+Print element 2 of 'one of each kind'.
+Print "{element 3 of 'one of each kind'}".
+Print element 3 of 'one of each kind'.
+Print "{element 4 of 'one of each kind'}".
+Print element 4 of 'one of each kind'.
+Print "{element 5 of 'one of each kind'}".
+Print element 5 of 'one of each kind'.
+Print "{element 6 of 'one of each kind'}".
+Print element 6 of 'one of each kind'.
+Print "{element 7 of 'one of each kind'}".
+Print element 7 of 'one of each kind'.

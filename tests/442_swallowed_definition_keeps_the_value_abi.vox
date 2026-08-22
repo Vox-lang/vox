@@ -1,0 +1,15 @@
+(Bug #73: a `To` written while a clause is still open is parsed into that
+ clause's body, and every pre-pass that answers "what is this function's
+ signature?" scanned the top-level list flat. A swallowed definition was
+ invisible to them, so a call was compiled against an empty signature - one
+ argument word per parameter - and a `value` parameter's tag word was never
+ pushed. The callee read its tag from a register the caller never wrote and
+ reported a text as a number, then as nothing recognisable.)
+
+For each attempt from 1 to 3,
+    If attempt is 99 then, Break.
+To examine with a value called given.
+    Print "{given's type}".
+
+examine of "".
+Exit 0.

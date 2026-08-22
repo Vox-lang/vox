@@ -2334,6 +2334,112 @@ Otherwise, a number called s is 1, append s to out.\n";
         );
     }
 
+    // ---- Bug #86: a float's precision reaches every sink, not just Print ----
+
+    /// `{ratio:.2}` outside Print position fell to `_buffer_append_float`,
+    /// which takes the raw bits alone and has nowhere to put N - so a
+    /// receipt written to a file read `2.5` where the same line on screen
+    /// read `2.50`. The buffer sinks must reach the SAME precision printer
+    /// Print reaches, through the redirection, carrying the same N.
+    #[test]
+    fn a_float_precision_in_a_text_initializer_carries_its_places() {
+        let asm = compile_to_asm(
+            "a float called ratio is 2.5.\n\
+             a text called captured is \"{ratio:.2}\".\n\
+             print captured.\n",
+        );
+        assert!(
+            asm.contains("mov rsi, 2") && asm.contains("call _buffer_append_float_precision"),
+            "a precision in a text initializer must render through \
+             _buffer_append_float_precision, carrying N: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_float\n"),
+            "the precision-less appender must not be what a `.2` reaches: {}",
+            asm
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/format.asm\""),
+            "the precision printer lives in format.asm, which must be included"
+        );
+    }
+
+    /// The buffer sinks the manual names by name, all reaching the same
+    /// routine: `copy`, `set` and `append`, plus `write`.
+    #[test]
+    fn a_float_precision_in_every_buffer_sink_carries_its_places() {
+        for source in [
+            "a float called ratio is 2.5.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             copy \"{ratio:.2}\" to sink.\n",
+            "a float called ratio is 2.5.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             set sink to \"{ratio:.2}\".\n",
+            "a float called ratio is 2.5.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             append \"{ratio:.2}\" to sink.\n",
+            "a float called ratio is 2.5.\n\
+             Open a file at 1 for writing called out.\n\
+             write \"{ratio:.2}\" to out.\n",
+        ] {
+            let asm = compile_to_asm(source);
+            assert!(
+                asm.contains("call _buffer_append_float_precision"),
+                "every sink renders a precision through the shared printer, \
+                 this one did not: {}\n{}",
+                source,
+                asm
+            );
+        }
+    }
+
+    /// A program that builds `{ratio:.2}` into a buffer and never prints
+    /// has no other reason to include io.asm - but the render-sink writers
+    /// the redirect goes through live in resource.asm behind io.asm's own
+    /// guard, so the compiler has to ask for it. Without this the program
+    /// did not assemble at all: `symbol _render_bytes not defined`.
+    #[test]
+    fn a_float_precision_in_a_buffer_asks_for_the_render_writers() {
+        let asm = compile_to_asm(
+            "a float called ratio is 2.5.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             copy \"{ratio:.2}\" to sink.\n",
+        );
+        assert!(
+            asm.contains("call _buffer_append_float_precision"),
+            "the precision must reach the redirect even with no print: {}",
+            asm
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/io.asm\"")
+                && asm.contains("%include \"coreasm/x86_64/resource.asm\""),
+            "the redirect's writers must be included: {}",
+            asm
+        );
+    }
+
+    /// A float with no precision keeps its own arm - the fix adds a branch,
+    /// it does not reroute the default rendering.
+    #[test]
+    fn a_float_without_a_precision_still_appends_directly() {
+        let asm = compile_to_asm(
+            "a float called ratio is 2.5.\n\
+             a text called captured is \"{ratio}\".\n\
+             print captured.\n",
+        );
+        assert!(
+            asm.contains("call _buffer_append_float"),
+            "a bare {{float}} still goes to _buffer_append_float: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_float_precision"),
+            "no precision was written, so none may be emitted: {}",
+            asm
+        );
+    }
+
     // ---- format specs: the count the author wrote is the count that is
     // emitted (docs/BUGS_FOUND.md #61) ----
 
@@ -2405,6 +2511,92 @@ Otherwise, a number called s is 1, append s to out.\n";
         );
     }
 
+    /// Bug #71's belt and braces. The analyzer refuses `{t:x}` on a text,
+    /// so the leak is unreachable from source - these call the emitter
+    /// directly, because the guarantee being pinned is that codegen never
+    /// reinterprets a slot's raw bits WHATEVER reaches it. A type the
+    /// analyzer could not prove (a `.lib` result, a global read from a
+    /// place the analyzer types as unknown) must still render as its own
+    /// type, not as an address.
+    fn emit_one_hole(value_type: Option<super::VarType>, spec: &str) -> String {
+        let mut gen = CodeGenerator::new();
+        let fmt = gen.parse_format_spec(Some(spec));
+        gen.emit_formatted_value(value_type, fmt);
+        gen.emitted_for_test()
+    }
+
+    #[test]
+    fn a_radix_on_a_text_prints_the_text_not_its_address() {
+        for spec in ["x", "X", "b", "o", "04x"] {
+            let asm = emit_one_hole(Some(super::VarType::String), spec);
+            assert!(
+                asm.contains("PRINT_CSTR rdi"),
+                "`:{}` on a text must print the string: {}",
+                spec,
+                asm
+            );
+            assert!(
+                !asm.contains("PRINT_HEX") && !asm.contains("PRINT_BINARY") && !asm.contains("PRINT_OCTAL"),
+                "`:{}` on a text must not reach an integer routine: {}",
+                spec,
+                asm
+            );
+        }
+    }
+
+    #[test]
+    fn a_radix_on_a_float_prints_the_float_not_its_bits() {
+        for spec in ["x", "b", "o"] {
+            let asm = emit_one_hole(Some(super::VarType::Float), spec);
+            assert!(
+                asm.contains("PRINT_FLOAT"),
+                "`:{}` on a float must print the float: {}",
+                spec,
+                asm
+            );
+        }
+    }
+
+    #[test]
+    fn a_precision_on_a_text_prints_the_text_not_a_double() {
+        let asm = emit_one_hole(Some(super::VarType::String), ".2");
+        assert!(
+            asm.contains("PRINT_CSTR rdi") && !asm.contains("_print_float_precision"),
+            "`:.2` on a text must print the string, not read it as a double: {}",
+            asm
+        );
+    }
+
+    /// The whole-number half of #71: a precision on an integer renders the
+    /// integer, a point and N zeros - never a double, which would round
+    /// anything past 2^53 while claiming to print it exactly (#34).
+    #[test]
+    fn a_precision_on_a_whole_number_renders_digits_then_zeros() {
+        let asm = emit_one_hole(Some(super::VarType::Integer), ".2");
+        assert!(
+            asm.contains("PRINT_INT rdi") && asm.contains("PRINT_INT_ZEROPAD 0, 2"),
+            "`:.2` on a number is the integer, a point and two zeros: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("_print_float_precision") && !asm.contains("cvtsi2sd"),
+            "and it never converts to a double on the way: {}",
+            asm
+        );
+    }
+
+    /// `{n:.0}` asks for no decimal places at all, so no point is written -
+    /// the same answer `{f:.0}` has always given.
+    #[test]
+    fn no_decimal_places_on_a_whole_number_writes_no_point() {
+        let asm = emit_one_hole(Some(super::VarType::Integer), ".0");
+        assert!(
+            asm.contains("PRINT_INT rdi") && !asm.contains("PRINT_INT_ZEROPAD"),
+            "`:.0` on a number is just the number: {}",
+            asm
+        );
+    }
+
     /// A spec that is not a count at all is not a fault - `.2z` is not a
     /// precision, and never was; it must stay a quiet no-op rather than
     /// become an error.
@@ -2413,6 +2605,57 @@ Otherwise, a number called s is 1, append s to out.\n";
         let (spec, fault) = super::read_format_spec(Some(".2z"));
         assert_eq!(spec.precision, None);
         assert_eq!(fault, None);
+    }
+
+    /// docs/BUGS_FOUND.md #85. A precision written after a width was read
+    /// as leftover text, matched against no base specifier and dropped, so
+    /// `{f:8.2}` printed 2.5 while `{f:.2}` printed 2.50 - a width
+    /// destroying a specifier that works on its own. Both halves are now
+    /// read and both are kept: the precision decides the digits, the width
+    /// decides the padding, and each is honoured wherever a primitive for
+    /// it exists (#71's rule for the width).
+    #[test]
+    fn a_precision_written_after_a_width_keeps_both_halves() {
+        let (spec, fault) = super::read_format_spec(Some("8.2"));
+        assert_eq!(spec.width, Some(8));
+        assert_eq!(spec.precision, Some(2));
+        assert_eq!(fault, None, "the pair is renderable, so it is not a fault");
+    }
+
+    /// A zero-pad is a width, so it composes with a precision the same way
+    /// and keeps its zeros.
+    #[test]
+    fn a_zero_pad_written_with_a_precision_keeps_both_halves() {
+        let (spec, fault) = super::read_format_spec(Some("08.2"));
+        assert_eq!(spec.width, Some(8));
+        assert!(spec.zero_pad);
+        assert_eq!(spec.precision, Some(2));
+        assert_eq!(fault, None);
+    }
+
+    /// A count past the limit is still a count fault, on whichever half
+    /// wrote it - the pair being legal does not make a 20-digit precision
+    /// renderable (#61's rule, unchanged).
+    #[test]
+    fn a_precision_too_large_beside_a_width_is_still_a_count_fault() {
+        let (spec, fault) = super::read_format_spec(Some("8.99999999999999999999"));
+        assert_eq!(spec.width, Some(8));
+        assert!(matches!(
+            fault,
+            Some(super::FormatSpecFault::PrecisionTooLarge(_))
+        ));
+    }
+
+    /// The boundary the fault must not cross: what follows the width has
+    /// to BE a count. `8.` and `8.2z` name no precision, so they stay the
+    /// quiet no-ops they were - the same rule `.2z` follows above.
+    #[test]
+    fn a_width_followed_by_something_that_is_not_a_count_is_not_a_fault() {
+        for spec_text in ["8.", "8.2z", "8x"] {
+            let (spec, fault) = super::read_format_spec(Some(spec_text));
+            assert_eq!(spec.width, Some(8), "width still read from {}", spec_text);
+            assert_eq!(fault, None, "{} is not a fault", spec_text);
+        }
     }
 
     /// More than one leading zero used to leave the base specifier

@@ -1,0 +1,4 @@
+cannot initialise 'drained', which is a number, with a boolean
+186_list_empty_into_a_number_declaration.vox:7:17
+note: a variable's type is fixed at its declaration, so 'drained' can only be initialised with a number
+help: declare it as a boolean - `a boolean called drained is counts's empty.` - or convert it explicitly:  a number called drained is counts's empty as a number.

@@ -1,0 +1,21 @@
+(docs/BUGS_FOUND.md #90, at its smallest. One call is enough: any single
+ operation that pushes a buffer parameter past its current capacity moves the
+ block and frees the old one. `Resize` and an out-of-capacity `Set byte` are
+ the two spellings that can do it without a loop; both used to leave the
+ caller holding freed memory, and the caller's next read segfaulted.)
+
+To 'widen' with a buffer called sink.
+    Resize sink to 9000.
+
+To 'poke far out' with a buffer called sink and a number called where.
+    Set byte where of sink to 65.
+
+a buffer called widened is "start".
+'widen' of widened.
+Print "after resize: {widened's size}".
+Print "and it still reads: {byte 1 of widened}".
+
+a buffer called poked is "start".
+'poke far out' of poked and 9000.
+Print "after a far byte write: {poked's size}".
+Print "the byte written: {byte 9000 of poked}".

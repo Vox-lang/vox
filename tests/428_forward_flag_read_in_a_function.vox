@@ -1,0 +1,20 @@
+(Bug #66, the flag half. Bug #32 made the ANALYZER's flag types
+ order-independent; codegen's stayed ordered, so a flag read inside a
+ function defined above its schema printed the address of the flag's own
+ default string. No flag is supplied on the command line, so every read
+ answers the declared default.)
+
+To 'show the flags'.
+    Print output.
+    Print retries.
+    Print verbose.
+
+a flag called output is "-o" or "--output", it is a text with default "out.txt".
+a flag called retries is "-r" or "--retries", it is a number with default 3.
+a flag called verbose is "-v" or "--verbose", it is a boolean.
+
+'show the flags'.
+
+Print output.
+Print retries.
+Print verbose.

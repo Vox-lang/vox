@@ -1,0 +1,11 @@
+(A loop body is not a scope of its own (LANGUAGE.md: no block scoping),
+ so a name declared inside one is available after the loop and the read
+ below is in order. Bug #79's fix must not reject it: a loop body's
+ declaration is never in the whole-program "definite" set - the loop may
+ run zero times - so this read is answered by the walk alone.)
+
+Repeat 2 times, a number called tally is 5.
+Print tally.
+
+Repeat 0 times, a number called untouched is 42.
+Print untouched.

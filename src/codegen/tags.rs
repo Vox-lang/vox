@@ -305,6 +305,25 @@ impl CodeGenerator {
         }
     }
 
+    /// Where a `{name}` format hole's runtime tag lives, for a name whose
+    /// resolved type is `Mixed` - a `value` local's shadow stack slot or a
+    /// top-level `value`'s BSS mirror, as the `movzx r11, byte <operand>`
+    /// source. `None` means there is no tag to read (the name is not a
+    /// `value`, or it is one with no shadow slot), and the caller must fall
+    /// back to its static rendering rather than dispatch on whatever r11
+    /// happens to hold - the same fallback Print takes.
+    pub(crate) fn mixed_value_tag_location(
+        &self,
+        name: &str,
+        value_type: Option<VarType>,
+    ) -> Option<String> {
+        if value_type != Some(VarType::Mixed) {
+            return None;
+        }
+        self.mixed_element_tag_slot(&Expr::Identifier(name.to_string()))
+            .map(|loc| loc.operand())
+    }
+
     /// Best-effort static tag for a value being written into a list slot
     /// at emit time (richer than the pre-scan version: consults
     /// `variable_types`/`list_element_types`, which are populated by the
@@ -390,6 +409,19 @@ impl CodeGenerator {
                         }
                     }
                 }
+            }
+            // A `treating` clause that dispatches on runtime tags has no
+            // single tag to write at emit time: the result is the element or
+            // the replacement, and which one - and what it is - is settled by
+            // the hardware (#59, #69). `infer_expr_type` would answer with the
+            // subject's static type, which is right for the element and wrong
+            // for a `value` replacement that turned out to hold something
+            // else. `expr_leaves_tag_in_r11` agrees on exactly this condition,
+            // so every tag consumer takes the real tag out of r11 instead.
+            Expr::TreatingAs { value, match_value, replacement }
+                if self.treating_dispatches_on_runtime_tag(value, match_value, replacement) =>
+            {
+                None
             }
             // Function results, binary/unary ops, casts, and property/element
             // reads: infer_expr_type resolves these from declared metadata and
@@ -762,22 +794,70 @@ impl CodeGenerator {
     /// text element's address as an integer) — for every element, including
     /// the ones the clause never matched.
     ///
-    /// Both the match and the replacement must carry a statically known tag:
-    /// the match's tag is what the subject's tag is compared against, and the
-    /// replacement's is the tag the result carries when the substitution
-    /// fires. Without both there is no tag to dispatch on, and the static path
-    /// stands. This predicate is the single condition under which
-    /// `generate_expr` emits the tagged path, so it is also exactly when the
-    /// result leaves its tag in r11.
+    /// All three operands must carry a tag - the match's is what the
+    /// subject's is compared against, and the replacement's is the tag the
+    /// result carries when the substitution fires - but the tag may now be a
+    /// runtime one on any of them (bug #69), not only on the subject. Without
+    /// a tag somewhere for each there is nothing to dispatch on and the static
+    /// path stands; when every tag is known at emit time the static path is
+    /// already right, so the tagged path is reserved for the case where at
+    /// least one of the three is only known at runtime. This predicate is the
+    /// single condition under which `generate_expr` emits the tagged path, so
+    /// it is also exactly when the result leaves its tag in r11.
     pub(crate) fn treating_dispatches_on_runtime_tag(
         &self,
         value: &Expr,
         match_value: &Expr,
         replacement: &Expr,
     ) -> bool {
-        self.runtime_tag_source(value).is_some()
-            && self.emit_time_expr_tag(match_value).is_some()
-            && self.emit_time_expr_tag(replacement).is_some()
+        let (Some(subject), Some(matched), Some(replaced)) = (
+            self.treating_subject_tag(value),
+            self.treating_clause_tag(match_value),
+            self.treating_clause_tag(replacement),
+        ) else {
+            return false;
+        };
+        [subject, matched, replaced]
+            .iter()
+            .any(|tag| matches!(tag, ClauseTag::Runtime(_)))
+    }
+
+    /// The tag of a `treating` clause's match or replacement: at emit time
+    /// where the operand's type is fixed, at runtime where it is a `value`
+    /// (bug #69).
+    ///
+    /// Emit time first, deliberately - a literal or a statically-typed
+    /// variable is proven, and asking the runtime what it already knows would
+    /// only cost instructions. `None` means the operand carries no tag by
+    /// either route, and the clause has nothing to dispatch on.
+    pub(crate) fn treating_clause_tag(&self, e: &Expr) -> Option<ClauseTag> {
+        match self.emit_time_expr_tag(e) {
+            Some(tag) => Some(ClauseTag::Static(tag)),
+            None => self.runtime_tag_source(e).map(ClauseTag::Runtime),
+        }
+    }
+
+    /// The tag of a `treating` clause's subject. Runtime first here, the
+    /// mirror image of `treating_clause_tag`: the subject is the loop
+    /// variable, and where it has a per-slot tag that tag is the only truth
+    /// about what this iteration holds - a static answer would be the wrong
+    /// one, which was bug #59.
+    ///
+    /// A buffer is excluded: its payload is a struct pointer rather than the
+    /// bytes, so it compares by `_mem_eq` over the tracked length (a NUL scan
+    /// would read stale bytes past the logical end). The tagged path compares
+    /// text with `_str_eq`, so a buffer subject keeps the static path that
+    /// knows how to reach its data.
+    pub(crate) fn treating_subject_tag(&self, e: &Expr) -> Option<ClauseTag> {
+        if let Some(src) = self.runtime_tag_source(e) {
+            return Some(ClauseTag::Runtime(src));
+        }
+        if let Expr::Identifier(name) = e {
+            if self.variable_types.get(name) == Some(&VarType::Buffer) {
+                return None;
+            }
+        }
+        self.emit_time_expr_tag(e).map(ClauseTag::Static)
     }
 
 }

@@ -1,0 +1,15 @@
+(A name declared in EVERY branch of an if/otherwise chain is definite -
+ whichever branch runs, it has been declared by the time the chain ends,
+ so the read after it is in order and must still compile. Bug #79's fix
+ makes the top-level walk fill its scope in declaration order instead of
+ from the whole-program set, and this is the shape that would break if
+ the branch merge were not doing its own half of the job.)
+
+a number called mode is 1.
+
+If mode is 1 then,
+  a text called verdict is "first".
+Otherwise,
+  a text called verdict is "second".
+
+Print verdict.

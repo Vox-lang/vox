@@ -358,6 +358,13 @@ impl Parser {
         self.included_paths.append(&mut inner.included_paths);
         self.warnings.append(&mut inner.warnings);
 
+        // The seen file's definitions have only just arrived, so a
+        // declaration further down THIS file naming one of its things could
+        // not be recognised by the scan that ran before the `see` was read
+        // (BUGS_FOUND #80). Re-running it costs one linear pass per `see` and
+        // leaves every entry the walk has already made alone.
+        self.register_declared_thing_vars();
+
         Ok(Some(statements?))
     }
 

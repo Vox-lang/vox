@@ -1,0 +1,6 @@
+(Bug #74 at the call site, reading a map's length.)
+
+To 'shout' with a text called word. Return a text, word.
+
+a map called ages is {"ada": 36}.
+Print 'shout' of ages's length.

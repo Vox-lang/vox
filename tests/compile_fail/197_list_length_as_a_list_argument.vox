@@ -1,0 +1,7 @@
+(Bug #74 at the call site, handing a number to a list parameter - the callee
+ read 3 as a list header.)
+
+To 'ident' with a list called items. Return a list, items.
+
+a list called counts is [10, 20, 30].
+Print 'ident' of counts's length.

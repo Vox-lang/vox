@@ -1,0 +1,7 @@
+(Bug #72: a mixed map proves no value type, so #54's check never fired here
+ at all - and the absent-key read into a text segfaulted. The key set is
+ provable whether or not the values share a type.)
+
+a map called oddments is {"a": 1, "b": "x"}.
+a text called n is oddments's "absent".
+Print n.

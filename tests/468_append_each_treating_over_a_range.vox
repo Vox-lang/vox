@@ -1,0 +1,20 @@
+(Bug #70, the range half: a `treating` clause sits between the collection
+ and the append separator, so the second `to` that tells a range source
+ from a list source was hidden behind it and the sentence did not parse at
+ all. Proving the range now reads past the clause.)
+
+(A range source, substituted)
+a list called out is [].
+append each n from 1 to 3 treating 2 as 99 to out.
+print out.
+
+(The control: the same range with no clause still reads as a range)
+a list called plain is [].
+append each n from 1 to 3 to plain.
+print plain.
+
+(And a list source is still a list source, not a range to its destination)
+a list called amounts is [10, 20].
+a list called copied is [].
+append each amount from amounts to copied.
+print copied.

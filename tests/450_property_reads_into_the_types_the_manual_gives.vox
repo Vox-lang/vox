@@ -1,0 +1,114 @@
+(Bug #74's control. The type lock could not see through a `'s <property>`
+ read, so it let a mismatched destination through and the program faulted on
+ the first read. Teaching it the property tables must not narrow what a
+ CORRECT property read is allowed to say: every line below is a property read
+ landing in the type LANGUAGE.md's own tables give it, and every one of them
+ compiled and printed exactly this before the fix too.)
+
+a list called counts is [10, 20, 30].
+a map called ages is {"ada": 36, "bea": 41}.
+
+(List Properties - `length` and `size` are one property under two names, both
+ Number; `empty` is Boolean.)
+a number called tally is counts's length.
+a number called 'the same tally' is counts's size.
+a boolean called drained is counts's empty.
+print tally.
+print 'the same tally'.
+print drained.
+
+(Map Properties - a map answers `length` the way a list does, and `keys` and
+ `values` build fresh lists.)
+a number called 'people named' is ages's length.
+a list called who is ages's keys.
+a list called 'how old' is ages's values.
+print 'people named'.
+print who.
+print 'how old'.
+
+(Buffer Properties - `size`, `capacity`, `empty` and `full`.)
+a buffer called ledger is 16 bytes in size.
+append "abc" to ledger.
+a number called 'bytes held' is ledger's size.
+a number called room is ledger's capacity.
+a boolean called blank is ledger's empty.
+a boolean called brimming is ledger's full.
+print 'bytes held'.
+print room.
+print blank.
+print brimming.
+
+(Number Properties - the five questions are Boolean, `sign` is Number.)
+a number called gauge is 0 subtract 42.
+a boolean called halves is gauge's even.
+a boolean called 'leaves one' is gauge's odd.
+a boolean called 'above zero' is gauge's positive.
+a boolean called 'below zero' is gauge's negative.
+a boolean called 'at zero' is gauge's zero.
+a number called direction is gauge's sign.
+print halves.
+print 'leaves one'.
+print 'above zero'.
+print 'below zero'.
+print 'at zero'.
+print direction.
+
+(The universal `type` property reports text, and lands in a text.)
+a text called described is gauge's type.
+print described.
+
+(`first` and `last` are typed by the LIST, not by the property - bug #54's
+ machinery, untouched here. A list of numbers hands back a number.)
+a number called leading is counts's first.
+a number called trailing is counts's last.
+print leading.
+print trailing.
+
+(`absolute` is typed by its base too - a float's absolute is a float - so it
+ stays unproven and unchecked, exactly as before.)
+a number called distance is gauge's absolute.
+print distance.
+
+(Time Properties are Number. The clock moves, so these are read into the
+ numbers they are and then compared, not printed.)
+Get current time into now.
+a number called 'this year' is now's year.
+a number called 'this hour' is now's hour.
+If 'this year' is greater than 2023 then, print "the year is a number".
+If 'this hour' is greater than -1 then, print "the hour is a number".
+
+(Timer Properties - `start time` and `end time` are Number, `running` is
+ Boolean, and `duration` is a Duration that reads through a unit cast.)
+a timer called clock.
+Start clock.
+Stop clock.
+a number called 'began at' is clock's start time.
+a boolean called 'still going' is clock's running.
+a number called 'seconds taken' is clock's duration in seconds.
+If 'began at' is greater than 0 then, print "the start time is a number".
+print 'still going'.
+If 'seconds taken' is greater than -1 then, print "the duration is a number".
+
+(File Properties - `size`, `descriptor`, `permissions` and the two mode
+ questions.)
+open a file for writing called sink at "./test_425_three_bytes.txt".
+Write "abc" to sink.
+Close sink.
+open a file for reading called source at "./test_425_three_bytes.txt".
+a number called 'file bytes' is source's size.
+a number called handle is source's descriptor.
+a number called mode is source's permissions.
+a boolean called 'can read' is source's readable.
+a boolean called 'can write' is source's writable.
+print 'file bytes'.
+If handle is greater than 2 then, print "the descriptor is a number".
+If mode is greater than 0 then, print "the permissions are a number".
+print 'can read'.
+print 'can write'.
+Close source.
+Delete the file "./test_425_three_bytes.txt".
+
+(And the cast is the other documented way to land a property read somewhere
+ else - LANGUAGE.md's Basic Conversions.)
+a text called spelled is counts's length as text.
+print spelled.

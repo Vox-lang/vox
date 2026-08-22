@@ -1,0 +1,27 @@
+(Bug #76: with other reads in the same sentence to pull the file runtime
+ in, the program linked and answered `-1` for a map parameter's `length` —
+ a file size on something that is not a file, bug #58's shape — while
+ `Print grades` and `{grades}` printed a raw heap address, bug #44's. The
+ same map, read from inside the function and from outside it, must answer
+ the same both ways.)
+
+To 'describe the grades' with a map called grades.
+    Print grades's length,
+    Print grades's size,
+    Print grades's empty,
+    Print grades,
+    Print "the grades are {grades}",
+    Print grades's type.
+
+To 'describe grades nobody has entered yet' with a map called grades.
+    Print grades's length,
+    Print grades's empty,
+    Print grades.
+
+A map called 'the class' is {"ada": 1, "bea": 2}.
+'describe the grades' of 'the class'.
+Print 'the class'.
+
+A map called 'the new class' is {}.
+'describe grades nobody has entered yet' of 'the new class'.
+Exit 0.

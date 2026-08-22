@@ -1,0 +1,2 @@
+cannot initialise 'n', which is a text, with a number read out of list 'blank'
+note: list 'blank' is empty, so there is nothing to read, and the read yields the number 0 and sets the error flag

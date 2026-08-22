@@ -1,0 +1,17 @@
+(Bug #76's other half: the SAME table decides a function's declared return
+ type, and `map` was missing from that copy too, so an untyped call result
+ printed a raw heap address exactly as the parameter did. LANGUAGE.md:727
+ says parameters and returns "share one vocabulary, not two", so they read
+ one table now. `A map called 'the class' is 'the starting grades'.` was
+ already right, because there the DECLARATION supplies the type the call
+ could not.)
+
+To 'the starting grades' with a number called term. Return a map, {"ada": 1, "bea": 2}.
+
+Print 'the starting grades' of 1.
+Print "the grades are {'the starting grades' of 1}".
+
+A map called 'the class' is 'the starting grades' of 1.
+Print 'the class''s length.
+Print 'the class'.
+Exit 0.

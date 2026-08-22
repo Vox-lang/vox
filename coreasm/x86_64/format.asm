@@ -286,7 +286,7 @@ section .bss
 
 section .text
 
-; Write exactly rdx bytes from rsi to stdout.
+; Write exactly rdx bytes from rsi to WHICHEVER SINK `_render_sink` names.
 ; A single write(2) is allowed to write less than it was asked to (a pipe
 ; with a full buffer does exactly that), so a chunked writer that ignores
 ; the return value silently truncates its output - a per-byte loop never
@@ -297,6 +297,40 @@ _fmt_write_all:
     push rdi
     push rsi
     push rdx
+%ifdef __RESOURCE_ASM_INCLUDED__
+%ifdef __IO_ASM_INCLUDED__
+    ; Sink-aware, exactly as io.asm's RENDER_* macros are. With
+    ; `_render_sink` zero the bytes go to stdout below, instruction for
+    ; instruction as they always did; with it holding a dynamic buffer the
+    ; same bytes are appended to that buffer instead.
+    ;
+    ; `{f:.N}` has ONE renderer, `_print_float_precision`, and this is the
+    ; writer it emits every byte through - digits, point and pad alike. So
+    ; teaching this one routine about the sink is what makes a precision
+    ; render identically whether the result is printed, written to a file
+    ; or built into a buffer (LANGUAGE.md "Format Strings Everywhere";
+    ; docs/BUGS_FOUND.md #86). Writing a second, buffer-shaped precision
+    ; printer is the duplication that shipped `{list}` as a raw heap
+    ; address in every sink but Print (#44).
+    ;
+    ; `_render_bytes` (resource.asm) takes rsi/rdx as they already are and
+    ; preserves every general-purpose register. Gated on both defines
+    ; because that is where it lives: resource.asm holds it (the buffer
+    ; branch needs `_buffer_append_bytes`) behind io.asm's own guard (the
+    ; stdout branch needs `_print_int_impl`). A program with neither has no
+    ; non-stdout sink to reach, so `_render_sink` there is unreachably zero
+    ; and the syscall below is what it would have executed anyway - and
+    ; codegen sets `uses_io` alongside `uses_buffers` wherever it emits a
+    ; call that depends on this redirect, so the arm is always present when
+    ; something can reach it. Both files are included before this one, so
+    ; the defines are visible.
+    mov rax, [rel _render_sink]
+    test rax, rax
+    jz .chunk
+    call _render_bytes
+    jmp .done
+%endif
+%endif
 .chunk:
     test rdx, rdx
     jz .done
@@ -1422,6 +1456,53 @@ _print_float_precision:
 %undef PFP_INT_LEN
 %undef PFP_PLACES
 %undef PFP_KEPT
+
+; ----------------------------------------------------------------------------
+; _buffer_append_float_precision - render `{f:.N}` into a dynamic buffer.
+; ----------------------------------------------------------------------------
+; Args:      rdi = destination buffer, rax = raw float bits, rsi = N
+; Returns:   rax = destination buffer (possibly reallocated)
+; Clobbers:  same as _print_float_precision.
+;
+; The return contract deliberately matches `_buffer_append_float` and
+; `_list_render_to_buffer`, so the codegen arm that emits this call sits
+; beside theirs as an equal (src/codegen/buffers.rs).
+;
+; This is a redirection, not a second printer: it points `_render_sink` at
+; the buffer and calls the very routine `Print` calls, so `{ratio:.2}`
+; produces the same bytes in a text initializer, a buffer set/copy/append,
+; a `write`, a path, a `treating` clause and a function argument as it does
+; in Print position (LANGUAGE.md "Format Strings Everywhere";
+; docs/BUGS_FOUND.md #86). Everything the precision printer knows - the
+; exact expansion, round-half-to-even, the 2^63 range (#60) - therefore
+; reaches every sink without being written down twice.
+;
+; Gated on the same two defines as the redirect in `_fmt_write_all` that
+; makes it work: without them, setting `_render_sink` would do nothing and
+; the digits would escape to stdout. The compiler sets `uses_buffers` and
+; `uses_io` wherever it emits this call, so both are always present; were
+; that ever to drift, the missing symbol is a link error, which is the
+; failure worth having.
+%ifdef __RESOURCE_ASM_INCLUDED__
+%ifdef __IO_ASM_INCLUDED__
+_buffer_append_float_precision:
+    push rbx
+    push r12
+
+    mov rbx, [rel _render_sink]     ; previous sink, restored on the way out
+    mov r12, rdi                    ; destination buffer
+    mov [rel _render_sink], r12
+    movq xmm0, rax                  ; the value
+    mov rdi, rsi                    ; N, the decimal places asked for
+    call _print_float_precision
+    mov rax, [rel _render_sink]     ; the buffer, after any reallocation
+    mov [rel _render_sink], rbx
+
+    pop r12
+    pop rbx
+    ret
+%endif
+%endif
 
 %endif  ; __FLOAT_ASM_INCLUDED__
 

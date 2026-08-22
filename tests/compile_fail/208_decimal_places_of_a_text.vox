@@ -1,0 +1,9 @@
+(Bug #71: `{label:.2}` printed `0.00` - the rodata pointer read as a
+ double. The precision path ran before any type check at all, which is why
+ it leaked a value the width path had already been taught to refuse
+ (v0.4.7, #36).
+
+ A decimal place is a place in a NUMBER's expansion; a text has none.)
+
+a text called label is "hi".
+Print "{label:.2}".

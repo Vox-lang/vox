@@ -1,0 +1,10 @@
+(Bug #89: a bare literal in a format hole is read as a variable name and
+ rejected - LANGUAGE.md:3169 says so of its own `{255:x}` example - but the
+ caret went looking for `3.14` as a name and found the first one anywhere
+ in the file: the legal declaration below, three lines above the mistake.
+ A correct line was marked as the error.)
+
+a float called f is 3.14.
+Print "ok".
+Print "ok".
+Print "{3.14:.17}".

@@ -1,0 +1,7 @@
+(Bug #77 lifted the append slot's *parse* restriction, not the buffer
+ overload's rule about what may be appended to a buffer. `-5` now parses
+ where it once said "Expected value to append"; it is still refused, by
+ the rule that owns the refusal.)
+
+a buffer called b is 64 bytes in size.
+append -5 to b.

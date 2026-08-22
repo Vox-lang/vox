@@ -1,0 +1,50 @@
+(Bug #87: a buffer stored in a `value` kept the buffer's STRUCT pointer as
+ its payload while the tag beside it said text, so every read dereferenced
+ the 24-byte header and printed the capacity field's low byte - `@` for a
+ 64-byte buffer, an empty line for a dynamic one whose low byte is 0. That
+ is bug #51's defect in the `value` positions #51's fix did not reach, and
+ the owner's #51 ruling settles it the same way: the cast-free spelling
+ means what `as text` means.
+
+ The two declared sizes are load-bearing. 64 and 65 differ ONLY in the
+ capacity byte, so an answer read out of the header tracks them (`@`, then
+ `A`) while the right answer does not move.)
+
+a buffer called sized is 64 bytes in size.
+append "first" to sized.
+a value called carried is sized.
+Print carried.
+
+a buffer called roomier is 65 bytes in size.
+append "first" to roomier.
+a value called held is roomier.
+Print held.
+
+(The register's headline repro: a dynamic buffer, whose capacity's low byte
+ is 0, so the wrong answer was a silent empty line rather than a character.)
+a buffer called made is "ABC".
+a value called echoed is made.
+Print echoed.
+Print "{echoed}".
+
+(The neighbours that were always right, and must stay right.)
+a text called direct is made.
+Print direct.
+Print "{made}".
+a value called viacast is made as text.
+Print viacast.
+
+(An empty buffer must give empty text, not a header read.)
+a buffer called untouched is 32 bytes in size.
+a value called blank is untouched.
+Print "[{blank}]".
+
+(The `value` says it holds text - it did so before the fix too, which is
+ what made the wrong payload a self-describing lie rather than undefined
+ territory. Both answers must still agree with the bytes now delivered.)
+Print carried's type.
+If carried is a text then, Print "predicate: text". Otherwise, Print "predicate: not text".
+
+(And a text read back out of the `value` carries the same bytes.)
+a text called back is echoed.
+Print "back=[{back}]".

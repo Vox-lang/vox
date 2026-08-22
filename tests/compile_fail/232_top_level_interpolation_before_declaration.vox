@@ -1,0 +1,7 @@
+(Bug #79 through a format hole. `{label}` is a read like any other, and
+ it reached the same forgotten-type formatter. The caret must land on
+ the name inside the braces, not on the declaration below that happens
+ to contain the same word (docs/BUGS_FOUND.md #46).)
+
+Print "the label is {label}".
+a text called label is "hello".

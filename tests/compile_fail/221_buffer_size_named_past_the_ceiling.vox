@@ -1,0 +1,6 @@
+(Bug #78: one byte past the 1 GiB ceiling is refused as a literal and was
+ accepted through a name.)
+
+a number called wanted is 1073741825.
+a buffer called room is wanted bytes in size.
+Print room's capacity.

@@ -1,0 +1,4 @@
+cannot initialise 'stamped', which is text, with a number
+190_time_year_into_a_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'stamped' can only be initialised with text
+help: declare it as a number - `a number called stamped is now's year.` - or convert it explicitly:  a text called stamped is now's year as text.

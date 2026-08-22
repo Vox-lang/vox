@@ -1,0 +1,2 @@
+'label' is used before it is declared
+top-level statements run in the order they are written, and 'label' is declared at line 7

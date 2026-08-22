@@ -1,0 +1,62 @@
+(Bug #72: an absent map key reads the NUMBER 0 - LANGUAGE.md:2429, "A
+ missing key does not crash: the lookup yields 0 and sets the error flag".
+ 0.4.9 typed such a read from the map's VALUES instead, so every line below
+ whose map holds text was refused at compile time, and the help line it
+ offered - the `text` spelling - segfaulted on the first read.)
+
+(The headline repro: a map of text, asked for a key it has not got.)
+a map called guess is {"a": "t"}.
+a number called 'missing letter' is guess's "absent".
+Print 'missing letter'.
+
+(A map of numbers misses the same way. This row always compiled; it must
+ keep answering the same.)
+a map called counts is {"a": 1}.
+a number called 'missing count' is counts's "absent".
+Print 'missing count'.
+
+(A mixed map proves no value type at all, but its key set is still known.)
+a map called oddments is {"a": 1, "b": "x"}.
+a number called 'missing oddment' is oddments's "absent".
+Print 'missing oddment'.
+
+(An empty map has no keys, so every key is absent from it.)
+a map called 'no entries' is {}.
+a number called 'missing anything' is 'no entries's "absent".
+Print 'missing anything'.
+
+(The manual's own worked example, LANGUAGE.md:2754-2757: the miss sets the
+ error flag, and "the key is absent" stays distinguishable from "the key
+ holds nothing".)
+a map called m is {"k": nothing}.
+If m's "k" is nothing, print "k is present and holds nothing".
+a number called x is m's "never_set".
+on error print "never_set is absent".
+
+(The assignment spelling of the same read.)
+a map called greeting is {"hello": "there"}.
+a number called 'missing greeting' is 0.
+'missing greeting' is greeting's "goodbye".
+Print 'missing greeting'.
+
+(A miss is a number, so it is a number in arithmetic too.)
+a number called 'one more' is greeting's "goodbye" add 1.
+Print 'one more'.
+
+(The other half of 0.4.9's help line - the explicit cast - still works.)
+a number called 'cast miss' is guess's "absent" as a number.
+Print 'cast miss'.
+
+(A miss into a boolean is false and into a float 0.0 - the same 0, in a
+ slot that can hold it. Only a text, list or map slot cannot: those hold a
+ pointer, and 0 as an address is the segfault this entry is about.)
+a map called flags is {"on": true}.
+a boolean called 'missing flag' is flags's "off".
+Print 'missing flag'.
+
+a map called measures is {"width": 1.5}.
+a float called 'missing measure' is measures's "height".
+Print 'missing measure'.
+
+(A key the literal DOES contain still reads its own value.)
+Print guess's "a".

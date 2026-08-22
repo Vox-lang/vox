@@ -1,0 +1,6 @@
+(Bug #72: an empty list has no first element, so the read yields 0 and the
+ text slot dereferenced it - segfault, exit 139.)
+
+a list called blank is [].
+a text called n is blank's first.
+Print n.

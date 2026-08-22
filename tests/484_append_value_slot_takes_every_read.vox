@@ -1,0 +1,33 @@
+(Bug #77: the append slot's primary was a hand-rolled copy of the general
+ one and had never learned `nothing`, an element or byte read, or any
+ possessive. Every form below compiled the moment it was wrapped in
+ braces, which is what proved the refusal was the slot's and not the
+ language's.)
+
+a list called ys is [9, 8].
+a map called m is {"k": 7}.
+a buffer called b is "A".
+a list called xs is [].
+
+append nothing to xs.
+append element 1 of ys to xs.
+append byte 1 of b to xs.
+append ys's first to xs.
+append ys's last to xs.
+append ys's length to xs.
+append m's "k" to xs.
+
+(The braced spellings, still reading the same.)
+append {element 1 of ys} to xs.
+append {m's "k"} to xs.
+
+Print element 1 of xs.
+Print element 2 of xs.
+Print element 3 of xs.
+Print element 4 of xs.
+Print element 5 of xs.
+Print element 6 of xs.
+Print element 7 of xs.
+Print element 8 of xs.
+Print element 9 of xs.
+Exit 0.

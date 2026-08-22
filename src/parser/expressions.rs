@@ -23,12 +23,12 @@ impl Parser {
     }
 
     pub(crate) fn parse_and_expr(&mut self) -> Result<Expr, Box<CompileError>> {
-        let mut left = self.parse_comparison()?;
+        let mut left = self.parse_not_expr()?;
         
         while *self.current() == Token::And {
             self.advance();
             self.skip_noise();
-            let right = self.parse_comparison()?;
+            let right = self.parse_not_expr()?;
             left = Expr::BinaryOp {
                 left: Box::new(left),
                 op: BinaryOperator::And,
@@ -37,6 +37,32 @@ impl Parser {
         }
         
         Ok(left)
+    }
+
+    /// `not` takes scope over the whole comparison after it, so
+    /// `not v1 is v2` is `not (v1 is v2)` - the reading LANGUAGE.md states
+    /// with `not <condition>`, and the only one an English reader arrives at
+    /// unaided. BUGS_FOUND #83: `not` lived only as a `parse_primary` arm, so
+    /// it bound to `v1` alone and `If not v1 is v2 then,` compiled as
+    /// `(not v1) is v2` - a guard that never fired, whatever the operands.
+    /// This level sits between `and` and `comparison` so every operand slot of
+    /// `and`/`or` reads the same way. The `parse_primary` arm stays, for
+    /// `not <boolean-primary>` in value position (`Print not b1.`), which was
+    /// already right.
+    pub(crate) fn parse_not_expr(&mut self) -> Result<Expr, Box<CompileError>> {
+        self.skip_noise();
+        
+        if *self.current() == Token::Not {
+            self.advance();
+            self.skip_noise();
+            let operand = self.parse_not_expr()?;
+            return Ok(Expr::UnaryOp {
+                op: UnaryOperator::Not,
+                operand: Box::new(operand),
+            });
+        }
+        
+        self.parse_comparison()
     }
 
     /// Look ahead to check if "are" token appears within the next few tokens
@@ -537,10 +563,21 @@ impl Parser {
                     current_literal.clear();
                 }
                 
-                // Parse content until closing brace
+                // Parse content until the closing brace, stepping over any
+                // quoted string inside the hole. Every `"` in here was
+                // written `\"` in the source - the lexer unescapes it before
+                // we see it - so each one really does open or close a string,
+                // and a `}` inside one belongs to that string, not to the
+                // hole. Without this the scanner stopped at the first `}` it
+                // met, so a map read with a dynamic key (LANGUAGE.md:2400)
+                // inside a hole - `"{scores's \"{key}\"}"` - ended halfway
+                // and spilled the leftover `"}` into the output verbatim.
                 let mut placeholder_content = String::new();
+                let mut in_string = false;
                 while let Some(&c) = chars.peek() {
-                    if c == '}' {
+                    if c == '"' {
+                        in_string = !in_string;
+                    } else if c == '}' && !in_string {
                         chars.next();
                         break;
                     }
@@ -548,9 +585,23 @@ impl Parser {
                     chars.next();
                 }
                 
-                // Split on first : to separate variable/expression from format spec
+                // Split on the first : to separate variable/expression from
+                // format spec - skipping any : inside a quoted string, which
+                // belongs to the string and not to the spec. Splitting on the
+                // bare first colon cut `{scores's \"a:b\"}` in half and read
+                // the empty key, returning the wrong value with no error.
                 // The format spec is preserved exactly as written, with no interpretation
-                let (content, format) = if let Some(colon_pos) = placeholder_content.find(':') {
+                let spec_colon = {
+                    let mut in_string = false;
+                    placeholder_content.char_indices().find(|&(_, c)| {
+                        if c == '"' {
+                            in_string = !in_string;
+                        }
+                        c == ':' && !in_string
+                    })
+                    .map(|(i, _)| i)
+                };
+                let (content, format) = if let Some(colon_pos) = spec_colon {
                     let content = placeholder_content[..colon_pos].trim().to_string();
                     // Preserve format spec verbatim - no trimming, no interpretation
                     let format = placeholder_content[colon_pos + 1..].to_string();

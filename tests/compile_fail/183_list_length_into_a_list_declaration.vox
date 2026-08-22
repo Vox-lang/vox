@@ -1,0 +1,6 @@
+(Bug #74, the same read into a list: Print walked a list header at address 3
+ and printed `[` before it faulted.)
+
+a list called counts is [10, 20, 30].
+a list called tally is counts's length.
+Print tally.

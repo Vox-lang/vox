@@ -1,0 +1,5 @@
+(Bug #71: the buffer twin of the text case - `{payload:.2}` read the
+ buffer's data pointer as a double.)
+
+a buffer called payload is "hi".
+Print "{payload:.2}".

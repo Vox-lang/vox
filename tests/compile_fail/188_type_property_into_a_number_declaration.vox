@@ -1,0 +1,7 @@
+(Bug #74 on the universal property. `type` reports the variable's declared
+ type as TEXT (LANGUAGE.md, Universal Properties), so a number's slot took a
+ string pointer and printed it as a decimal address.)
+
+a number called gauge is 3.
+a number called described is gauge's type.
+Print described.

@@ -1,0 +1,27 @@
+(Bug #81, the other half: the hole parser split off the format spec at the
+ first `:` it saw, including one inside the quoted key, so `{scores's \"a:b\"}`
+ was read as the empty key and quietly returned the wrong value. The hole
+ parser is shared by every site that takes a format string, so the quoted key
+ is checked here at each of them, and against the specs it composes with.)
+
+a map called scores is {"ada": 10, "a:b": 5}.
+a text called player is "ada".
+
+(A key with a colon in it belongs to the key, not to the format spec.)
+Print "colon in the key: {scores's \"a:b\"}".
+
+(A spec after a quoted key is still a spec, either spelling of the key.)
+Print "padded dynamic: [{scores's \"{player}\":6}]".
+Print "padded static: [{scores's \"ada\":6}]".
+Print "hex: {scores's \"{player}\":x}".
+
+(The same hole, at each site that takes a format string.)
+a text called line is "as a text value: {scores's \"{player}\"}".
+Print line.
+
+a buffer called note is 64 bytes in size.
+Append "into a buffer: {scores's \"{player}\"}" to note.
+Print note.
+
+a list called lines is ["in a list: {scores's \"{player}\"}"].
+Print lines's first.

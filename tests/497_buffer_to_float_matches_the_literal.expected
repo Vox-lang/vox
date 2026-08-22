@@ -1,0 +1,7 @@
+0.88 from a buffer: same double
+0.88000000000000000
+0.23 from a buffer: same double
+0.44 byte by byte: same double
+2.53 after a clear: same double
+-0.88 from a buffer: same double
+0.0

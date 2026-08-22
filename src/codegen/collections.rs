@@ -340,7 +340,31 @@ impl CodeGenerator {
 
     /// Emit a print of the value in rdi dispatched on the runtime tag held
     /// in `tag_reg` (a full 64-bit register holding 0..=6).
+    ///
+    /// The spec-less form, for a `Print` with no format hole to carry one.
     pub(crate) fn emit_mixed_print_dispatch(&mut self, tag_reg: &str) {
+        let plain = self.parse_format_spec(None);
+        self.emit_mixed_print_dispatch_spec(tag_reg, plain);
+    }
+
+    /// The same dispatch, carrying the hole's format spec.
+    ///
+    /// `docs/BUGS_FOUND.md #81`, the composition half. #68 made a hole
+    /// dispatch on the value's runtime tag, and its BUFFER twin
+    /// (`emit_append_mixed_value_to_buffer_ptr`) already renders the integer
+    /// branch through `emit_append_formatted_int_to_buffer(fmt)` - so
+    /// `a text called t is "{element 1 of sizes:5}".` pads and always has.
+    /// Print's twin took no spec at all and emitted a bare `PRINT_INT`, so
+    /// the same hole printed straight to the terminal did not pad. That is
+    /// the one sink LANGUAGE.md's "Format Strings Everywhere" promise was
+    /// still missing, and #86's shape one type over.
+    ///
+    /// Only the INTEGER branch takes the spec, exactly as the buffer twin
+    /// does: a tagged text has no width primitive and a tagged float has no
+    /// float-padding primitive (#36's recorded residue), so both render by
+    /// their tag and ignore the spec, and a list, a map and `nothing` render
+    /// through their own routines.
+    pub(crate) fn emit_mixed_print_dispatch_spec(&mut self, tag_reg: &str, fmt: FormatSpec) {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
         let list_label = self.new_label("mixp_list");
@@ -366,8 +390,10 @@ impl CodeGenerator {
         self.emit_indent(&format!("cmp {}, {}  ; nothing tag?", tag_reg, TAG_NOTHING));
         self.emit_indent(&format!("je {}", nothing_label));
         // Integer and boolean both print as numbers (matches homogeneous
-        // boolean lists, which print 1/0 today).
-        self.emit_indent("PRINT_INT rdi");
+        // boolean lists, which print 1/0 today) - through the formatter, so a
+        // width or a radix written in the hole is honoured here exactly as it
+        // is in the buffer twin (#81).
+        self.emit_formatted_value(Some(VarType::Integer), fmt);
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", str_label));
         self.emit_indent("PRINT_CSTR rdi");
@@ -450,6 +476,48 @@ impl CodeGenerator {
         }
     }
 
+    /// The type codegen statically believes a read out of `list` yields, or
+    /// `None` when it cannot tell. `Some(VarType::Mixed)` means the elements
+    /// are runtime-tagged and the tag in `r11` decides — every consumer of an
+    /// element read (`generate_print`, and the miss paths in `generate_expr`)
+    /// must agree on this answer, which is why it lives here rather than
+    /// inline at each of them. (stage 1e1/1e2; extracted for #91.)
+    pub(crate) fn static_list_element_type(&self, list: &Expr) -> Option<VarType> {
+        if let Expr::Identifier(name) = list {
+            // A list parameter (or any list with no proven element type)
+            // stores a per-slot runtime tag, so the tag decides rather than a
+            // static type the slot never had — see `list_expr_is_mixed`.
+            match self.list_element_types.get(name) {
+                None | Some(&VarType::Mixed) | Some(&VarType::Unknown) => Some(VarType::Mixed),
+                Some(other) => Some(other.clone()),
+            }
+        } else if let Expr::ListLit { elements } = list {
+            if self.list_expr_is_mixed(list) {
+                Some(VarType::Mixed)
+            } else if let Some(first) = elements.first() {
+                match first {
+                    Expr::IntegerLit(_) => Some(VarType::Integer),
+                    Expr::FloatLit(_) => Some(VarType::Float),
+                    Expr::StringLit(_) => Some(VarType::String),
+                    // A format string always materializes text (bug #17);
+                    // `element N of <literal>` on a list literal never
+                    // carried that arm (bug #39).
+                    Expr::FormatString { .. } => Some(VarType::String),
+                    Expr::BoolLit(_) => Some(VarType::Boolean),
+                    Expr::ListLit { .. } => Some(VarType::List),
+                    Expr::MapLit { .. } => Some(VarType::Map),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else if self.list_expr_is_mixed(list) {
+            Some(VarType::Mixed)
+        } else {
+            None
+        }
+    }
+
     /// Materialize a map key expression as a NUL-terminated text pointer in
     /// `rax`. A quoted key (`"name"`) is ALWAYS the literal text, even when a
     /// variable with that name exists — otherwise the key would silently
@@ -467,4 +535,57 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// `docs/BUGS_FOUND.md #91`: the type a **tagless** consumer will read a
+/// fallible read's result as, when the compiler can name one.
+///
+/// A miss yields the number 0 at the read (LANGUAGE.md's "yields 0"), and a
+/// destination with a declared type re-types it through
+/// `emit_empty_value_if_missed`. A consumer with no declared destination -
+/// `Print element 5 of names.`, a format hole holding the same read, an
+/// `append` of it - has no slot to read the type from, so it reads the value
+/// as the collection's own static element type. Where that type is a pointer,
+/// this is what tells the consumer's guard which empty value to substitute.
+///
+/// `None` for a mixed or unprovable element type: there the runtime tag
+/// travels with the value and every consumer dispatches on it, so the 0 is
+/// read as the number it is.
+impl CodeGenerator {
+    pub(crate) fn tagless_read_type(&self, expr: &Expr) -> Option<VarType> {
+        if !is_fallible_collection_read(expr) {
+            return None;
+        }
+        let found = match expr {
+            Expr::ElementAccess { list, .. } => self.static_list_element_type(list),
+            Expr::PropertyAccess {
+                object,
+                property: ObjectProperty::First | ObjectProperty::Last,
+                ..
+            } => self.list_element_types.get(object).cloned(),
+            _ => None,
+        };
+        match found {
+            Some(VarType::String) | Some(VarType::List) | Some(VarType::Map) => found,
+            _ => None,
+        }
+    }
+}
+
+/// `docs/BUGS_FOUND.md #91`: the reads that can MISS — an index outside the
+/// list, a key the map does not hold, `first`/`last` of an empty list. Each
+/// sets the error flag and yields the number 0 (LANGUAGE.md's "yields 0",
+/// "returns 0"), so each is a read whose result must be re-typed before it
+/// can enter a `text`/`list`/`map` destination.
+pub(crate) fn is_fallible_collection_read(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::ElementAccess { .. }
+            | Expr::ListAccess { .. }
+            | Expr::MapAccess { .. }
+            | Expr::PropertyAccess {
+                property: ObjectProperty::First | ObjectProperty::Last,
+                ..
+            }
+    )
 }

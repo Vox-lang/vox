@@ -1,0 +1,4 @@
+cannot initialise 'who', which is text, with a list
+185_map_keys_into_a_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'who' can only be initialised with text
+help: declare it as a list - `a list called who is ages's keys.`

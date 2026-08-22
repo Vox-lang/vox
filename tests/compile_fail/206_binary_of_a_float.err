@@ -1,0 +1,3 @@
+cannot render 'ratio', which is a float, in binary
+note: `:x`, `:X`, `:b` and `:o` write a whole number in another base, and a float is not one
+help: convert it first - `{ratio as a number:b}`, or drop the specifier to render `{ratio}`

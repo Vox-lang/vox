@@ -1,0 +1,21 @@
+(Bug #69 over a list whose element type IS static. The static path chose its
+ comparison from the subject's type alone, so a text subject meant `_str_eq`
+ - and a `value` holding a number went into it as a `char*`. The tags decide
+ it now: a number never equals a text, so the clause simply does not fire.)
+
+a list called names is ["ann", "-"].
+
+a value called probe is 7.
+print each name from names treating probe as "X".
+
+(The same on the replacement side: it fires (both sides are text), and the
+ substituted value comes out as the number it is rather than being read as
+ a pointer to bytes.)
+a value called seven is 7.
+print each name from names treating "-" as seven.
+
+(Unchanged: a value that holds text, matched and substituted over the same
+ list.)
+a value called dash is "-".
+a value called anon is "anon".
+print each name from names treating dash as anon.

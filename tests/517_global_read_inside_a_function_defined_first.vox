@@ -1,0 +1,22 @@
+(Bug #79 rejects a top-level read written above the variable's own
+ declaration. A function body is the case that must NOT be rejected:
+ LANGUAGE.md's "Function Scope" says a top-level variable is global and
+ can be used inside functions, and a function runs when it is called -
+ after the whole file has been read - so a global declared further down
+ IS in scope in a body written above it. `bump` is defined above `tally`
+ and both reads and writes it; `announce` is defined below `label` and
+ reads it. Neither may become an error.)
+
+To bump.
+  Set tally to tally add 1.
+
+a number called tally is 0.
+a text called label is "hello".
+
+To announce.
+  Print label.
+
+bump.
+bump.
+Print tally.
+announce.

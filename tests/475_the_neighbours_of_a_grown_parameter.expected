@@ -1,0 +1,11 @@
+read a parameter: 10
+in-place write: CHANGED
+returned and assigned: 21
+into a global: 21
+at the top level: 21
+a map at the top level: 21
+both ways: 4
+last: z
+item: a
+item: b
+past the sixth word: 21

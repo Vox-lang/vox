@@ -1,0 +1,17 @@
+(Bug #67's nearest working neighbour — routing a declared return through a
+ declared variable of the same type was the only spelling that read a float,
+ a map or a buffer back correctly, and it is what proved the returned value
+ was intact and a renderer existed. It has to keep working after the fix.)
+
+To 'give float'. Return a float, 2.5.
+To 'give map'. Return a map, {"ann": 30}.
+To 'give buffer'. a buffer called made is 16 bytes in size. Copy "bytes" to made. Return a buffer, made.
+
+a float called measured is 'give float'.
+Print measured.
+
+a map called ages is 'give map'.
+Print ages.
+
+a buffer called payload is 'give buffer'.
+Print payload.

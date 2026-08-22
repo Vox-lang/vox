@@ -1,0 +1,43 @@
+(Bug #82 reached both runtime parsers: a buffer-typed cast goes through
+ the length-bounded routine, which carried the identical
+ divide-once-per-digit loop. The buffer path has to agree with the
+ literal for the same values the text path does, including a buffer
+ filled a byte at a time and one cleared and refilled - the shapes that
+ exercise the bounded scan rather than a NUL terminator.)
+
+a buffer called spelled is "0.88".
+a float called parsed is spelled as a float.
+If parsed is 0.88 then, Print "0.88 from a buffer: same double". Otherwise, Print "0.88 from a buffer: DIFFERENT".
+Print "{parsed:.17}".
+
+a buffer called reported is "0.23".
+a float called 'reported parsed' is reported as a float.
+If 'reported parsed' is 0.23 then, Print "0.23 from a buffer: same double". Otherwise, Print "0.23 from a buffer: DIFFERENT".
+
+Create a buffer called written.
+Set byte 1 of written to '0'.
+Set byte 2 of written to '.'.
+Set byte 3 of written to '4'.
+Set byte 4 of written to '4'.
+a float called 'written parsed' is written as a float.
+If 'written parsed' is 0.44 then, Print "0.44 byte by byte: same double". Otherwise, Print "0.44 byte by byte: DIFFERENT".
+
+clear written.
+Set byte 1 of written to '2'.
+Set byte 2 of written to '.'.
+Set byte 3 of written to '5'.
+Set byte 4 of written to '3'.
+a float called 'refilled parsed' is written as a float.
+If 'refilled parsed' is 2.53 then, Print "2.53 after a clear: same double". Otherwise, Print "2.53 after a clear: DIFFERENT".
+
+a buffer called owed is "-0.88".
+a float called 'owed parsed' is owed as a float.
+If 'owed parsed' is -0.88 then, Print "-0.88 from a buffer: same double". Otherwise, Print "-0.88 from a buffer: DIFFERENT".
+
+(An empty buffer has no digits at all. The bounded parser used to leave
+ on that path without ever writing its result register, so the cast
+ handed back whatever float had been computed last - print this line on
+ the old runtime and it says -0.88, the value above it. Zero now.)
+a buffer called blank is "".
+a float called 'blank parsed' is blank as a float.
+Print 'blank parsed'.

@@ -1,0 +1,4 @@
+cannot initialise 'tally', which is text, with a number
+182_list_length_into_a_text_declaration.vox:10:15
+note: a variable's type is fixed at its declaration, so 'tally' can only be initialised with text
+help: declare it as a number - `a number called tally is counts's length.` - or convert it explicitly:  a text called tally is counts's length as text.

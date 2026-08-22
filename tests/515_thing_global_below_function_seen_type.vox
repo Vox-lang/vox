@@ -1,0 +1,16 @@
+(Bug #80 across a `see`: the definition arrives from the seen file, so the
+ scan that registers declarations has to run again once it has. The
+ instance is declared below the function that reads it.)
+
+see "./include/geometry.vox".
+
+To 'show all'.
+  Print marker's x.
+  Print marker's y.
+
+a point called marker.
+
+Set marker's x to 11.
+Set marker's y to 4.
+'show all'.
+Exit 0.

@@ -1,0 +1,40 @@
+(Bug #41's class through bug #87's spelling. A `value` that took the
+ buffer's struct pointer was not merely wrong on the first read - it was
+ tied to the buffer for life, so refilling the buffer rewrote the `value`
+ and resizing it left the `value` pointing at freed memory. The copy has
+ to be independent, which is why #51 fixed `as text` by copying rather
+ than by adding an offset.
+
+ The type checks are here for the mirror of #51's trap: a buffer flowing
+ into a `value` is a CONVERSION, not a retype, so the name must still be a
+ `value` afterwards - `Text (dynamic)`, dynamic being the word that says
+ the tag is read at runtime - and not be relabelled a buffer.)
+
+To 'keep a copy' with a buffer called incoming.
+  a value called kept is incoming.
+  Clear incoming.
+  append "changed" to incoming.
+  Print kept.
+
+(clear and refill: the snapshot must not follow the buffer)
+a buffer called source is 64 bytes in size.
+append "first" to source.
+a value called snapshot is source.
+Clear source.
+append "second" to source.
+Print snapshot.
+Print source.
+Print snapshot's type.
+
+(resize: the half that would otherwise be a use-after-free)
+a buffer called growing is "abc".
+a value called before is growing.
+append "defghijklmnopqrstuvwxyz" to growing.
+Print before.
+Print growing.
+
+(a frame-local copy inside a function is a different store in codegen)
+a buffer called handed is 64 bytes in size.
+append "first" to handed.
+'keep a copy' with handed.
+Print handed.

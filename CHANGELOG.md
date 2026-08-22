@@ -4,6 +4,319 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.10] - 2026-08-22
+
+- **Libraries built by an older Vox must be rebuilt.** A `.so` exporting a
+  function with a `list`, `map` or `buffer` parameter, and every program
+  that `see`s it, must be built by the same 0.4.10 compiler: those
+  parameters now carry the address of the caller's storage, so a collection
+  grown inside the function reaches the caller instead of being lost
+  ([#75](docs/BUGS_FOUND.md), [#90](docs/BUGS_FOUND.md)).
+
+### Fixed
+
+- **A global declared below a function is read inside that function as a raw
+  machine word** — `Print label.` inside a function defined above `a text
+  called label is "hello".` printed `4198488`, the string's own address, while
+  a `float` printed its IEEE-754 bits and a `list`, `map` or `buffer` a live
+  heap address; only a `number` came back right, and no diagnostic was raised
+  either way. Codegen now reads every top-level declaration's type in a
+  pre-pass and gives it to each function body before generating it, so a
+  global is read as its declared type wherever the declaration sits — flags
+  included, which #32 had made order-independent only inside the analyzer
+  ([#66](docs/BUGS_FOUND.md)).
+
+- **A declared `float`, `map` or `buffer` return printed directly is now
+  rendered by its own formatter, not the integer one** — `To 'give float'.
+  Return a float, 2.5.` then `Print 'give float'.` printed
+  `4612811918334230528`, the bit pattern of 2.5; a declared `map` or `buffer`
+  return printed a heap address, and a map did so in every position,
+  including through a `.lib` import. Declaring the return type is the first
+  way out bug #45's diagnostic offers, so it now works for all eleven types
+  ([#67](docs/BUGS_FOUND.md)).
+
+- **A mixed list's element in the *expression* form of a format hole no
+  longer prints as an integer** — `Print "{element 2 of nested}"` printed a
+  live heap address that changed between runs, while `Print element 2 of
+  nested.` printed `[2, 3]` on the same element in the same run; a text
+  element printed a `.rodata` address and a decimal element its raw IEEE-754
+  bits. The tag was loaded and then discarded: the hole's expression path
+  rendered by the compiler's static guess instead of the slot's runtime tag.
+  It now dispatches on that tag in every sink — Print, a text initializer,
+  buffer `set`/`copy`/`append`, `write`, filesystem paths, `treating` clauses
+  and function arguments — through the same renderers Print calls, so a
+  `value` interpolated outside Print is right too. The two LANGUAGE.md
+  sentences that documented the limitation are gone
+  ([#68](docs/BUGS_FOUND.md)).
+
+- **A `treating` clause whose match or replacement is a `value` now reads
+  its runtime tag** — `print each item from [1, "-"] treating probe as "X".`,
+  with `a value called probe is "-".`, printed `1` then a rodata address, and
+  over a text list a `value` holding a number went into `_str_eq` as a
+  `char*` and segfaulted. A `value` carries no tag at emit time, so the
+  clause fell back to the static path #59 replaced; the tag test and the
+  choice between comparing bytes and comparing registers are now runtime
+  branches, and a fired substitution carries the replacement's own tag out
+  with it ([#69](docs/BUGS_FOUND.md)).
+
+- **`append each <var> from <collection> treating <match> as <replacement>
+  to <list>` now substitutes instead of dropping the clause** — the clause
+  was parsed and thrown away, so `append each name from names treating "-"
+  as "anon" to out.` appended `["ann", "-"]`, and over a range source the
+  same sentence would not parse at all. Written after the destination it
+  now names itself instead of falling through as `Expected a statement,
+  got Treating` ([#70](docs/BUGS_FOUND.md)).
+
+- **A format specifier other than a width now honours the value's type** —
+  `{n:.2}` on a whole number read the integer's bits as a double and printed
+  `0.00`; `{t:x}` on a `text` and `{b:x}` on a `buffer` printed the
+  variable's ADDRESS, so two texts holding the same bytes printed two
+  different numbers and a buffer printed a live heap pointer that moved
+  between runs. v0.4.7 fixed this for the width specifier only (#36); the
+  precision and radix paths never consulted the type at all. A precision on
+  a whole number now prints it to that many places (`255.00`, exactly, for
+  every number Vox can hold), and a specifier the type cannot answer — a
+  radix on a `text`, a `buffer` or a `float`, a precision on a `text` or a
+  `buffer` — is a compile error naming the cast, in #45/#62/#63/#65's family
+  ([#71](docs/BUGS_FOUND.md)).
+
+- **An absent map key, or an out-of-range list index, is no longer typed
+  from the collection's values** — `a map called guess is {"a": "t"}.`
+  followed by the manual's own idiom, `a number called n is guess's
+  "absent".`, was refused on 0.4.9 with "cannot initialise 'n', which is a
+  number, with a text read out of map 'guess'"; 0.4.8 compiled it and printed
+  `0`. A key the literal does not contain, and an index past a list literal's
+  end, yield the **number** 0 (LANGUAGE.md:2429, :2857), so the read is now
+  typed `number` whatever the collection holds. The `text` spelling that
+  0.4.9's own `help:` line recommended dereferenced that 0 as a pointer and
+  segfaulted; it is now a compile error naming the absent key. The proof is
+  withheld — and the behaviour left exactly as it was — for any collection an
+  `Append`, a `Set`, an alias or a call can reach
+  ([#72](docs/BUGS_FOUND.md)).
+
+- **A function definition swallowed into an open clause is now called with
+  the right ABI** — a `To` written while a `For each`, `While`, `Repeat`,
+  `If` or `on error` was still open is parsed into that clause's body, and
+  the pre-passes that record each function's signature scanned only the
+  top-level statement list, so every call to such a definition was compiled
+  against an empty signature: a `value` parameter's tag word was never pushed
+  and the callee read its tag from a register the caller never wrote, which
+  turned an integer argument into a text pointer and segfaulted in eleven
+  lines. The analyzer and codegen now find nested definitions through one
+  shared sweep, so a call is compiled the same wherever the definition stands
+  ([#73](docs/BUGS_FOUND.md)).
+
+- **A `'s <property>` read is type-checked where it lands.** `a text
+  called t is xs's length.` compiled and segfaulted on the first read, and
+  so did the same value passed to a text parameter, returned from a text
+  function, or assigned with `Set` — the type lock's oracle answered for
+  `first` and `last` and treated every other property as "type unknown".
+  Every property whose type is the same whatever it is read from now
+  proves that type, so a mismatch is a compile error naming the two ways
+  out; `first`, `last`, `absolute`, `duration` and `elapsed` are typed by
+  what they are read from and stay unchecked ([#74](docs/BUGS_FOUND.md)).
+
+- **A list or map grown through a function parameter reaches the caller,
+  instead of stopping at the size its literal happened to allocate** —
+  `append`ing to a `list` parameter (or inserting into a `map` parameter)
+  silently stopped after `max(8, element count)` elements:
+  `_list_append`/`_map_insert` returned the reallocated pointer and the
+  callee stored it only into its own parameter slot, so the caller kept
+  pointing at the block the collection outgrew. Every call past that
+  reallocated afresh and dropped the new block, leaking a whole collection
+  per call — 781 MiB of resident memory for a list that reported eight
+  elements. A `list` or `map` argument now travels as the address of the
+  caller's storage, the shape a `thing` argument already used, and the
+  store-back writes the new pointer through it; growth arrives however many
+  calls deep the collection was passed. **A `.so` exporting a function with
+  a `list` or `map` parameter, and the programs that `see` it, must be
+  rebuilt together: their calling convention changed**
+  ([#75](docs/BUGS_FOUND.md)).
+
+- **A `map` parameter is no longer typed as nothing at all** — `To 'show'
+  with a map called holder. Print holder's length.` did not fail at runtime,
+  it failed to **assemble**: `holder's length` emitted a call to
+  `_file_size`, and NASM reported an undefined symbol that appears nowhere
+  in the program, with no Vox diagnostic. The same parameter printed a raw
+  heap address from `Print holder` and `"{holder}"`, and answered `-1` for
+  `'s length` in the programs that did happen to link the file runtime. The
+  declared-type to codegen-type table had been copied out four times and
+  `map` had reached only the declaration's copy, so a map parameter — and a
+  declared `map` return, whose result leaked an address the same way — fell
+  to `Unknown`, which every property and print dispatch reads as the file
+  branch. The four copies are now one `vartype_of_declared_type`. Found by
+  the vox-fuzz candidate audit and adjudicated by the language lawyer
+  ([#76](docs/BUGS_FOUND.md)).
+
+- The `append` value slot now reads the values every other value position
+  reads: a negative literal, `nothing`, `element N of <list>`, `byte N of
+  <buffer>`, a `'s` possessive and the operator spelling `times` were
+  refused there and accepted everywhere else — including inside `{...}` in
+  the slot itself. The value was parsed by two hand-written copies of the
+  general parser that had fallen behind it; it reads one primary now, with
+  `to` still reserved as the append separator ([#77](docs/BUGS_FOUND.md)).
+
+- **A buffer sized from a variable no longer escapes the size bound** —
+  `a number called wanted is 0 minus 1.` followed by `a buffer called b is
+  wanted bytes in size.` compiled and reported `capacity -1`, and a size past
+  what the system can map (from a named number, a float read as its bit
+  pattern, or an argument) built a null buffer that segfaulted on the first
+  read. The 1..1073741824-byte bound lived in the parser's literal arm alone,
+  so it was a rule about a spelling: `Create a buffer called b with capacity
+  1073741825.` was never bounded at all. The bound is now held wherever a size
+  is decided — at compile time for a size the compiler can prove, and at run
+  time for one it cannot, where the buffer is made with no capacity and the
+  error flag is raised for `On error` to catch. LANGUAGE.md now states the
+  bound ([#78](docs/BUGS_FOUND.md)).
+
+- **A top-level read written above the variable's own declaration is now a
+  compile error** — `Print label.` above `a text called label is "hello".`
+  used to compile clean and print `0`: the name resolved from a whole-program
+  pre-pass while its type came from the in-order walk and was not there yet,
+  so codegen formatted the zeroed `.bss` slot as an integer. The collection,
+  map and buffer spellings of the same too-early read segfaulted instead —
+  `append`, `element N of`, a map key read, `Clear`, `Resize`, `copy` and
+  `For each` among them. The top-level walk now fills its scope in
+  declaration order, and the read is answered with a diagnostic naming the
+  line the declaration is on. A function body is unaffected: it runs when it
+  is called, so it may still name a global declared further down the file
+  ([#79](docs/BUGS_FOUND.md)).
+
+- **A `thing` instance declared below a function can now be read inside it**
+  — `Print origin's x.` inside a function was a parse error, `Expected
+  property name, got Identifier("x")`, whenever `a point called origin.` was
+  written below that function; the caret landed on the field name, the one
+  token in the line that was not the problem. The write, the article
+  spelling, the format hole, a chain through a nested thing and the instance
+  possessive all failed the same way. LANGUAGE.md attaches no ordering
+  condition to a top-level variable, and the rule it does state is about a
+  thing *definition*, which the repro already obeyed. The parser now
+  registers every top-level `a <thing> called <name>` declaration in one pass
+  before the first statement is parsed — the whole-program answer the
+  analyzer and codegen have always had. A thing used above its *definition*
+  is still refused, and now says so instead of complaining about the field
+  name ([#80](docs/BUGS_FOUND.md)).
+
+- **A quoted map key inside a format hole is read as a key, not as the end
+  of the hole** — `Print "[{scores's \"{key}\"}]".` printed `[1"}]`,
+  rendering the right value and then spilling the hole's own `"` and `}` into
+  the output; a key containing `}` or `:` was cut in half and quietly
+  answered the wrong value. The hole parser scanned to the first `}` and
+  split the format spec at the first `:` without noticing a quoted string in
+  between. Both now step over quoted strings, so a dynamic key composes with
+  a format hole as both features are documented
+  ([#81](docs/BUGS_FOUND.md)).
+
+- **A float read from text is now the same double as the same number
+  written as a literal** — `"0.88" as a float` was not `0.88`, and 53 of
+  the 1000 two-decimal values below ten disagreed with their own literal,
+  because the runtime parser divided the fractional part by ten once per
+  digit and every one of those divisions rounded. The whole decimal is now
+  read as one mantissa and the point placed in a single rounding, so every
+  decimal of up to 18 significant digits converts to exactly the double the
+  compiler's own parser gives it. The same rewrite stops a long decimal
+  wrapping the parser's accumulator — `"3.141592653589793238462643"` used
+  to read as `2.999995446079999` and `"123456789012345678901.5"` as a
+  negative number — and stops an empty buffer cast to a float handing back
+  whatever float was computed last. Found by the vox-fuzz claim ledger row
+  VAL-09 and adjudicated by the language lawyer
+  ([#82](docs/BUGS_FOUND.md)).
+
+- **`not` now takes the whole condition after it, so `If not v1 is v2
+  then,` is `not (v1 is v2)`** — `not` was parsed as an operator on a
+  primary, so that guard compiled as `(not v1) is v2` and was false
+  whatever the operands, and `not <comparison>` had no working spelling
+  at all. A `not` level now sits between `and` and the comparisons,
+  matching the `not <condition>` the manual documents, and `is not`,
+  `not` in front of a boolean, and `not` in a printed value are
+  unchanged ([#83](docs/BUGS_FOUND.md)).
+
+- **`isn't` and `aren't` now compile** — both have always been listed in
+  LANGUAGE.md's Logical Operators table as spellings of `not`, but the lexer
+  stopped reading a word at the apostrophe, so neither could ever be built
+  and any program that used one was refused with `Expected a statement, got
+  Apostrophe`. Each now lexes as the two words it stands for — `is not` and
+  `are not` — while the four undocumented contractions that sat unreachable
+  beside them in the same table (`doesn't`, `don't`, `it's`, `they're`) were
+  removed rather than woken, so `print it's length.` stays the possessive on
+  a variable called `it` ([#84](docs/BUGS_FOUND.md)).
+
+- **A width and a precision written together in one format specifier now
+  compose instead of dropping both** — `{f:8.2}` printed `2.5` though
+  `{f:.2}` prints `2.50`, because the spec reader consumed the width and then
+  matched the leftover `.2` against the base specifiers, where it fell to a
+  catch-all and the precision was never assigned. Both halves are now read
+  and both are kept: the precision decides the digits and the width decides
+  the padding, each honoured wherever a primitive for it exists — the rule
+  the width already followed on its own. `{n:8.2}` on a whole number prints
+  `  255.00` and `{n:08.2}` prints `00255.00`; on a `float` the places are
+  printed and the padding is not, because there is no float padder yet
+  (#36's residue), exactly as a bare `{f:8}` already behaved. LANGUAGE.md,
+  which never said whether `N.M` composes, now says
+  ([#85](docs/BUGS_FOUND.md)).
+
+- **A float's precision now renders in every sink, not just `Print`** —
+  `{ratio:.2}` printed `2.50` to the terminal and `2.5` everywhere else: a
+  text initializer, buffer `set`/`copy`/`append`, a `write` to a file and a
+  function argument, so a receipt written to disk disagreed with the same
+  line shown on screen. Those sinks now render the precision through the
+  same routine `Print` uses, which LANGUAGE.md "Format Strings Everywhere"
+  has always promised; every other specifier already agreed and is
+  unchanged ([#86](docs/BUGS_FOUND.md)).
+
+- A buffer stored in a `value` now carries its bytes instead of its struct
+  pointer: `a value called carried is made.` printed an empty line (or the
+  capacity byte — `@` for a 64-byte buffer) while `carried's type` reported
+  `Text (dynamic)`. The same copy `as text` makes is now made at all five
+  `value` write sites — declaration, `Set`, `the ... is`, a `value`
+  argument, and `Return a value` ([#87](docs/BUGS_FOUND.md)).
+
+- **`Print not <text>` no longer segfaults** — a `not` is a boolean whatever
+  it is applied to, but `infer_expr_type` and `is_float_expr` returned its
+  OPERAND's type, so `Print` was told a boolean was text and dereferenced
+  address 0; a list, a map and `"{not t}"` in a format string faulted the same
+  way, and a float operand printed `0.0` where a boolean belongs. Both
+  predicates now answer boolean for `not` and keep propagating the operand's
+  type for `-x` ([#88](docs/BUGS_FOUND.md)).
+
+- **The "Unknown variable" caret for a bare literal in a format hole now
+  points at the hole** — `Print "{3.14:.17}".` is rejected because a hole
+  names a variable, not a literal, but the caret went looking for `3.14` as a
+  name and marked the first one anywhere in the file: a legal `a float called
+  f is 3.14.` three lines above. The symbol-location scan now asks whether the
+  symbol could have been lexed as a name at all, and for one that could not —
+  a literal the format parser handed back — looks for it inside the text
+  literal it was written in instead of in code. Found by the language lawyer
+  during the round-3 candidate audit ([#89](docs/BUGS_FOUND.md)).
+
+- **A `buffer` grown past its capacity through a parameter no longer
+  segfaults the caller** — `To 'pad out' with a buffer called sink. append
+  "0123456789" to sink.` called in a loop crashed the caller's next read of
+  its own buffer, and one `Resize sink to 9000` was enough. Growing a buffer
+  moves it and frees the block it grew out of, but the reallocated pointer
+  stopped at the callee's frame, so the caller was left reading unmapped
+  memory. A `buffer` parameter's argument word is now the address of the cell
+  where the caller keeps its pointer, and the write-back happens at the
+  reallocation rather than when the call returns, so a function called in
+  between that reaches the same buffer sees it where it now lives. A `.so`
+  exporting a function with a `buffer` parameter must be rebuilt with 0.4.10
+  alongside its consumer, and a buffer reallocated across that boundary still
+  faults in exit cleanup — recorded in the register as its own defect
+  ([#90](docs/BUGS_FOUND.md)).
+
+- **An absent-key or out-of-range read into a `text`, `list` or `map` no
+  longer segfaults** — a miss yields the number 0 and sets the error flag,
+  and that 0 used to reach a pointer-typed destination and be dereferenced
+  on the first read wherever the miss was not provable: a variable index, a
+  dynamic key, an `Append`-grown list, a `Set`-grown map, a collection
+  reached through a parameter. A miss now yields the destination's default
+  value instead — `0` for a `number`, the empty text for a `text`, `[]` for
+  a `list`, `{}` for a `map` — the same values a declaration with no
+  initializer has written since #25. Where the miss *is* provable, #72's
+  diagnostic still refuses the program before this rule is reached. The
+  error flag is unchanged, so `On error` still catches every one of them
+  ([#91](docs/BUGS_FOUND.md)).
+
 ## [0.4.9] - 2026-08-21
 
 ### Fixed

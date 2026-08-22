@@ -1,0 +1,8 @@
+(Bug #79's second half. A number read before its own declaration also
+ printed `0` - right by accident, because 0 is what a number defaults to
+ and what the zeroed slot holds. Accepting it because the wrong answer
+ happens to look correct is how the text case above went unnoticed, so
+ this is refused on the same rule and not on the value it produced.)
+
+Print count.
+a number called count is 42.

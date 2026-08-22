@@ -1,0 +1,12 @@
+(Bug #79 is about a top-level READ above the variable's own declaration.
+ A write is a different statement and is deliberately left alone: the
+ order it describes is well defined - store 9, then the declaration
+ stores 5 - and nothing reads a slot nobody has written. This pins that
+ the fix did not widen into `Set`, and pins the answer the order gives.)
+
+Set tally to 9.
+a number called tally is 5.
+Print tally.
+
+Set tally to 12.
+Print tally.

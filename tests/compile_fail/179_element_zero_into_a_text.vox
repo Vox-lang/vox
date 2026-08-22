@@ -1,0 +1,6 @@
+(Bug #72: Vox lists are 1-indexed, so element 0 is as out of range as
+ element 5 - the read yields 0 and the text slot dereferenced it.)
+
+a list called words is ["a", "b"].
+a text called n is element 0 of words.
+Print n.

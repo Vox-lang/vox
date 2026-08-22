@@ -1,0 +1,22 @@
+(docs/BUGS_FOUND.md #90. A buffer grown through a `buffer` parameter used to
+ stop at the buffer's first allocation: `_reallocate_buffer` freed the block
+ it grew out of, the caller was left holding the freed pointer, and the
+ caller's next read of its own buffer segfaulted. The parameter IS the
+ caller's buffer, so every append through it is the caller's append, however
+ far past the first allocation it grows.)
+
+To 'pad out' with a buffer called sink.
+    append "0123456789" to sink.
+
+a buffer called journal is "start".
+a number called appended is 0.
+While appended is less than 600,
+    'pad out' of journal,
+    Set appended to appended add 1.
+
+(Five seed bytes and six hundred appends of ten bytes each. The first
+ allocation holds 4096 bytes, so the 410th append is the one that moves the
+ block out from under the caller.)
+Print "size: {journal's size}".
+Print "first byte: {byte 1 of journal}".
+Print "last byte: {byte 6005 of journal}".

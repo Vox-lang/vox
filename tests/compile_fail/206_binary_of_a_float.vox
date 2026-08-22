@@ -1,0 +1,11 @@
+(Bug #71: `{ratio:b}` printed the IEEE-754 bit pattern of 2.5 as binary -
+ 4611686018427387904 ones and zeros of raw representation, not the value.
+
+ A float is refused rather than truncated: number and float are one family
+ by the designer's ruling recorded on #65, but that ruling keeps the value
+ - `a number called count is 3.5.` still holds 3.5 - and no base can write
+ 2.5 without dropping the fraction. A loss that size is the author's to
+ ask for, which is what the cast in the help line is.)
+
+a float called ratio is 2.5.
+Print "{ratio:b}".

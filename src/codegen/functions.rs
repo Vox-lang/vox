@@ -1,6 +1,113 @@
 use super::*;
 
+/// What a call site has to repair after a call that took a `buffer` argument,
+/// so the buffer's (possibly new) pointer reaches every holder of it and none
+/// is left pointing at the block `_reallocate_buffer` freed
+/// (docs/BUGS_FOUND.md #90).
+enum BufferArgFixup {
+    /// The cell handed to the callee was the name's BSS mirror; carry the new
+    /// pointer back into the frame slot the top level reads.
+    MirrorToSlot { label: String, offset: i64 },
+    /// The argument was itself a `buffer` parameter of this frame, so what the
+    /// callee was handed is the cell this frame's OWN cell points at - the
+    /// buffer's owner, however many frames up. Refresh this frame's copy of
+    /// the pointer from it now that the call has returned.
+    OuterCellToSlot { cell: i64, offset: i64 },
+}
+
 impl CodeGenerator {
+    /// Leave in rax the ADDRESS of the cell where the caller keeps its buffer
+    /// pointer, which is what a `buffer` parameter's argument word carries
+    /// (docs/BUGS_FOUND.md #90).
+    ///
+    /// A top-level name has two holders - the frame slot the top level reads
+    /// and the BSS mirror functions read - and the mirror is the one handed
+    /// over, because a function the callee calls can reach the same buffer
+    /// through the mirror while the call is still in flight; that read must
+    /// not land in a freed block either. The frame slot, which nothing can
+    /// read until the call returns, is refreshed from the mirror afterwards.
+    ///
+    /// Handing over the mirror is safe in the other direction too: at the top
+    /// level the mirror is never the staler of the two. Every top-level write
+    /// stores the slot and mirrors it in the same breath, and a function that
+    /// grows the same buffer by name can only reach the mirror - so copying
+    /// the slot into the mirror first would be the one way to LOSE a pointer.
+    fn emit_buffer_arg_cell_address(&mut self, arg: &Expr) -> Option<BufferArgFixup> {
+        if let Expr::Identifier(name) = arg {
+            if !self.in_function_codegen {
+                if let (Some(offset), Some(label)) =
+                    (self.get_var(name), self.global_var_label(name).cloned())
+                {
+                    self.emit_indent(&format!(
+                        "lea rax, [rel {}]  ; the cell holding {}",
+                        label, name
+                    ));
+                    return Some(BufferArgFixup::MirrorToSlot { label, offset });
+                }
+            }
+            if let Some(offset) = self.get_var(name) {
+                // When this name is itself a `buffer` parameter of THIS frame,
+                // the holder that has to stay live while the callee runs is
+                // not this frame's slot but the one this frame's own cell
+                // points at - the buffer's owner, however many frames up. Hand
+                // the callee that, so a reallocation two or thirty calls deep
+                // reaches the owner AT the reallocation and not one return at
+                // a time; this frame's own copy is refreshed from it when the
+                // call comes back (docs/BUGS_FOUND.md #90).
+                if let Some(cell) = self.buffer_param_cells.get(&offset).copied() {
+                    self.emit_indent(&format!(
+                        "mov rax, [rbp-{}]  ; where {}'s owner keeps it",
+                        cell, name
+                    ));
+                    return Some(BufferArgFixup::OuterCellToSlot { cell, offset });
+                }
+                self.emit_indent(&format!("lea rax, [rbp-{}]  ; the cell holding {}", offset, name));
+                return None;
+            }
+            if let Some(label) = self.global_var_label(name).cloned() {
+                self.emit_indent(&format!("lea rax, [rel {}]  ; the cell holding {}", label, name));
+                return None;
+            }
+        }
+        // An argument with no variable of its own - a literal, an element
+        // read, a call's result - gets a cell of its own. The callee is
+        // correct for the length of the call, and the growth dies with the
+        // temporary because there is no caller variable for it to reach.
+        self.generate_expr(arg);
+        self.stack_offset += 8;
+        let tmp = self.stack_offset;
+        self.emit_indent(&format!(
+            "mov [rbp-{}], rax  ; a cell for a buffer argument with no name",
+            tmp
+        ));
+        self.emit_indent(&format!("lea rax, [rbp-{}]", tmp));
+        None
+    }
+
+    fn emit_buffer_arg_fixups(&mut self, fixups: Vec<BufferArgFixup>) {
+        // rcx and rdx only: a call's result is still live in rax, and a
+        // `value` result's tag in r11.
+        for fixup in fixups {
+            match fixup {
+                BufferArgFixup::MirrorToSlot { label, offset } => {
+                    self.emit_indent(&format!("mov rcx, [rel {}]  ; the buffer may have moved", label));
+                    self.emit_indent(&format!(
+                        "mov [rbp-{}], rcx  ; the top level's copy follows it",
+                        offset
+                    ));
+                }
+                BufferArgFixup::OuterCellToSlot { cell, offset } => {
+                    self.emit_indent(&format!("mov rcx, [rbp-{}]  ; where this buffer's owner keeps it", cell));
+                    self.emit_indent("mov rcx, [rcx]  ; the buffer may have moved");
+                    self.emit_indent(&format!(
+                        "mov [rbp-{}], rcx  ; this frame's copy follows it",
+                        offset
+                    ));
+                }
+            }
+        }
+    }
+
     pub(crate) fn emit_function_call(&mut self, name: &str, args: &[Expr]) {
         let param_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
 
@@ -52,8 +159,31 @@ impl CodeGenerator {
         // byte, historically (#51). A copy is also what makes the argument
         // behave like every other Vox argument: the callee's text does not
         // change when the caller refills or resizes the buffer afterwards.
+        // A `value` parameter given a buffer wants the same copy (#87): the
+        // tag word pushed with it is TAG_STRING, so the payload word beside
+        // it has to be text.
         let is_text_param = |i: usize| -> bool {
             param_types.get(i) == Some(&Type::String)
+        };
+        // A `buffer` parameter takes one word too, but the word is the ADDRESS
+        // of the cell holding the caller's buffer pointer, not the pointer:
+        // growing a buffer inside the callee FREES the block it grew out of,
+        // so the caller has to be told where the buffer went before it reads
+        // it again (docs/BUGS_FOUND.md #90).
+        let is_buffer_param = |i: usize| -> bool {
+            param_types.get(i) == Some(&Type::Buffer)
+        };
+        // BUGS_FOUND #75. A `list` or `map` parameter takes one word too, and
+        // like a `thing` parameter's (above) that word is an ADDRESS - here the
+        // address of the caller's own storage for the argument. The callee
+        // reads the pointer out of it on entry, so every read inside the body
+        // is unchanged; what the address buys is the way back, so a realloc
+        // inside the callee can store the new pointer into the caller's
+        // variable instead of only into the parameter's slot. Without it the
+        // caller kept pointing at the block the collection outgrew, and every
+        // append past the literal's capacity was silently dropped.
+        let is_collection_param = |i: usize| -> bool {
+            matches!(param_types.get(i), Some(Type::List(_)) | Some(Type::Map(_)))
         };
         // Number of argument words a given arg contributes.
         let word_count = |i: usize| if is_value_param(i) { 2 } else { 1 };
@@ -73,15 +203,32 @@ impl CodeGenerator {
         // Evaluate/push all arg words right-to-left. For a `value` param the
         // tag word is pushed BEFORE the payload word, so the payload lands on
         // top (lower word index) — matching how the callee reads them.
+        let mut buffer_fixups: Vec<BufferArgFixup> = Vec::new();
+        // Named collections whose slot the callee may have written through:
+        // whatever else holds that same pointer is re-synced after the call.
+        let mut collections_to_resync: Vec<(String, i64)> = Vec::new();
         for i in (0..args.len()).rev() {
             if is_thing_param(i) {
                 self.emit_thing_address(&args[i]); // rax = where the thing is
+            } else if is_buffer_param(i) {
+                // rax = where the caller keeps its buffer pointer
+                if let Some(fixup) = self.emit_buffer_arg_cell_address(&args[i]) {
+                    buffer_fixups.push(fixup);
+                }
+            } else if is_collection_param(i) {
+                if let Some(sync) = self.emit_collection_argument_address(&args[i]) {
+                    collections_to_resync.push(sync);
+                }
             } else {
-                if is_text_param(i) {
+                if is_text_param(i) || is_value_param(i) {
                     self.generate_expr_as_text(&args[i]); // rax = text payload
                 } else {
                     self.generate_expr(&args[i]); // rax = payload
                 }
+                // #91: a parameter slot is a destination like any other -
+                // a text/list/map parameter must not receive a missed read's 0.
+                let param_slot = param_types.get(i).and_then(declared_slot_vartype);
+                self.emit_empty_value_if_missed(&args[i], param_slot);
                 if is_value_param(i) {
                     self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)
                     self.emit_indent("push r11  ; value param tag word");
@@ -145,6 +292,90 @@ impl CodeGenerator {
         if cleanup > 0 {
             self.emit_indent(&format!("add rsp, {}", cleanup));
         }
+        // A buffer has more than one holder, so the new pointer follows it to
+        // all of them (#90). `add rsp` leaves rcx/rdx alone, so this reads the
+        // same registers either way.
+        self.emit_buffer_arg_fixups(buffer_fixups);
+
+        // A collection the callee may have grown can live in more than this
+        // frame's slot: a top-level name also has the global mirror a function
+        // body reads it by, and a name that is ITSELF a collection parameter
+        // has our own caller's storage behind it. The callee wrote the slot;
+        // carry that on to the rest, or growth would stop one call short of
+        // home whenever a function passes its own collection parameter along.
+        for (name, offset) in collections_to_resync {
+            self.emit_resync_collection_after_call(&name, offset);
+        }
+    }
+
+    /// BUGS_FOUND #75. Propagate a collection's (possibly reallocated) pointer
+    /// out of this frame's slot to everything else that holds it - our own
+    /// caller's storage, when the name is a collection parameter, and the
+    /// global mirror, when it is a top-level name.
+    ///
+    /// Emitted immediately after a call, so it must leave the call's result
+    /// alone: `rax` carries the return value and `r11` a `value` return's tag.
+    /// It works in `rbx`/`rcx`, both restored, and touches neither.
+    fn emit_resync_collection_after_call(&mut self, name: &str, offset: i64) {
+        let backing = self.collection_backing_slots.get(name).copied();
+        let mirror = if self.in_function_codegen {
+            None
+        } else {
+            self.global_var_label(name).cloned()
+        };
+        if backing.is_none() && mirror.is_none() {
+            return;
+        }
+        self.emit_indent("push rbx");
+        self.emit_indent(&format!("mov rbx, [rbp-{}]  ; {} as the call left it", offset, name));
+        if let Some(back_slot) = backing {
+            self.emit_indent("push rcx");
+            self.emit_indent(&format!(
+                "mov rcx, [rbp-{}]  ; where our caller keeps {}",
+                back_slot, name
+            ));
+            self.emit_indent("mov [rcx], rbx  ; the caller grows too");
+            self.emit_indent("pop rcx");
+        }
+        if let Some(label) = mirror {
+            self.emit_indent(&format!("mov [rel {}], rbx  ; global mirror of {}", label, name));
+        }
+        self.emit_indent("pop rbx");
+    }
+
+    /// BUGS_FOUND #75. Leave in `rax` the address of storage holding this
+    /// collection argument's pointer, for a `list`/`map` parameter.
+    ///
+    /// A named variable hands over its own slot, so a realloc inside the
+    /// callee lands in the caller's variable. Anything else - a literal, a
+    /// call's result, an element read - has no variable to update, so its
+    /// value is parked in a slot this call site owns and the address of that
+    /// is passed instead: the callee's store-back is then a harmless write to
+    /// a temporary, and the argument still arrives correctly.
+    ///
+    /// Returns the `(name, offset)` of a top-level stack slot whose global
+    /// mirror the caller must re-sync after the call, if any.
+    pub(crate) fn emit_collection_argument_address(
+        &mut self,
+        arg: &Expr,
+    ) -> Option<(String, i64)> {
+        if let Expr::Identifier(name) = arg {
+            if let Some(offset) = self.get_var(name) {
+                self.emit_indent(&format!("lea rax, [rbp-{}]  ; the caller's {}", offset, name));
+                return Some((name.clone(), offset));
+            }
+            if let Some(label) = self.global_var_label(name).cloned() {
+                self.emit_indent(&format!("lea rax, [rel {}]  ; the caller's {}", label, name));
+                return None;
+            }
+        }
+        // No variable behind this argument: park its value in a slot of our own.
+        self.generate_expr(arg);
+        self.stack_offset += 8;
+        let slot = self.stack_offset;
+        self.emit_indent(&format!("mov [rbp-{}], rax  ; collection argument", slot));
+        self.emit_indent(&format!("lea rax, [rbp-{}]", slot));
+        None
     }
 
     pub fn set_shared_lib_mode(&mut self, enabled: bool) {
@@ -280,6 +511,26 @@ impl CodeGenerator {
         self.target_arch = arch.to_string();
     }
 
+    /// File one definition's signature under `key`: the return type, twice
+    /// (once reduced to a `VarType`, once whole), and the parameter types the
+    /// call site counts argument words from.
+    ///
+    /// Shared by the scan of the top-level list and the sweep of definitions
+    /// nested inside an open clause, so the two can never disagree about what
+    /// a function's ABI is (bug #73).
+    fn record_function_signature(
+        &mut self,
+        key: String,
+        params: &[(String, Type)],
+        return_type: &Type,
+    ) {
+        let vt = vartype_of_declared_type(return_type);
+        self.function_return_types.insert(key.clone(), vt);
+        self.function_return_full_types.insert(key.clone(), return_type.clone());
+        self.function_param_types
+            .insert(key, params.iter().map(|(_, t)| t.clone()).collect());
+    }
+
     // Record each function's declared return type so infer_expr_type() can
     // resolve Expr::FunctionCall correctly instead of falling through to
     // its generic "Integer for anything unrecognized" default. Without
@@ -322,23 +573,7 @@ impl CodeGenerator {
                         current_lib.as_ref(),
                         name,
                     );
-                    let vt = match return_type {
-                        Type::Integer => VarType::Integer,
-                        Type::Float => VarType::Float,
-                        Type::String => VarType::String,
-                        Type::Boolean => VarType::Boolean,
-                        Type::Buffer => VarType::Buffer,
-                        Type::List(_) => VarType::List,
-                        // A `value` return is dynamic: the runtime tag travels
-                        // back in r11 alongside the payload in rax, so the
-                        // result is a Mixed-typed value (no static tag).
-                        Type::Value => VarType::Mixed,
-                        _ => VarType::Unknown,
-                    };
-                    self.function_return_types.insert(key.clone(), vt);
-                    self.function_return_full_types.insert(key.clone(), return_type.clone());
-                    self.function_param_types
-                        .insert(key, params.iter().map(|(_, t)| t.clone()).collect());
+                    self.record_function_signature(key, params, return_type);
 
                     if self.shared_lib_mode {
                         if let Some((lib, ver)) = current_lib.as_ref() {
@@ -401,6 +636,30 @@ impl CodeGenerator {
                 }
                 _ => {}
             }
+
+            // A definition the parser drew into an open clause's body is a
+            // definition like any other: the walk that generates code emits
+            // it into `functions_section`, so every call to it must be
+            // compiled against its real signature. Without this the lookup in
+            // `emit_function_call` missed and `unwrap_or_default()` invented
+            // an all-scalar signature, so a `value` parameter's tag word was
+            // never pushed (bug #73). The library identity used is the one in
+            // force at the enclosing top-level statement, which is where the
+            // definition textually sits.
+            //
+            // Exports are deliberately NOT extended: a `.lib` interface lists
+            // what a library offers, and a definition swallowed into a block
+            // is not something the author wrote at a library's top level.
+            for def in nested_function_defs(stmt) {
+                if let Statement::FunctionDef { name, params, return_type, .. } = def {
+                    let key = make_function_label(
+                        self.shared_lib_mode,
+                        current_lib.as_ref(),
+                        name,
+                    );
+                    self.record_function_signature(key, params, return_type);
+                }
+            }
         }
 
         // Stage A4: imported signatures, keyed by each import's own
@@ -411,16 +670,7 @@ impl CodeGenerator {
         // this same entry. A `value` return is Mixed for the same reason a
         // local one is (the tag rides home in r11).
         for imp in &self.imports {
-            let vt = match imp.return_type {
-                Type::Integer => VarType::Integer,
-                Type::Float => VarType::Float,
-                Type::String => VarType::String,
-                Type::Boolean => VarType::Boolean,
-                Type::Buffer => VarType::Buffer,
-                Type::List(_) => VarType::List,
-                Type::Value => VarType::Mixed,
-                _ => VarType::Unknown,
-            };
+            let vt = vartype_of_declared_type(&imp.return_type);
             self.function_return_types.insert(imp.mangled.clone(), vt);
             self.function_return_full_types
                 .insert(imp.mangled.clone(), imp.return_type.clone());

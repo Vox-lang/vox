@@ -1,0 +1,3 @@
+cannot render 'payload', which is a buffer, in hexadecimal
+note: `:x`, `:X`, `:b` and `:o` write a whole number in another base, and a buffer is not one
+help: read it out first - `a text called contents is "{payload}".` - then convert that, or drop the specifier to render `{payload}`

@@ -1,0 +1,2 @@
+'items' is used before it is declared
+top-level statements run in the order they are written, and 'items' is declared at line 5
