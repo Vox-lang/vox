@@ -4,6 +4,18 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **VS Code extension 0.4.1**: the grammar now scopes list/map literal
+  punctuation — `[` `]` as `punctuation.section.brackets.begin/end.vox`,
+  `{` `}` as `punctuation.section.braces.begin/end.vox`, the map key/value
+  `:` as `punctuation.separator.key-value.vox`, and `,` as
+  `punctuation.separator.comma.vox`. Previously these characters carried no
+  scope at all inside a list or map literal (`a list called xs is [1, "two",
+  nothing].`) while every value between them was already highlighted.
+
 ## [0.4.10] - 2026-08-22
 
 - **Libraries built by an older Vox must be rebuilt.** A `.so` exporting a
