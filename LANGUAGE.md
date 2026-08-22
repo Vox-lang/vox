@@ -5150,9 +5150,12 @@ own diagnostic — both name the canonical form `see '<lib>' version "<x.y>" fro
   preference to the one sitting next to your source. Write `./utils.vox` when
   you mean the local one.
 
-`--lib-path` is not consulted by `see` of a `.vox` source; it only passes
-search paths to the linker (`-L`) for `--link`. It *is* consulted by `see` of
-a `.lib` — both to find the `.lib` and to resolve its `Location` `.so` — see
+Those three shapes describe a `.vox` source include. A `.lib` path resolves
+differently: relative or bare, it is tried against the containing file's
+directory first and then each `--lib-path` directory, and its `Location` `.so`
+against the `.lib`'s own directory first and then `--lib-path`; absolute paths
+are used as-is. `--lib-path` is not consulted for a `.vox` include at all; for
+`--link` it only passes search paths to the linker (`-L`). See
 [Consuming a library](#consuming-a-library).
 
 **Circular includes.** The compiler tracks files already seen and skips a
@@ -5174,7 +5177,7 @@ names a non-Vox caller needs.
 > produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
 > consumes it from Vox, export names are mangled, and multi-input `--shared`
 > links several libraries (and several versions of one library) into one `.so`.
-> Every output below is real, captured from this compiler (vox v0.2.0). A
+> Every output below is real, captured from this compiler (vox v0.4.9). A
 > foreign host can also call the `.so` directly — see
 > [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
@@ -5196,6 +5199,11 @@ To greet.
 vox mathkit_lib.vox --shared -o libmathkit.so
 ```
 
+That writes two files: `libmathkit.so`, and `libmathkit.lib` beside it — the
+typed interface a Vox consumer `see`s, described in
+[The `.lib` file](#the-lib-file) below. The `.lib` name comes from `-o`, so the
+pair always travels together.
+
 This compiles to a self-contained shared object. It carries its own copy of
 the Vox runtime, so it is loadable from C, Rust, or any other host — not only
 from Vox. The runtime is position-independent, so a library may use the full
@@ -5207,8 +5215,8 @@ Verify what you built:
 
 ```bash
 $ nm -D --defined-only libmathkit.so
-00000000000005c4 T mathkit_1_0_add_two_numbers
-00000000000005f9 T mathkit_1_0_greet
+000000000000072c T mathkit_1_0_add_two_numbers
+000000000000076c T mathkit_1_0_greet
 $ readelf -r libmathkit.so
 There are no relocations in this file.
 ```
@@ -5247,10 +5255,10 @@ its `.so` is, and a table of contents of every exported function's signature.
 It is what a consumer `see`s, and the only place Vox types live — ELF carries
 mangled names but no types, so the `.lib` is the type source. A `--shared`
 build writes `<output-stem>.lib` beside the `.so`, one `Library` block per
-input. It will not overwrite a `.lib` that already exists — a repeat
-`--shared` build errors and asks you to remove the `.lib` first, then
-regenerates the `.so` and `.lib` together, so a rebuild cannot silently
-clobber an interface you have pinned or edited. The format:
+input. The `.lib` is a declared output like the `.so`, derived from the same
+`-o`: a rebuild overwrites it in place, so an edit-build loop needs no manual
+cleanup and anything hand-edited into a `.lib` is lost. The pair is written
+together, so a fresh `.so` never lands beside a stale `.lib`. The format:
 
 ```
 Library mathkit version "1.0".
@@ -5258,7 +5266,7 @@ Location "./libmathkit.so".
 
 Table of Contents:
     To 'add two numbers' with a number called x and a number called y, returning a number.
-    greet.
+    To greet.
 ```
 
 - **`Library '<name>' version "<ver>".`** — the block's identity. Several
@@ -5273,7 +5281,9 @@ Table of Contents:
   `value`; anything else is an error naming the unsupported type. `void`
   isn't a spelling — a function returning nothing omits the `, returning`
   clause entirely — and neither is `unknown`, the compiler's own internal
-  placeholder for an untyped parameter.
+  placeholder for an untyped parameter. A user-defined thing has no noun
+  here either, so a `--shared` build refuses an export that takes or returns
+  one — see [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported).
 - A `list` may optionally carry its element type: `a list of text called
   out`, `returning a list of text`. This is compiler-inferred, not author-
   declared — Vox source has no generic/typed-collection syntax, so a library
@@ -5303,6 +5313,15 @@ a number called sum is 'add two numbers' of 3 and 4.
 Print the sum.
 ```
 
+```bash
+$ vox mathkit_consumer.vox -o consumer
+$ ./consumer
+7
+```
+
+That is the whole consumer build — no `--link`, no `-l`, no `-L`. The `see`
+does the linking, because the `.lib` says where the `.so` is.
+
 `see` of a `.lib` is the consumption path. The compiler:
 
 1. Resolves the `.lib` (relative to the source, then `--lib-path`).
@@ -5315,11 +5334,29 @@ Print the sum.
 6. Emits `extern <mangled>` for each used function and adds the `.so` and an
    `-rpath` to the link line.
 
+The `-rpath` in step 6 is the directory the `.so` was found in, recorded as an
+absolute `RUNPATH`. So the program finds its library where it stood at build
+time; move the `.so` afterwards and the loader will not find it, unless
+`LD_LIBRARY_PATH` points at the new directory.
+
 Each failure is its own diagnostic naming the file and what was expected:
 missing `.lib`; no such library in it; **version mismatch, listing the
 versions the `.lib` does offer**; missing `.so` at `Location`; symbol absent
 from the `.so` (the stale-`.lib` case — it names the symbol); arity or type
-mismatch at the call site.
+mismatch at the call site; and reading the *result* of an entry that has no
+`, returning` clause, which returns nothing, so there is no value to read —
+call it as a statement instead.
+
+The stale-`.lib` case is the one you meet by hand-editing a `.lib` or by
+rebuilding a library with different exports:
+
+```text
+Error: the .lib entry 'To 'ghostgreet' ...' promises the symbol
+'mathkit_1_0_ghostgreet', but 'libmathkit.so' does not export it (not in
+.dynsym).
+The .lib is stale: it does not match the library binary. Rebuild the library
+with `vox --shared` to regenerate the pair.
+```
 
 The worked example set in [`examples/`](examples) shows the workflow:
 `mathkit_lib.vox` is the library and `mathkit_consumer.vox` is the Vox consumer
@@ -5386,8 +5423,8 @@ only — the tools Vox already requires). Run these from the `examples/` directo
 ```bash
 $ vox mathkit_lib.vox --shared -o libmathkit.so
 $ nm -D --defined-only libmathkit.so
-00000000000005c4 T mathkit_1_0_add_two_numbers
-00000000000005f9 T mathkit_1_0_greet
+000000000000072c T mathkit_1_0_add_two_numbers
+000000000000076c T mathkit_1_0_greet
 ```
 
 ```nasm
@@ -5433,6 +5470,11 @@ matching what `nm -D` showed above.
 
 #### Linking an executable against a `.so` directly
 
+If the library has a `.lib`, you do not need this: `see` it, which registers
+its signatures *and* links its `.so`. `--link` is for a `.so` with no `.lib` —
+foreign, or hand-built — where the compiler knows no Vox signatures and only
+the linker is involved.
+
 `--link` puts a built `.so` on the link line of an executable. It takes the
 library's soname *stem* — the part between `lib` and `.so` — so a file named
 `libmath.so` is linked as `--link math`:
@@ -5474,7 +5516,7 @@ vox <source.vox> [options]
 | `--emit-asm` | Output assembly only (don't assemble/link) |
 | `--run` | Compile and run the program |
 | `--shared` | Build a shared library (.so) instead of executable |
-| `--link <libs>` | Link against shared libraries (comma-separated) |
+| `--link <libs>` | Link against shared libraries by soname stem (comma-separated). A Vox library with a `.lib` is linked by `see`ing it instead |
 | `--lib-path <paths>` | Additional library search paths (comma-separated) |
 | `-o <file>` | Output file name |
 | `-v`, `--verbose` | Verbose output |
@@ -5491,7 +5533,10 @@ vox hello.vox -o myprogram
 # Build shared library
 vox math.vox --shared -o libmath.so
 
-# Link an executable against a built .so (stem, not the lib prefix)
+# Consume a Vox library through its .lib (the `see` does the linking)
+vox mathkit_consumer.vox -o consumer
+
+# Link an executable against a .so that has no .lib (stem, not the lib prefix)
 vox main.vox --link math --lib-path ./libs
 ```
 
