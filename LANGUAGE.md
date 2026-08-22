@@ -567,8 +567,8 @@ silent retype.
 
 ```vox fragment
 a number called n is 5.
-n is "abc".              → compile error: cannot assign text to 'n', which is a number
-n is "42" as a number.   → OK: n is now 42
+n is "abc".              (compile error: cannot assign text to 'n', which is a number)
+n is "42" as a number.   (OK: n is now 42)
 ```
 
 The error names the variable, its declared type and where it was declared,
@@ -601,8 +601,8 @@ there is no separate slot for the inner declaration to occupy):
 ```vox fragment
 a number called n is 5.
 If 1 is equal to 2,
-  a text called n is "abc".   → compile error: cannot bind 'n' to text in this
-                                 declaration; 'n' is already declared as a number
+  a text called n is "abc".   (compile error: cannot bind 'n' to text in this
+                                 declaration; 'n' is already declared as a number)
 ```
 
 **Two exemptions, both deliberate:**
