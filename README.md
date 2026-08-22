@@ -15,6 +15,23 @@ Vox is an experiment in compiler design, language ergonomics, and low-level syst
 
 ---
 
+## Documentation
+
+The full language reference is browsable at
+**[vox-lang.dev/docs/](https://vox-lang.dev/docs/)** — one page per
+`LANGUAGE.md` section, plus the whole spec on one page at
+[/docs/all/](https://vox-lang.dev/docs/all/). Every page has a Markdown
+twin at the same path with `.md` appended (plain-Markdown twins for
+tools and crawlers). It's generated from `LANGUAGE.md` on `main` at
+build time, so it stays current; each page states the commit it was
+built from. The canonical source stays `LANGUAGE.md` in this repo.
+
+Also see the style guide, [docs/STYLE.md](docs/STYLE.md); how to
+contribute, [CONTRIBUTING.md](CONTRIBUTING.md); and how to install,
+[docs/INSTALL.md](docs/INSTALL.md).
+
+---
+
 ## Motivation
 
 Vox explores how far a human-readable, deterministic syntax can be lowered *directly* to native assembly while preserving the kinds of guarantees typically associated with modern systems languages.
@@ -35,7 +52,8 @@ Instead, it uses a constrained, sentence-based grammar designed to remain readab
 The goal is not to “write code like prose”, but to explore an alternative surface syntax that remains precise, analyzable, and predictable at compile time.
 
 For a complete description of the grammar and semantics, see  
-**[LANGUAGE.md](LANGUAGE.md)**.
+**[LANGUAGE.md](LANGUAGE.md)** (or browse it at
+[vox-lang.dev](https://vox-lang.dev)).
 
 ---
 
