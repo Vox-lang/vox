@@ -350,7 +350,7 @@ Actively developed, free and open-source projects written in Vox:
   runs with none of them installed.
 
 Building something in Vox? We'd like this list to point to real, actively
-maintained FOSS projects — email **info@vox-lang.net** to have yours added.
+maintained FOSS projects — email **info@vox-lang.dev** to have yours added.
 
 ---
 
