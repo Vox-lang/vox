@@ -649,6 +649,59 @@ EOF
 }
 run_see_consumer_test
 
+# A4.3 — a DECLARED float, map and buffer return, printed straight from an
+# imported function. The consumer never routes the result through a variable,
+# so the only thing that can supply the type is the `returning a <type>` clause
+# the `.lib` states. Builds tests/shared/collections_lib.vox, then a consumer
+# that prints all three directly; before BUGS_FOUND #67 the map row printed the
+# map's heap address, because the imports return-type table had no `map` arm.
+# Must never report "skipped".
+run_see_collection_return_test() {
+    local work lib_src
+    lib_src="$SCRIPT_DIR/tests/shared/collections_lib.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libcollections.so" >"$work/build.log" 2>&1; then
+        fail_msg="see/collection-return (library build)"; fail_log="$work/build.log"
+    elif [[ ! -f "$work/libcollections.lib" ]]; then
+        fail_msg="see/collection-return (.lib not emitted beside the .so)"
+    else
+        cat >"$work/use_collections.vox" <<'EOF'
+see collections version "1.0" from "./libcollections.lib".
+
+Print 'give float'.
+Print 'give map'.
+Print 'give buffer'.
+EOF
+        if ! "$VOX_BIN" "$work/use_collections.vox" -o "$work/use_collections" >"$work/consumer.log" 2>&1; then
+            fail_msg="see/collection-return (consumer build)"; fail_log="$work/consumer.log"
+        else
+            local out expected
+            out=$("$work/use_collections" 2>"$work/run.log")
+            expected=$'2.5\n{"ann": 30}\nbytes'
+            if [[ "$out" != "$expected" ]]; then
+                fail_msg="see/collection-return (printed '$out', not the three declared types)"
+                { echo "stdout: $out"; cat "$work/run.log"; } >"$work/out.log"
+                fail_log="$work/out.log"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/collection-return (float, map and buffer through a .lib)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_collection_return_test
+
 # A4.2 — two versions of one library in one .so, each consumed from its own
 # program. Reuses the A2 flags .so (flags 0.1 and 1.0 in one binary); two
 # consumers `see` different versions and call hasflag(5), which must print 6

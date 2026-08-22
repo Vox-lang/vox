@@ -1,0 +1,29 @@
+(Bug #82's other half: the old parser accumulated the digits into a
+ 64-bit integer with no room check, so a long decimal wrapped around and
+ came back as something else entirely - pi to twenty-five places read as
+ 2.9999954460799989, and twenty-one digits with a point in them read as
+ a negative number. The digits now stop at eighteen significant places,
+ one more than a double can tell apart, and the ones past that only move
+ the point rather than corrupting the mantissa.)
+
+a text called 'pi to twenty-five places' is "3.141592653589793238462643".
+a float called 'pi parsed' is 'pi to twenty-five places' as a float.
+If 'pi parsed' is 3.141592653589793238462643 then, Print "pi to twenty-five places: same double". Otherwise, Print "pi to twenty-five places: DIFFERENT".
+Print 'pi parsed'.
+
+a text called 'twenty nines' is "0.99999999999999999999".
+a float called 'nines parsed' is 'twenty nines' as a float.
+If 'nines parsed' is 1.0 then, Print "twenty nines below one: rounds to one". Otherwise, Print "twenty nines below one: DIFFERENT".
+
+a text called 'a long count' is "99999999999999999999".
+a float called 'count parsed' is 'a long count' as a float.
+If 'count parsed' is 100000000000000000000.0 then, Print "twenty nines with no point: rounds to ten to the twenty". Otherwise, Print "twenty nines with no point: DIFFERENT".
+
+a text called 'a long measure' is "123456789012345678901.5".
+a float called 'measure parsed' is 'a long measure' as a float.
+If 'measure parsed' is 123456789012345678901.5 then, Print "twenty-two digits around a point: same double". Otherwise, Print "twenty-two digits around a point: DIFFERENT".
+If 'measure parsed' is greater than 0.0 then, Print "twenty-two digits around a point: still positive". Otherwise, Print "twenty-two digits around a point: WENT NEGATIVE".
+
+a text called 'a small measure' is "0.0000000000000000000000001".
+a float called 'small parsed' is 'a small measure' as a float.
+If 'small parsed' is 0.0000000000000000000000001 then, Print "a point twenty-five places away: same double". Otherwise, Print "a point twenty-five places away: DIFFERENT".

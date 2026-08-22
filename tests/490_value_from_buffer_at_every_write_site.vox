@@ -1,0 +1,45 @@
+(Bug #87's siblings. The register found the declaration from a buffer
+ variable, but a cast-free buffer lands in a `value` slot five other ways,
+ and every one of them stored the buffer's struct pointer and printed the
+ capacity byte - `@`, a 64-byte buffer's capacity low byte.
+
+ The one code path is `generate_expr_as_text` (and through it bug #51's
+ `emit_buffer_to_text_copy`), so this file is really asking whether every
+ `value` write site reaches it, exactly as tests/386 asks it of the text
+ write sites.)
+
+To 'make a buffer'.
+  a buffer called inner is 64 bytes in size.
+  append "first" to inner.
+  Return a buffer, inner.
+
+To 'echo the value' with a value called what. Print what.
+To 'hand back a value' with a buffer called source. Return a value, source.
+
+a buffer called label is 64 bytes in size.
+append "first" to label.
+
+(a declaration from a buffer variable - the register's own repro)
+a value called declared is label.
+Print declared.
+
+(a declaration from a buffer-returning call)
+a value called relayed is 'make a buffer'.
+Print relayed.
+
+(`Set v to <buffer>`)
+a value called assigned is "seed".
+Set assigned to label.
+Print assigned.
+
+(`the v is <buffer>`)
+a value called restated is "seed".
+the restated is label.
+Print restated.
+
+(a `value` parameter receiving a buffer argument)
+'echo the value' with label.
+
+(`Return a value, <buffer>`)
+a value called returned is 'hand back a value' with label.
+Print returned.

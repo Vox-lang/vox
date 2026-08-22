@@ -1,0 +1,5 @@
+(Bug #79 through an element read, the collection spelling of the same
+ too-early read.)
+
+Print element 1 of items.
+a list called items is [1, 2].

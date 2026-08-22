@@ -322,10 +322,13 @@ _map_insert:
     mov rcx, [rbx + MAP_LENGTH_OFFSET]
     imul rcx, MAP_ENTRY_SIZE
     rep movsb                  ; no-op when rcx = 0
-    ; NOTE: the old block is intentionally NOT munmap'd - a caller may still
-    ; hold a pointer to it (e.g. a map passed to a function); freeing it here
-    ; would turn that stale read into a use-after-free. The leak is bounded
-    ; (geometric, ~1x final size) and reclaimed at process exit.
+    ; NOTE: the old block is intentionally NOT munmap'd - a second name may
+    ; still hold a pointer to it (a map stored into another variable, or
+    ; sitting in a thing's field); freeing it here would turn that stale read
+    ; into a use-after-free. The leak is bounded (geometric, ~1x final size)
+    ; and reclaimed at process exit. A map passed to a function used to be
+    ; this case's example and broke the bound - see the same note in
+    ; list.asm's .need_realloc and docs/BUGS_FOUND.md #75.
     mov rbx, rdx               ; rbx = new map (henceforth)
     ; rebuild hash table by rehashing each entry. hash_cap and length are read
     ; back from the new map header, so no extra register survives the loop.

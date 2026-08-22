@@ -1,0 +1,52 @@
+(Bug #75, the deeper shapes. A function that passes its own collection
+ parameter on to another function, and one that passes it to itself, hold
+ the pointer one frame further from the variable that owns it. The store-back
+ has to travel the whole chain, not just the last hop, or growth stops one
+ call short of home.)
+
+To 'inner add' with a list called items.
+    append "x" to items.
+
+To 'outer add' with a list called items.
+    'inner add' of items.
+
+To 'three deep' with a list called items.
+    'outer add' of items.
+
+(Recursion: each frame's parameter is a link in the same chain.)
+To 'fill' with a list called items and a number called left.
+    If left is greater than 0,
+        append "x" to items,
+        'fill' of items and {left subtract 1}.
+
+To 'store into' with a map called holder and a text called label.
+    Set holder's "{label}" to 1.
+
+To 'pass the map on' with a map called holder and a text called label.
+    'store into' of holder and label.
+
+a list called 'deep' is ["a"].
+a number called n is 0.
+While n is less than 20,
+    'outer add' of 'deep',
+    Set n to n add 1.
+Print "two calls deep: {'deep''s length}".
+
+a list called deeper is ["a"].
+a number called d is 0.
+While d is less than 20,
+    'three deep' of deeper,
+    Set d to d add 1.
+Print "three calls deep: {deeper's length}".
+
+a list called recursed is ["a"].
+'fill' of recursed and 20.
+Print "recursed: {recursed's length}".
+Print "recursed last: {recursed's last}".
+
+a map called m is {"seed": 0}.
+a number called k is 0.
+While k is less than 20,
+    'pass the map on' of m and "k{k}",
+    Set k to k add 1.
+Print "a map, two calls deep: {m's length}".

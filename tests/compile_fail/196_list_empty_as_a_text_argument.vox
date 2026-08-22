@@ -1,0 +1,6 @@
+(Bug #74 at the call site, handing a boolean property to a text parameter.)
+
+To 'shout' with a text called word. Return a text, word.
+
+a list called counts is [10, 20, 30].
+Print 'shout' of counts's empty.

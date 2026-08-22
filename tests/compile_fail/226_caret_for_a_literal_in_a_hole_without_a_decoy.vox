@@ -1,0 +1,8 @@
+(Bug #89's control: with no other 3.14 in the file's code the caret was
+ already right, and must stay right. The only other occurrence is in this
+ comment, which is no use of anything (#46).)
+
+a float called f is 2.5.
+Print "ok".
+Print "ok".
+Print "{3.14:.17}".

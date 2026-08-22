@@ -22,6 +22,12 @@ impl CodeGenerator {
         self.global_var_labels.clear();
         self.global_var_counter = 0;
         self.collect_global_var_labels(&program.statements);
+        // The type half of the same pre-pass: a function body is generated
+        // where it sits in the file, but the globals it may read are the
+        // whole program's, so their types must be known before the first one
+        // is generated (docs/BUGS_FOUND.md #66). Runs after the label pass,
+        // which a `value` global's tag label is derived from.
+        self.collect_global_var_types(&program.statements);
 
         let explicit_parse_idx = program
             .statements
@@ -56,6 +62,12 @@ impl CodeGenerator {
         // them in ahead of the body already generated into `self.output`.
         let body_code = std::mem::take(&mut self.output);
         self.emit_conditional_decl_defaults(&program.statements);
+        // Same setup, forward case (#66): a global a function body was typed
+        // from is now READ as that type, so a call placed above the
+        // declaration must find the type's empty value in the mirror rather
+        // than the zero it starts life with. Emitted after the walk, when
+        // every function has said which globals it had to look ahead for.
+        self.emit_forward_global_defaults();
         let defaults_code = std::mem::take(&mut self.output);
         self.output = defaults_code + &body_code;
 
@@ -310,6 +322,23 @@ impl CodeGenerator {
                     VarTarget::Local(self.stack_offset)
                 };
 
+                // A *declaration* that lands on a slot already in use names a
+                // different thing from here on, so a `buffer` parameter's slot
+                // stops being the caller's buffer: `a buffer called sink is
+                // "..."` inside a function whose parameter is `sink` allocates
+                // its own buffer, and growing THAT must not reach out through
+                // the caller's cell (docs/BUGS_FOUND.md #90). Rebinding stays
+                // local, exactly as it does for a list or map parameter (#75).
+                // A bare assignment (`Set sink to ...`, which arrives with no
+                // declared type) is not a rebinding: on a buffer it copies
+                // bytes into the buffer the name already denotes, so it keeps
+                // the cell.
+                if var_type.is_some() {
+                    if let Some(offset) = target.local_offset() {
+                        self.buffer_param_cells.remove(&offset);
+                    }
+                }
+
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
                     // Declared as something else: this name no longer holds a
@@ -321,20 +350,7 @@ impl CodeGenerator {
                         self.thing_vars.remove(name);
                     }
                     self.declared_types.insert(name.clone(), t.clone());
-                    let vt = match t {
-                        Type::String => VarType::String,
-                        Type::Integer => VarType::Integer,
-                        Type::Float => VarType::Float,
-                        Type::Boolean => VarType::Boolean,
-                        Type::Buffer => VarType::Buffer,
-                        Type::List(_) => VarType::List,
-                        Type::Map(_) => VarType::Map,
-                        // A declared `value` local is a Mixed-typed scalar
-                        // carrying its runtime tag in a shadow slot, exactly
-                        // like a value parameter / for-each variable.
-                        Type::Value => VarType::Mixed,
-                        _ => VarType::Unknown,
-                    };
+                    let vt = vartype_of_declared_type(t);
                     self.variable_types.insert(name.clone(), vt);
                     if matches!(t, Type::Value) {
                         if matches!(target, VarTarget::Global(_)) {
@@ -437,22 +453,7 @@ impl CodeGenerator {
                         }
                         // Track element type separately
                         else if let Some(first) = elements.first() {
-                            let elem_type = match first {
-                                Expr::StringLit(_) => VarType::String,
-                                // A format string always materializes text
-                                // (bug #17); this named-list element-type
-                                // inference never carried that arm (bug #39).
-                                Expr::FormatString { .. } => VarType::String,
-                                Expr::IntegerLit(_) => VarType::Integer,
-                                Expr::FloatLit(_) => VarType::Float,
-                                Expr::BoolLit(_) => VarType::Boolean,
-                                // A nested list literal element means this is
-                                // a list-of-lists; the element type is List
-                                // (stage 1e1), so a for-each loop var prints
-                                // via `_list_print`.
-                                Expr::ListLit { .. } => VarType::List,
-                                _ => VarType::Unknown,
-                            };
+                            let elem_type = list_literal_element_vartype(first);
                             self.list_element_types.insert(name.clone(), elem_type);
                         }
                     }
@@ -654,8 +655,15 @@ impl CodeGenerator {
                     } else {
                         // A text slot takes a copy of a buffer source, never
                         // the buffer's struct pointer (#51); every other source
-                        // generates exactly as before.
-                        if is_text_target {
+                        // generates exactly as before. A `value` slot is a text
+                        // slot too, for exactly the sources that make it one:
+                        // the tag stored below is `vartype_to_tag(Buffer)` =
+                        // TAG_STRING, so the payload must be the bytes that tag
+                        // promises, or the slot answers `Text (dynamic)` while
+                        // holding the buffer's header (#87). Non-buffer sources
+                        // are untouched - `generate_expr_as_text` converts only
+                        // a buffer.
+                        if is_text_target || is_value_var {
                             self.generate_expr_as_text(val);
                         } else {
                             self.generate_expr(val);
@@ -683,6 +691,14 @@ impl CodeGenerator {
                                 self.uses_floats = true;
                             }
                         }
+                        // #91: a fallible read that missed yields 0; a
+                        // text/list/map slot takes its type's empty value
+                        // instead, never that 0.
+                        let slot_type = match var_type {
+                            Some(t) => declared_slot_vartype(t),
+                            None => self.variable_types.get(name).cloned(),
+                        };
+                        self.emit_empty_value_if_missed(val, slot_type);
                         self.emit_store_rax_to_target(&target, &format!("{}", name));
                         // A declared `value` stores its runtime tag alongside
                         // the payload, in whichever storage (local shadow
@@ -830,12 +846,21 @@ impl CodeGenerator {
                     } else {
                         // `Set t to b.` / `the t is b.` on a text local copies
                         // the buffer's bytes, exactly as `t is b as text.`
-                        // does (#51); every other source is unchanged.
-                        if self.variable_types.get(name) == Some(&VarType::String) {
+                        // does (#51); every other source is unchanged. A
+                        // `value` local takes the same copy for the same
+                        // reason (#87): the tag written just below says
+                        // TAG_STRING for a buffer source.
+                        if matches!(
+                            self.variable_types.get(name),
+                            Some(&VarType::String) | Some(&VarType::Mixed)
+                        ) {
                             self.generate_expr_as_text(value);
                         } else {
                             self.generate_expr(value);
                         }
+                        // #91, the assignment half of the declaration guard.
+                        self.emit_empty_value_if_missed(
+                            value, self.variable_types.get(name).cloned());
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                         // Reassigning a `value` local must update its shadow tag
                         // slot too, or the runtime tag would go stale.
@@ -870,12 +895,19 @@ impl CodeGenerator {
                             );
                         }
                     } else {
-                        // The global mirror of the text-takes-a-copy rule above.
-                        if self.variable_types.get(name) == Some(&VarType::String) {
+                        // The global mirror of the text-takes-a-copy rule
+                        // above, `value` globals included (#51, #87).
+                        if matches!(
+                            self.variable_types.get(name),
+                            Some(&VarType::String) | Some(&VarType::Mixed)
+                        ) {
                             self.generate_expr_as_text(value);
                         } else {
                             self.generate_expr(value);
                         }
+                        // #91, the global mirror of the same guard.
+                        self.emit_empty_value_if_missed(
+                            value, self.variable_types.get(name).cloned());
                         self.emit_indent(
                             &format!("mov [rel {}], rax", label));
                         // A top-level `value` keeps its runtime tag paired
@@ -1124,12 +1156,24 @@ impl CodeGenerator {
                     // `Return a text, b.` hands back a copy of the buffer's
                     // bytes, not its struct pointer (#51) - and a copy is the
                     // only safe thing to return anyway, since a buffer local
-                    // to this frame does not outlive it.
-                    if self.current_function_return_type == Some(Type::String) {
+                    // to this frame does not outlive it. `Return a value, b.`
+                    // is the same sentence with a runtime tag attached, and
+                    // the tag loaded below reads TAG_STRING for a buffer, so
+                    // it owes the caller the same bytes (#87).
+                    if self.current_function_return_type == Some(Type::String)
+                        || self.current_function_return_type == Some(Type::Value)
+                    {
                         self.generate_expr_as_text(v);
                     } else {
                         self.generate_expr(v); // leaves return payload in RAX
                     }
+                    // #91: `Return a text, element 5 of xs.` hands the caller's
+                    // text slot the miss's 0 unless it is re-typed here.
+                    let return_slot = self
+                        .current_function_return_type
+                        .as_ref()
+                        .and_then(declared_slot_vartype);
+                    self.emit_empty_value_if_missed(v, return_slot);
                     // A `value` return carries its runtime tag in r11 for the
                     // caller. Load it AFTER generate_expr (which leaves r11=tag
                     // for fresh reads / value-returning calls, or nothing for a
@@ -1191,6 +1235,18 @@ impl CodeGenerator {
                 let saved_declared_types = self.declared_types.clone();
                 let saved_thing_vars = self.thing_vars.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
+                // Per-frame, like `variables` itself: a slot offset means
+                // nothing outside the frame it was allocated in (#90).
+                let saved_buffer_param_cells =
+                    std::mem::take(&mut self.buffer_param_cells);
+                // #75's backing slots are frame offsets, so they are as
+                // function-local as `self.variables` - but the map is keyed by
+                // parameter name in the same flat namespace `mixed_tag_slots`
+                // uses, so it needs the same clone-and-restore. It starts EMPTY
+                // for each function: an outer function's `items` offset would
+                // otherwise be read as this frame's.
+                let saved_collection_backing_slots =
+                    std::mem::take(&mut self.collection_backing_slots);
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
                 // just like `variable_types`, so they need the same
                 // clone-and-restore isolation: a function's own locals must not
@@ -1258,22 +1314,19 @@ impl CodeGenerator {
                 let total_words: usize =
                     hidden_words + params.iter().map(|(_, t)| word_count(t)).sum::<usize>();
 
+                // Every global's declared type, before this function's own
+                // params and locals are registered over the top of it: a body
+                // may read a global declared BELOW it, and until #66 that read
+                // had no type and fell through to the integer printer. Names
+                // this function binds itself still win, exactly as they do for
+                // a global declared above.
+                self.seed_global_var_types();
+
                 // Allocate param stack slots FIRST so offsets are stable.
                 // Also register param types so they're known in function body.
                 for (param_name, param_type) in params.iter() {
                     self.declared_types.insert(param_name.clone(), param_type.clone());
-                    let var_type = match param_type {
-                        Type::Integer => VarType::Integer,
-                        Type::Float => VarType::Float,
-                        Type::String => VarType::String,
-                        Type::Boolean => VarType::Boolean,
-                        Type::List(_) => VarType::List,
-                        Type::Buffer => VarType::Buffer,
-                        // A `value` parameter is a Mixed-typed scalar carrying
-                        // its runtime tag in a shadow slot.
-                        Type::Value => VarType::Mixed,
-                        _ => VarType::Unknown,
-                    };
+                    let var_type = vartype_of_declared_type(param_type);
                     // A thing parameter's slot is the whole thing: the frame
                     // holds this function's own copy, so its fields address
                     // off rbp exactly like a thing declared in the body.
@@ -1288,6 +1341,26 @@ impl CodeGenerator {
                     if matches!(param_type, Type::Value) {
                         let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
                         self.mixed_tag_slots.insert(param_name.clone(), tag_slot);
+                    }
+                    // docs/BUGS_FOUND.md #90: a `buffer` parameter's argument
+                    // word is the ADDRESS of the caller's copy of the pointer,
+                    // parked in a hidden `{name}_cell` slot - the shape a
+                    // `value`'s shadow tag slot already has - so a
+                    // reallocation inside this function can reach the caller
+                    // before it reads the block that was just freed.
+                    if matches!(param_type, Type::Buffer) {
+                        if let Some(payload) = self.get_var(param_name) {
+                            let cell_slot = self.alloc_var(&format!("{}_cell", param_name));
+                            self.buffer_param_cells.insert(payload, cell_slot);
+                        }
+                    }
+                    // BUGS_FOUND #75: a collection parameter's word is the
+                    // address of the caller's storage. Keep it in a shadow
+                    // slot beside the parameter's own, so a realloc anywhere
+                    // in the body can write the new pointer back through it.
+                    if matches!(param_type, Type::List(_) | Type::Map(_)) {
+                        let back_slot = self.alloc_var(&format!("{}_backptr", param_name));
+                        self.collection_backing_slots.insert(param_name.clone(), back_slot);
                     }
                 }
 
@@ -1421,6 +1494,37 @@ impl CodeGenerator {
                     if let Some(offset) = payload_off {
                         // Payload word.
                         self.emit_indent(&read_argument_word(word_index));
+                        // docs/BUGS_FOUND.md #90: a `buffer` parameter's word
+                        // is the ADDRESS of the caller's copy of the pointer.
+                        // Park it in the hidden cell first, then take this
+                        // frame's own copy of the buffer out of it. Only rax is
+                        // touched, so the later parameters still sitting in
+                        // rsi/rdx/rcx are safe (the `thing` copies below are
+                        // deferred for exactly that reason). The cell slot is
+                        // looked up by name because body codegen may have
+                        // disowned the offset since (a redeclaration of the
+                        // parameter's name names a different buffer).
+                        if matches!(param_type, Type::Buffer) {
+                            if let Some(cell) = self.get_var(&format!("{}_cell", param_name)) {
+                                self.emit_indent(&format!(
+                                    "mov [rbp-{}], rax  ; where the caller keeps {}",
+                                    cell, param_name
+                                ));
+                                self.emit_indent("mov rax, [rax]  ; ...and the buffer itself");
+                            }
+                        }
+                        // BUGS_FOUND #75: a collection's word is the address of
+                        // the caller's storage. Park the address, then read the
+                        // pointer out of it into the parameter's own slot - so
+                        // the body sees exactly what it saw before, and the
+                        // store-back path has somewhere to write.
+                        if let Some(back_slot) = self.collection_backing_slots.get(param_name).copied() {
+                            self.emit_indent(&format!(
+                                "mov [rbp-{}], rax  ; where the caller keeps {}",
+                                back_slot, param_name
+                            ));
+                            self.emit_indent("mov rax, [rax]  ; the collection itself");
+                        }
                         self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
                         if let Type::Thing(thing) = param_type {
                             things_to_copy.push((thing.clone(), offset));
@@ -1481,6 +1585,8 @@ impl CodeGenerator {
                 self.declared_types = saved_declared_types;
                 self.thing_vars = saved_thing_vars;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
+                self.buffer_param_cells = saved_buffer_param_cells;
+                self.collection_backing_slots = saved_collection_backing_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
                 self.list_element_types = saved_list_element_types;
@@ -1708,6 +1814,10 @@ impl CodeGenerator {
                     self.variables.insert(name.clone(), self.stack_offset);
                     self.stack_offset
                 };
+                // Declaring over a `buffer` parameter's slot names a buffer of
+                // this function's own from here on; it is no longer the
+                // caller's (docs/BUGS_FOUND.md #90, and the VarDecl arm above).
+                self.buffer_param_cells.remove(&offset);
                 self.variable_types.insert(name.clone(), VarType::Buffer);
                 // Register the declared type so the `type` property reports
                 // `Buffer (static)` (LANGUAGE.md:3202), not the runtime tag.
@@ -1730,6 +1840,9 @@ impl CodeGenerator {
                 if is_sized {
                     // Fixed-size buffer (bounds checked, no auto-grow)
                     self.generate_expr(size);
+                    if !matches!(size, Expr::IntegerLit(_)) {
+                        self.emit_buffer_size_guard();
+                    }
                     self.emit_indent("mov rdi, rax  ; buffer size");
                     self.emit_indent("call _alloc_buffer_sized");
                 } else {
@@ -2012,6 +2125,10 @@ impl CodeGenerator {
 
                     // Evaluate value to append
                     self.generate_expr(value);
+                    // #91: an appended element has no declared destination -
+                    // the list's element type is what every later read of it
+                    // will use, so a missed read must not enter as 0.
+                    self.emit_empty_value_if_missed(value, self.tagless_read_type(value));
 
                     if is_buffer_value {
                         // For buffer values, extract string data and duplicate it.
@@ -2092,7 +2209,7 @@ impl CodeGenerator {
                         self.emit_append_runtime_value_to_buffer_ptr(src_type, fmt_spec);
                         self.emit_indent("pop rdi  ; original destination buffer pointer");
                         if let Some(offset) = dst_local {
-                            self.emit_indent(&format!("mov [rbp-{}], rax  ; updated destination pointer", offset));
+                            self.emit_store_buffer_ptr_to_slot(offset, "rax", "  ; updated destination pointer");
                         } else if let Some(ref label) = dst_global {
                             self.emit_indent(&format!("mov [rel {}], rax  ; updated destination pointer", label));
                         }
@@ -2112,7 +2229,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, rax  ; buffer");
                 self.emit_indent("call _buffer_clear");
                 if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer (unchanged pointer)", offset));
+                    self.emit_store_buffer_ptr_to_slot(offset, "rax", "  ; buffer (unchanged pointer)");
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
                     self.emit_indent(&format!("mov [rel {}], rax  ; buffer (unchanged pointer)", label));
@@ -3242,4 +3359,17 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// `docs/BUGS_FOUND.md #91`: the declared types whose slot holds a POINTER,
+/// narrowed to the `VarType` the codegen labels that slot with. Every other
+/// declared type stores its value inline, so a missed read's 0 is just the
+/// number 0 there - the manual's own answer - and needs no re-typing.
+pub(crate) fn declared_slot_vartype(t: &Type) -> Option<VarType> {
+    match t {
+        Type::String => Some(VarType::String),
+        Type::List(_) => Some(VarType::List),
+        Type::Map(_) => Some(VarType::Map),
+        _ => None,
+    }
 }

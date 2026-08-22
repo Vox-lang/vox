@@ -1,0 +1,8 @@
+(Compile-fail: bug #88 - the declaration path always knew `not <text>` was a
+ boolean and refused to initialise a number with one. That is the reading the
+ segfault contradicted: handed the same expression, Print was told it was
+ text and dereferenced the boolean 0. The type-check stays, and is the proof
+ that a `not` is boolean-valued whatever its operand.)
+
+a text called greeting is "hi".
+a number called answer is not greeting.

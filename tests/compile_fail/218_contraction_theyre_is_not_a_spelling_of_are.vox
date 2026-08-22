@@ -1,0 +1,6 @@
+(Compile-fail: bug #84. `they're` sat in the keyword table as a spelling
+ of `are`, with the same collision as `it's`: `print they's length.` is
+ the possessive on a variable called `they`. The entry was removed.)
+
+a boolean called ready is true.
+If ready they're true then, print "yes". Otherwise, print "no".

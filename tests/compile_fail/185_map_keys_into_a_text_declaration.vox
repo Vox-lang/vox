@@ -1,0 +1,6 @@
+(Bug #74 on a map. `keys` builds a fresh list; read back as text it printed
+ nothing at all - a list header taken for a string.)
+
+a map called ages is {"ada": 36}.
+a text called who is ages's keys.
+Print who.

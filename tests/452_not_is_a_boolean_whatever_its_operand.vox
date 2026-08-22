@@ -1,0 +1,62 @@
+(Bug #88: `Print not <text>` segfaulted, and so did a list and a map - the
+ list printing `[` and the map `{` first. `infer_expr_type` and
+ `is_float_expr` in codegen/expr.rs returned the OPERAND's type for a unary
+ `not`, so Print was told a boolean was text and emitted a text print of the
+ boolean 0 - dereferencing address 0. A float operand made `not f` print
+ `0.0`, a float where a boolean belongs. A `not` answers a boolean whatever
+ it is applied to - the rule `prescan_expr_tag` in codegen/tags.rs already
+ states in so many words - so every row below prints 0 or 1.
+
+ What this file pins is the TYPE, which is what #88 was: a `not` is a
+ boolean, and no operand makes Print dereference it. The VALUE on a
+ pointer-typed operand is a null-pointer test, not an emptiness test -
+ `not ""` and `not []` both answer 0 because the pointer is real, the same
+ shape #33 fixed for `is empty`. Nothing in LANGUAGE.md gives `not` an
+ emptiness reading, so the rows below record what the compiler does; use
+ `is empty` to ask about contents.
+
+ The `value` and mixed-list-element rows are controls: `infer_expr_type`
+ answers None for both, so Print already fell back to the runtime tag, which
+ codegen/tags.rs has tagged TAG_BOOLEAN all along. They were safe before the
+ fix and are here to keep the dynamic path honest alongside the static one.)
+
+a text called greeting is "hi".
+Print not greeting.
+
+a text called blank is "".
+Print not blank.
+
+a list called readings is [1, 2, 3].
+Print not readings.
+
+a list called no_readings is [].
+Print not no_readings.
+
+a map called stock is {"apples": 1}.
+Print not stock.
+
+a float called ratio is 2.5.
+Print not ratio.
+
+a buffer called scratch is 16 bytes in size.
+Print not scratch.
+
+a number called depth is 20.
+Print not depth.
+
+a number called nought is 0.
+Print not nought.
+
+a boolean called ready is true.
+Print not ready.
+
+a boolean called done is false.
+Print not done.
+
+a value called payload is "hi".
+Print not payload.
+
+a list called mixed is [1, "two", 3.5].
+Print not element 2 of mixed.
+
+Print "a not in a format string: {not greeting}".

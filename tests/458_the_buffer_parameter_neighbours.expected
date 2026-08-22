@@ -1,0 +1,7 @@
+an in-place write: Atart
+growth inside the first allocation: 205
+a fixed buffer still refuses
+Set through a parameter: much longer than the seed
+the callee's own buffer: 6004
+and the caller keeps its own: 5
+grown at the top level: 6005

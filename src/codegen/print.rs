@@ -112,6 +112,23 @@ impl CodeGenerator {
                             }
                             let expr_type = self.infer_expr_type(expr);
                             let fmt_spec = self.parse_format_spec(format.as_deref());
+                            // A value that carries a runtime tag - a mixed
+                            // list's element, a `value`, a map read, a tagged
+                            // `treating` result - must be rendered by that tag
+                            // and not by its static type. The Variable arm
+                            // above and the statement arms below already do
+                            // this; the expression form did not, so
+                            // `Print "{element 2 of nested}"` threw away the
+                            // very tag the element load had just put in r11
+                            // and printed the payload as an integer - a rodata
+                            // address for a text element, a live heap address
+                            // for a nested list (docs/BUGS_FOUND.md #68). Asked
+                            // before the value is generated, because
+                            // `runtime_tag_source` reports where the tag WILL
+                            // be, and taken first because a runtime tag
+                            // outranks a static guess (the same order the
+                            // catch-all arm below uses).
+                            let tag_source = self.runtime_tag_source(expr);
 
                             // A bare `nothing` literal interpolated into a
                             // format string renders `nothing` (it would else
@@ -123,11 +140,31 @@ impl CodeGenerator {
                             if matches!(expr.as_ref(), Expr::NothingLit) {
                                 let label = self.add_string("nothing");
                                 self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
+                            } else if let Some(src) = tag_source {
+                                self.generate_expr(expr);
+                                // #91: no declared destination here either.
+                                self.emit_empty_value_if_missed(
+                                    expr, self.tagless_read_type(expr));
+                                if let Some(operand) = src.shadow_operand() {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte {}  ; value's runtime type tag", operand
+                                    ));
+                                }
+                                self.emit_indent("mov rdi, rax");
+                                // #81: the hole's own spec travels into the
+                                // dispatch, so a tagged number pads or changes
+                                // base here exactly as it does in a buffer.
+                                self.emit_mixed_print_dispatch_spec("r11", fmt_spec);
                             } else if expr_type == Some(VarType::Buffer) {
                                 // For buffer expressions: generate the struct pointer,
                                 // not the data-area pointer - PRINT_BUF reads its own
                                 // length from the struct, so it needs the base pointer.
                                 self.generate_expr(expr);
+                                // #91: a format hole has no declared
+                                // destination; the value is read as the
+                                // collection's element type.
+                                self.emit_empty_value_if_missed(
+                                    expr, self.tagless_read_type(expr));
                                 self.emit_indent("mov rdi, rax");
                                 if fmt_spec.width.is_none() && matches!(fmt_spec.base, IntegerBase::Decimal) && fmt_spec.precision.is_none() {
                                     self.emit_indent("PRINT_BUF rdi");
@@ -155,6 +192,11 @@ impl CodeGenerator {
                                 // arm below has been here since stage 1e2; this
                                 // is its list twin.
                                 self.generate_expr(expr);
+                                // #91: a format hole has no declared
+                                // destination; the value is read as the
+                                // collection's element type.
+                                self.emit_empty_value_if_missed(
+                                    expr, self.tagless_read_type(expr));
                                 self.emit_indent("mov rdi, rax");
                                 self.uses_lists = true;
                                 self.emit_indent("call _list_print");
@@ -162,6 +204,11 @@ impl CodeGenerator {
                                 // Map expression interpolation: rdi holds the map
                                 // pointer; _map_print renders it. (stage 1e2)
                                 self.generate_expr(expr);
+                                // #91: a format hole has no declared
+                                // destination; the value is read as the
+                                // collection's element type.
+                                self.emit_empty_value_if_missed(
+                                    expr, self.tagless_read_type(expr));
                                 self.emit_indent("mov rdi, rax");
                                 self.uses_maps = true;
                                 self.emit_indent("call _map_print");
@@ -169,6 +216,11 @@ impl CodeGenerator {
                                 // Non-buffer: generate_cstr_expr adds +24 for buffer
                                 // (irrelevant here), then falls through to normal path.
                                 self.generate_cstr_expr(expr);
+                                // #91: a format hole has no declared
+                                // destination; the value is read as the
+                                // collection's element type.
+                                self.emit_empty_value_if_missed(
+                                    expr, self.tagless_read_type(expr));
                                 self.emit_indent("mov rdi, rax");
                                 self.emit_formatted_value(expr_type, fmt_spec);
                             }
@@ -284,45 +336,13 @@ impl CodeGenerator {
                 // element 2 of deep`) the elements are runtime-tagged, so
                 // `generate_expr` left the slot's tag in r11 and we dispatch
                 // on it (stage 1e1).
-                let elem_type = if let Expr::Identifier(name) = list.as_ref() {
-                    // A list parameter (or any list with no proven element
-                    // type) stores a per-slot runtime tag, so dispatch on it
-                    // rather than defaulting to PRINT_INT — see
-                    // `list_expr_is_mixed`. `generate_expr` left that tag in
-                    // r11 for this same unknown-element case.
-                    match self.list_element_types.get(name) {
-                        None | Some(&VarType::Mixed) | Some(&VarType::Unknown) => {
-                            Some(VarType::Mixed)
-                        }
-                        Some(other) => Some(other.clone()),
-                    }
-                } else if let Expr::ListLit { elements } = list.as_ref() {
-                    if self.list_expr_is_mixed(list) {
-                        Some(VarType::Mixed)
-                    } else if let Some(first) = elements.first() {
-                        match first {
-                            Expr::IntegerLit(_) => Some(VarType::Integer),
-                            Expr::FloatLit(_) => Some(VarType::Float),
-                            Expr::StringLit(_) => Some(VarType::String),
-                            // A format string always materializes text
-                            // (bug #17); `element N of <literal>` on a list
-                            // literal never carried that arm (bug #39).
-                            Expr::FormatString { .. } => Some(VarType::String),
-                            Expr::BoolLit(_) => Some(VarType::Boolean),
-                            Expr::ListLit { .. } => Some(VarType::List),
-                            Expr::MapLit { .. } => Some(VarType::Map),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                } else if self.list_expr_is_mixed(list) {
-                    Some(VarType::Mixed)
-                } else {
-                    None
-                };
+                let elem_type = self.static_list_element_type(list);
 
                 self.generate_expr(value);
+                // #91: Print has no declared destination, so it reads the miss
+                // as the list's element type. A pointer type must not be handed
+                // the 0 the read yields.
+                self.emit_empty_value_if_missed(value, self.tagless_read_type(value));
                 self.emit_indent("mov rdi, rax");
 
                 match elem_type {
@@ -395,6 +415,15 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     if matches!(expr_type, Some(VarType::String)) {
                         self.emit_indent("PRINT_CSTR rdi");
+                    } else if matches!(expr_type, Some(VarType::Buffer)) {
+                        // rdi holds a buffer struct pointer, so PRINT_BUF
+                        // reads the length out of the header - the same arm
+                        // the buffer-variable path above has had all along.
+                        // A declared `buffer` return printed directly reaches
+                        // Print only here, and without this arm the integer
+                        // formatter rendered the struct's address
+                        // (BUGS_FOUND #67).
+                        self.emit_indent("PRINT_BUF rdi");
                     } else if matches!(expr_type, Some(VarType::List)) {
                         // A bare list literal, or `first`/`last` of a
                         // homogeneous list-of-lists: rdi holds a list pointer,

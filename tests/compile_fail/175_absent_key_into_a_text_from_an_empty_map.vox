@@ -1,0 +1,6 @@
+(Bug #72: an empty map has no keys, so every key is absent from it. The
+ read yields 0 and the text slot dereferenced it - segfault, exit 139.)
+
+a map called 'no entries' is {}.
+a text called n is 'no entries's "absent".
+Print n.

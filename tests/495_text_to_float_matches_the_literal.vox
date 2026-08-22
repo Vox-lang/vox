@@ -1,0 +1,50 @@
+(Bug #82: the runtime text-to-float parser divided the fractional part
+ by ten once per digit, and every one of those divisions rounded, so a
+ float read from text sat one ulp away from the same number written as
+ a literal. LANGUAGE.md's cast table gives `"3.14" as a float` as
+ `3.14`, and the `value` retype is bound to "the conversion that the
+ corresponding static cast would use", so both spellings have to land
+ on the same double. The scaling now rounds once.)
+
+a text called spelled is "0.88".
+a float called parsed is spelled as a float.
+a float called written is 0.88.
+If parsed is written then, Print "0.88 from text: same double". Otherwise, Print "0.88 from text: DIFFERENT".
+Print "{parsed:.17}".
+Print "{written:.17}".
+
+(The register's own repro: a `value` retyped in place goes through the
+ same conversion, and the assertion used to fire while printing a
+ number that looked identical to the one it expected.)
+a value called gauge is "00.88".
+gauge is a float.
+If gauge is 0.88 then, Print "retyped value: same double". Otherwise, Print "retyped value: DIFFERENT".
+Print gauge.
+
+(The neighbours that were right before this fix and are still right. A
+ half is exactly representable, so the two parsers could not disagree
+ about it; a literal compared against itself is exact; and the manual's
+ own example never was among the values that differed.)
+a text called 'a half in text' is "0.5".
+a float called 'a half parsed' is 'a half in text' as a float.
+If 'a half parsed' is 0.5 then, Print "0.5 from text: same double". Otherwise, Print "0.5 from text: DIFFERENT".
+
+If 0.88 is 0.88 then, Print "literal against itself: same double". Otherwise, Print "literal against itself: DIFFERENT".
+
+a text called 'the manual example' is "3.14".
+a float called 'the manual parsed' is 'the manual example' as a float.
+If 'the manual parsed' is 3.14 then, Print "3.14 from text: same double". Otherwise, Print "3.14 from text: DIFFERENT".
+
+(A negative, an integer with no point at all, and a text whose digits
+ run out at the point - the shapes the parser has to keep handling.)
+a text called owed is "-2.5".
+a float called 'owed parsed' is owed as a float.
+If 'owed parsed' is -2.5 then, Print "-2.5 from text: same double". Otherwise, Print "-2.5 from text: DIFFERENT".
+
+a text called countable is "42".
+a float called 'countable parsed' is countable as a float.
+If 'countable parsed' is 42.0 then, Print "42 from text: same double". Otherwise, Print "42 from text: DIFFERENT".
+
+a text called truncated is "7.".
+a float called 'truncated parsed' is truncated as a float.
+If 'truncated parsed' is 7.0 then, Print "7. from text: same double". Otherwise, Print "7. from text: DIFFERENT".

@@ -1,0 +1,11 @@
+(Bug #74: the type lock could not see through a `'s <property>` read. Every
+ property but `first`/`last` answered "type unknown", so #65's declaration
+ check stayed silent, codegen stored the list's length in the text's slot,
+ and Print dereferenced 3 as a pointer: segfault. LANGUAGE.md's List
+ Properties table types `length` Number, and LANGUAGE.md:531-532 fixes a
+ variable's type at its declaration - this is that sentence, read through a
+ property.)
+
+a list called counts is [10, 20, 30].
+a text called tally is counts's length.
+Print tally.

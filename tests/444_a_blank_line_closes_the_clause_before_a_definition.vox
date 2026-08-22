@@ -1,0 +1,12 @@
+(Bug #73's nearest working neighbour: one blank line before the `To` closes
+ the loop, so the definition lands at the top level where the flat scan
+ always saw it. This is what the swallowed form must now agree with.)
+
+For each attempt from 1 to 3,
+    If attempt is 99 then, Break.
+
+To examine with a value called given.
+    Print "{given's type}".
+
+examine of "".
+Exit 0.

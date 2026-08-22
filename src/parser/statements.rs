@@ -57,6 +57,13 @@ impl Parser {
     pub(crate) fn parse_statement_list(
         &mut self,
     ) -> Result<Vec<Statement>, Box<CompileError>> {
+        // Every thing variable this file declares outside a function body is
+        // registered before the first statement is read, so a function may
+        // name a global declared below it (BUGS_FOUND #80). The walk still
+        // registers each declaration as it reaches it; this only fills the
+        // table in ahead of the walk.
+        self.register_declared_thing_vars();
+
         let mut statements = Vec::new();
 
         while *self.current() != Token::EOF {

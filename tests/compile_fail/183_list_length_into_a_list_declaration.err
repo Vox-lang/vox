@@ -1,0 +1,4 @@
+cannot initialise 'tally', which is a list, with a number
+183_list_length_into_a_list_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'tally' can only be initialised with a list
+help: declare it as a number - `a number called tally is counts's length.`

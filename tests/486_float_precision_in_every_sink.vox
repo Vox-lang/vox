@@ -1,0 +1,56 @@
+(Bug #86 - a float's precision was dropped by every sink but Print.
+ `{ratio:.2}` printed 2.50 to the terminal and 2.5 into a text
+ initializer, a buffer set/copy/append, a `write` and a function
+ argument: the precision reached one printer that only Print called,
+ and every other sink appended the float through a routine that takes
+ the raw bits alone and has nowhere to put N. A receipt written to a
+ file therefore disagreed with the same line shown on screen.
+
+ LANGUAGE.md "Format Strings Everywhere" promises format specifiers
+ "render identically whether the result is printed, written to a file,
+ or built into a text or a buffer", so every line below must read the
+ same. Fixed the way #44 fixed `{list}`: the one renderer is redirected
+ at the destination buffer, never copied into a second buffer-shaped
+ printer.)
+
+To announce with a text called label.
+  Print label.
+
+a float called ratio is 2.5.
+
+Print "print:    {ratio:.2}".
+
+a text called said is "text:     {ratio:.2}".
+Print said.
+
+Create a buffer called copied.
+copy "copy:     {ratio:.2}" to copied.
+Print copied.
+
+Create a buffer called kept.
+set kept to "set:      {ratio:.2}".
+Print kept.
+
+Create a buffer called grown.
+copy "append:   " to grown.
+append "{ratio:.2}" to grown.
+Print grown.
+
+Open a file at 1 for writing called out.
+write "write:    {ratio:.2}\n" to out.
+
+announce with "argument: {ratio:.2}".
+
+(The receipt case, all the way to disk and back: the bytes on the file
+ are the bytes the terminal showed, not a rounder-looking neighbour.)
+Open a file for writing called receipt at "./test_float_precision_sink.txt".
+write "file:     {ratio:.2}\n" to receipt.
+Close receipt.
+Create a buffer called line.
+Open a file for reading called back at "./test_float_precision_sink.txt".
+Read line from back into line.
+Close back.
+(`Read line` keeps the trailing newline it found, as documented, so this
+ print must not add a second one.)
+Print line without newline.
+Delete the file "./test_float_precision_sink.txt".

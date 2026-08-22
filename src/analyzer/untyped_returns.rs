@@ -166,7 +166,7 @@ impl Analyzer {
     fn find_call_site_location(&self, name: &str) -> Option<SourceLocation> {
         let definition_line = self.function_definition_line(name);
         let patterns = [format!("'{}'", name), name.to_string()];
-        self.find_pattern_location(name, &patterns, 0, definition_line, false)
+        self.find_pattern_location(name, &patterns, 0, definition_line, false, false)
             .or_else(|| self.find_interpolated_call_location(name, definition_line))
     }
 

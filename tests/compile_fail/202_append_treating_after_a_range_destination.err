@@ -1,0 +1,2 @@
+A `treating` clause belongs to the `each` clause, not after the append destination
+help: write `append each n from <collection> treating <match> as <replacement> to out.`

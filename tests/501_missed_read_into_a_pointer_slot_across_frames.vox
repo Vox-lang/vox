@@ -1,0 +1,33 @@
+(Bug #91, the slots a call owns. A `text`, `list` or `map` destination is
+ not only a declaration: a function's declared return type is one, and so
+ is a parameter. A miss handed either of those the raw 0 and the first read
+ in the receiving frame dereferenced it. Inside a function the list is a
+ parameter, so its elements carry runtime tags and no static element type
+ can be proved - the corner no compile-time proof reaches at all.)
+
+To peek with a list called shelf. Return a text, element 5 of shelf.
+To 'peek in range' with a list called shelf. Return a text, element 2 of shelf.
+To announce with a text called label. Print "announced: [{label}]".
+
+a list called grown is ["a", "b"].
+Append "c" to grown.
+
+(The working neighbour: a return the list can satisfy.)
+a text called found is 'peek in range' of grown.
+Print "returned in range: {found}".
+
+(The return slot: the miss travels back as the empty text.)
+a text called missed is peek of grown.
+Print "returned past the end: [{missed}]".
+
+(The parameter slot: the miss travels in as the empty text.)
+announce of element 5 of grown.
+
+(A returned miss is a real text, so the caller can go on using it.)
+a list called collected is [].
+Append missed to collected.
+Print "collected: {collected}".
+
+(And the miss is still an error in the caller's frame.)
+a text called 'last miss' is peek of grown.
+On error Print "the error flag was set".

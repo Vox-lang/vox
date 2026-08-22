@@ -1,0 +1,23 @@
+(Bug #67 stage — the .lib side of "a declared return printed directly". The
+local `To` table and the imports table in `src/codegen/functions.rs` each
+translate a declared return type into the type codegen tracks, and the imports
+copy was missing its `map` arm for exactly as long as the local one was: an
+imported map return printed the map's heap address while `float` and `buffer`
+were right. `returning a map` is a spelling a `.lib` can state, so this library
+exports one of each of the three types the entry names.
+
+Built with `vox collections_lib.vox --shared -o libcollections.so`, which
+writes `libcollections.lib` beside it; the consumer `see`s the `.lib`.)
+
+Library collections version "1.0".
+
+To 'give float'.
+  Return a float, 2.5.
+
+To 'give map'.
+  Return a map, {"ann": 30}.
+
+To 'give buffer'.
+  a buffer called made is 16 bytes in size.
+  Copy "bytes" to made.
+  Return a buffer, made.

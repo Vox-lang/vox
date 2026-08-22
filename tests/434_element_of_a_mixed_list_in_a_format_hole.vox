@@ -1,0 +1,17 @@
+(Regression test for bug #68: the headline repro. The *expression* form of
+ a format hole - `"{element 2 of nested}"` - threw away the runtime tag the
+ element load had just put in r11 and rendered the payload as an integer,
+ so a nested-list element printed a LIVE HEAP ADDRESS that changed between
+ runs. The very same read printed as a statement was correct, which is what
+ proves the tag was there and simply not consulted.
+
+ Acceptance: the hole and the statement agree, on the same element, in the
+ same run - and the answer is the rendering, not an address.)
+
+a list called nested is [1, [2, 3], "four"].
+
+Print "{element 2 of nested}".
+Print element 2 of nested.
+
+Print "{element 3 of nested}".
+Print element 3 of nested.

@@ -1,0 +1,10 @@
+(Bug #71: the refusal is not Print's alone. LANGUAGE.md:3226 promises a
+ format specifier renders identically "whether the result is printed,
+ written to a file, or built into a buffer", so a specifier the type cannot
+ answer is refused in every sink - here a buffer `copy`, which used to
+ accept it and silently drop the `:x`.)
+
+a text called label is "hi".
+a buffer called out is 64 bytes in size.
+copy "{label:x}" to out.
+Print "{out}".

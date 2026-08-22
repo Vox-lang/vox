@@ -1,0 +1,16 @@
+(Bug #78: a size the compiler cannot see - here it arrives on the command
+ line - reached mmap unchecked. 4611686018427387904 bytes is more than any
+ mapping can serve, so the allocation answered nothing at all, the nothing
+ was stored as the buffer, and the next read of it segfaulted. The bound
+ is now held at run time too: the buffer is made with no capacity, the
+ error flag is raised so `On error` can catch it, and the program carries
+ on - the truncation behaviour the manual gives every full fixed buffer.)
+
+a number called wanted is arguments's first as a number.
+a buffer called room is wanted bytes in size.
+On error print "that size was refused".
+
+Print "capacity: {room's capacity}".
+Set room to "hello".
+Print "size after writing: {room's size}".
+Print "full: {room's full}".

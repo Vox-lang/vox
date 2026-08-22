@@ -1,0 +1,4 @@
+cannot assign number to 'label', which is a text
+199_list_length_assigned_to_a_text.vox:7:5
+note: 'label' was declared as a text at 199_list_length_assigned_to_a_text.vox:6:15
+help: convert it explicitly:  label is counts's length as text.

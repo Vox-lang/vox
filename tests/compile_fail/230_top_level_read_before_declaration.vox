@@ -1,0 +1,10 @@
+(Bug #79. The headline repro: a top-level read written above the
+ variable's own declaration. It used to compile clean and print `0` -
+ the zeroed .bss slot, rendered by the integer formatter, because the
+ name resolved from the whole-program set while its type came from the
+ walk and was not there yet. The type had been forgotten, not defaulted:
+ LANGUAGE.md's bare-`Create` table gives a text the EMPTY STRING, so even
+ the reading in which the compiler is right wanted an empty line, not 0.)
+
+Print label.
+a text called label is "hello".

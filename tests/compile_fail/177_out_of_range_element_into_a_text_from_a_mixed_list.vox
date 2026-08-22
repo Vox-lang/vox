@@ -1,0 +1,7 @@
+(Bug #72: a mixed list proves no element type, so #54's check never fired
+ here - and the out-of-range read into a text segfaulted. A literal's
+ LENGTH is provable whether or not its elements share a type.)
+
+a list called oddments is [1, "b"].
+a text called n is element 5 of oddments.
+Print n.

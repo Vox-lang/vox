@@ -1,0 +1,37 @@
+(Bug #76's fix hoisted four copies of one type table into one. These are
+ the sibling arms that were already right — a list, a buffer, a text and a
+ value parameter, and a top-level map read outside any function. They must
+ answer exactly as they did before, or the hoist changed more than the one
+ missing `map` row it was written to add.)
+
+To 'describe the marks' with a list called marks.
+    Print marks's length,
+    Print marks,
+    Print marks's type.
+
+To 'describe the greeting' with a buffer called greeting.
+    Print greeting's size,
+    Print greeting's empty,
+    Print greeting's type.
+
+To 'describe the caption' with a text called caption.
+    Print caption,
+    Print caption's type.
+
+To 'describe whatever arrives' with a value called arrival.
+    Print arrival,
+    Print arrival's type.
+
+A list called marks is [1, 2].
+'describe the marks' of marks.
+
+A buffer called greeting is "hello".
+'describe the greeting' of greeting.
+
+'describe the caption' of "plain".
+'describe whatever arrives' of 7.
+
+A map called 'the class' is {"ada": 1, "bea": 2}.
+Print 'the class''s length.
+Print 'the class'.
+Exit 0.

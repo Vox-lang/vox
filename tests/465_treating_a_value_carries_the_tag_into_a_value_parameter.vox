@@ -1,0 +1,30 @@
+(Bug #69 in the call form LANGUAGE.md:419 documents - `<function> of each
+ <var> from <collection> treating <match> as <replacement>`. The tag the
+ clause hands the `value` parameter has to be the element's own, or the
+ replacement's when the substitution fires, whichever the runtime found.)
+
+To announce with a value called what.
+  print what.
+
+a value called probe is "a".
+announce of each item from [1, "a"] treating probe as "b".
+
+a value called nine is 9.
+announce of each item from [1, "a"] treating "a" as nine.
+
+(And the other direction: a `value` PARAMETER used as the clause's match,
+ whose tag is read from the frame it was passed into.)
+To swapin with a value called m.
+  print each item from [1, "-"] treating m as "X".
+
+a value called dash is "-".
+swapin of dash.
+a value called seven is 7.
+swapin of seven.
+
+(And a `value` replacement over a list whose element type IS static: the tag
+ that travels with the argument has to be the replacement's runtime one, not
+ the collection's static text - which is what stops 9 being read as a
+ pointer inside the callee.)
+a list called names is ["ann", "-"].
+announce of each name from names treating "-" as nine.

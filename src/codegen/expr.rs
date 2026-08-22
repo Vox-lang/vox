@@ -25,8 +25,20 @@ impl CodeGenerator {
             // A string literal is text, unconditionally - never resolved
             // against a same-spelled variable's type (BUGS_FOUND #19).
             Expr::StringLit(_) => false,
+            // A bare name is a variable if one is in scope, and otherwise a
+            // zero-argument call (plan 270 G4) - so its float-ness comes from
+            // the same two places, in the same order, that `infer_expr_type`'s
+            // own Identifier arm consults. Without the second, a declared
+            // `float` return printed by its bare name was not seen as a float
+            // and PRINT_INT rendered its bit pattern (BUGS_FOUND #67); the
+            // spelling with a connector took the FunctionCall arm below and
+            // was right all along.
             Expr::Identifier(name) => {
-                self.variable_types.get(name) == Some(&VarType::Float)
+                self.variable_types
+                    .get(name)
+                    .cloned()
+                    .or_else(|| self.zero_arg_func_return_type(name))
+                    == Some(VarType::Float)
             }
             // A float field reads as its bit pattern, exactly like a float
             // variable's slot, so it must take the same float paths.
@@ -48,6 +60,15 @@ impl CodeGenerator {
                     _ => self.is_float_expr(left) || self.is_float_expr(right),
                 }
             }
+            // `not` answers a boolean, never a float, whatever it is applied
+            // to - the same rule the `BinaryOp` arm above states for `and` and
+            // `or`, and the one `prescan_expr_tag` in codegen/tags.rs already
+            // spells out ("Logical negation is always a boolean, regardless of
+            // the operand's type"). Only `Negate` carries its operand's type
+            // through: `-x` really does have `x`'s type. Reporting `not f` as a
+            // float printed a boolean 0 through the float path as `0.0`
+            // (BUGS_FOUND #88).
+            Expr::UnaryOp { op: UnaryOperator::Not, .. } => false,
             Expr::UnaryOp { operand, .. } => self.is_float_expr(operand),
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name))
@@ -356,11 +377,11 @@ impl CodeGenerator {
         self.emit(&format!("{}:", done_label));
     }
 
-    /// `treating <match> as <replacement>` over a subject that carries a
-    /// runtime type tag (bug #59). The subject is the loop variable, and over
-    /// a mixed list, a map's values, or a `value` it has no static type: the
-    /// only truth about what it holds is the per-slot tag. So the tag decides
-    /// the comparison, and the result carries a tag of its own.
+    /// `treating <match> as <replacement>` where at least one of the three
+    /// operands only knows its type at runtime (bugs #59 and #69). Over a
+    /// mixed list, a map's values, or a `value`, the only truth about what a
+    /// slot holds is the tag it carries: so the tags decide the comparison,
+    /// and the result carries a tag of its own.
     ///
     /// Three answers, in the order the hardware finds them:
     ///
@@ -378,6 +399,15 @@ impl CodeGenerator {
     /// 3. The tags agree and the values are equal — the substitution fires and
     ///    the result is the replacement, tagged as the replacement.
     ///
+    /// Where the match's tag is itself a runtime one — a `value` as the match
+    /// (#69) — both the tag test and the choice between the two comparisons
+    /// become runtime branches, because at emit time there is nothing to
+    /// choose them by. That is the whole of #69: with the match's tag missing,
+    /// the clause used to fall back to the static path, which compares by the
+    /// *subject's* static type — bytes for a text subject (so a `value`
+    /// holding a number was dereferenced as a `char*`) and untagged pointers
+    /// for a mixed one (so a text element printed as its address).
+    ///
     /// Leaves the value in rax and its tag in r11, the same contract a mixed
     /// element read has (`expr_leaves_tag_in_r11`), so Print and the append
     /// and value-passing paths dispatch on it exactly as they do for a bare
@@ -390,55 +420,84 @@ impl CodeGenerator {
     ) {
         let skip_label = self.new_label("treating_tagged_skip");
         let done_label = self.new_label("treating_tagged_done");
-        let tag_source = self
-            .runtime_tag_source(value)
+        let subject_tag = self
+            .treating_subject_tag(value)
             .expect("the tagged path is only taken for a subject that has a tag");
         let match_tag = self
-            .emit_time_expr_tag(match_value)
-            .expect("the tagged path is only taken for a statically tagged match");
+            .treating_clause_tag(match_value)
+            .expect("the tagged path is only taken for a match that has a tag");
         let replacement_tag = self
-            .emit_time_expr_tag(replacement)
-            .expect("the tagged path is only taken for a statically tagged replacement");
+            .treating_clause_tag(replacement)
+            .expect("the tagged path is only taken for a replacement that has a tag");
 
         self.generate_expr(value);
-        if let Some(operand) = tag_source.shadow_operand() {
-            self.emit_indent(&format!(
-                "movzx r11, byte {}  ; subject tag (shadow slot)", operand
-            ));
-        }
+        self.emit_tag_into_r11(&subject_tag, "subject");
         // Both halves go on the stack: r11 survives only until the next call,
         // and the comparison below can be one (`_str_eq`).
         self.emit_indent("push rax  ; subject value");
         self.emit_indent("push r11  ; subject tag");
 
-        self.emit_indent(&format!("cmp r11, {}  ; subject tag == match tag?", match_tag));
-        self.emit_indent(&format!(
-            "jne {}  ; different types can never be equal", skip_label
-        ));
+        match &match_tag {
+            ClauseTag::Static(match_tag) => {
+                self.emit_indent(&format!("cmp r11, {}  ; subject tag == match tag?", match_tag));
+                self.emit_indent(&format!(
+                    "jne {}  ; different types can never be equal", skip_label
+                ));
 
-        if match_tag == TAG_STRING {
-            // Same tag means the subject really is a pointer to bytes, so
-            // comparing by content is safe here in a way it never was on the
-            // static path.
-            self.generate_expr(match_value);
-            self.emit_indent("mov rsi, rax  ; match text");
-            self.emit_indent("mov rdi, [rsp+8]  ; subject text");
-            self.emit_indent("call _str_eq");
-            self.emit_indent("test rax, rax");
-            self.emit_indent(&format!("jz {}", skip_label));
-            self.uses_strings = true;
-        } else {
-            self.generate_expr(match_value);
-            self.emit_indent("mov rbx, rax  ; match value");
-            self.emit_indent("mov rax, [rsp+8]  ; subject value");
-            self.emit_indent("cmp rax, rbx");
-            self.emit_indent(&format!("jne {}", skip_label));
+                if *match_tag == TAG_STRING {
+                    // Same tag means the subject really is a pointer to bytes,
+                    // so comparing by content is safe here in a way it never
+                    // was on the static path.
+                    self.generate_expr(match_value);
+                    self.emit_indent("mov rsi, rax  ; match text");
+                    self.emit_indent("mov rdi, [rsp+8]  ; subject text");
+                    self.emit_indent("call _str_eq");
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent(&format!("jz {}", skip_label));
+                    self.uses_strings = true;
+                } else {
+                    self.generate_expr(match_value);
+                    self.emit_indent("mov rbx, rax  ; match value");
+                    self.emit_indent("mov rax, [rsp+8]  ; subject value");
+                    self.emit_indent("cmp rax, rbx");
+                    self.emit_indent(&format!("jne {}", skip_label));
+                }
+            }
+            // A `value` as the match: its tag arrives with its payload, so the
+            // two questions the static tag answered at emit time - do the tags
+            // agree, and are these bytes or registers - are asked here instead
+            // (#69).
+            ClauseTag::Runtime(_) => {
+                let bytes_label = self.new_label("treating_tagged_bytes");
+                let fired_label = self.new_label("treating_tagged_fired");
+                self.generate_expr(match_value);
+                self.emit_tag_into_r11(&match_tag, "match");
+                self.emit_indent("mov rbx, [rsp]  ; subject tag");
+                self.emit_indent("cmp r11, rbx  ; subject tag == match tag?");
+                self.emit_indent(&format!(
+                    "jne {}  ; different types can never be equal", skip_label
+                ));
+                self.emit_indent(&format!("cmp r11, {}  ; text compares by bytes", TAG_STRING));
+                self.emit_indent(&format!("je {}", bytes_label));
+                self.emit_indent("mov rbx, [rsp+8]  ; subject value");
+                self.emit_indent("cmp rax, rbx");
+                self.emit_indent(&format!("jne {}", skip_label));
+                self.emit_indent(&format!("jmp {}", fired_label));
+                self.emit(&format!("{}:", bytes_label));
+                self.emit_indent("mov rsi, rax  ; match text");
+                self.emit_indent("mov rdi, [rsp+8]  ; subject text");
+                self.emit_indent("call _str_eq");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", skip_label));
+                self.uses_strings = true;
+                self.emit(&format!("{}:", fired_label));
+            }
         }
 
         // Fired: the replacement brings its own tag.
         self.emit_indent("add rsp, 16  ; discard the saved subject");
         self.generate_expr(replacement);
-        self.emit_indent(&format!("mov r11, {}  ; replacement tag", replacement_tag));
+        self.emit_tag_into_r11(&replacement_tag, "replacement");
         self.emit_indent(&format!("jmp {}", done_label));
 
         // Did not fire: the element as it was, tag and all.
@@ -446,6 +505,25 @@ impl CodeGenerator {
         self.emit_indent("pop r11  ; subject tag");
         self.emit_indent("pop rax  ; subject value");
         self.emit(&format!("{}:", done_label));
+    }
+
+    /// Put a `treating` operand's tag in r11, immediately after its value has
+    /// been emitted into rax. A static tag is a constant; a runtime one is
+    /// read from the `value`'s shadow slot, or is already in r11 because the
+    /// read that produced the payload left it there.
+    fn emit_tag_into_r11(&mut self, tag: &ClauseTag, role: &str) {
+        match tag {
+            ClauseTag::Static(tag) => {
+                self.emit_indent(&format!("mov r11, {}  ; {} tag", tag, role));
+            }
+            ClauseTag::Runtime(src) => {
+                if let Some(operand) = src.shadow_operand() {
+                    self.emit_indent(&format!(
+                        "movzx r11, byte {}  ; {} tag (shadow slot)", operand, role
+                    ));
+                }
+            }
+        }
     }
 
     pub(crate) fn generate_expr(&mut self, expr: &Expr) {
@@ -1105,6 +1183,13 @@ impl CodeGenerator {
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
                 self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                // A miss yields the number 0, whatever the collection holds
+                // (LANGUAGE.md: "the lookup yields 0", "returns 0"). It is the
+                // pointer-typed CONSUMER that must not take that 0 as an
+                // address - see `emit_empty_value_if_missed`, which every such
+                // consumer calls (docs/BUGS_FOUND.md #91). Re-typing it here
+                // instead would hand a text pointer to a `number` destination,
+                // which is the same disease one type further on.
                 self.emit_indent("xor rax, rax  ; return 0 on error");
                 if is_mixed {
                     self.emit_indent("xor r11d, r11d  ; integer tag on error path");
@@ -1278,6 +1363,9 @@ impl CodeGenerator {
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
                             self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            // `first`/`last` of an empty list misses like any
+                            // other fallible read: the number 0 here, re-typed
+                            // by the consumer (#91).
                             self.emit_indent("xor rax, rax  ; return 0 on error");
                             if is_mixed {
                                 self.emit_indent("xor r11d, r11d  ; integer tag on error path");
@@ -1311,6 +1399,9 @@ impl CodeGenerator {
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
                             self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            // `first`/`last` of an empty list misses like any
+                            // other fallible read: the number 0 here, re-typed
+                            // by the consumer (#91).
                             self.emit_indent("xor rax, rax  ; return 0 on error");
                             if is_mixed {
                                 self.emit_indent("xor r11d, r11d  ; integer tag on error path");
@@ -2296,6 +2387,13 @@ impl CodeGenerator {
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
                 self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                // A miss yields the number 0, whatever the collection holds
+                // (LANGUAGE.md: "the lookup yields 0", "returns 0"). It is the
+                // pointer-typed CONSUMER that must not take that 0 as an
+                // address - see `emit_empty_value_if_missed`, which every such
+                // consumer calls (docs/BUGS_FOUND.md #91). Re-typing it here
+                // instead would hand a text pointer to a `number` destination,
+                // which is the same disease one type further on.
                 self.emit_indent("xor rax, rax  ; return 0 on error");
                 if is_mixed {
                     self.emit_indent("xor r11d, r11d  ; integer tag on error path");
@@ -2474,6 +2572,13 @@ impl CodeGenerator {
                 BinaryOperator::Modulo if self.is_float_expr(left) || self.is_float_expr(right) => Some(VarType::Float),
                 _ => Some(VarType::Integer),
             },
+            // A `not` is boolean-valued whatever its operand is, so it types
+            // as an integer here - the convention `BoolLit`, `TypeCheck` and
+            // the comparison operators above all follow. Returning the
+            // OPERAND's type told `Print not t` that a boolean was text, and it
+            // emitted a text print of the boolean 0 - dereferencing address 0
+            // (BUGS_FOUND #88). `Negate` keeps propagating: `-x` has `x`'s type.
+            Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(VarType::Integer),
             Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
             Expr::TreatingAs { value, .. } => self.infer_expr_type(value),
             Expr::Cast { target_type, .. } => match target_type {

@@ -1,0 +1,8 @@
+(Bug #72: the spelling 0.4.9's own help line recommended. The key is not in
+ the map's literal, so the read yields the number 0 - and 0 copied into a
+ text slot was then dereferenced as a text pointer: segfault, exit 139,
+ with no diagnostic at all.)
+
+a map called guess is {"a": "t"}.
+a text called n is guess's "absent".
+Print n.

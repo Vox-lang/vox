@@ -1,0 +1,7 @@
+pi to twenty-five places: same double
+3.141592653589793
+twenty nines below one: rounds to one
+twenty nines with no point: rounds to ten to the twenty
+twenty-two digits around a point: same double
+twenty-two digits around a point: still positive
+a point twenty-five places away: same double

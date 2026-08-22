@@ -1,0 +1,19 @@
+(Bug #88's other side: only `not` is a boolean. `-x` really does have `x`'s
+ type, so `is_float_expr` and `infer_expr_type` must keep propagating the
+ operand's type through `Negate` - a negated float still prints as a float.
+ The three paths that were already right are pinned here too: a bare `not`
+ in an `if` condition, `is not empty`, and `is not a <type>`.)
+
+a float called ratio is 2.5.
+Print -ratio.
+
+a number called depth is 7.
+Print -depth.
+
+a text called greeting is "hi".
+if not greeting, print "not fired", otherwise print "silent".
+if greeting is not empty, print "greeting has content", otherwise print "greeting is blank".
+if greeting is not a number, print "greeting is not a number", otherwise print "greeting is a number".
+
+a boolean called ready is false.
+if not ready, print "not ready fired", otherwise print "ready".

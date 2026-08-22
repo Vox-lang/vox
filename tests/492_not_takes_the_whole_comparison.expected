@@ -1,0 +1,5 @@
+equality: fires
+ordering: fires
+emptiness: silent
+property: fires
+equal pair: silent

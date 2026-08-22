@@ -1,0 +1,59 @@
+(docs/BUGS_FOUND.md #90 — the control. Everything a buffer parameter already
+ did right, kept right: an in-place byte write reaches the caller, growth
+ that fits inside the first allocation was always visible, a fixed-size
+ buffer still refuses to grow and sets the error flag, `Set` on a buffer
+ parameter still copies bytes into the caller's buffer rather than rebinding
+ the name, declaring a buffer of the parameter's own name inside the function
+ names a buffer of that function's own and leaves the caller's alone, and
+ growth at the top level is untouched by any of this. This file passes on
+ both sides of the fix, which is the point of it.)
+
+To 'poke' with a buffer called sink.
+    Set byte 1 of sink to 65.
+
+To 'pad a little' with a buffer called sink.
+    a number called appended is 0.
+    While appended is less than 20,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+
+To 'overfill' with a buffer called sink.
+    Set byte 9000 of sink to 65.
+
+To 'refill' with a buffer called sink.
+    Set sink to "much longer than the seed".
+
+To 'shadow and grow' with a buffer called sink.
+    a buffer called sink is "mine".
+    a number called added is 0.
+    While added is less than 600,
+        append "0123456789" to sink,
+        Set added to added add 1.
+    Print "the callee's own buffer: {sink's size}".
+
+a buffer called poked is "start".
+'poke' of poked.
+Print "an in-place write: {poked}".
+
+a buffer called nudged is "start".
+'pad a little' of nudged.
+Print "growth inside the first allocation: {nudged's size}".
+
+a buffer called fixed is 100 bytes.
+'overfill' of fixed.
+On error print "a fixed buffer still refuses".
+
+a buffer called refilled is "start".
+'refill' of refilled.
+Print "Set through a parameter: {refilled}".
+
+a buffer called shadowed is "start".
+'shadow and grow' of shadowed.
+Print "and the caller keeps its own: {shadowed's size}".
+
+a buffer called topmost is "start".
+a number called appended is 0.
+While appended is less than 600,
+    append "0123456789" to topmost,
+    Set appended to appended add 1.
+Print "grown at the top level: {topmost's size}".

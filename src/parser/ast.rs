@@ -958,6 +958,61 @@ pub fn collect_widened_lists(stmts: &[Statement]) -> std::collections::HashSet<S
     out
 }
 
+/// Every function definition hidden inside `stmt`'s own block bodies, at any
+/// depth, in source order. `stmt` itself is never included - the caller has
+/// already seen it.
+///
+/// A `To` written while a clause is still open is parsed into that clause's
+/// body: the termination rule (LANGUAGE.md, "The termination rule") names a
+/// period and a blank line as the closers, and a definition is a statement
+/// like any other. Codegen then compiles that definition perfectly well - a
+/// `FunctionDef` is emitted into `functions_section` wherever the walk meets
+/// it - but every pre-pass that answers "what is this function's signature?"
+/// scanned the top-level list flat and so never saw it. A call was compiled
+/// against an empty signature, which spells "every parameter is one word":
+/// a `value` parameter's tag word was never pushed and the callee read its
+/// tag from a register the caller never wrote (bug #73).
+///
+/// Paired with a scan of the top-level list, this is the ONE answer to
+/// "which statements define a function". A new pre-pass that needs that
+/// answer should use both halves rather than growing a fourth flat scan.
+pub fn nested_function_defs(stmt: &Statement) -> Vec<&Statement> {
+    let mut out = Vec::new();
+    walk_nested_function_defs(stmt, &mut out);
+    out
+}
+
+fn walk_nested_function_defs<'a>(stmt: &'a Statement, out: &mut Vec<&'a Statement>) {
+    fn walk<'a>(stmts: &'a [Statement], out: &mut Vec<&'a Statement>) {
+        for stmt in stmts {
+            if matches!(stmt, Statement::FunctionDef { .. }) {
+                out.push(stmt);
+            }
+            // A definition can be nested inside another definition's body,
+            // so the descent continues through a `FunctionDef` too.
+            walk_nested_function_defs(stmt, out);
+        }
+    }
+    match stmt {
+        Statement::If { then_block, else_if_blocks, else_block, .. } => {
+            walk(then_block, out);
+            for (_, block) in else_if_blocks {
+                walk(block, out);
+            }
+            if let Some(block) = else_block {
+                walk(block, out);
+            }
+        }
+        Statement::While { body, .. }
+        | Statement::ForRange { body, .. }
+        | Statement::ForEach { body, .. }
+        | Statement::Repeat { body, .. }
+        | Statement::FunctionDef { body, .. } => walk(body, out),
+        Statement::OnError { actions } => walk(actions, out),
+        _ => {}
+    }
+}
+
 /// True if any function in the program widens a list it was HANDED - it
 /// appends to, or element-sets, one of its own parameters.
 ///
@@ -997,6 +1052,184 @@ pub fn any_function_widens_a_parameter(stmts: &[Statement]) -> bool {
             let names: std::collections::HashSet<&str> =
                 params.iter().map(|(n, _)| n.as_str()).collect();
             body_widens(body, &names)
+        }
+        _ => false,
+    })
+}
+
+/// Every map name some statement in the program can insert a key INTO -
+/// `Set m's "k" to <value>.`, which is `Statement::MapSet`.
+///
+/// Bug #72 needs to know whether a map's key set is still the one its
+/// declaration literal wrote, because an absent key is what makes a read
+/// yield the number 0 (LANGUAGE.md:2429) rather than a value of the map's
+/// type. One `Set` anywhere can put the very key a read asks for into the
+/// map, so a name in this set gets no key-set proof at all.
+///
+/// Aliasing is deliberately NOT collected here.
+/// `collect_widened_lists` above already collects every name copied into
+/// or out of another variable, returned, or handed to a call - that walk
+/// is name-keyed and type-blind, so it catches an aliased map too - and
+/// the analyzer requires a name to be absent from BOTH sets before it
+/// offers the proof.
+///
+/// Name-keyed and whole-program in exactly the sense
+/// `collect_widened_lists` is, and for the same reason: a read early in
+/// the file must get the same answer as one written after the `Set`.
+pub fn collect_map_key_writers(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    fn walk(stmts: &[Statement], out: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Statement::MapSet { map, .. } => {
+                    out.insert(map.clone());
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    walk(then_block, out);
+                    for (_, block) in else_if_blocks {
+                        walk(block, out);
+                    }
+                    if let Some(block) = else_block {
+                        walk(block, out);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. }
+                | Statement::FunctionDef { body, .. } => walk(body, out),
+                Statement::OnError { actions } => walk(actions, out),
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = std::collections::HashSet::new();
+    walk(stmts, &mut out);
+    out
+}
+
+/// True if any function in the program inserts a key into a map it was
+/// HANDED - `Set <one of my own parameters>'s "k" to <value>.`
+///
+/// The map half of `any_function_widens_a_parameter`, blunt for the same
+/// reason: the `Set` names the parameter, and the call that passed the
+/// caller's map may sit in an expression position no scan reaches. While
+/// this is true, no map anywhere gets a key-set proof. The cost is a
+/// diagnostic in a program that has such a helper; the alternative is a
+/// proof a call could have invalidated (bug #72).
+/// Bug #72: the shape every literal collection declaration writes - a map
+/// literal's key set, a list literal's length - for the names where that
+/// shape is unambiguous.
+///
+/// A name is offered ONLY if the whole program declares it exactly once.
+/// Two declarations mean two shapes, and which one is live at a read
+/// depends on control flow this walk does not follow: a function defined
+/// above a second declaration of the same global reads whichever map the
+/// call site left in the slot, not the one textually above it. Taking the
+/// most recent declaration's word for it turns the absence proof from a
+/// missed diagnostic into a WRONG one - it would accept a text read into a
+/// number and print an address. So the proof is withheld instead, the same
+/// "can't prove it, allow it" policy as the rest of this family.
+///
+/// Filled once, BEFORE the analyzer's walk, for the reason
+/// `collect_widened_lists` is filled before it: a read must get the same
+/// answer wherever in the file it sits.
+///
+/// A map literal whose keys are not all string literals answers no key set
+/// at all - a `"{k}"` key is dynamic, so the set would be incomplete and no
+/// key could be proven absent from it. A list literal always answers its
+/// length, mixed elements included: a length is provable whether or not the
+/// elements share a type.
+pub fn collect_literal_collection_shapes(
+    stmts: &[Statement],
+) -> (
+    std::collections::HashMap<String, std::collections::HashSet<String>>,
+    std::collections::HashMap<String, usize>,
+) {
+    use std::collections::{HashMap, HashSet};
+
+    fn walk(
+        stmts: &[Statement],
+        counts: &mut HashMap<String, usize>,
+        keys: &mut HashMap<String, HashSet<String>>,
+        lens: &mut HashMap<String, usize>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, value, .. } => {
+                    *counts.entry(name.clone()).or_insert(0) += 1;
+                    match value {
+                        Some(Expr::MapLit { pairs }) => {
+                            let mut set = HashSet::new();
+                            let every_key_is_literal = pairs.iter().all(|(k, _)| match k {
+                                Expr::StringLit(key) => {
+                                    set.insert(key.clone());
+                                    true
+                                }
+                                _ => false,
+                            });
+                            if every_key_is_literal {
+                                keys.insert(name.clone(), set);
+                            }
+                        }
+                        Some(Expr::ListLit { elements }) => {
+                            lens.insert(name.clone(), elements.len());
+                        }
+                        _ => {}
+                    }
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    walk(then_block, counts, keys, lens);
+                    for (_, block) in else_if_blocks {
+                        walk(block, counts, keys, lens);
+                    }
+                    if let Some(block) = else_block {
+                        walk(block, counts, keys, lens);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. }
+                | Statement::FunctionDef { body, .. } => walk(body, counts, keys, lens),
+                Statement::OnError { actions } => walk(actions, counts, keys, lens),
+                _ => {}
+            }
+        }
+    }
+
+    let mut counts = HashMap::new();
+    let mut keys = HashMap::new();
+    let mut lens = HashMap::new();
+    walk(stmts, &mut counts, &mut keys, &mut lens);
+    keys.retain(|name, _| counts.get(name) == Some(&1));
+    lens.retain(|name, _| counts.get(name) == Some(&1));
+    (keys, lens)
+}
+
+pub fn any_function_writes_a_map_parameter(stmts: &[Statement]) -> bool {
+    fn body_writes(body: &[Statement], params: &std::collections::HashSet<&str>) -> bool {
+        body.iter().any(|stmt| match stmt {
+            Statement::MapSet { map, .. } => params.contains(map.as_str()),
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                body_writes(then_block, params)
+                    || else_if_blocks.iter().any(|(_, b)| body_writes(b, params))
+                    || else_block.as_ref().is_some_and(|b| body_writes(b, params))
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => body_writes(body, params),
+            Statement::OnError { actions } => body_writes(actions, params),
+            _ => false,
+        })
+    }
+
+    stmts.iter().any(|stmt| match stmt {
+        Statement::FunctionDef { params, body, .. } => {
+            let names: std::collections::HashSet<&str> =
+                params.iter().map(|(n, _)| n.as_str()).collect();
+            body_writes(body, &names)
         }
         _ => false,
     })
@@ -1109,6 +1342,148 @@ fn walk_widened_lists(stmts: &[Statement], out: &mut std::collections::HashSet<S
             }
             Statement::Print { value, .. } => {
                 note_call_args(value, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The bound a fixed buffer's size must satisfy: at least one byte, at most
+/// 1 GiB (LANGUAGE.md, "Fixed-Size Buffers").
+///
+/// It is a memory-safety rule rather than a formatting one, so the two
+/// numbers live here, once, where every site that can decide a size reads
+/// the same pair: the parser for a literal it can see, the analyzer for a
+/// named size it can prove, and codegen for the runtime guard on a size
+/// nobody can prove (docs/BUGS_FOUND.md #78). Before #78 the bound existed
+/// only in the parser's `Expr::IntegerLit` arm, so naming the size in a
+/// variable walked straight past it.
+pub const MIN_BUFFER_SIZE: i64 = 1;
+pub const MAX_BUFFER_SIZE: i64 = 1024 * 1024 * 1024;
+
+/// The integer this expression evaluates to, when the whole expression is
+/// decidable without running the program - a literal, a negation, or the
+/// three arithmetic operators whose answer on two integers is another
+/// integer.
+///
+/// `None` means "not provable here", never "not an integer": `divide` and
+/// `modulo` are deliberately absent (their answer on two integers is not
+/// always one, LANGUAGE.md's Arithmetic section), and every operation is
+/// checked, so an overflow answers `None` rather than a wrapped number
+/// nobody wrote. Callers must treat `None` as "allow it" - the same
+/// can't-prove-it-so-allow-it policy the analyzer's type checks use.
+pub fn constant_integer(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::IntegerLit(n) => Some(*n),
+        Expr::UnaryOp { op: UnaryOperator::Negate, operand } => {
+            constant_integer(operand)?.checked_neg()
+        }
+        Expr::BinaryOp { left, op, right } => {
+            let left = constant_integer(left)?;
+            let right = constant_integer(right)?;
+            match op {
+                BinaryOperator::Add => left.checked_add(right),
+                BinaryOperator::Subtract => left.checked_sub(right),
+                BinaryOperator::Multiply => left.checked_mul(right),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Every name that holds one fixed integer for the whole program: declared
+/// exactly once with an initializer `constant_integer` can evaluate, and
+/// never written again anywhere in the file.
+///
+/// A single write - an assignment, an increment, a second declaration, a
+/// loop variable, a parameter of that name - drops the name from the
+/// answer entirely, whatever the write would have stored. That is the safe
+/// direction, and it is why this is a whole-program pre-pass rather than
+/// something tracked as the walk proceeds: a value tracked mid-walk would
+/// be whatever the last branch happened to write, and a size proved from a
+/// branch nobody may take would refuse a program that is legal on the
+/// other path. Losing the proof costs a diagnostic; a wrong proof costs a
+/// correct program (docs/BUGS_FOUND.md #78).
+///
+/// Like `collect_widened_lists`, this descends into function bodies: a
+/// write is a write no matter whose name reached it.
+pub fn collect_constant_numbers(stmts: &[Statement]) -> std::collections::HashMap<String, i64> {
+    let mut declared: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
+    walk_constant_numbers(stmts, &mut declared, &mut written);
+    declared.retain(|name, _| !written.contains(name));
+    declared
+}
+
+fn walk_constant_numbers(
+    stmts: &[Statement],
+    declared: &mut std::collections::HashMap<String, i64>,
+    written: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarDecl { name, var_type, value } => {
+                // A second declaration of the same name is itself a write:
+                // the two initializers can differ, and nothing here decides
+                // which one a later read sees.
+                if declared.contains_key(name) {
+                    written.insert(name.clone());
+                }
+                match (var_type, value.as_ref().and_then(constant_integer)) {
+                    (None | Some(Type::Integer), Some(n)) => {
+                        declared.insert(name.clone(), n);
+                    }
+                    _ => {
+                        written.insert(name.clone());
+                    }
+                }
+            }
+            Statement::Assignment { name, .. }
+            | Statement::ValueRetype { name, .. }
+            | Statement::Increment { name }
+            | Statement::Decrement { name }
+            | Statement::Allocate { name, .. }
+            | Statement::BufferDecl { name, .. }
+            | Statement::TimerDecl { name }
+            | Statement::FileOpen { name, .. } => {
+                written.insert(name.clone());
+            }
+            Statement::GetTime { into } => {
+                written.insert(into.clone());
+            }
+            Statement::FlagSchemaDecl { name, .. } => {
+                // A flag's value arrives from the command line at run time.
+                written.insert(name.clone());
+            }
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                walk_constant_numbers(then_block, declared, written);
+                for (_, block) in else_if_blocks {
+                    walk_constant_numbers(block, declared, written);
+                }
+                if let Some(block) = else_block {
+                    walk_constant_numbers(block, declared, written);
+                }
+            }
+            Statement::ForRange { variable, body, .. } => {
+                written.insert(variable.clone());
+                walk_constant_numbers(body, declared, written);
+            }
+            Statement::ForEach { variable, body, .. } => {
+                written.insert(variable.clone());
+                walk_constant_numbers(body, declared, written);
+            }
+            Statement::While { body, .. } | Statement::Repeat { body, .. } => {
+                walk_constant_numbers(body, declared, written);
+            }
+            Statement::FunctionDef { params, body, .. } => {
+                for (param, _) in params {
+                    written.insert(param.clone());
+                }
+                walk_constant_numbers(body, declared, written);
+            }
+            Statement::OnError { actions } => {
+                walk_constant_numbers(actions, declared, written);
             }
             _ => {}
         }

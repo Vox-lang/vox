@@ -1,0 +1,67 @@
+(Bug #74's other half. Every sentence the fix now refuses has a documented
+ way to say what it meant, and both ways answer correctly. The refused
+ spellings are tests/compile_fail/182-198; this is what those programs
+ become, and what they print is the answer their authors were after.)
+
+a list called counts is [10, 20, 30].
+a map called ages is {"ada": 36, "bea": 41}.
+
+(`a text called t is counts's length.` segfaulted on the length read as a
+ pointer. Either declare the type the property has...)
+a number called tally is counts's length.
+print tally.
+(...or convert it, the way the diagnostic's help line spells it.)
+a text called spelled is counts's length as text.
+print spelled.
+
+(`a list called L is counts's length.` walked a list header at address 3.)
+a number called 'how many' is counts's length.
+print 'how many'.
+
+(`a text called t is ledger's capacity.` faulted the same way.)
+a buffer called ledger is 16 bytes in size.
+a number called room is ledger's capacity.
+print room.
+a text called 'room spelled' is ledger's capacity as text.
+print 'room spelled'.
+
+(`a number called n is counts's empty.` put a boolean in a number's slot. It
+ happened to print 0, which is why nobody noticed; the boolean is what the
+ manual's table promises, and the cast is what says otherwise out loud.)
+a boolean called drained is counts's empty.
+print drained.
+a number called 'drained as a number' is counts's empty as a number.
+print 'drained as a number'.
+
+(`a boolean called done is counts's length.` printed 3 out of a boolean.)
+a boolean called 'any at all' is counts's empty.
+print 'any at all'.
+
+(`a number called what is gauge's type.` printed the literal's address.
+ `type` is text.)
+a number called gauge is 4.
+a text called described is gauge's type.
+print described.
+
+(`a text called t is ages's keys.` printed nothing at all - a list header
+ read as a string. Keys are a list.)
+a list called who is ages's keys.
+print who.
+
+(`a text called t is gauge's even.` faulted on address 1.)
+a boolean called halves is gauge's even.
+print halves.
+a text called 'halves spelled' is gauge's even as text.
+print 'halves spelled'.
+
+(The three sites past the declaration - an argument, a return and a `Set` -
+ each written so the types agree.)
+To 'shout' with a text called word. Return a text, word.
+To 'count' with a list called items. Return a number, items's length.
+
+print 'shout' of counts's length as text.
+print 'count' of counts.
+
+a text called label is "start".
+Set label to counts's length as text.
+print label.

@@ -1,0 +1,4 @@
+cannot pass a number to 'word', which 'shout' declares as text
+193_list_length_as_a_text_argument.vox:6:31
+note: a parameter's type is fixed by the signature, so 'word' can only be given text
+help: convert it at the call site - `counts's length as text` - or declare 'word' as a number

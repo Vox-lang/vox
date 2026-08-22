@@ -1,0 +1,30 @@
+(Bug #66, the sinks beyond a bare Print: a forward-declared global reaches a
+ format hole, a property, arithmetic, an append and a copy into a local, and
+ each one asked the same broken question - "what type is this name?" - of a
+ table the walk had not filled yet. `Print "{label}"` printed the address
+ inside the text; `names's first` printed the element's address; float
+ arithmetic read the bits as an integer; appending to a forward buffer wrote
+ through a slot typed as a number.)
+
+To 'use them all'.
+    Print "interp {label}".
+    Print names's first.
+    a float called doubled is ratio multiply 2.0.
+    Print doubled.
+    Append "DEF" to payload.
+    Print payload.
+    Append 4 to items.
+    Print items.
+    a text called copied is label.
+    Print copied.
+    Print anything.
+    Print label's type.
+
+a text called label is "hello".
+a list called names is ["alpha", "beta"].
+a float called ratio is 2.5.
+a buffer called payload is "ABC".
+a list called items is [1, 2, 3].
+a value called anything is "vv".
+
+'use them all'.

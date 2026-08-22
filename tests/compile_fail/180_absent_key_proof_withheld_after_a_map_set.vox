@@ -1,0 +1,8 @@
+(Bug #72's guard: the key set is only the literal's while nothing can add
+ to it. A `Set` puts "absent" in the map, so the read is NOT a miss - it
+ answers the text that was set - and #54's rejection must still stand.)
+
+a map called guess is {"a": "t"}.
+Set guess's "absent" to "here".
+a number called n is guess's "absent".
+Print n.

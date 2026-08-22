@@ -1,0 +1,7 @@
+(Bug #72: index 5 is past the end of a two-element literal, so the read
+ yields the number 0 - LANGUAGE.md:2855 - and 0 copied into a text slot was
+ dereferenced as a text pointer: segfault, exit 139, no diagnostic.)
+
+a list called words is ["a", "b"].
+a text called n is element 5 of words.
+Print n.

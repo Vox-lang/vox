@@ -1,0 +1,13 @@
+(Bug #76, the headline: a `map` parameter fell to VarType::Unknown, and
+ every property dispatch reads Unknown as the FILE branch, so `'s length`
+ emitted a call to `_file_size`. That symbol is only linked when the
+ program uses files, so this program did not fail to run — it failed to
+ ASSEMBLE, with no Vox diagnostic and a NASM error naming a symbol that
+ appears nowhere in the source. This test exists to prove it builds.)
+
+To 'count the entries' with a map called grades.
+    Print grades's length.
+
+A map called 'the class' is {"ada": 1, "bea": 2}.
+'count the entries' of 'the class'.
+Exit 0.

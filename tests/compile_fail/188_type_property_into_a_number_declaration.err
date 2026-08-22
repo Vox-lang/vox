@@ -1,0 +1,4 @@
+cannot initialise 'described', which is a number, with text
+188_type_property_into_a_number_declaration.vox:6:17
+note: a variable's type is fixed at its declaration, so 'described' can only be initialised with a number
+help: declare it as text - `a text called described is gauge's type.` - or convert it explicitly:  a number called described is gauge's type as a number.

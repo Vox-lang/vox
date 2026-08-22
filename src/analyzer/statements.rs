@@ -21,6 +21,29 @@ fn shared_top_level_label(stmt: &Statement) -> &'static str {
 }
 
 impl Analyzer {
+    /// File one definition under `key`: its existence, its parameter count,
+    /// its full signature, and the two questions #45 and #63 ask about its
+    /// body. Signatures are collected in a pre-pass, before the walk, so a
+    /// call to a function defined further down the file is judged exactly as
+    /// a call below the definition is.
+    ///
+    /// Shared by the scan of the top-level list and the sweep of definitions
+    /// nested inside an open clause, so the two can never disagree (bug #73).
+    fn register_function_definition(
+        &mut self,
+        key: String,
+        params: &[(String, Type)],
+        return_type: &Type,
+        body: &[Statement],
+    ) {
+        self.functions.insert(key.clone());
+        self.function_param_counts.insert(key.clone(), params.len());
+        self.function_signatures
+            .insert(key.clone(), (params.to_vec(), return_type.clone()));
+        self.record_untyped_result_function(key.clone(), return_type, body);
+        self.record_procedure(key, return_type, body);
+    }
+
     pub fn analyze(&mut self, program: &mut Program) {
         // A shared library has no `_start`, so top-level executable statements
         // would be generated into the discarded main body and silently dropped.
@@ -134,6 +157,28 @@ impl Analyzer {
         self.widened_lists = collect_widened_lists(&program.statements);
         self.functions_widen_lists = any_function_widens_a_parameter(&program.statements);
 
+        // Bug #72: the same question for a map's KEY set, which is what
+        // decides whether a read asks for a key the literal does not have -
+        // and so yields the number 0 (LANGUAGE.md:2429) rather than a value
+        // of the map's type. `collect_widened_lists` above already answers
+        // the aliasing half for maps too (it is name-keyed and type-blind),
+        // so only the insertion half needs its own scan.
+        self.map_key_writers = collect_map_key_writers(&program.statements);
+        self.functions_write_map_keys = any_function_writes_a_map_parameter(&program.statements);
+        // ...and the shapes themselves, whole-program and up front for the
+        // same reason: a read inside a function defined above a second
+        // declaration of the same global must not be judged against the
+        // key set that is textually nearest to it.
+        let (map_keys, list_lens) = collect_literal_collection_shapes(&program.statements);
+        self.map_literal_keys = map_keys;
+        self.list_literal_len = list_lens;
+
+        // Bug #78: which names hold one fixed integer for the whole
+        // program, so a buffer sized from one can be measured against the
+        // size bound at compile time. Whole-program and order-independent
+        // for the same reason as the list proof above.
+        self.number_constants = collect_constant_numbers(&program.statements);
+
         // Load and validate the thing registry before anything can consult it
         // for a size, an offset, or a field path (plan 310 §6, §10).
         self.load_things(program);
@@ -176,25 +221,7 @@ impl Analyzer {
                         current_lib.as_ref(),
                         name,
                     );
-                    self.functions.insert(key.clone());
-                    self.function_param_counts.insert(key.clone(), params.len());
-                    // Signatures are collected here, before the walk, so a
-                    // call to a function defined further down the file still
-                    // knows whether an argument is a thing to copy.
-                    self.function_signatures
-                        .insert(key.clone(), (params.clone(), return_type.clone()));
-                    // Bug #45: whether the result of a call has a type to
-                    // read is settled here too, for the same reason - a call
-                    // above the definition must be judged the same as one
-                    // below it.
-                    self.record_untyped_result_function(key.clone(), return_type, body);
-                    // Bug #63: whether a call has a result at all is settled
-                    // here too, for the same reason - a call above the
-                    // definition must be judged the same as one below it.
-                    // Two independent questions about the same definition:
-                    // #45 asks whether the result has a type to read, #63
-                    // whether there is a result at all.
-                    self.record_procedure(key, return_type, body);
+                    self.register_function_definition(key, params, return_type, body);
                 }
                 Statement::FlagSchemaDecl { name, value_type, .. } => {
                     self.flag_variables.insert(
@@ -220,6 +247,26 @@ impl Analyzer {
                     explicit_parse_seen = true;
                 }
                 _ => {}
+            }
+
+            // A definition the parser drew into an open clause's body is
+            // still a definition, and a call to it is judged against the same
+            // tables as a call to a top-level one: how many arguments it
+            // takes, whether a `thing` argument is copied, whether its result
+            // has a type to read (#45), and whether it has a result at all
+            // (#63). The codegen side of this sweep is what stops the call
+            // being emitted with the wrong ABI (bug #73); this side is what
+            // stops the analyzer judging it against a signature it never
+            // recorded.
+            for def in nested_function_defs(stmt) {
+                if let Statement::FunctionDef { name, params, return_type, body, .. } = def {
+                    let key = crate::codegen::make_function_label(
+                        self.shared_mode,
+                        current_lib.as_ref(),
+                        name,
+                    );
+                    self.register_function_definition(key, params, return_type, body);
+                }
             }
         }
 
@@ -278,8 +325,18 @@ impl Analyzer {
             }
         }
 
-        self.variables = self.global_variables.clone();
-        
+        // The top-level walk starts with NOTHING available and fills
+        // `variables` in declaration order, because top-level statements run
+        // in the order they are written: at line 1, a declaration on line 2
+        // has not happened yet (docs/BUGS_FOUND.md #79). This used to be
+        // seeded with `global_variables` - the whole-program set - which made
+        // every top-level name available from the very first statement, so
+        // `Print label.` above `a text called label is "hello".` compiled and
+        // printed the zeroed .bss slot through the integer formatter: `0`.
+        // A function body is the case that genuinely needs the whole-program
+        // set (a function runs when it is called, which is after the whole
+        // file has been read), and the FunctionDef arm seeds it there itself.
+        //
         // Second pass: analyze all statements
         for stmt in &program.statements {
             self.analyze_statement(stmt);
@@ -481,7 +538,7 @@ impl Analyzer {
                 // already-declared case is a reassignment that the type
                 // lock applies to; a genuinely new `x` is a real
                 // declaration and must infer/lock its type as usual.
-                let was_already_declared = self.is_variable_available(name);
+                let was_already_declared = self.is_variable_declared_anywhere(name);
                 // A second explicitly-typed declaration of an
                 // already-declared name is a redeclaration, not scoping:
                 // Vox has no block-level lexical scoping today - If/While/
@@ -759,7 +816,7 @@ impl Analyzer {
                 // one" - which it is decides whether this write gets
                 // type-checked at all, so capture it before the auto-declare
                 // below can change the answer.
-                let was_already_declared = self.is_variable_available(name);
+                let was_already_declared = self.is_variable_declared_anywhere(name);
                 // `elsewhere is origin.` on a name that holds a thing copies
                 // the whole thing into the storage it already has (plan 310
                 // §5); anything that is not a whole thing of that type is a
@@ -1412,6 +1469,11 @@ impl Analyzer {
                 self.variables.insert(name.clone());
                 self.buffer_variables.insert(name.clone());
                 self.analyze_expr(size);
+                // Every buffer spelling routes here - `is N bytes`, `with
+                // size N`, `of capacity N` and the sizeless dynamic form -
+                // so this is the one place the size bound can be a rule
+                // about sizes rather than about spellings (bug #78).
+                self.check_buffer_size(name, size);
                 self.deps.uses_heap = true;
             }
             
@@ -1477,8 +1539,31 @@ impl Analyzer {
                 self.track_identifier(list);
                 self.analyze_expr(value);
 
+                // Unlike every other target arm, this one asks what KIND the
+                // name is before it asks whether the name is available yet -
+                // and `buffer_variables`/`list_variables` are filled by the
+                // whole-program pre-pass, so both answer for a declaration
+                // this walk has not reached. That is how `append 1 to items.`
+                // above `a list called items is [].` walked past the
+                // availability check below and segfaulted in codegen on a
+                // list header that did not exist yet (docs/BUGS_FOUND.md
+                // #79). Order first, kind second.
+                if self.is_used_before_its_declaration(list) {
+                    self.push_used_before_declaration(list);
+                    return;
+                }
+
                 if self.is_buffer_variable(list) {
-                    match value {
+                    // A `treating` clause reports the same static type a bare
+                    // read of its subject does (#59), so an append carrying
+                    // one is judged by the subject - `append each name from
+                    // names treating "-" as "anon" to built` is the same
+                    // append into `built` that it is without the clause (#70).
+                    let source = match value {
+                        Expr::TreatingAs { value: subject, .. } => subject.as_ref(),
+                        plain => plain,
+                    };
+                    match source {
                         Expr::Identifier(source) => {
                             if !self.is_variable_available(source) {
                                 self.push_error(format!("Unknown buffer: {}", source), Some(source));

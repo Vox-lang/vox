@@ -1,0 +1,23 @@
+(Bug #66's guard: giving a function body every global's declared type must
+ not out-rank the names the function binds itself. LANGUAGE.md:711 - "Declaring
+ a variable inside a function shadows a top-level variable of the same name" -
+ and a parameter is the same story. Both are declared here against globals
+ that sit BELOW the functions, and of a different type, so a seeded global
+ type would be visible in the wrong place if it won.)
+
+To 'take a parameter' with a number called label.
+    Print label.
+
+To 'declare a local'.
+    a number called label is 7.
+    Print label.
+
+To 'read the global'.
+    Print label.
+
+a text called label is "global".
+
+'take a parameter' with 5.
+'declare a local'.
+'read the global'.
+Print label.

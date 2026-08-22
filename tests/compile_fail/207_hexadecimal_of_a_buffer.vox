@@ -1,0 +1,6 @@
+(Bug #71: a buffer under a radix printed a LIVE HEAP address, which moved
+ from run to run - the worst row in the table, since the value was not just
+ wrong but different every time.)
+
+a buffer called payload is "hi".
+Print "{payload:x}".

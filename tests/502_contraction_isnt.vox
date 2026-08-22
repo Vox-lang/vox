@@ -1,0 +1,27 @@
+(BUGS_FOUND #84: `isn't` is a documented spelling of `not` - LANGUAGE.md's
+ Logical Operators table - that the lexer could never build, because
+ `read_word` stopped dead at the apostrophe. `isn't` means `is not`, so
+ each pair below prints the same line twice: the contraction first, then
+ the spelled-out form it stands for.)
+
+a number called v1 is 20.
+a number called v2 is 6.
+
+(Not equal)
+If v1 isn't v2 then, print "differ". Otherwise, print "same".
+If v1 is not v2 then, print "differ". Otherwise, print "same".
+
+(Not equal, written out)
+If v1 isn't equal to v2 then, print "differ". Otherwise, print "same".
+If v1 is not equal to v2 then, print "differ". Otherwise, print "same".
+
+(A property, where the answer is no - the negation has to be able to fail)
+If v1 isn't even then, print "odd". Otherwise, print "even".
+If v1 is not even then, print "odd". Otherwise, print "even".
+
+(A literal on the right, where the two are equal)
+If v1 isn't 20 then, print "not twenty". Otherwise, print "twenty".
+If v1 is not 20 then, print "not twenty". Otherwise, print "twenty".
+
+(Case is not significant, as for every other keyword)
+If v1 ISN'T v2 then, print "differ". Otherwise, print "same".

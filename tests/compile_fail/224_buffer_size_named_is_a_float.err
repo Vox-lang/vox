@@ -1,0 +1,3 @@
+cannot size the buffer 'room' from 'wanted', which is a float
+a buffer's size is a whole number of bytes
+round it to whole bytes first

@@ -1,0 +1,61 @@
+(Bug #83: `not` now sits between `and` and the comparison level, so every
+ operand slot of `and`/`or` reads it the same way. Before the fix only a
+ leading `not` was even reachable, and it bound to the primary next to it.)
+
+To calm with a number called temperature.
+  Return a boolean, not temperature is greater than 10.
+
+a number called heat is 3.
+a number called limit is 6.
+a boolean called door_open is false.
+a boolean called alarm_armed is true.
+
+(Left and right of `and`, and left of `or`.)
+If heat is 3 and not limit is 5 then,
+    Print "right of and: fires".
+Otherwise,
+    Print "right of and: silent".
+
+If not heat is 4 and limit is 6 then,
+    Print "left of and: fires".
+Otherwise,
+    Print "left of and: silent".
+
+If not heat is 4 or limit is 99 then,
+    Print "left of or: fires".
+Otherwise,
+    Print "left of or: silent".
+
+(Two `not`s cancel, because the inner one takes the comparison and the
+ outer one takes the inner.)
+If not not heat is limit then,
+    Print "double: fires".
+Otherwise,
+    Print "double: silent".
+
+(The `but if` guard and the guarded `print` take a condition too.)
+If heat is 99 then,
+    Print "unreachable".
+But if not heat is limit then,
+    Print "but if: fires".
+Otherwise,
+    Print "but if: silent".
+
+Print "guarded print: default", but if not heat is limit print "guarded print: fires".
+
+(A plural subject list is one comparison, so `not` takes all of it.)
+If not door_open, alarm_armed, and door_open are true then,
+    Print "plural subjects: fires".
+Otherwise,
+    Print "plural subjects: silent".
+
+(A returned condition, and a loop condition.)
+If calm of 3 is true then,
+    Print "returned condition: fires".
+Otherwise,
+    Print "returned condition: silent".
+
+a number called tick is 3.
+While not tick is greater than 5,
+    Print "loop tick {tick}",
+    increment tick.

@@ -1,0 +1,47 @@
+(Bug #85 - `{f:8.2}` printed 2.5: neither the width nor the precision,
+ though `{f:.2}` prints 2.50 on its own. The reader consumed the width,
+ found ".2" left over, matched it against no base specifier and dropped
+ it, so the precision was never assigned.
+
+ Both halves are now read and both are kept. They compose under the rule
+ #71 already states for the width - "the width is the one exception: it
+ applies to any value and is ignored where no padding exists for that
+ type yet" - so the precision decides the digits and the width decides
+ the padding, and each is honoured wherever a primitive for it exists.
+
+ The float rows are unpadded on purpose: coreasm has no float padder,
+ which is bug #36's recorded residue and not this entry's to close. A
+ whole number HAS a padder, so `{n:8.2}` gets both.)
+a float called f is 2.5.
+a number called n is 255.
+a text called t is "hi".
+
+(A precision alone, unchanged.)
+Print "[{f:.2}]".
+Print "[{f:.0}]".
+
+(A width and a precision together: the float takes the places and drops
+ the padding, exactly as a bare `{f:8}` drops it.)
+Print "[{f:8.2}]".
+
+(A whole number takes BOTH: 255 to two places is `255.00`, eight wide.)
+Print "[{n:8.2}]".
+Print "[{n:08.2}]".
+
+(And the same pair in a text initializer, so the sinks agree.)
+a text called captured is "[{n:8.2}]".
+Print captured.
+
+(Every spec that already rendered goes on rendering the same way.)
+Print "[{f:8}]".
+Print "[{f}]".
+Print "[{n:8}]".
+Print "[{n:08}]".
+Print "[{n:x}]".
+Print "[{n:04x}]".
+Print "[{n:b}]".
+Print "[{t:6}]".
+
+(What follows the width has to BE a count; these name no precision.)
+Print "[{f:8.}]".
+Print "[{f:8.2z}]".

@@ -1,0 +1,7 @@
+(Bug #74 at a return. #65's return check consults the same oracle, so the
+ caller read the length back as the address of a text.)
+
+To 'count' with a list called items. Return a text, items's length.
+
+a list called counts is [10, 20, 30].
+Print 'count' of counts.

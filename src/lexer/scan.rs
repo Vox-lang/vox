@@ -300,6 +300,46 @@ impl<'a> Lexer<'a> {
         Token::IntegerLiteral(ch as i64)
     }
     
+    /// Consume the `'t` of a documented contraction and return the two
+    /// tokens it spells. `isn't` means `is not` and `aren't` means `are
+    /// not`, so each has to be two tokens: the parser reads `Is`/`Are` and
+    /// then an optional `Not` (`parse_comparison`), exactly as it does for
+    /// the spelled-out forms. A single `Not` would not parse - `v1 not v2`
+    /// is an error today and would stay one.
+    ///
+    /// These two are the whole list. LANGUAGE.md's Logical Operators table
+    /// documents `isn't` and `aren't` and no others, and a wider rule would
+    /// break working code: `print it's length.` prints a length today, and
+    /// waking `it's` as a spelling of `is` would swallow that possessive.
+    ///
+    /// Fires only on a whole contraction followed by a character that
+    /// cannot continue a word, so `sb1's size` and `name'a quoted name'`
+    /// still reach the scanner's `'` arm untouched.
+    fn take_contraction(&mut self, word: &str) -> Option<(Token, Token)> {
+        let head = match word.to_lowercase().as_str() {
+            "isn" => Token::Is,
+            "aren" => Token::Are,
+            _ => return None,
+        };
+
+        let mut ahead = self.input.clone();
+        if ahead.next() != Some('\'') {
+            return None;
+        }
+        if !matches!(ahead.next(), Some('t') | Some('T')) {
+            return None;
+        }
+        if let Some(&after) = ahead.peek() {
+            if is_ident_continue(after) || after == '-' || after == '\'' {
+                return None;
+            }
+        }
+
+        self.advance(); // the apostrophe
+        self.advance(); // the `t`
+        Some((head, Token::Not))
+    }
+
     fn read_word(&mut self, first: char) -> Token {
         let mut word = String::from(first);
         while let Some(&ch) = self.peek() {
@@ -311,6 +351,18 @@ impl<'a> Lexer<'a> {
             }
         }
         
+        // BUGS_FOUND #84: the loop above stops dead at an apostrophe, so the
+        // contractions the manual documents (`isn't`, `aren't`) could never
+        // be built and their keyword-table entries were unreachable. Claim
+        // them here, before the table, because a contraction's apostrophe is
+        // the one that falls *inside* a word already in progress - the
+        // character literal, the quoted name and the `'s` possessive marker
+        // all begin where no word is being read, and stay the `'` arm's.
+        if let Some((head, tail)) = self.take_contraction(&word) {
+            self.pending = Some(tail);
+            return head;
+        }
+
         match word.to_lowercase().as_str() {
             "print" | "prints" | "display" | "show" => Token::Print,
             "set" | "store" | "assign" => Token::Set,
@@ -350,14 +402,22 @@ impl<'a> Lexer<'a> {
             "flags" => Token::Identifier("flags".to_string()),
             "required" => Token::Required,
             "default" => Token::Default,
-            "is" | "it's" => Token::Is,
+            // The contractions these three arms used to list (`it's`,
+            // `they're`, `isn't`, `aren't`, `doesn't`, `don't`) were dead
+            // code: no input could reach a word containing an apostrophe
+            // (BUGS_FOUND #84). The two the manual documents are claimed by
+            // `take_contraction` above, which expands each into the two
+            // tokens it really means. The four it never documented are gone
+            // rather than woken - `it's` and `they're` would have swallowed
+            // the possessive on a variable called `it` or `they`.
+            "is" => Token::Is,
             "it" => Token::Identifier("it".to_string()),
-            "are" | "they're" => Token::Are,
+            "are" => Token::Are,
             "equals" | "equal" => Token::Equals,
             "greater" | "more" | "bigger" | "larger" => Token::Greater,
             "less" | "fewer" | "smaller" => Token::Less,
             "than" => Token::Than,
-            "not" | "isn't" | "aren't" | "doesn't" | "don't" => Token::Not,
+            "not" => Token::Not,
             "and" => Token::And,
             "or" => Token::Or,
             "from" | "starting" => Token::From,
@@ -609,6 +669,13 @@ impl<'a> Lexer<'a> {
             
             let is_eof = token == Token::EOF;
             tokens.push(TokenInfo { token, line, column });
+
+            // A contraction is one word and two tokens (`isn't` is `is
+            // not`). Both halves carry the contraction's own line and
+            // column, so a caret under either points at what was written.
+            if let Some(tail) = self.pending.take() {
+                tokens.push(TokenInfo { token: tail, line, column });
+            }
             
             if is_eof {
                 break;

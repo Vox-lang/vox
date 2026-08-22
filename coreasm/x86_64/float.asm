@@ -17,6 +17,16 @@ section .data
 align 8
 _float_int64_boundary: dq 9223372036854775808.0
 
+; 10^0 through 10^22, the powers of ten that are themselves exact
+; doubles. _f64_scale10 multiplies or divides by one of these to place a
+; parsed decimal's point in a single rounding (docs/BUGS_FOUND.md #82).
+; 10^23 is the first that is not exact, which is where the table stops.
+align 8
+_f64_pow10:
+    dq 1.0,     1.0e1,  1.0e2,  1.0e3,  1.0e4,  1.0e5,  1.0e6,  1.0e7
+    dq 1.0e8,   1.0e9,  1.0e10, 1.0e11, 1.0e12, 1.0e13, 1.0e14, 1.0e15
+    dq 1.0e16,  1.0e17, 1.0e18, 1.0e19, 1.0e20, 1.0e21, 1.0e22
+
 section .text
 
 ; Float arithmetic - operates on xmm0 and xmm1, result in xmm0
@@ -387,22 +397,129 @@ _float_negate:
     leave
     ret
 
+; Scale an integer mantissa by a power of ten, rounding exactly once.
+;
+; This is the arithmetic half of every text-to-float conversion in the
+; language. The parsers below hand it the whole decimal - every digit of
+; both parts read as one integer - together with the decimal exponent
+; that says where the point sits, and it puts the point where it belongs
+; in a single rounding.
+;
+; Rounding once is the whole point (docs/BUGS_FOUND.md #82). The routine
+; this replaced divided the fractional part by ten once per digit, and
+; every one of those divisions rounded, so `"0.88" as a float` landed one
+; ulp away from the literal `0.88` the compiler's own parser produces.
+;
+; The work is done on the x87 stack rather than in SSE, because x87 can
+; be told how wide to round. `fild` loads any mantissa below 2^63
+; exactly, the powers of ten up to 10^22 are exact doubles that `fld`
+; widens without loss, and with the precision-control field set to a
+; 53-bit significand the single fmul/fdiv rounds straight to what a
+; double can hold - so the qword store afterwards is exact and the whole
+; conversion has rounded once. That is the correctly-rounded result, bit
+; for bit what Rust's f64 parser gives the same digits at compile time.
+; The window it covers - up to 18 significant digits with the point
+; within 22 places - is wider than a double can tell apart.
+;
+; Past that window the point is walked in strides of 10^22, so more than
+; one rounding happens; there the precision control is left at the full
+; 64-bit significand instead, which keeps eleven spare bits under the
+; answer and leaves the final store to do the rounding that matters. A
+; magnitude beyond the double's range saturates to infinity and one
+; below it decays to zero, which is what the strides do naturally.
+;
+; The caller's control word is put back before returning, and the x87
+; stack is left as empty as it was found.
+;
+; Args: rax = mantissa (unsigned, below 2^63), rcx = decimal exponent
+;       (signed - the value is mantissa * 10^rcx)
+; Returns: xmm0 = the scaled value
+; Clobbers: rax, rcx, xmm0. Every other register is preserved, so the
+;           parsers keep their pointer, sign flag and exponent across
+;           the call.
+_f64_scale10:
+    push rbx
+    push rsi
+    sub rsp, 16                      ; [rsp] the mantissa, then the result;
+                                      ; [rsp+8] the caller's control word;
+                                      ; [rsp+12] ours
+
+    fnstcw [rsp + 8]
+    mov bx, [rsp + 8]
+    and bx, 0xFCFF                   ; clear the precision-control field
+    cmp rcx, 22
+    jg .scale_wide_precision
+    cmp rcx, -22
+    jl .scale_wide_precision
+    or bx, 0x0200                    ; 53-bit significand: round once, here
+    jmp .scale_precision_set
+.scale_wide_precision:
+    or bx, 0x0300                    ; 64-bit significand: round at the store
+.scale_precision_set:
+    mov [rsp + 12], bx
+    fldcw [rsp + 12]
+
+    mov [rsp], rax
+    fild qword [rsp]
+    lea rsi, [rel _f64_pow10]
+    test rcx, rcx
+    jz .scale_store                  ; lea leaves the flags from the test
+    jl .scale_neg
+
+.scale_pos:
+    cmp rcx, 22
+    jle .scale_pos_last
+    fmul qword [rsi + 22*8]
+    sub rcx, 22
+    jmp .scale_pos
+.scale_pos_last:
+    fmul qword [rsi + rcx*8]
+    jmp .scale_store
+
+.scale_neg:
+    neg rcx
+.scale_neg_loop:
+    cmp rcx, 22
+    jle .scale_neg_last
+    fdiv qword [rsi + 22*8]
+    sub rcx, 22
+    jmp .scale_neg_loop
+.scale_neg_last:
+    fdiv qword [rsi + rcx*8]
+
+.scale_store:
+    fstp qword [rsp]
+    fldcw [rsp + 8]
+    movsd xmm0, [rsp]
+
+    add rsp, 16
+    pop rsi
+    pop rbx
+    ret
+
 ; Parse a double-precision float from a NUL-terminated string.
 ; Handles an optional leading '-', an integer part, and an optional
 ; '.' followed by a fractional part. Degrades gracefully to 0.0 on an
 ; empty or entirely-invalid string, matching the "stop at first invalid
 ; character" convention used by _parse_i64/_parse_int_radix elsewhere
 ; in this codebase.
+;
+; Both parts accumulate into one integer mantissa, with r9 counting how
+; far the decimal point sits from its right-hand end; _f64_scale10 then
+; puts the point where it belongs in a single rounding. Digits past the
+; mantissa's room are dropped - 18 significant digits is already one more
+; than a double can tell apart - and a dropped digit left of the point
+; still counts towards the exponent, so the magnitude survives.
 ; Args: rdi = string pointer
 ; Returns: rax = the parsed value's raw 64-bit bit pattern (per this
 ; codebase's float convention - see RAX_TO_XMM0/XMM0_TO_RAX above)
 global _parse_f64
 _parse_f64:
     push rbx
-    push rcx
+    push rcx              ; mantissa room, then the exponent argument
     push rdx
-    push r8              ; sign flag
-    push r9               ; fractional digit count
+    push r8               ; sign flag
+    push r9               ; decimal exponent
     push r11              ; parsed-a-digit flag
 
     xor r8, r8
@@ -417,6 +534,8 @@ _parse_f64:
     inc rbx
 .pf64_sign_done:
     xor rax, rax
+    mov rcx, 100000000000000000      ; 10^17: one more digit still fits
+                                      ; in a signed 64-bit mantissa
 
 .pf64_int_loop:
     mov dl, [rbx]
@@ -424,61 +543,55 @@ _parse_f64:
     jl .pf64_int_done
     cmp dl, '9'
     jg .pf64_int_done
+    cmp rax, rcx
+    jae .pf64_int_drop
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
+    jmp .pf64_int_next
+.pf64_int_drop:
+    inc r9                            ; no room for the digit, but it
+                                      ; still moves the point one place
+.pf64_int_next:
     inc rbx
     mov r11, 1
     jmp .pf64_int_loop
 
 .pf64_int_done:
-    cvtsi2sd xmm0, rax
-
     mov dl, [rbx]
     cmp dl, '.'
     jne .pf64_check_digits
     inc rbx
 
-    xor rax, rax
 .pf64_frac_loop:
     mov dl, [rbx]
     cmp dl, '0'
-    jl .pf64_frac_done
+    jl .pf64_check_digits
     cmp dl, '9'
-    jg .pf64_frac_done
+    jg .pf64_check_digits
+    cmp rax, rcx
+    jae .pf64_frac_next               ; below the double's resolution
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
-    inc r9
+    dec r9
+.pf64_frac_next:
     inc rbx
     mov r11, 1
     jmp .pf64_frac_loop
 
-.pf64_frac_done:
-    test r9, r9
-    jz .pf64_check_digits
-    cvtsi2sd xmm1, rax
-    mov rcx, r9
-.pf64_pow10_loop:
-    test rcx, rcx
-    jz .pf64_pow10_done
-    mov rax, 10
-    cvtsi2sd xmm2, rax
-    divsd xmm1, xmm2
-    dec rcx
-    jmp .pf64_pow10_loop
-.pf64_pow10_done:
-    addsd xmm0, xmm1
-
 .pf64_check_digits:
     test r11, r11
-    jnz .pf64_sign
+    jnz .pf64_scale
     mov qword [rel _last_error], 1
+    xorpd xmm0, xmm0
     jmp .pf64_done
-.pf64_sign:
+.pf64_scale:
     mov qword [rel _last_error], 0
+    mov rcx, r9
+    call _f64_scale10
     test r8, r8
     jz .pf64_done
     xorpd xmm1, xmm1
@@ -507,12 +620,12 @@ _parse_f64:
 global _parse_f64_bounded
 _parse_f64_bounded:
     push rbx
-    push rcx
+    push rcx              ; mantissa room, then the exponent argument
     push rdx
     push r8               ; sign flag
-    push r9                ; fractional digit count
-    push r10               ; remaining length
-    push r11               ; parsed-a-digit flag
+    push r9               ; decimal exponent
+    push r10              ; remaining length
+    push r11              ; parsed-a-digit flag
 
     xor r8, r8
     xor r9, r9
@@ -520,6 +633,7 @@ _parse_f64_bounded:
     xor rax, rax
     mov rbx, rdi
     mov r10, rsi
+    mov rcx, 100000000000000000      ; 10^17, as in _parse_f64 above
 
     test r10, r10
     jz .pf64b_no_digits
@@ -539,18 +653,22 @@ _parse_f64_bounded:
     jl .pf64b_int_done
     cmp dl, '9'
     jg .pf64b_int_done
+    cmp rax, rcx
+    jae .pf64b_int_drop
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
+    jmp .pf64b_int_next
+.pf64b_int_drop:
+    inc r9
+.pf64b_int_next:
     inc rbx
     dec r10
     mov r11, 1
     jmp .pf64b_int_loop
 
 .pf64b_int_done:
-    cvtsi2sd xmm0, rax
-
     test r10, r10
     jz .pf64b_check_digits
     mov dl, [rbx]
@@ -559,49 +677,38 @@ _parse_f64_bounded:
     inc rbx
     dec r10
 
-    xor rax, rax
 .pf64b_frac_loop:
     test r10, r10
-    jz .pf64b_frac_done
+    jz .pf64b_check_digits
     mov dl, [rbx]
     cmp dl, '0'
-    jl .pf64b_frac_done
+    jl .pf64b_check_digits
     cmp dl, '9'
-    jg .pf64b_frac_done
+    jg .pf64b_check_digits
+    cmp rax, rcx
+    jae .pf64b_frac_next
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
-    inc r9
+    dec r9
+.pf64b_frac_next:
     inc rbx
     dec r10
     mov r11, 1
     jmp .pf64b_frac_loop
 
-.pf64b_frac_done:
-    test r9, r9
-    jz .pf64b_check_digits
-    cvtsi2sd xmm1, rax
-    mov rcx, r9
-.pf64b_pow10_loop:
-    test rcx, rcx
-    jz .pf64b_pow10_done
-    mov rax, 10
-    cvtsi2sd xmm2, rax
-    divsd xmm1, xmm2
-    dec rcx
-    jmp .pf64b_pow10_loop
-.pf64b_pow10_done:
-    addsd xmm0, xmm1
-
 .pf64b_check_digits:
     test r11, r11
-    jnz .pf64b_sign
+    jnz .pf64b_scale
 .pf64b_no_digits:
     mov qword [rel _last_error], 1
+    xorpd xmm0, xmm0
     jmp .pf64b_done
-.pf64b_sign:
+.pf64b_scale:
     mov qword [rel _last_error], 0
+    mov rcx, r9
+    call _f64_scale10
     test r8, r8
     jz .pf64b_done
     xorpd xmm1, xmm1

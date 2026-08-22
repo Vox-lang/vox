@@ -1,0 +1,7 @@
+(Bug #78: the arm that let a named size through checked nothing at all,
+ not even that the name held a number. This sized the buffer from the
+ address of the text's characters.)
+
+a text called wanted is "ten".
+a buffer called room is wanted bytes in size.
+Print room's capacity.

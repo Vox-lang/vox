@@ -447,11 +447,21 @@ _list_append:
     mov qword [rdi + LIST_ELEMSIZE_OFFSET], r14     ; same elem size
 
     ; Copy existing data (rdi = new list base, rbx = old list base)
-    ; NOTE: the old block is intentionally NOT munmap'd. Lists passed as
-    ; function parameters keep the caller's pointer to the old block when a
-    ; realloc happens inside the callee; freeing it here would turn that
-    ; stale read into a use-after-free. The leak is bounded (geometric, at
-    ; most ~1x the final list size) and reclaimed at process exit.
+    ; NOTE: the old block is intentionally NOT munmap'd. A second name may
+    ; still hold the old pointer - a list stored into another variable, or
+    ; sitting in a thing's field - and freeing it here would turn that stale
+    ; read into a use-after-free. The leak is geometric (at most ~1x the final
+    ; list size) and reclaimed at process exit.
+    ;
+    ; This comment used to name a list passed as a function PARAMETER as the
+    ; case it protects, and the bound above was false for it: the callee's new
+    ; pointer never reached the caller, so the caller re-entered at the old
+    ; block's capacity on every call and leaked a whole fresh list each time -
+    ; linear in call count, not geometric, and the appends past that capacity
+    ; were silently dropped (docs/BUGS_FOUND.md #75). A collection parameter now
+    ; travels as the address of the caller's storage and the store-back writes
+    ; through it, so the caller's pointer advances with the callee's and the
+    ; bound above is true again.
     push rdi                                ; save new list base
     lea rdi, [rdi + LIST_DATA_OFFSET]       ; dest = new list data
     lea rsi, [rbx + LIST_DATA_OFFSET]       ; source = old list data

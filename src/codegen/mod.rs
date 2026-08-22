@@ -34,6 +34,27 @@ pub struct CodeGenerator {
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
+    // docs/BUGS_FOUND.md #90. A `buffer` parameter's argument word is the
+    // ADDRESS of the cell where the CALLER keeps its buffer pointer, not the
+    // pointer itself. This maps a buffer parameter's payload slot offset to
+    // the hidden `{name}_cell` slot holding that address, so every store of a
+    // (possibly reallocated) buffer pointer into the payload slot can travel
+    // on to the caller's cell in the same breath. `_reallocate_buffer` frees
+    // the block it grew out of - mremap consumes it, the fallback munmaps it -
+    // so a caller left holding the old pointer is holding unmapped memory.
+    // Keyed by slot offset rather than by name because the buffer helpers in
+    // `buffers.rs`/`format.rs` only ever know the destination's offset. Reset
+    // and restored per function, like every other per-frame table.
+    buffer_param_cells: HashMap<i64, i64>,
+    // BUGS_FOUND #75. Stack slot ([rbp - offset]) holding the address of the
+    // CALLER's storage for each `list`/`map` parameter of the function being
+    // generated. A collection argument travels as the address of the caller's
+    // slot (the shape a `thing` argument already uses), the prologue reads the
+    // pointer out of it into the parameter's own slot, and every store-back
+    // after a realloc writes the new pointer through this address as well - so
+    // growth inside a callee reaches the caller's variable instead of stopping
+    // at the block the caller still points at. Empty outside a function body.
+    collection_backing_slots: HashMap<String, i64>,
     // The single source of truth for a file handle's open mode. `readable`
     // and `writable` are both derived from this at the point they are read,
     // instead of one being derived (writable) and the other left as a
@@ -149,6 +170,30 @@ pub struct CodeGenerator {
     // `type` property to choose between a static literal and runtime tag
     // dispatch (a `value` is the only dynamic case).
     declared_types: HashMap<String, Type>,
+    // The declared type of every top-level (global) name and flag, collected
+    // by `collect_global_var_types` BEFORE any statement is generated. The
+    // analyzer already makes every top-level name available from the very
+    // first statement (`analyzer::statements`'s `self.variables =
+    // self.global_variables.clone()`), so a function body may legally read a
+    // global declared BELOW it (LANGUAGE.md: "Variables declared at top level
+    // are global and can be used inside functions"). Codegen's own
+    // `variable_types` is filled as statements are walked, so that read used
+    // to reach a slot whose type was not known yet and be printed as a raw
+    // machine word - docs/BUGS_FOUND.md #66. This map is the whole-program
+    // half, seeded into `variable_types` at the top of every function body,
+    // exactly as #32 made the analyzer's flag types whole-program.
+    global_var_types: HashMap<String, Type>,
+    // The element type of every top-level list, read off its initializer by
+    // the same pre-pass. A list's element type is inferred rather than
+    // declared, so it is not in `global_var_types` - and without it a forward
+    // read of `<list>'s first` on a list of texts still printed the element's
+    // address.
+    global_list_element_types: HashMap<String, VarType>,
+    // Globals whose type a function body took from `global_var_types` because
+    // their declaration had not been walked yet. Their BSS mirror still holds
+    // zero until that declaration runs, so a pointer type among them needs its
+    // empty default written at frame setup - #25's rule, for the forward case.
+    forward_typed_globals: std::collections::HashSet<String>,
     // Top-level global variables whose BSS mirror has already received an
     // initial value (allocated buffer, list, map, etc.). For buffer targets
     // this avoids clearing/appending into a null pointer on redeclaration or
@@ -182,6 +227,43 @@ pub(crate) enum VarType {
     Mixed,       // Runtime-tagged value from a heterogeneous list; the
                  // actual type is dispatched via a per-slot tag byte
     Unknown,
+}
+
+/// The codegen `VarType` a declared type noun stands for — one table, read by
+/// every position that writes one: a declaration, a parameter, and a function's
+/// declared return type (local and imported). It used to be copied out four
+/// times, and `map` had reached only the declaration's copy, so a `map`
+/// parameter and a `map` return both fell to `Unknown` — which every property
+/// and print dispatch reads as the *file* branch (bug #76: `holder's length`
+/// emitted `_file_size` and the program failed to assemble, `Print holder`
+/// leaked a heap address, `holder's length` answered `-1` where it linked).
+/// One table now, so the next type added cannot land in only some of them.
+///
+/// `file`, `time`, `timer` and `thing` are deliberately `Unknown`: they are
+/// handles whose property reads go through their own paths, not through the
+/// `VarType` dispatch.
+///
+/// The `map` arm answers for a declared map RETURN as well, local and
+/// imported (`returning a map` is a spelling a `.lib` states): without it
+/// every consumer that asks what a call answers with - Print's catch-all, a
+/// format hole, a `value` declaration's tag - fell through to the integer
+/// formatter and rendered the map's heap address, on both sides of the
+/// library boundary (bug #67).
+pub(crate) fn vartype_of_declared_type(t: &Type) -> VarType {
+    match t {
+        Type::Integer => VarType::Integer,
+        Type::Float => VarType::Float,
+        Type::String => VarType::String,
+        Type::Boolean => VarType::Boolean,
+        Type::Buffer => VarType::Buffer,
+        Type::List(_) => VarType::List,
+        Type::Map(_) => VarType::Map,
+        // A declared `value` is a Mixed-typed scalar carrying its runtime tag
+        // in a shadow slot — the same in a declaration, in a parameter, and
+        // coming home from a call (where the tag rides back in r11).
+        Type::Value => VarType::Mixed,
+        _ => VarType::Unknown,
+    }
 }
 
 /// Storage target selected for a variable declaration or assignment.
@@ -221,15 +303,18 @@ use flags::FlagSchemaRuntime;
 mod syscalls;
 mod buffers;
 mod format;
-pub(crate) use format::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
+pub(crate) use format::{read_format_spec, read_format_spec_ask, FormatSpecAsk, FormatSpecFault, FORMAT_MAX_COUNT};
 mod vars;
+use vars::list_literal_element_vartype;
 mod functions;
 mod tags;
 use tags::type_to_tag;
 mod collections;
+use collections::is_fallible_collection_read;
 mod print;
 mod expr;
 mod statements;
+use statements::declared_slot_vartype;
 mod things;
 
 // ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
@@ -314,6 +399,19 @@ pub(crate) enum RuntimeTagSource {
 }
 
 
+/// Where one operand of a `treating` clause keeps its type tag (bug #69).
+///
+/// A literal, or a variable whose type is fixed, has a tag at emit time and
+/// the clause can be compiled against it. A `value` does not: its tag travels
+/// with its payload and is only readable at runtime, so the tag test - and
+/// with it the choice between comparing bytes and comparing registers - has
+/// to become a runtime branch. See `CodeGenerator::treating_clause_tag`.
+pub(crate) enum ClauseTag {
+    Static(u8),
+    Runtime(RuntimeTagSource),
+}
+
+
 /// Where a Mixed variable's shadow tag slot lives: a local stack offset
 /// (function locals, params, for-each variables, and a function-local
 /// `value`), or a BSS label (a top-level `value` global). See
@@ -383,6 +481,8 @@ impl CodeGenerator {
             mixed_lists: std::collections::HashSet::new(),
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
+            buffer_param_cells: HashMap::new(),
+            collection_backing_slots: HashMap::new(),
             file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
             local_unprovable_scalars: HashMap::new(),
@@ -418,6 +518,9 @@ impl CodeGenerator {
             global_var_counter: 0,
             global_value_tag_labels: HashMap::new(),
             declared_types: HashMap::new(),
+            global_var_types: HashMap::new(),
+            global_list_element_types: HashMap::new(),
+            forward_typed_globals: std::collections::HashSet::new(),
             initialized_globals: std::collections::HashSet::new(),
             in_function_codegen: false,
             target_arch: "x86_64".to_string(),
@@ -482,6 +585,17 @@ impl CodeGenerator {
         self.output.push('\n');
     }
     
+    /// The instructions emitted so far, for a unit test that drives one
+    /// emitter directly rather than compiling a whole program. Codegen's
+    /// guarantees about what it will never emit (docs/BUGS_FOUND.md #71: a
+    /// text's address, a float's bit pattern) have to be checkable for
+    /// types no legal source can route here, because the analyzer refuses
+    /// those programs before codegen sees them.
+    #[cfg(test)]
+    pub(crate) fn emitted_for_test(&self) -> String {
+        self.output.clone()
+    }
+
     fn emit_indent(&mut self, code: &str) {
         self.output.push_str("    ");
         self.output.push_str(code);

@@ -1,0 +1,30 @@
+(docs/BUGS_FOUND.md #90. A buffer parameter handed on to a second function is
+ still the ORIGINAL caller's buffer, so a reallocation two — or thirty —
+ calls deep has to reach the variable that owns it. A call passes on the cell
+ its own parameter arrived with, so the innermost frame writes straight to the
+ owner at the moment of the reallocation, and every frame in between refreshes
+ its own copy of the pointer on the way back out.)
+
+To 'pad out' with a buffer called sink.
+    append "0123456789" to sink.
+
+To 'pad out twice' with a buffer called sink.
+    'pad out' of sink.
+    'pad out' of sink.
+
+To 'pad out down to' with a buffer called sink and a number called remaining.
+    If remaining is greater than 0,
+        'pad out twice' of sink,
+        a number called left is remaining subtract 1,
+        'pad out down to' of sink and left.
+
+a buffer called doubled is "start".
+a number called rounds is 0.
+While rounds is less than 300,
+    'pad out twice' of doubled,
+    Set rounds to rounds add 1.
+Print "two calls deep: {doubled's size}".
+
+a buffer called deepened is "start".
+'pad out down to' of deepened and 300.
+Print "three hundred deep: {deepened's size}".

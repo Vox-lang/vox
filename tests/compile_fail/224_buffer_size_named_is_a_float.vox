@@ -1,0 +1,7 @@
+(Bug #78: a float size read its bit pattern as a byte count - 2.5 asked
+ for 4612811918334230528 bytes, which no mapping can serve, and the
+ program segfaulted on the first read of the buffer.)
+
+a float called wanted is 2.5.
+a buffer called room is wanted bytes in size.
+Print room's capacity.

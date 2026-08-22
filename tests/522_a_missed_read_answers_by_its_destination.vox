@@ -1,0 +1,41 @@
+(Bugs #72 and #91 composed. A miss yields the NUMBER 0 at the read, whatever
+ the collection holds; it is the destination that re-types it. Where the miss
+ is provable #72 refuses a pointer destination outright, so every pointer row
+ below is an unprovable miss. A `number` destination must never be handed the
+ element type's empty value - that was the composition defect this pins.)
+
+(A provable miss out of a list of TEXT, read into a number: the number 0.)
+a list called words is ["a", "b"].
+a number called 'missing word' is element 5 of words.
+Print 'missing word'.
+
+(The same where the miss is NOT provable - an Append means the length is no
+ longer known - still the number 0.)
+a list called grown is ["a", "b"].
+Append "c" to grown.
+a number called 'missing grown' is element 5 of grown.
+Print 'missing grown'.
+
+(An unprovable miss into a TEXT destination: the empty text, not the raw 0,
+ so the first read does not dereference null.)
+a text called 'missing text' is element 5 of grown.
+Print "[{'missing text'}]".
+
+(A tagless consumer has no declared destination and reads the value as the
+ list's element type. Print, a format hole, and an append each get the empty
+ text rather than the 0.)
+Print element 5 of grown.
+Print "[{element 5 of grown}]".
+a list called collected is [].
+Append element 5 of grown to collected.
+Print collected.
+
+(first/last of an empty list miss the same way, by the same two rules.)
+a list called blank is [].
+a number called 'no first' is blank's first.
+Print 'no first'.
+
+(The error flag is untouched by any of it.)
+a number called probe is element 9 of grown.
+On error print "error flag still fires".
+Exit 0.

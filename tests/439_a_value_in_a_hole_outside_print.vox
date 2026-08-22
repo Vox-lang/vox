@@ -1,0 +1,42 @@
+(Regression test for bug #68's other half: the VARIABLE form of a hole over
+ a `value`. Print learned to read a `value`'s shadow tag slot in stage 1e,
+ but the buffer sinks never got the matching arm, so `a text called t is
+ "{v}".` stored the payload as a decimal integer while `Print "{v}"` on the
+ same variable was right. A `value` global keeps its tag in a BSS mirror
+ rather than a stack slot, so both are exercised.
+
+ A BARE name is a variable part and a QUOTED one is an expression part, so
+ the two spellings take different paths: `chosen` was right in Print and
+ wrong everywhere else, while `'the global one'` was wrong even in Print.
+ Both are here. The same tag machinery serves the other tagged expression
+ spellings - a mixed list's `last`, and a call to a function declared to
+ give back a value - so they are checked too.
+
+ Acceptance: Print and the text initializer agree, for a local `value`, for
+ a global `value` reassigned inside a function, and for the two other
+ tagged reads.)
+
+a value called 'the global one' is nothing.
+a list called nested is [1, [2, 3], "four"].
+
+To 'set and show'.
+  Set 'the global one' to element 2 of nested.
+  Print "in a function: {'the global one'}".
+  a text called seen is "captured there: {'the global one'}".
+  Print seen.
+
+a value called chosen is element 3 of nested.
+Print "print: {chosen}".
+a text called captured is "text: {chosen}".
+Print captured.
+
+'set and show'.
+Print "at the top: {'the global one'}".
+
+To 'the fourth thing'. Return a value, "four".
+Print "last: {nested's last}".
+a text called 'the last one' is "last: {nested's last}".
+Print 'the last one'.
+Print "called: {'the fourth thing'}".
+a text called 'the called one' is "called: {'the fourth thing'}".
+Print 'the called one'.

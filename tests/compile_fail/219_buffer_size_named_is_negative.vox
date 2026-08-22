@@ -1,0 +1,7 @@
+(Bug #78: the size bound was checked only against an integer literal, so
+ naming the size walked past it - this program compiled and reported
+ `capacity -1`, the shape of bug #58.)
+
+a number called wanted is 0 minus 1.
+a buffer called room is wanted bytes in size.
+Print room's capacity.

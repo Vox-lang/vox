@@ -1,0 +1,18 @@
+(Regression test for bug #68: the three spellings that ALREADY worked, kept
+ working. These are what isolated the defect - a bare list literal and a
+ quoted list name both parse as expression parts too (bug #44 added Print's
+ List arm for them), and a mixed list's `first` happened to be a number, so
+ the static guess was right. Only the element read was wrong, so a fix that
+ broke any of these would have traded one defect for another.
+
+ Acceptance: the neighbours render exactly as bug #44 left them.)
+
+a list called nested is [1, [2, 3], "four"].
+a list called 'the deep one' is [4, [5, 6]].
+a map called person is {"name": "Ada"}.
+
+Print "lit {[1, 2]}".
+Print "quoted {'the deep one'}".
+Print "first {nested's first}".
+Print "whole {nested}".
+Print "map {person}".

@@ -1,0 +1,39 @@
+(Bug #86's working neighbour, kept working. A float with NO precision
+ already rendered identically in every sink, through a different
+ routine (`_buffer_append_float`), and the fix for the precision arm
+ must leave that one alone: the trimmed default rendering, its
+ always-present decimal point, its sign, and the magnitudes past 2^63.
+
+ The other specifiers already held parity too - radix and integer width
+ render the same in Print, in a text and in a buffer - so they are here
+ for the same reason: the arm that was added must not have moved them.)
+
+a float called ratio is 2.5.
+a float called owed is -1.25.
+a float called whole is 3.0.
+a float called 'ten sextillion' is 10000000000000000000000.0.
+
+Print "print:  {ratio} {owed} {whole} {ten sextillion}".
+
+a text called said is "text:   {ratio} {owed} {whole} {ten sextillion}".
+Print said.
+
+Create a buffer called built.
+copy "buffer: {ratio} {owed} {whole} {ten sextillion}" to built.
+Print built.
+
+Open a file at 1 for writing called out.
+write "write:  {ratio} {owed} {whole} {ten sextillion}\n" to out.
+
+a number called count is 255.
+
+Print "print:  {count} {count:x} {count:06} {count:o} {count:b}".
+
+a text called counted is "text:   {count} {count:x} {count:06} {count:o} {count:b}".
+Print counted.
+
+Create a buffer called tallied.
+copy "buffer: {count} {count:x} {count:06} {count:o} {count:b}" to tallied.
+Print tallied.
+
+write "write:  {count} {count:x} {count:06} {count:o} {count:b}\n" to out.

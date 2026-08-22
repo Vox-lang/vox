@@ -1,0 +1,59 @@
+(Bug #75: a list appended to through a `list` parameter stopped at the
+ capacity its literal happened to allocate - max(8, element count) - and
+ every append past that was dropped, because `_list_append`'s new pointer
+ was stored only into the parameter's own slot. The caller's variable now
+ receives it, so the answer is the initial count plus the appends and the
+ literal's capacity no longer leaks into the language.)
+
+To 'add one to' with a list called items.
+    append "x" to items.
+
+(The reported shape: one element, twenty calls, past the default capacity of 8.)
+a list called xs is ["a"].
+a number called n is 0.
+While n is less than 20,
+    'add one to' of xs,
+    Set n to n add 1.
+Print "one element, 20 calls: {xs's length}".
+
+(The rows of the capacity table, each grown by the same forty calls. Before
+ the fix every one of these answered max(8, element count).)
+a list called 'from empty' is [].
+a list called 'from three' is [1, 2, 3].
+a list called 'from eight' is [1, 2, 3, 4, 5, 6, 7, 8].
+a list called 'from nine' is [1, 2, 3, 4, 5, 6, 7, 8, 9].
+a number called count is 0.
+While count is less than 40,
+    'add one to' of 'from empty',
+    'add one to' of 'from three',
+    'add one to' of 'from eight',
+    'add one to' of 'from nine',
+    Set count to count add 1.
+Print "from empty: {'from empty''s length}".
+Print "from three: {'from three''s length}".
+Print "from eight: {'from eight''s length}".
+Print "from nine: {'from nine''s length}".
+
+(The growth is real data, not just a count: the appended elements read back.)
+Print "first: {xs's first}".
+Print "last: {xs's last}".
+Print "element 9: {element 9 of xs}".
+
+(Two lists through one call keep their own storage.)
+To 'add one to each of' with a list called left and a list called right.
+    append "L" to left,
+    append "R" to right.
+
+a list called ones is ["one"].
+a list called twos is ["two"].
+a number called turn is 0.
+While turn is less than 12,
+    'add one to each of' of ones and twos,
+    Set turn to turn add 1.
+Print "two parameters: {ones's length} and {twos's length}".
+Print "kept apart: {ones's last} and {twos's last}".
+
+(A collection argument with no variable behind it still arrives intact -
+ there is nothing to store back into, and nothing crashes.)
+To 'count of' with a list called items. Return a number, items's length.
+Print "literal argument: {'count of' of [1, 2, 3]}".

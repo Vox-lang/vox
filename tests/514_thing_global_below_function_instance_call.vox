@@ -1,0 +1,26 @@
+(Bug #80: the instance possessive is a call, not a field read, and it
+ resolved through the same table. A global declared below the function
+ that reads it reaches both a declared member and an ordinary function
+ taking the thing first.)
+
+A thing called point has
+  a function called 'moved east',
+  a number called x is 4.
+
+To do the point's 'moved east', with a point called start.
+  a point called shifted.
+  Set shifted's x to start's x add 1.
+  Return a point, shifted.
+
+To doubled with a point called p.
+  Return a number, p's x add p's x.
+
+To 'show all'.
+  Print corner's doubled.
+  a point called nudged is corner's 'moved east'.
+  Print nudged's x.
+
+a point called corner.
+
+'show all'.
+Exit 0.

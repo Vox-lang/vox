@@ -1,0 +1,7 @@
+(Compile-fail: bug #84. `don't` is the second of the four undocumented
+ contractions removed from the lexer's keyword table. See
+ contraction_doesnt_is_not_vox for why they were removed and not woken.)
+
+a number called v1 is 20.
+a number called v2 is 6.
+If v1 don't v2 then, print "differ". Otherwise, print "same".

@@ -1,0 +1,8 @@
+(Bug #74 at an assignment. The type lock has guarded writes to an
+ already-declared name since 0.3.0, but it asks the same oracle what the
+ value is, so a property read walked straight past it.)
+
+a list called counts is [10, 20, 30].
+a text called label is "start".
+Set label to counts's length.
+Print label.

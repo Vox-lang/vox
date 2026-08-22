@@ -1,0 +1,10 @@
+(The neighbouring form that was already right, kept right: a `value` as the
+ match in the file-open spelling LANGUAGE.md:410 documents. The clause hands
+ the open path a text either way - the runtime tag rides alongside the
+ payload and this sink has no use for it.)
+
+a value called dash is "-".
+a list called sources is ["/dev/null", "-"].
+open a file for reading called source at each filename from sources treating dash as "/dev/null",
+  close source.
+print "opened both".

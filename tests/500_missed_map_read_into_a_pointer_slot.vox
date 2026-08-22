@@ -1,0 +1,66 @@
+(Bug #91, the map half. LANGUAGE.md, Maps: "A missing key does not crash:
+ the lookup yields 0 and sets the error flag, so an `on error` handler can
+ react." That 0 is the number 0, and the manual is right about it - a `map`
+ read leaves its runtime tag beside the value, so printing a missing key
+ still prints 0. What broke was the read landing in a slot whose declared
+ type is a pointer: a `text`, `list` or `map` destination stored the 0 and
+ dereferenced it on the first read. Each destination now takes its own
+ type's empty value, the same one an unwritten slot of that type holds.)
+
+(A map no static proof can close: the literal's value types differ, and
+ `Set` can insert any key at all.)
+a map called found is {"a": "apple", "counted so far": 2}.
+Set found's "b" to "banana".
+
+(The working neighbour: a key the map holds is unchanged.)
+a text called present is found's "a".
+Print "present: {present}".
+
+(The headline: a key it does not hold, into a text.)
+a text called absent is found's "zebra".
+Print "absent: [{absent}]".
+
+(Reassignment is the declaration's twin.)
+a text called seeded is "seed".
+Set seeded to found's "zebra".
+Print "reassigned: [{seeded}]".
+
+(Printing the read itself is tag-driven and always was: the manual's 0.)
+Print "printed direct: " without newline.
+Print found's "zebra".
+
+(A number destination takes that same 0 - the manual's own sentence.)
+a number called counted is found's "zebra".
+Print "number destination: {counted}".
+
+(A map of lists: the empty list, not a null one.)
+a list called apples is ["braeburn"].
+a map called baskets is {"a": apples}.
+(#72 proves this literal map has no "zebra" and refuses a list
+ destination - its own compile_fail case. #91 owns the unprovable half, so a
+ Set that never runs reaches the map and the proof is withheld.)
+a number called 'never set' is 0.
+While 'never set' is less than 0,
+    Set baskets's "zebra" to apples,
+    Set 'never set' to 'never set' add 1.
+a list called 'no basket' is baskets's "zebra".
+Print "list destination: {'no basket'}".
+
+(A map of maps: the empty map.)
+a map called 'apple facts' is {"colour": "red"}.
+a map called facts is {"a": 'apple facts'}.
+(The same withholding for `facts`, for the same reason.)
+a number called 'never touched' is 0.
+While 'never touched' is less than 0,
+    Set facts's "zebra" to {"seed": 1},
+    Set 'never touched' to 'never touched' add 1.
+a map called 'no facts' is facts's "zebra".
+Print "map destination: {'no facts'}".
+
+(The empty value is a real collection, so it can be grown afterwards.)
+Append "windfall" to 'no basket'.
+Print "grown after the miss: {'no basket'}".
+
+(And the miss is still an error.)
+a text called 'last miss' is found's "zebra".
+On error Print "the error flag was set".

@@ -1,0 +1,79 @@
+(Bug #86, the other half: a buffer sink must not merely honour a
+ precision, it must honour the SAME one Print does. The fix redirects
+ the single precision printer at the destination buffer rather than
+ writing a second one, so everything that printer knows has to arrive
+ with it - the exact decimal expansion, round-half-to-even on a tie,
+ the carry that lengthens the integer part, and the magnitudes at or
+ beyond 2^63 that #60 was about.
+
+ Each value is rendered twice, by Print and through a buffer. The two
+ lines of every pair are identical by construction; a second, drifting
+ renderer is exactly what makes them differ.)
+
+a float called 'pi' is 3.14159.
+Print "pi to 2:  {pi:.2}".
+Create a buffer called two.
+copy "pi to 2:  {pi:.2}" to two.
+Print two.
+
+Print "pi to 20: {pi:.20}".
+Create a buffer called twenty.
+copy "pi to 20: {pi:.20}" to twenty.
+Print twenty.
+
+Print "pi to 50: {pi:.50}".
+Create a buffer called fifty.
+copy "pi to 50: {pi:.50}" to fifty.
+Print fifty.
+
+(No places asked for, so no point is printed - in either sink.)
+Print "pi to 0:  {pi:.0}".
+Create a buffer called none.
+copy "pi to 0:  {pi:.0}" to none.
+Print none.
+
+(An exact half goes to the even digit, which is what printf does.)
+a float called 'two and a half' is 2.5.
+Print "2.5 to 0: {two and a half:.0}".
+Create a buffer called tie.
+copy "2.5 to 0: {two and a half:.0}" to tie.
+Print tie.
+
+(A carry out of the leading digit lengthens the integer part.)
+a float called 'nearly ten' is 9.9999.
+Print "9.9999 to 3: {nearly ten:.3}".
+Create a buffer called carried.
+copy "9.9999 to 3: {nearly ten:.3}" to carried.
+Print carried.
+
+(A negative keeps its sign and rounds by magnitude.)
+a float called 'owed' is -1.25.
+Print "-1.25 to 1: {owed:.1}".
+Create a buffer called signed.
+copy "-1.25 to 1: {owed:.1}" to signed.
+Print signed.
+
+(Past 2^63 the digits come from the big-integer routine, not from a
+ register conversion - the sink must reach that arm too.)
+a float called 'ten sextillion' is 10000000000000000000000.0.
+Print "10000000000000000000000 to 3: {ten sextillion:.3}".
+Create a buffer called enormous.
+copy "10000000000000000000000 to 3: {ten sextillion:.3}" to enormous.
+Print enormous.
+
+(Every place of the exact expansion, then the zeros that follow it -
+ the value has ended, it has not run out of accuracy.)
+a float called 'a tenth' is 0.1.
+Print "0.1 to 60: {a tenth:.60}".
+Create a buffer called exact.
+copy "0.1 to 60: {a tenth:.60}" to exact.
+Print exact.
+
+(400 places outgrows a fresh buffer several times over, so the
+ destination is reallocated part-way through the render and the sink
+ has to follow the moved pointer rather than keep writing to the old
+ one.)
+Print "0.1 to 400: {a tenth:.400}".
+Create a buffer called reallocated.
+copy "0.1 to 400: {a tenth:.400}" to reallocated.
+Print reallocated.

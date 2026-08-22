@@ -1,0 +1,5 @@
+(Bug #78: the bound was a rule about one spelling. The `Create ... with
+ capacity N` spelling was never bounded at all, literal or not.)
+
+Create a buffer called room with capacity 1073741825.
+Print room's capacity.

@@ -1,0 +1,5 @@
+lit [1, 2]
+quoted [4, [5, 6]]
+first 1
+whole [1, [2, 3], "four"]
+map {"name": "Ada"}

@@ -1,0 +1,6 @@
+(Bug #74 at the call site, reading a buffer's size.)
+
+To 'shout' with a text called word. Return a text, word.
+
+a buffer called ledger is 16 bytes in size.
+Print 'shout' of ledger's size.

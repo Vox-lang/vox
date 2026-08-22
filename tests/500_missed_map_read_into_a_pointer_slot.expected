@@ -1,0 +1,9 @@
+present: apple
+absent: []
+reassigned: []
+printed direct: 0
+number destination: 0
+list destination: []
+map destination: {}
+grown after the miss: ["windfall"]
+the error flag was set

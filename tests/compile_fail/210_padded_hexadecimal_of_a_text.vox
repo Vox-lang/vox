@@ -1,0 +1,7 @@
+(Bug #71: a width in front of the radix does not rescue it - `{label:04x}`
+ padded the address instead of printing one unpadded. The help line quotes
+ the specifier back exactly as it was written, width and all, so the
+ suggested rewrite is one the author can paste.)
+
+a text called label is "hi".
+Print "{label:04x}".

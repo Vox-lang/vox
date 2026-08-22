@@ -207,12 +207,12 @@ Remaining after 1c, in order of closure:
   (`a list called inner is element 2 of nested.`) is a *reference* to
   the child list, not a copy: if the parent is later grown past a
   reallocation, a child extracted before it may dangle. Extract after the
-  parent finishes growing, or copy element-by-element. And the
-  *expression* form of format interpolation (`print "{element 2 of
-  nested}"`) has no runtime-tag dispatch, so a nested list does not
-  render there — use the *variable* form (`print "{nested}"`) or a plain
-  `print element 2 of nested.` Flow-sensitive narrowing after `if item is
-  a list` (using `item` as a list inside the branch) is also future work.
+  parent finishes growing, or copy element-by-element. (The *expression*
+  form of format interpolation — `print "{element 2 of nested}"` — was
+  the other limitation 1e1 documented; it dispatches on the runtime tag
+  in every sink as of 0.4.10, docs/BUGS_FOUND.md #68.) Flow-sensitive
+  narrowing after `if item is a list` (using `item` as a list inside the
+  branch) is also future work.
 
 ## Track 2 — Matrix / tensor (the ML and numerics track)
 

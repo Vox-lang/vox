@@ -5731,7 +5731,7 @@ declaration and all left for that gap:
 | program | answers |
 |---|---|
 | `To scale with a float called x. Print x.` + `scale with 3.` | `0.0` — the same integer bits, at the argument site |
-| `To 'give it'. Return a float, 3.` + `print 'give it'.` | `3` — rendered as an integer, not `3.0` |
+| `To 'give it'. Return a float, 3.` + `print 'give it'.` | `0.0` — the same integer bits, at the return site (it answered `3` until #67 made `Print` read a declared float return as a float; the `3` was the integer formatter's accident, and `a float called kept is 'give it'.` already answered `0.0`) |
 | `a float called f is element 1 of counts.` (a list of numbers) | refused by bug #54's read check, which still uses the strict predicate |
 
 **Not in scope, noticed on the way.**
@@ -5749,3 +5749,4479 @@ declaration and all left for that gap:
   documents: `{the val add 0.5} as a number`. A one-line documentation
   defect, unrelated to this fix's mechanism, recorded here for the queue
   and deliberately not changed.
+
+---
+
+### 66. A global declared below a function is read inside it as a raw machine word — every type but `number`
+
+**Status:** **fixed** (unreleased, for 0.4.10). Severity: **wrong value,
+silent** — no diagnostic, no crash, and an address printed straight into
+program output: a static rodata address for a `text`, a live heap address
+that changes between runs for a `list`, `map` or `buffer`. Found 2026-08-21
+by the vox-fuzz `functions` claim ledger (Discrepancy 1, probes `D1.vox` and
+`D1b.vox`, against rows FUN-11, FUN-17 and FUN-19), adjudicated as candidate
+**A** of the 0.4.10 audit and master-reproduced on `4b77934` (= v0.4.9).
+
+```vox
+To 'show all'.
+    Print label.
+
+a text called label is "hello".
+
+'show all'.
+Print label.
+```
+→ compiles clean and prints `4198488`, then `hello`. Move the declaration
+above the function and both reads print `hello`.
+
+**The whole defect in eight lines of assembly** (`vox A1.vox --emit-asm`) —
+one BSS slot, two different printers, chosen by which side of the
+declaration the read sits on:
+
+```nasm
+_start:
+    lea rax, [rel str_0]
+    mov [rel gvar_0], rax   ; global store label
+    call show_all
+    mov rax, [rel gvar_0]
+    mov rdi, rax
+    PRINT_CSTR rdi          ; top-level read: correct printer
+...
+show_all:
+    mov rax, [rel gvar_0]
+    mov rdi, rax
+    PRINT_INT rdi           ; in-function read: same slot, integer printer
+```
+
+**Every read measured, one program per row, on `4b77934` and on the fix.**
+The middle column is the read inside a function defined *above* the
+declaration; the right-hand column is the same read at top level, which was
+right all along and is unchanged.
+
+| read | before | at top level | after |
+|---|---|---|---|
+| `Print counter.` (`a number called counter is 42.`) | `42` | `42` | `42` |
+| `Print label.` (`a text`) | `4210888` | `hello` | `hello` |
+| `Print ratio.` (`a float called ratio is 2.5.`) | `4612811918334230528` | `2.5` | `2.5` |
+| `Print items.` (`a list called items is [1, 2, 3].`) | `140602256846848` | `[1, 2, 3]` | `[1, 2, 3]` |
+| `Print payload.` (`a buffer called payload is "ABC".`) | `140602256838656` | `ABC` | `ABC` |
+| `Print scores.` (`a map called scores is {"a": 1}.`) | `140493452648448` | `{"a": 1}` | `{"a": 1}` |
+| `Print flagged.` (`a boolean`) | `1` | `1` | `1` |
+| `Print anything.` (`a value called anything is "vv".`) | `4210906` | `vv` | `vv` |
+| `Print "interp {label}".` | `interp 4211053` | `interp hello` | `interp hello` |
+| `Print label's type.` | `Number (dynamic)` | `Text (static)` | `Text (static)` |
+| `Print names's first.` (a list of texts) | `4210900` | `alpha` | `alpha` |
+| `a float called doubled is ratio multiply 2.0.` | `9225623836668461056.0` | `5.0` | `5.0` |
+| `Append "DEF" to payload.` then `Print payload.` | mojibake — the buffer's own header, read as text | `ABCDEF` | `ABCDEF` |
+| `Print output.` (a `text` flag declared below the reader) | `4198488` | `out.txt` | `out.txt` |
+| `Print element 1 of names.` (control — runtime tags) | `alpha` | `alpha` | `alpha` |
+| `Print scores's "a".` (control — a map lookup) | `1` | `1` | `1` |
+| `Append 4 to items.` (control) | `[1, 2, 3, 4]` | — | `[1, 2, 3, 4]` |
+| `Set label to "bye".` (control — the store, not the read) | `bye` | — | `bye` |
+
+**It is the read, not the store.** Copying the same global into a declared
+local inside the same forward-referencing function and printing the local
+printed `hello` even before the fix, and `Set label to "bye"` from inside
+such a function always updated the global correctly. The bytes were there;
+the type was not.
+
+**Cause.** Name resolution in this compiler is deliberately whole-program
+and order-independent: `collect_definite_decls`
+(`src/parser/ast.rs`) gathers every top-level declaration before the walk,
+`src/analyzer/statements.rs` seeds `global_variables` from it, and
+`self.variables = self.global_variables.clone()` makes every top-level name
+available from the very first statement — which is why a name that is
+genuinely never declared *is* rejected (`error: Unknown variable`), and why
+this program compiles at all. Codegen had only half of that. Its
+`variable_types` (`src/codegen/mod.rs`) is filled as statements are walked
+(`src/codegen/statements.rs`, the `VarDecl` arm), with no equivalent
+pre-pass, so a function body generated above the declaration found no entry
+for the name and every downstream dispatch — `Print`, format holes, `'s`
+properties, arithmetic, buffer appends, the `type` property — fell through
+to its integer default.
+
+Either horn was a defect. If the name is known, LANGUAGE.md:705 says the
+read must work; if it is unknown, :712 says the program must be rejected.
+"Compiles silently and prints a pointer" is the one outcome no reading of
+the manual reaches — and LANGUAGE.md:658-659 names that outcome as the
+disease the 0.3.0 identifier/literal split was written to end: *"A function
+pointer, printed as a number, silently. No error, no warning; the program
+runs and gives a wrong answer that looks like data."*
+
+**Fix.** Codegen gets the pre-pass it was missing.
+`collect_global_var_types` (`src/codegen/vars.rs`) reads the declared type
+of every top-level name straight after `collect_global_var_labels` reads
+its storage — the same two walkers the analyzer uses
+(`collect_definite_decls` ∩ `collect_all_typed_decls`), so the type map and
+the storage map can never disagree about which names behave as globals — and
+`seed_global_var_types` gives them to each function body before its
+parameters and locals are registered. A name already carrying a type keeps
+it, so a global declared *above* a function is untouched; a parameter or a
+local of the same name still shadows, exactly as LANGUAGE.md:711 says.
+Three things ride along because they are the same question asked of a
+different table: a `value` global's tag byte is allocated in the pre-pass
+(the payload's type is useless without it), a list's element type is read
+off its initializer (it is inferred, never declared, so it is not in the
+type map — without it `names's first` still printed the element's address),
+and a flag's schema type is collected too.
+
+**The flags needed it as much as the variables, despite #32.** That entry
+made the *analyzer's* flag types whole-program (`flag_variables:
+HashMap<String, Type>`, filled in a pre-pass); the order-dependence that
+survived was codegen's, so a `text` flag read inside a function defined
+above its schema printed the address of the flag's own default string. This
+is that fix's other half, and the shape is deliberately the same one.
+
+**The window the fix opens, and how it is closed.** A read that is now
+typed is also a read that dereferences: a function *called* above the
+declaration would have found the BSS mirror still holding the zero it
+starts life with, and a `text`/`list`/`map`/`buffer` read as its own type
+would have faulted on it where before it merely printed `0`.
+`emit_forward_global_defaults` writes each such global's empty value at
+frame setup — `""`, `[]`, `{}`, an empty buffer — which is exactly #25's
+rule (a slot whose declaring path may not have run) and #16/#31's (an
+uninitialised `text` must point at a real empty string, never at null).
+Only the pointer types get it; `0`, `0.0` and `false` are already the right
+defaults for the rest.
+
+**Family.** #32 (the same order/type split, for flags, fixed once already
+on the analyzer's side), #45 and #63 (a read where nothing supplies a type),
+#25 (a slot no executed path wrote), #16/#31 (a null text default).
+
+**Not in scope, met on the way.** A `thing` global declared below a
+function that reads one of its fields is a *parse* error — `Print origin's
+x.` answers `Expected property name, got Identifier("x")` — because the
+parser's `thing_vars` is filled in source order (`src/parser/things.rs`).
+It is a diagnostic, not a silent wrong value, so it is a different entry
+in the #45/#62/#63 diagnostic family and is left alone. A top-level read
+placed *before* the declaration (not inside a function) still prints `0`
+and is likewise unchanged.
+
+**Regression tests.** `tests/425_global_declared_below_a_function.vox`
+(the five-type probe plus `map`, `boolean`, both columns of the table
+above), `tests/427_forward_global_read_in_every_sink.vox` (format hole,
+`'s first`, arithmetic, buffer append, list append, copy into a local,
+`value`, `'s type`), `tests/428_forward_flag_read_in_a_function.vox` (all
+three flag types), `tests/429_forward_global_read_before_its_declaration.vox`
+(the window above: a call before the declaration, then the same call after
+it), and two controls that pass on both sides —
+`tests/426_global_declared_above_a_function.vox` (the working neighbour,
+byte-identical before and after) and
+`tests/430_a_local_shadows_a_forward_global.vox` (a parameter and a local
+of a different type, both against a global declared below them). Every one
+of the four fail-before cases was run against a clean extract of
+`4b77934` and fails there with the addresses quoted above.
+
+LANGUAGE.md:705 gained the sentence it was missing: where a top-level
+declaration sits in the file makes no difference to a function that reads
+it, and a function that runs before the declaration reads the type's empty
+value.
+
+
+---
+
+### 67. A declared `float`, `map` or `buffer` return is printed by the integer formatter — the fix #45's diagnostic tells the author to apply
+
+**Status:** **fixed in 0.4.10** (this branch), found 2026-08-21 by the
+vox-fuzz claim ledger / candidate audit against 0.4.9 (`4b77934`) and
+adjudicated by the language lawyer — section **B** of
+`vox-notes/REPORT-CANDIDATES-0.4.10.md`. Worker's own re-run of the
+headline repro and its neighbour is quoted in `REPORT-67.md`.
+
+```vox
+To 'give float'. Return a float, 2.5.
+Print 'give float'.                 (4612811918334230528   — wrong)
+
+a float called routed is 'give float'.
+Print routed.                       (2.5                   — right)
+```
+
+`4612811918334230528` is `0x4004000000000000`, the IEEE-754 bit pattern of
+2.5. A declared `map` return printed a heap address (`139755989557248`,
+different every run), and so did a declared `buffer` return. Routing the
+same call through a declared variable of the same type printed all three
+correctly, so the value came back intact and a renderer existed for it —
+the **read** was wrong, exactly as in #45, and this is the other half of
+that rule: #45 closed the **un**declared case by refusing it and pointing
+the author at declaring the return type; declaring it did not work for
+three of the eleven types.
+
+**Exactly which of the eleven types were wrong.** Seven declared returns,
+printed directly, one program (`tests/431`):
+
+| declared return | `Print <call>.` before | after |
+|---|---|---|
+| `Return a text, "hi".` | `hi` | `hi` |
+| `Return a boolean, yes.` | `1` | `1` |
+| `Return a list, [1, 2].` | `[1, 2]` | `[1, 2]` |
+| `Return a number, 7.` | `7` | `7` |
+| `Return a float, 2.5.` | `4612811918334230528` | `2.5` |
+| `Return a map, {"ann": 30}.` | `140715186864128` | `{"ann": 30}` |
+| `Return a buffer, made.` | `140715186794496` | `bytes` |
+
+The three failures failed in **different** positions, which is the tell
+that they are three separate one-line gaps and not one (`tests/433`):
+
+| position | `float` | `map` | `buffer` |
+|---|---|---|---|
+| `Print <call>.` (bare name) | ✗ bits | ✗ address | ✗ address |
+| `Print <call> of 1.` (connector) | ✓ | ✗ address | ✗ address |
+| `Print "{<call>}"` | ✓ | ✗ address | ✓ |
+| `a value called c is <call>.` | ✓ | ✗ address | — |
+| `a <type> called r is <call>.` | ✓ | ✓ | ✓ |
+| an imported `.lib` call, printed | ✓ | ✗ address | ✓ |
+
+**What the spec promises.** LANGUAGE.md:721-726 — "the same 11 types are
+also legal as a declared `Return a <type>,` return type (plan 296) —
+parameters and returns share one vocabulary, not two", the eleven being
+`number`, `float`, `text`, `boolean`, `list`, `map`, `buffer`, `file`,
+`time`, `timer`, `value`. And LANGUAGE.md's "Reading a result" (:787-793,
+written by #45's own fix) — "A declared return type travels to every call
+site, so the result can be printed, interpolated, stored in a list or map
+slot, or put in a `value` — each of those reads it back as what it is."
+Neither sentence carries a type restriction, and both are broken by three
+of the eleven.
+
+**No reading makes the compiler right.** Three were tried. *"`Print` of a
+call has no variable to carry a type"* — it has the declared return type,
+and it uses it correctly for `text` and `list` in that same position.
+*"A map cannot be rendered from a call"* — a map variable renders in all
+three positions and `a map called routed is 'give map'.` renders, so the
+renderer exists and the value is intact. *"This is #45, and #45 is
+fixed"* — #45 is the **un**declared case; its own control test
+`tests/376_declared_return_reads_everywhere.vox` is titled "a declared
+return read back correctly in all six refused positions" and every line
+of it returns a `text`. `float`, `map` and `buffer` were never exercised.
+
+**Root cause — three missing arms in three dispatchers, the #44 shape.**
+
+- **map, local `To`**: `collect_function_signatures`
+  (`src/codegen/functions.rs`) translates a declared return type into the
+  `VarType` codegen tracks. It is the same table as the declaration path's
+  (`src/codegen/statements.rs`, `a map called ages is {}.`) arm for arm —
+  minus `Type::Map(_)`. A map return therefore became `VarType::Unknown`
+  and every consumer that asks what a call answers with fell through to
+  `PRINT_INT`. `VarType::Map` has existed since stage 1e2 and Print's
+  catch-all has had an arm for it just as long; nothing routed a call into
+  it. This is the mirror of #44's own discovery — *"Print's expression arm
+  carried a `Map` case from stage 1e2 and never a `List` one"* — one layer
+  up.
+- **map, imported `.lib`**: the imports copy of that same table, further
+  down the same function, had the identical gap. `returning a map` is a
+  spelling a `.lib` can state (`src/lib_file.rs`'s `Token::Map` arm), so
+  fixing only the local table would have left the bug alive on the other
+  side of the boundary — the half-fix #44 records catching itself making.
+- **float**: `is_float_expr` (`src/codegen/expr.rs`) answers for
+  `Expr::FunctionCall`, but its `Expr::Identifier` arm consulted only
+  `variable_types` and never fell back to `zero_arg_func_return_type` —
+  the fallback `infer_expr_type`'s own `Expr::Identifier` arm already has.
+  A **bare** zero-argument call parses as `Expr::Identifier` (plan 270
+  G4), so it was not seen as a float; the spelling with a connector took
+  the `FunctionCall` arm and was right all along.
+- **buffer**: `generate_print`'s catch-all (`src/codegen/print.rs`) has
+  arms for `String`, `List` and `Map` and none for `Buffer`. A buffer
+  variable is printed by the *variable* arm above, which has had
+  `PRINT_BUF` all along; a buffer-returning call reaches Print only
+  through the catch-all, so the struct pointer went to `PRINT_INT`.
+
+**Fix.** Four lines, one per gap: `Type::Map(_) => VarType::Map` in both
+return-type tables in `src/codegen/functions.rs`; the
+`.or_else(|| self.zero_arg_func_return_type(name))` fallback in
+`is_float_expr`'s Identifier arm in `src/codegen/expr.rs`, mirroring
+`infer_expr_type`'s; and a `VarType::Buffer => PRINT_BUF rdi` arm in
+`generate_print`'s catch-all in `src/codegen/print.rs`. No analyzer
+change, no new diagnostic — the manual promises these reads work, and they
+now do.
+
+**Severity.** Wrong value, silent — the failure mode LANGUAGE.md:649-660
+says the 0.3.0 identifier/literal split was written to kill. Not memory
+safety: the pointer is handed to the wrong formatter, never dereferenced
+as an integer. The map and buffer addresses **change between runs**, which
+puts this in #44's class for vox-fuzz — a generated program printing a
+declared map return had wandering output and would be classified
+nondeterministic, a manufactured finding on top of the wrong answer.
+
+**Did 0.4.9 touch it?** No. Both tables above reproduce identically on
+0.4.8 and on `4b77934`; only the heap addresses differ per run. #45
+shipped in that batch and is the entry that should have caught it.
+
+**One neighbouring answer changes with this fix, and should.** #65's
+"three more places the same family is still wrong" table records `To 'give
+it'. Return a float, 3.` + `print 'give it'.` answering `3` — "rendered as
+an integer, not `3.0`". It now answers `0.0`, because `Print` finally
+reads it as the float it is declared to be, and the slot really does hold
+a raw integer 3 — which as an IEEE-754 bit pattern is 1.5e-323, the same
+`0.0` #65 documents for `a float called ratio is 3.` before 0.4.9
+converted it. The `3` was the integer formatter's accident, not a right
+answer: every typed reader of that same function already said `0.0`. The
+return site's missing int-to-float conversion is #65's open gap, not this
+one's, and is left there; that row is updated in place so the register is
+not stale.
+
+**Tests.** `tests/431_declared_float_map_buffer_return_printed.vox` (all
+seven rows of the type table), `tests/432_declared_return_routed_through_-
+a_variable.vox` (the nearest working neighbour, which had to keep
+working), and `tests/433_declared_float_map_buffer_return_in_every_-
+position.vox` (the position table: bare name, connector, format hole,
+`value` declaration, list slot, whole list, map slot, text initializer and
+buffer sink) — 427 is the float/map/buffer twin of #45's text-only
+`tests/376`. The `.lib` row cannot be expressed as a single `.vox`, so it
+is a `test.sh` stage in the repo's own shared-library convention: **A4.3**
+`run_see_collection_return_test`, over the new fixture
+`tests/shared/collections_lib.vox`. All four proven to fail on a clean
+extract of `4b77934` and to pass after.
+
+**Incidental, recorded and left** (see `REPORT-67.md` for repros): a `map`
+**parameter** printed inside a function body prints its address (`To 'show
+map' with a map called seen. Print seen.` over a plain map variable — no
+call involved); its cause is the third copy of the same type table,
+`src/codegen/statements.rs`'s parameter table, missing the same `Map` arm,
+but a parameter is not a call result and it is a different entry.
+
+
+---
+
+### 68. A mixed list's element in the *expression* form of a format hole prints as an integer — the same read printed as a statement is correct
+
+**Status:** **fixed** in 0.4.10 (unreleased, on top of 0.4.9 `4b77934`).
+Regression tests: `tests/434_element_of_a_mixed_list_in_a_format_hole.vox`
+(the headline repro), `426_a_mixed_element_renders_by_its_own_type.vox`
+(every row of the candidate report's table, mixed and uniform),
+`427_the_working_neighbours_of_an_element_hole.vox` (the spellings that
+already worked, unchanged — the control),
+`428_a_format_hole_dispatches_on_every_runtime_tag.vox` (all seven slot
+tags, hole against statement),
+`429_a_tagged_hole_renders_the_same_in_every_sink.vox` (Print, a text
+initializer, a fixed buffer, a function argument, and a real file read back
+from disk) and `430_a_value_in_a_hole_outside_print.vox` (the `value`
+half: a local's shadow slot, a global's BSS mirror, `'s last`, and a call
+declared to give back a `value`). Five of the six print addresses on
+unfixed `main` and pass after; 427 is the control and passes on both. Each
+stable over three consecutive runs.
+
+Found 2026-08-21 by the vox-fuzz claim ledger —
+`vox-fuzz/docs/ledger/collections-b.md` row **LST2-13** (blocked on D7) and
+its **Discrepancy 7**, which reproduces collections-a's D7 against this
+range and whose lawyer resolution reads: *"COMPILER BUG, duplicate of vox
+#44 … New sub-case: the EXPRESSION form `print "{element 2 of nested}"`
+leaks an address in print position too. Fold into #44 as an extra repro."*
+It is filed separately because #44 shipped in 0.4.9 without reaching it.
+Re-adjudicated in the candidate audit 2026-08-21
+(`REPORT-CANDIDATES-0.4.10.md` §E) and master-reproduced on this branch.
+
+```vox
+a list called nested is [1, [2, 3], "four"].
+Print "{element 2 of nested}".
+Print element 2 of nested.
+```
+→ `140477763297280` then `[2, 3]`. Same element, same run: the statement
+form dispatches on the tag and the format hole does not. Two consecutive
+runs gave `140477763297280` and `140268219564032` — a **live heap address**,
+so the program's own output wanders.
+
+**It is every element of a mixed list, not only a nested one.** Each row
+re-run on `4b77934` and on this branch:
+
+| program | format hole, 0.4.9 | format hole, fixed | statement form |
+|---|---|---|---|
+| `[1, [2, 3], "four"]`, element 1 (`1`) | `1` | `1` | `1` |
+| `[1, [2, 3], "four"]`, element 2 (a list) | `140155337404416` | `[2, 3]` | `[2, 3]` |
+| `[1, [2, 3], "four"]`, element 3 (`"four"`) | `4210888` | `four` | `four` |
+| `[1, "two", 2.5]`, element 3 (`2.5`) | `4612811918334230528` | `2.5` | `2.5` |
+| `["a", "b"]` (uniform), element 1 | `a` | `a` | `a` |
+| `[10, 20]` (uniform), element 1 | `10` | `10` | `10` |
+
+A uniform list was fine because the static guess happened to be right,
+which is exactly why the defect hid. `4612811918334230528` is `2.5`'s
+IEEE-754 bits read as a decimal integer — #1's symptom, at a new site.
+`4210888` is a `.rodata` address, stable across runs, the same class the
+register quotes for #55 (`:3981`), #54 (`:3812`) and #29 (`:1438`).
+
+**And it is every sink, not only `Print`.** The same hole, on `4b77934`:
+
+```vox
+a list called nested is [1, [2, 3], "four"].
+a text called captured is "{element 2 of nested}".   (140213536817152)
+a buffer called sink is 64 bytes in size.
+copy "{element 3 of nested}" to sink.                (4206780)
+```
+
+The `value` half of the same defect is worse still, because there the
+*variable* form fails too — the one form #44 fixed everywhere:
+
+```vox
+a list called nested is [1, [2, 3], "four"].
+a value called v is element 3 of nested.
+Print v.                                (four   — right)
+a text called t is "{v}".
+Print t.                                (4210906   — wrong)
+```
+
+`Print "{v}"` is right and `a text called t is "{v}".` is wrong, on the
+same variable in the same run.
+
+**Step 0 — the reading in which the compiler is right, and where it stops.**
+LANGUAGE.md documented this, twice, as a known limitation. As of 0.4.9,
+at :2382-2385 ("the *expression* form of format interpolation … has no
+runtime-tag dispatch, so a nested list does not render there; use the
+*variable* form") and at :2811-2813 ("the *expression* form (`print
+"{element 2 of xs}"`) does not dispatch on a nested element's runtime
+tag"). On the letter, for a **nested-list** element, the compiler did what
+the manual said.
+
+That reading does not reach the rest, for three reasons.
+
+1. **It is scoped to nested elements.** Both sentences say "a *nested*
+   element's runtime tag", and both sit inside the Nested Lists discussion.
+   A `text` element and a `float` element of a mixed list are not nested,
+   and both were wrong — undocumented, unmentioned, silent.
+2. **It says the dispatch is absent, never what is rendered instead.** A
+   live heap address that changes between runs is not a rendering. It is
+   the `4198480` disease LANGUAGE.md:649-660 says the identifier/literal
+   split exists to kill: *"a function pointer, printed as a number,
+   silently. No error, no warning; the program runs and gives a wrong
+   answer that looks like data."*
+3. **The tag is present and is being discarded.** The two emissions are
+   byte-identical up to the dispatch — the element load emits
+   `movzx r11, byte [rbx + r11 + 24]  ; slot type tag` in *both* cases.
+   The statement form then compares r11; the format hole emits
+   `PRINT_INT rdi` over it. Nothing was unknowable; the answer was in a
+   register and was thrown away.
+
+So the manual half of the nested case is a promise that stopped one clause
+too early, and the text/float/`value` cases were never covered at all.
+Both are fixed, and the two limitation sentences are gone (below).
+
+**Mechanism.** A `{...}` hole becomes one of two AST parts.
+`parse_format_string` (`src/parser/expressions.rs`) makes
+`FormatPart::Variable` only for a bare name; everything else
+`try_parse_expression` accepts — an `element N of` read, a *quoted* name, a
+list literal, `'s last`, a call — becomes `FormatPart::Expression`. That is
+the same split #44's entry records for `{'the running total'}`.
+
+Print's Variable arm learned to read a runtime tag in stage 1e
+(`src/codegen/print.rs`, the `VarType::Mixed` case), and the statement arms
+`Expr::ElementAccess`, `Expr::MapAccess` and the catch-all each dispatch on
+one too. **The Expression arm never did.** It asked `infer_expr_type` —
+which correctly answers `Mixed`/`None` for a value whose type is only known
+at runtime — and then fell past the Buffer/List/Map cases into
+`emit_formatted_value`, whose default is `PRINT_INT rdi`.
+
+The non-Print sinks fail one layer down, for the matching reason:
+`emit_append_runtime_value_to_buffer_ptr` (`src/codegen/buffers.rs:75`) has
+arms for `Buffer`, `String`, `Float`, `List` and `Map` — the last three
+added by bug #1 and by #44 — **and none for a runtime-tagged value**, so it
+too fell to `_ => emit_append_formatted_int_to_buffer`. This is the third
+time that same missing arm has been paid for: the `Float` arm closed #1,
+the `List`/`Map` arms closed #44, and this entry closes the `Mixed` one.
+
+**The fix — dispatch on the tag, render through the routine Print calls.**
+Two readings were on offer, exactly as in #44: *render* (LANGUAGE.md
+:3196-3198, a format string "materializes into a fresh NUL-terminated
+string"; :3221-3227, "every statement that takes a string value accepts a
+format string", both stated without a type restriction) and *refuse* (the
+`thing` precedent at :1251-1254). Render wins for the same reason it won in
+#44 — a tagged value has a runtime renderer already, so there is something
+for a sink to call — and it wins more easily here, because the correct
+answer was already sitting in r11.
+
+- `src/codegen/print.rs`, the `FormatPart::Expression` arm: ask
+  `runtime_tag_source(expr)` *before* generating the value (it reports
+  where the tag **will** be), then dispatch through the existing
+  `emit_mixed_print_dispatch`. Taken ahead of the static Buffer/List/Map
+  arms, because a runtime tag outranks a static guess — the same order the
+  catch-all statement arm below it already used.
+- `src/codegen/buffers.rs`: a new `emit_append_mixed_value_to_buffer_ptr`
+  (and its buffer-slot twin), branch for branch the twin of
+  `emit_mixed_print_dispatch`, with the same `rdi` = buffer, `rax` = value,
+  `rax` = possibly-reallocated buffer contract every other arm uses. Each
+  branch calls the SAME routine the Print dispatch calls, pointed at the
+  destination: `_buffer_append_cstr` for `PRINT_CSTR`,
+  `_buffer_append_float` for `PRINT_FLOAT`, and `_list_render_to_buffer` /
+  `_map_render_to_buffer` — #44's own redirections — for `_list_print` /
+  `_map_print`. **No renderer was duplicated**, which is the rule
+  `resolve_format_variable`'s doc comment states and #44's entry restates.
+- `src/codegen/format.rs`: both sinks (`_slot` and `_ptr`) route a tagged
+  part to the new dispatch. The Expression arm reads
+  `runtime_tag_source`; the Variable arm reads the new
+  `mixed_value_tag_location` (`src/codegen/tags.rs`), which returns a
+  `value`'s shadow-slot or BSS-mirror operand and `None` when there is no
+  tag to read — so a name with no shadow slot falls back to the integer
+  rendering rather than dispatching on whatever r11 happens to hold, which
+  is the same fallback Print takes.
+
+No coreasm changed: every routine the fix calls was already there, written
+for #1 and #44.
+
+**Why r11 survives.** The tag is only valid until the next call or syscall.
+Between `generate_expr` and the dispatch the emitted code is `mov`
+instructions only — the destination load (`mov rdi, [rbp-N]` /
+`mov rdi, [rel label]`) and `mov rdi, rax` — and the tag comparisons all run
+before any branch makes its one call. A growing dynamic buffer was checked
+across three tagged appends (30 + 31 + 30 = 91 bytes, correct).
+
+**Severity.** A silent wrong answer **plus an address leak**: a `.rodata`
+address for a text element, a live heap address for a nested list or a map.
+The heap case also costs vox-fuzz a false nondeterminism finding — the
+program's output wanders between runs — which is why the ledger had to
+forbid the construct outright rather than assert on it.
+
+**Family.** #44 (`:2940`) — this is the sub-case its own ledger row asked to
+be folded in, and the sink arm it did not add; #1 — the first missing arm in
+the same function, and the same float-bits symptom; #59 (`:4732`) — the
+identical confusion in a `treating` clause, fixed the identical way, by
+dispatching on the runtime tag instead of a static type; #45 (`:3097`) for
+the shape (a value read back as an integer wherever nothing supplies a
+type); #29 (`:1438`), #54 (`:3812`) and #55 (`:3981`) for the `.rodata`
+address this class prints.
+
+**Manual.** Both limitation sentences are removed, because the limitation
+is gone: LANGUAGE.md:2378-2383 now says "One limitation remains for this
+stage" (the child-reference dangling case) and drops the interpolation
+clause; :2808-2812 now says the rendering "appears inside `{...}` format
+interpolation, in both its forms and in every sink … so an element renders
+in a hole exactly as it does printed as a statement".
+`docs/COLLECTIONS_ROADMAP.md`'s 1e1 limitations bullet records the same
+closure. No feature was added: every spelling that compiled before still
+compiles, and only the rendering of a value the compiler could not type
+statically has changed.
+
+**Not affected today.** No vox-fuzz leaf emits this construct — LST2-13 is
+`todo`, blocked on D7, and D7's standing instruction is that no leaf may put
+a collection slot in a non-print sink. With this fix that row is unblocked
+and the construct becomes assertable: a leaf can now emit
+`"{element N of xs}"` and compare it against the statement form, with
+stable output either way.
+
+**Incidental, not fixed (out of this entry's scope).**
+
+- A map value read cannot be written in a format hole at all: the key is a
+  double-quoted literal (LANGUAGE.md:2397-2400) and a nested `"` closes the
+  format string, so `Print "{person's "name"}"` is a parse error
+  ("expected a name, found a string literal"). The single-quoted spelling
+  `person's 'name'` is a different error ("Expected property name"). The
+  tag dispatch this entry adds would render such a hole correctly if it
+  could be spelled; the gap is in the quoting, not the rendering.
+- The caret for `Copy source must be a buffer: v` and `Buffer append
+  requires a buffer source: v` lands on the **declaration** of `v` rather
+  than on the offending `copy`/`append` line — #46's family, a second
+  instance, left where it is.
+
+
+---
+
+### 69. A `treating` clause whose match or replacement is a `value` keeps the static path — a pointer printed as a number, or a number read as a `char*`
+
+**Status:** **fixed** (unreleased, on top of 0.4.9 — ships in 0.4.10).
+Severity: **wrong value, silent** — a rodata address printed as data — and,
+where the `value` holds a number over a text collection, **memory safety**: a
+number handed to `_str_eq` as a `char*`. Regression tests:
+`tests/461_treating_a_value_as_the_match_on_a_mixed_list.vox`,
+`426_treating_a_value_as_the_replacement_on_a_mixed_list.vox`,
+`427_treating_a_value_over_a_typed_list.vox` (the two crashes),
+`428_treating_a_value_over_a_map_s_values.vox`,
+`429_treating_a_value_carries_the_tag_into_a_value_parameter.vox`, plus the
+control `430_treating_a_value_when_opening_a_file.vox` (a neighbouring form
+that was already right and stays byte-identical). The #59 controls
+`359_treating_matching_types_substitutes.vox`,
+`360_treating_over_an_unprovable_list.vox` and `400`-`406` are unchanged.
+Recorded 2026-08-21 by the #59 fix worker, in #59's own "What this fix does
+not reach" ("Unfiled; worth its own entry"); re-verified against 0.4.9 by
+the candidate audit of the same day (REPORT-CANDIDATES-0.4.10 §H1) and
+master-reproduced on this branch.
+
+```vox
+a value called probe is "-".
+print each item from [1, "-"] treating probe as "X".
+```
+→ `1` then `4198538` (expected `1` then `X`)
+
+```vox
+a value called swap is "X".
+print each item from [1, "-"] treating "-" as swap.
+```
+→ `1` then `4198538` (expected `1` then `X`)
+
+```vox
+a value called probe is 7.
+a list called names is ["ann", "-"].
+print each name from names treating probe as "X".
+```
+→ **segfault**, no output (expected `ann` then `-`: a number can never equal
+a text, so the clause simply does not fire)
+
+```vox
+a value called seven is 7.
+a list called names is ["ann", "-"].
+print each name from names treating "-" as seven.
+```
+→ `ann`, then **segfault** (expected `ann` then `7`)
+
+The address is a fixed `.rodata` one in a non-PIE binary, byte-identical
+across runs, exactly as #59 records for its own case. The two crashes are
+new to this entry: the candidate report has the two silent-wrong-value
+reproductions, and the pair above turned up while mapping the clause's
+behaviour across subject types.
+
+**What the manual promises.** `treating X as Y` is "inline value
+substitution": "If the loop variable equals `<match>`, it's replaced with
+`<replacement>` for that iteration" (LANGUAGE.md:424, duplicated at :3131),
+and neither sentence restricts what `<match>` or `<replacement>` may be.
+`value` is one of the eleven expressible types (LANGUAGE.md:729-731) and its
+whole definition is that it "carries its runtime tag *alongside* its payload"
+(LANGUAGE.md:2554-2556) so that "printing dispatches on it" (:2575). A mixed
+list's elements carry the same per-slot tag (:2272 "elements carry a small
+per-slot type tag at runtime", :2409 "the value carries its runtime tag, so a
+text prints as text and a number as a number"). Every ingredient of a correct
+answer is therefore present at runtime; only the compiler's emit-time view
+was missing one. And even the most charitable reading — that a
+`value`-typed match is of a different type from the element and so should
+never fire — does not reach any of these outputs: not firing means printing
+the element, which is `-`, not its address, and certainly not a fault.
+(Every line number here was landed on by searching this branch's manual,
+after the edit below. #59's `:2227`/`:2348` for the last two sentences were
+pinned to an older manual and no longer land.)
+
+**Mechanism.** #59 made the clause dispatch on the *subject's* runtime tag,
+but `treating_dispatches_on_runtime_tag` (`src/codegen/tags.rs`) demanded
+`emit_time_expr_tag(...).is_some()` for the match **and** the replacement:
+the tag path had to know, at emit time, what to compare the subject's tag
+against and what tag to hand out when the substitution fires. A `value`
+answers `None` there — its tag is a runtime fact, in its shadow slot — so
+the whole clause fell back to the static path, which chooses its comparison
+from the *subject's* static type alone:
+
+- a mixed subject has no static type, so the comparison is a raw pointer
+  `cmp` and the result carries no tag: `Print` renders a text element's
+  address as an integer (the first two reproductions — #44's rendering
+  failure reached through #59's gap);
+- a text subject means `_str_eq`, and a `value` holding a number goes into
+  it as a `char*` (the third and fourth reproductions — #55's dereference
+  hazard, reached the one way #55's compile-time guard cannot see, because
+  a `value`'s type is not there to check).
+
+`treating_subject_type` (`src/analyzer/types.rs`) deliberately answers `None`
+for `Type::Value`, so the analyzer is right not to reject these programs:
+`probe` may hold text, and only the runtime knows. The missing half was
+always codegen's.
+
+**The fix.** `src/codegen/{mod,tags,expr}.rs` — 180 lines added (69 of them
+comment), 49 removed — no analyzer change.
+A new `ClauseTag` says where each of the three operands keeps its tag —
+`Static(u8)` at emit time, or `Runtime(RuntimeTagSource)` for a `value` — and
+`treating_clause_tag`/`treating_subject_tag` classify them.
+`treating_dispatches_on_runtime_tag` now asks only that every operand have a
+tag *somewhere*, and that at least one of them be a runtime one (when all
+three are static the old path is already right and is emitted unchanged).
+Checked, not assumed: `--emit-asm` output for `359`, `400`, `402` and a
+three-clause static probe is byte-identical between this branch and
+`4b77934`.
+
+`generate_treating_on_tagged_subject` gained the runtime-match arm. Where the
+match's tag is static, the emitted code is exactly what #59 emitted. Where it
+is a `value`, the two questions the static tag used to answer at emit time
+become runtime branches, in the order the hardware finds them:
+
+1. **the tags disagree** — different types can never be equal, so the clause
+   does not fire, nothing is read through the match, and the element comes
+   through wearing its own tag;
+2. **the tags agree and say text** — compare the bytes (`_str_eq`), which is
+   safe *because* the tags agree;
+3. **the tags agree otherwise** — compare in registers.
+
+When the substitution fires the result carries the replacement's own tag,
+which for a `value` replacement is read from its shadow slot. And
+`emit_time_expr_tag` now answers `None` for a clause that dispatches at
+runtime: it used to answer with the subject's static type, which is right for
+the element and wrong for a replacement that turned out to hold something
+else, so a `value` parameter, a list append and a map insert all take the
+real tag out of r11 instead. That half has its own crash to its name:
+
+```vox
+To announce with a value called what.
+  print what.
+
+a value called nine is 9.
+a list called names is ["ann", "-"].
+announce of each name from names treating "-" as nine.
+```
+→ `ann`, then **segfault** — the parameter was handed `mov r11, 1` (text)
+over the payload `9`. It now reads `push r11` straight from the clause and
+prints `9`. Last block of `429`.
+
+A subject that keeps a static type — a homogeneous list, a range — still
+takes the static path whenever the whole clause is static; it reaches the tag
+path only when a `value` is in the clause, which is the case that was broken.
+A **buffer** subject is excluded outright: its payload is a struct pointer
+rather than the bytes, so it compares by `_mem_eq` over the tracked length,
+which the tag path does not do (see below).
+
+**What this fix does not reach.** `write <buffer> treating <value> as <text>
+to <file>` — a spelling the parser accepts (`src/parser/io.rs`) and the manual
+never documents — has its own copy of the clause inside
+`Statement::FileWrite` (`src/codegen/statements.rs`), which
+never consults a tag at all: it calls `_str_len` on the match to size a
+`_mem_eq`. With a `value` match holding a number that is a segfault, before
+and after this fix:
+
+```vox
+a value called seven is 7.
+a buffer called content is 8 bytes in size.
+copy "-" to content.
+open a file for writing called out at "/dev/stdout".
+write content treating seven as "REPLACED" to out.
+close out.
+```
+→ segfault, byte-identical on 0.4.9 and on this branch (no regression, not
+covered). The same program with a text-valued `value` writes `REPLACED`
+correctly. Closing it means teaching that second emitter the same runtime tag
+branch, over a buffer's length-bearing comparison rather than `_str_eq`.
+Unfiled; worth its own entry.
+
+**Found alongside, not this bug.** `append each <var> from <collection>
+treating <match> as <replacement> to <list>.` still drops the clause
+entirely — `append each item from [1, "-"] treating "-" as "X" to out.`
+yields `[1, "-"]`. #59 recorded it and it is section H2 of the 0.4.10
+candidate report, on its way to its own entry; nothing here touches it.
+
+
+---
+
+### 70. `append each … treating …` parses the clause and discards it — silently in the spelling that compiles, as a parse error in the grammar's own
+
+**Status:** **fixed** (unreleased, on top of 0.4.9). Regression tests:
+`tests/467_append_each_treating_substitutes.vox` (the repro, a list
+literal, the no-clause control, and a `but if` branch),
+`tests/468_append_each_treating_over_a_range.vox` (a range source, plus
+the two controls the range disambiguation depends on),
+`tests/469_append_each_treating_into_a_buffer.vox` (a buffer
+destination, with and without the clause) and
+`tests/470_append_each_treating_matches_print.vox` (the working
+neighbour `print each … treating …` unchanged, and both actions agreeing
+over a mixed list), plus the compile-fail cases
+`tests/compile_fail/201_append_treating_after_the_destination.vox` and
+`tests/compile_fail/202_append_treating_after_a_range_destination.vox`.
+Found 2026-08-21 by the vox-fuzz **grammar-summary** claim ledger,
+Discrepancy 3 (row GRM-16, probe `docs/ledger/probes/grammar-summary/
+D3.vox`) — "wrong position in the manual's own grammar, and a silent
+no-op once moved to a position that parses", left unfiled there — and
+adjudicated in the candidate audit of 2026-08-21 (REPORT-CANDIDATES-0.4.10
+§H2). Recorded before that inside #59 as "Found alongside, not fixed here
+(out of scope)". Master-reproduced on this branch.
+
+```vox
+a list called names is ["ann", "-"].
+a list called out is [].
+append each name from names treating "-" as "anon" to out.
+Print out.
+```
+→ `["ann", "-"]` (expected `["ann", "anon"]`) — exit 0, no diagnostic
+
+```vox
+append each name from names to out treating "-" as "anon".
+```
+```
+error: Expected a statement, got Treating
+  --> H2.vox:3:36
+```
+
+```vox
+a list called out is [].
+append each n from 1 to 3 treating 2 as 99 to out.
+```
+```
+error: Expected list name after 'to'
+  --> t_range.vox:2:25
+    |
+  2 | append each n from 1 to 3 treating 2 as 99 to out.
+    |                         ^--- here
+```
+
+The nearest working neighbour — the byte-identical clause on the same
+list under `print`, the form the manual demonstrates:
+
+```vox
+print each name from names treating "-" as "anon".
+```
+→ `ann` then `anon` (correct)
+
+It is not a tag problem in the #44/#59 sense: the clause drops on a
+homogeneous text list too (`append each item from ["a", "c"] treating "a"
+as "b" to out.` → `["a", "c"]`), and on a buffer destination
+(`ann-`), so no runtime dispatch is involved. The clause simply never
+reaches the AST.
+
+**What the manual promises.** `treating` is a clause of the loop
+expansion, not of any one action: `loop_expansion ::= "each" name "from"
+expr ("treating" expr "as" expr)?` (LANGUAGE.md:5310), and the prose
+syntax rule — stated twice, at :422 and again at :3122 — is `... each
+<var> from <collection> treating <match> as <replacement>, ...`, in a
+section that lists `print`, `open` and a function call as the actions it
+rides on. The loop expansion itself is documented as universal:
+"**Works with any action**", with `append each X from Y to Z` named in
+that list (:2944). So the clause is promised over `append`, and its
+place is straight after the collection.
+
+**The manual's own grammar summary said otherwise, and was wrong.**
+`append_stmt`'s second production (LANGUAGE.md:5277) put the optional
+group after the destination:
+
+```
+append_stmt ::= "append" expr "to" name "."
+              | "append" "each" name "from" expr "to" name ("treating" expr "as" expr)? "."
+```
+
+That contradicts `loop_expansion` five lines further down, and it
+contradicts `print_stmt` on the same page, both of which attach the
+clause to the collection. Two sentences promise one placement; one
+transcription of the append production promises another. The
+transcription is the outlier and is now corrected to
+`("treating" expr "as" expr)? "to" name`, so the summary agrees with the
+production it is a specialisation of. The two `treating` sections gained
+an `append` example alongside the existing `print`/`open`/call ones, so
+the placement is demonstrated where a reader looks for it rather than
+inferred.
+
+**Mechanism.** Three failures, one root: the append path was written from
+the plain `append <expr> to <name>` form outward and never wired the
+clause in.
+
+1. `parse_append` (`src/parser/collections.rs`) destructured the clause
+   into `_treating` and threw it away — `if let Some((variable,
+   collection, _treating)) = self.try_parse_each_from(true)?` — then built
+   `Statement::ListAppend { value: Expr::Identifier(variable) }`. That is
+   the silent half: `try_parse_each_from` *does* parse the clause, which
+   is why the sentence compiles, and nothing downstream ever sees it.
+2. `try_parse_each_from`'s range disambiguation
+   (`src/parser/control_flow.rs`) was blinded by the clause. In append
+   position a range source shows two `to`s (`from 1 to 5 to rl`) and a
+   list source one (`from source to dest`), so the parser speculatively
+   reads the would-be range end and keeps the range only if a second `to`
+   follows. A `treating` clause sits between the two, so the test saw
+   `Treating` where it wanted `To`, rewound, and handed `1` back as the
+   whole collection — after which `append` demanded a list name and found
+   the literal `3`.
+3. Written where the grammar summary put it, the clause fell out of the
+   statement entirely and reached the top level as `Expected a statement,
+   got Treating` — a diagnostic that names neither the clause nor the way
+   out.
+
+**The fix.** Three local changes, each following the shape an existing
+action already uses.
+
+- The appended value is now `Self::each_arg_expr(&variable, &treating)`,
+  the same helper `print each … treating …` uses
+  (`src/parser/statements.rs`) and the same wrapping `open … at each …`
+  does by hand (`src/parser/io.rs`): the loop variable is wrapped in
+  `Expr::TreatingAs` when a clause is present and left bare when it is
+  not. Nothing new is invented for `append` — it joins the two actions
+  that already worked. As with those, the clause applies to the base
+  action; a `, but if …` branch's own action is a separate sentence and
+  is untouched, which `425` pins.
+- The range test reads the clause speculatively, alongside the end bound,
+  and keeps it only when the second `to` proves the range. On a list
+  source the rewind gives the clause back to the caller, which is what
+  lets the misplaced spelling reach its diagnostic instead of being
+  silently reinterpreted.
+- A `treating` sitting after the destination is now refused by name, in
+  the #45/#62/#63 family, with the caret on the offending token (#46):
+
+```
+error: A `treating` clause belongs to the `each` clause, not after the append destination
+  --> 173_append_treating_after_the_destination.vox:8:36
+    |
+  8 | append each name from names to out treating "-" as "anon".
+    |                                    ^^^^^^^^ this substitutes for the loop variable, so it goes where the variable is bound
+    |
+  help: write `append each name from <collection> treating <match> as <replacement> to out.`
+```
+
+One analyzer change came with it. `Statement::ListAppend` into a **buffer**
+destination is checked against a small set of legal sources
+(`src/analyzer/statements.rs`) — a buffer, a text-valued name, a string
+literal or a format string — and a `TreatingAs` wrapping any of them was
+none of those, so wiring the clause in would have turned a program that
+compiled (wrongly) into one that did not compile at all. The check now
+looks through the clause and judges the append by its subject, which is
+exactly the parity #59 established for a `treating`-wrapped read: it
+reports what a bare read of the same subject reports.
+
+**Family.** #50 — a bare `otherwise` rejected after every base action but
+`append` — is the same shape from the other side: a clause the grammar
+offers generally that one statement's parser never wired in, with
+`append` the odd one out. #59 fixed the runtime half of `treating` over a
+tagged element and recorded this drop as out of scope; with the clause now
+reaching the AST, #59's tag work is what makes `append each item from [1,
+"a"] treating "a" as "b" to mixed.` answer `[1, "b"]` rather than a
+pointer (`428`).
+
+**What this does not reach.** #59's unfiled residual is untouched: a
+clause whose *match* or *replacement* is a `value` has no emit-time tag,
+so it keeps the old static path under `append` exactly as it does under
+`print` — that is candidate H1, its own entry, not this one. And a
+`treating` after a plain `append <expr> to <name>` (no `each`) is still
+the generic `Expected a statement, got Treating`: with no loop variable
+bound there is nothing for the clause to substitute for, so the sentence
+is not valid under any reading and was deliberately left alone.
+
+
+---
+
+### 71. A format specifier other than a width still ignores the value's type — a precision on a number renders `0.00`, and `:x` / `:b` / `:o` on a text or buffer print its address
+
+**Status:** **fixed in 0.4.10** (unreleased). Severity: **address leak**,
+which by #36's own ranking is the worst class in the format layer — a
+`text` or `buffer` formatted with `:x` emitted a live pointer into program
+output — plus **wrong value, silent** for the precision half. Regression
+tests: `tests/471_precision_on_a_whole_number.vox`,
+`tests/472_specifiers_the_type_can_answer.vox`, compile-fail cases
+`tests/compile_fail/203_hexadecimal_of_a_text.vox` through
+`182_hexadecimal_of_a_float_expression.vox` (ten cases, covering each radix,
+each refused type, a width in front of the radix, a non-`Print` sink, and the
+expression form of a hole), and five codegen routing tests in `src/codegen/tests.rs` that drive
+`emit_formatted_value` directly, because the analyzer now refuses every
+program that could reach the leaking arms. Found 2026-08-21 by the
+candidate audit for 0.4.10 (`vox-notes/REPORT-CANDIDATES-0.4.10.md` §H4
+and §H4b): H4 from a note against the format layer, H4b — the address
+leak, the bigger half — found by the auditor while checking it.
+Master-reproduced on `4b77934` (= v0.4.9) before this fix.
+
+```vox
+a number called n is 255.
+Print "{n:.2}".              (0.00 — 255's bits read as an IEEE-754 double)
+
+a text called first is "hi".
+a text called second is "hi".
+Print "{first:x}".           (0x4030ee — an ADDRESS)
+Print "{second:x}".          (0x4030f1 — same bytes, different address)
+
+a buffer called payload is "hi".
+Print "{payload:x}".         (0x7f3db387e018 — a LIVE heap address, per run)
+```
+
+**This is the half of #36 that v0.4.7's fix did not take.** That entry's
+status line scopes itself precisely — "the harm half: a **width** no longer
+changes what a value IS" — and its fix put the type check behind a
+`matches!(fmt.base, IntegerBase::Decimal)` gate. A radix is by definition
+not `Decimal`, so it walked straight past; and a precision was handled
+above the gate, before any type was consulted at all. Both then reached the
+integer routines holding a float's bits or a pointer.
+
+**The matrix, each row measured on this branch's parent (`4b77934` = 0.4.9)
+and on the fix:**
+
+| hole | value | before | after |
+|---|---|---|---|
+| `{n:.2}` | number 255 | `0.00` | **`255.00`** |
+| `{n:.0}` | number 255 | `0` | `255` |
+| `{n:.5}` | number 255 | `0.00000` | **`255.00000`** |
+| `{owed:.2}` | number -5 | a **310-digit** number (see below) | **`-5.00`** |
+| `{big:.2}` | number 9007199254740993 | `0.00` | **`9007199254740993.00`** |
+| `{largest:.1}` | number 9223372036854775807 | a **309-digit** number | **`9223372036854775807.0`** |
+| `{ready:.2}` | boolean true | `0.00` | **`1.00`** |
+| `{ratio:.2}` | float 2.5 | `2.50` | `2.50` ✓ the working neighbour |
+| `{label:.2}` | text "hi" | `0.00` (the rodata pointer as a double) | **rejected** |
+| `{payload:.2}` | buffer "hi" | `0.00` | **rejected** |
+| `{first:x}` / `{second:x}` | two texts, both "hi" | `0x4030ee` / `0x4030f1` | **rejected** |
+| `{first:X}` | text "hi" | `0x4040FA` | **rejected** |
+| `{first:b}` | text "hi" | `10000000100000011111010` (= 0x4040FA) | **rejected** |
+| `{first:o}` | text "hi" | `0o20040372` (= 0x4040FA) | **rejected** |
+| `{label:04x}` | text "hi" | `0x4010ba` — an address, and no padding, since six digits already exceed the width | **rejected** |
+| `{payload:x}` | buffer "hi" | `0x7f3db387e018`, moves between runs | **rejected** |
+| `{ratio:x}` | float 2.5 | `0x4004000000000000` (the IEEE bits) | **rejected** |
+| `{ratio:b}` | float 2.5 | the same bits in binary | **rejected** |
+| `{n:x}` / `{n:X}` / `{n:b}` / `{eight:o}` | numbers | `0xff` / `0xFF` / `11111111` / `0o10` | unchanged ✓ |
+| `{n:04x}` / `{n:8x}` / `{n:06}` / `{n:6}` | number 255 | correct | unchanged ✓ |
+| `{ready:x}` / `{ready:06}` | boolean true | `0x1` / `000001` | unchanged ✓ |
+| `{f:06}` / `{t:06}` / `{b:06}` | float / text / buffer | #36's answers | unchanged ✓ |
+| `{held:06}` / `{worded:x}` | `value` 2.5 / `value` "words" | `2.5` / `words` | unchanged ✓ |
+| `{items:x}` / `{ages:.2}` | list / map | `[1, 2]` / `{"bo": 3}` | unchanged ✓ |
+| `a text called built is "{n:.2}".` | number 255 | `255` | **`255.00`** |
+| `copy "{label:x}" to out.` | text "hi" | `hi`, the `:x` silently dropped | **rejected** |
+
+**The negative row is the worst arithmetic answer in the table.** `-5` is
+`0xFFFFFFFFFFFFFFFB`, and that bit pattern read as a double is about
+-3.6e308 — one place below the largest finite double. So a two-line program
+asking for a small negative number to two places printed 310 digits:
+
+```vox
+a number called owed is 0 subtract 5.
+Print "{owed:.2}".
+```
+→ `-359538626972462981961830084685823781086324092104604707801734118769711…
+   …0708994615585441174176564756845767803804301355268373821189624847455485952.00`
+
+`{largest:.1}`, on `i64::MAX`, printed the positive twin of it. Both are
+`0.00` in disguise: every small positive number's bits are a denormal, which
+rounds to zero at any precision, which is why the wrong answer usually
+looked like a plausible `0.00` rather than like a bit pattern.
+
+**Proof that the text case printed an address, not a value** — #36's own
+control, one specifier over. Two distinct `text` variables holding the same
+content printed different numbers, and a `buffer` printed a number that
+changed between runs of the same binary. No value-based explanation
+survives either. (The particular rodata addresses above belong to the
+program they were measured in; another program with a different string
+layout prints different ones, which is the point.)
+
+**Root cause.** `emit_formatted_value` (`src/codegen/format.rs`) dispatched
+on the *specifier* and consulted the type only in one branch of it:
+
+- the precision arm ran first, unconditionally — `movq xmm0, rdi` / `call
+  _print_float_precision` — so any slot's 64 bits were read as a double;
+- the type-aware block #36 added was gated on `IntegerBase::Decimal`, so
+  every radix skipped it;
+- the radix arms then ran `PRINT_HEX_LOWER rdi` and friends on whatever
+  those bits were.
+
+The correct architecture was already in the compiler, one file away:
+`emit_append_runtime_value_to_buffer_ptr` (`src/codegen/buffers.rs`), the
+buffer/text sink, dispatches on `value_type` FIRST and only falls to the
+integer formatter for the integer family — which is why *no* sink ever
+leaked an address, and why `copy "{label:x}" to out.` printed `hi` while
+`Print "{label:x}"` printed a pointer.
+
+**Fix.** `emit_formatted_value` now dispatches on the type first, in the
+sink's shape: a `float` renders as a float (with the precision, if one was
+written), a `text` as a C string, a `buffer` as its bytes, and only then
+does the integer family reach the width/base routines. A raw slot can no
+longer be reinterpreted whatever specifier is written, including for a type
+the analyzer could not prove.
+
+On top of that the analyzer refuses, at compile time, the combinations that
+have no meaning — `check_format_spec_against_type`
+(`src/analyzer/expressions.rs`), reached from `analyze_format_parts`, so it
+covers every sink:
+
+- a radix on a `text`, a `buffer` or a `float`;
+- a precision on a `text` or a `buffer`.
+
+The diagnostic names the construct and the way out, with the caret on the
+offending hole rather than the declaration (#46), and quotes the specifier
+back exactly as written so the suggested rewrite pastes:
+
+```
+error: cannot render 'first', which is text, in hexadecimal
+  --> leak.vox:2:9
+    |
+  2 | Print "{first:x}".
+    |         ^--- here
+    |
+  note: `:x`, `:X`, `:b` and `:o` write a whole number in another base, and text is not one
+  help: convert it first - `{first as a number:x}`, or drop the specifier to render `{first}`
+```
+
+**Two rulings this fix makes, and the ground for each.**
+
+1. **A precision on a whole number renders it.** LANGUAGE.md:3175 writes
+   the rule of `{var:.N}` with no type attached, and the designer's
+   number/float ruling recorded on #65 — "in human language we call 1 a
+   number and pi a number; it should be the same in Vox" — makes a whole
+   number a member of the family a decimal place belongs to. So `{n:.2}`
+   is `255.00`, not a category error. It is rendered as the integer, a
+   point and N zeros rather than by converting to a double first, because
+   2^53+1 and `i64::MAX` have no exact double: a conversion would print
+   `9007199254740992.00` and `9223372036854775808.0` while the manual
+   promises "exactly `N` decimal places, correctly rounded". Digits then
+   zeros is exact for every i64.
+2. **A radix on a float is refused, not truncated.** The same family ruling
+   *keeps the value* — `a number called count is 3.5.` still holds 3.5 —
+   and no base can write 2.5 without dropping the fraction. A silent
+   truncation is the class of defect this register exists to catalogue, so
+   the loss is the author's to ask for: `{ratio as a number:b}` prints
+   `10`.
+
+**Why a diagnostic and not a silent drop.** With the codegen fix alone,
+`{label:x}` would print `hi` — the right value, with the `:x` quietly
+doing nothing. That is the mildest wrong rather than none, and it is what
+the buffer sink had been doing all along. Vox knows the type at the format
+site, which is the one place it has the most information, so a specifier
+the type cannot answer is refused the way #45, #62, #63 and #65 refuse a
+category error the compiler can see. A `value` is exempt — its type is not
+known until it runs — and so are a `list` and a `map`, which render through
+their own routines and ignore a specifier entirely.
+
+**Family:** **#36** (`docs/BUGS_FOUND.md:1952`) directly — this is the half
+its v0.4.7 fix did not reach, and its regression test
+(`tests/bugs_found_36_format_width_type.vox`) is unchanged and still green,
+which is what proves the width path was not disturbed. **#34** (the float
+formatter's i64 routing), which #36 already pairs with itself, and which is
+the reason the whole-number precision path avoids a double. **#45**, **#62**,
+**#63**, **#65** for the shape of the diagnostic. **#61** for the count
+limits, which are unchanged: `check_format_spec` still reports a count too
+large to hold, and now runs alongside the type check rather than instead of
+it.
+
+**Incidental, found on the way and deliberately not fixed here.**
+
+- **A precision on a FLOAT is still dropped by every sink but `Print`.**
+  `a text called built is "{ratio:.2}".` renders `2.5`, where `Print
+  "{ratio:.2}"` renders `2.50` — LANGUAGE.md:3226 promises a specifier
+  renders identically "whether the result is printed, written to a file,
+  or built into a buffer". The whole-number half of this was closed here
+  (`emit_append_int_with_decimal_places`) because `{n:.2}` is this entry's
+  own headline case; the float half needs a
+  `_buffer_append_float_precision` in coreasm, which is a defect of its
+  own and not this one's scope.
+
+  ```vox
+  a float called ratio is 2.5.
+  a text called built is "{ratio:.2}".
+  Print "{built}".            (2.5, where Print "{ratio:.2}" gives 2.50)
+  ```
+
+- **`{f:8.2}` drops the precision.** A spec is read as *either* a precision
+  *or* a width-and-base, never both, so a width in front of a precision
+  silently discards it — `{ratio:8.2}` renders `2.5`. This is #36's
+  recorded residue seen from the other side (that entry's table lists the
+  row) and is a dropped specifier, not a wrong value.
+
+- **`{'label'}` — a quoted single-word name in a format hole — is "Unknown
+  variable: 'label'"**, rejecting legal Vox. This is §I1 of the candidate
+  report, reproduced here independently while building the test cases; it
+  is its own entry, not part of this one.
+
+
+---
+
+### 72. An absent map key, or an out-of-range list index, is typed from the collection's VALUES — the manual's own `a number called x is m's "never_set".` is refused, and the `help:` line it offers segfaults
+
+**Status:** **fixed** (unreleased, on top of 0.4.9). Severity: **rejects a
+correct program that 0.4.8 compiled — a 0.4.9 REGRESSION — and the
+alternative its own `help:` line recommends is a segfault.** Regression
+tests: `tests/440_absent_map_key_reads_zero.vox` and
+`tests/441_out_of_range_list_read_reads_zero.vox`, and compile-fail cases
+`tests/compile_fail/173_absent_map_key_into_a_text.vox` through
+`181_absent_key_proof_withheld_for_an_aliased_map.vox`. Found 2026-08-21 by
+the vox-fuzz collections claim ledger — hand-reduced from campaign seed
+1009 while sweeping the leaves `gen leaf map oob` (kind 10) and `gen leaf
+list oob` (kind 5), written up as finding C of
+`vox-notes/REPORT-SWEEP-COLLECTIONS.md`. Adjudicated 2026-08-22 as
+candidate **C-i** of `vox-notes/REPORT-CANDIDATES-ROUND-2.md`,
+master-reproduced on 4b77934.
+
+```vox
+a map called guess is {"a": "t"}.
+a number called n is guess's "absent".
+Print n.
+```
+→ on 0.4.9:
+```
+error: cannot initialise 'n', which is a number, with a text read out of map 'guess'
+  --> c1.vox:2:17
+    |
+  2 | a number called n is guess's "absent".
+    |                 ^ this reads text
+    |
+  note: the read yields a text, and 'n' is declared as a number
+  help: declare it as a text - `a text called n is guess's "absent".` - or convert it explicitly:  a number called n is guess's "absent" as a number.
+```
+On **0.4.8** the same three lines compiled and printed `0`.
+
+And the `help:` line, followed verbatim, is the one destination that
+crashes:
+
+```vox
+a map called guess is {"a": "t"}.
+a text called n is guess's "absent".
+Print n.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+**The matrix, each cell its own program, on 4b77934 (= 0.4.9) and on the
+fix. In every row the runtime yields the number `0`.**
+
+| collection | destination | 0.4.9 | fixed |
+|---|---|---|---|
+| `{"a": "t"}`, key `"absent"` | `number` | rejected | prints `0` |
+| `{"a": "t"}`, key `"absent"` | `text` | **139** | rejected |
+| `{"a": 1}`, key `"absent"` | `number` | prints `0` | prints `0` |
+| `{"a": 1}`, key `"absent"` | `text` | rejected | rejected |
+| `{"a": 1, "b": "x"}`, key `"absent"` | `number` | prints `0` | prints `0` |
+| `{"a": 1, "b": "x"}`, key `"absent"` | `text` | **139** | rejected |
+| `{}`, key `"absent"` | `number` | prints `0` | prints `0` |
+| `{}`, key `"absent"` | `text` | **139** | rejected |
+| `["a","b"]`, `element 5 of` | `number` | rejected | prints `0` |
+| `["a","b"]`, `element 5 of` | `text` | **139** | rejected |
+| `[1,2]`, `element 5 of` | `number` | prints `0` | prints `0` |
+| `[1,2]`, `element 5 of` | `text` | rejected | rejected |
+| `[1,"b"]`, `element 5 of` | `number` | prints `0` | prints `0` |
+| `[1,"b"]`, `element 5 of` | `text` | **139** | rejected |
+| `[]`, `'s first` | `number` | prints `0` | prints `0` |
+| `[]`, `'s first` | `text` | **139** | rejected |
+| `["a","b"]`, `element 0 of` | `text` | **139** | rejected |
+| `[true,false,true]`, `element 100 of` | `boolean` | prints `0` | prints `0` |
+| `[1.5,2.5]`, `element 100 of` | `float` | prints `0.0` | prints `0.0` |
+
+Six of those rows are a **segfault the check was written to prevent and
+walked straight past**, and two more are the regression itself. The
+assignment spelling (`n is guess's "absent".`) and the arithmetic spelling
+(`guess's "absent" add 1`) were refused for the same reason and are fixed by
+the same change.
+
+**What the spec promises.** LANGUAGE.md:2429 — "A missing key does not
+crash: the lookup **yields 0** and sets the error flag, so an `on error`
+handler can react", with `print person's "nope".    (prints: 0)` beside it.
+LANGUAGE.md:2857 — "Out-of-bounds access sets an error flag and **returns
+0**". The manual then writes the rejected sentence itself, twice, and both
+times the destination is a `number`:
+
+```
+a map called m is {"k": nothing}.                 (LANGUAGE.md:2756-2759)
+If m's "k" is nothing, print "k is present and holds nothing".
+a number called x is m's "never_set".
+on error print "never_set is absent".
+```
+```
+a list called items is [1, 2, 3].                 (LANGUAGE.md:2861-2864)
+a number called bad is element 100 of items.
+On error print "Cannot access element 100 - out of bounds!".
+```
+
+Both survive on 0.4.9 only because their collections happen not to hold
+text. Swap `{"k": nothing}` for `{"k": "v"}` and the manual's own paragraph
+stops compiling.
+
+**Mechanism — the read is typed from the values, and a miss has no value.**
+`arithmetic_operand_type` (`src/analyzer/types.rs:114` on 4b77934) answered a
+map read with `map_value_type.get(map)` and a list read with
+`list_element_type_of(name)`, unconditionally — the key and the index were
+never consulted. Those two tables are #54's and plan 294's, filled from a
+homogeneous literal initializer, and for a key the literal **does** contain
+they are exactly right. For a key it does not, the type they name is one no
+value of that read will ever have: `_map_lookup` sets `_last_error`, `rax =
+0`, `r11 = 0`, and the read is the number 0 with the number tag. A `value`
+destination proves it at runtime —
+
+```vox
+a map called guess is {"a": "t"}.
+a value called v is guess's "absent".
+Print "{v's type}".    (prints: Number (dynamic))
+Print v.               (prints: 0)
+```
+
+`check_declared_read_type` (`src/analyzer/types.rs:661` on 4b77934) then
+compared that false type against the declaration and refused the number,
+while the `text` it recommended sailed through — declared and inferred agreed
+— into this, from `--emit-asm`:
+
+```asm
+    call _map_lookup
+    mov [rel gvar_1], rax  ; global store n   <- rax is 0 on a miss
+    mov rax, [rel gvar_1]
+    mov rdi, rax
+    PRINT_CSTR rdi         ; walks a string at address 0
+```
+
+#54 and #65 both judge a *type mismatch*; here the declared and inferred
+types **agree** and the runtime value is 0, so neither of them looks.
+
+**Fix — prove the miss, then type it as what a miss yields.** All in the
+analyzer; codegen and the runtime are untouched.
+
+1. `absent_read_reason` (`src/analyzer/types.rs`) answers whether a read
+   provably asks for something the collection's own literal does not
+   contain — a map key the literal never wrote, an index below 1 or past
+   the literal's last element, a `'s first`/`'s last` on an empty literal —
+   and returns the reason, phrased for the diagnostic's `note:` line.
+2. `arithmetic_operand_type`'s `MapAccess`, `ElementAccess`/`ListAccess` and
+   `PropertyAccess{First,Last}` arms ask it first, and answer `number` when
+   it fires. That single answer fixes the declaration spelling, the
+   assignment spelling (through `check_type_lock`) and the arithmetic
+   spelling at once, because all three read the type from this one
+   function.
+3. Two new tables carry the proof, both filled by
+   `collect_literal_collection_shapes` (`src/parser/ast.rs`) in one
+   whole-program pass **before** the analyzer's walk, beside
+   `collect_widened_lists`: `map_literal_keys` (the literal's key set, when
+   every key is a string literal — a `"{k}"` key is dynamic, so the set
+   would be incomplete and the whole map gets no proof) and
+   `list_literal_len` (the literal's length, recorded for a **mixed**
+   literal too, since a length is provable whether or not the elements
+   share a type — which is why the two mixed rows above are caught where
+   #54's element-type proof never reached them). A name the program
+   declares more than once is in neither table; see below for why that
+   matters more here than it does for #54.
+4. `absent_zero_fits` decides what the miss is refused into: a `number`
+   holds 0, a `float` holds it as +0.0, and a `boolean` holds it as false —
+   Vox represents a boolean as 0/1 and prints it that way. A `text`, `list`
+   or `map` slot holds a **pointer**, and 0 as an address is the crash. Only
+   those three are refused. This is #65's "a number and a float are one
+   family" ruling (Josj, 2026-08-21) applied to the one read that yields a
+   bare 0, and it is what keeps `examples/lists.vox:27` —
+   `a boolean called bad is element 100 of bools.` — compiling.
+
+**The proof is only offered where it holds.** A map's key set stops being
+the literal's the moment anything can add to it, so `map_literal_keys_of`
+withholds it when the program contains any `Set <map>'s "k" to <value>.`
+(`collect_map_key_writers`, `src/parser/ast.rs`), when any function inserts
+into a map it was handed (`any_function_writes_a_map_parameter`, the map
+twin of #54's `any_function_widens_a_parameter`), or when the name is in
+`widened_lists` — #54's whole-program alias scan, which is name-keyed and
+type-blind and so already collects every map copied into or out of a
+variable, returned, or passed to a call. `list_literal_len_of` reuses
+`list_element_type_of`'s guard unchanged, because an `Append` is exactly
+what makes an index no longer past the end. In every withheld case the
+behaviour is byte-identical to 0.4.9 — compile-fail cases 180 and 181 pin
+that.
+
+**Why the shapes are collected before the walk, and why a name declared
+twice gets nothing.** #54's tables are filled at each declaration as the
+walk reaches it, and that is safe for them because a wrong answer there
+costs a *diagnostic*. An absence proof is different: a wrong answer there
+costs a wrong **acceptance**. Recorded at the declaration, this program was
+accepted and printed an address, where `main` rejects it:
+
+```vox
+a map called guess is {"b": "t"}.
+
+To peek.
+    a number called n is guess's "a".    (analyzed while the table says {"b"})
+    Print n.
+
+a map called guess is {"a": "t"}.        (but THIS is the map peek reads)
+peek.                                     (prints 4198562)
+```
+
+`collect_literal_collection_shapes` (`src/parser/ast.rs`) therefore walks
+the whole program **before** the analyzer's walk and offers a shape only for
+a name the program declares exactly once — so a read gets the same answer
+wherever in the file it sits, which is the property #54's own doc comment
+says these scans must have.
+
+**The diagnostic that replaces the segfault.** In #45/#62/#63's family: it
+names what is actually read, says why, and points at the destination the
+manual itself uses.
+
+```
+error: cannot initialise 'n', which is a text, with a number read out of map 'guess'
+  --> c2.vox:2:15
+    |
+  2 | a text called n is guess's "absent".
+    |               ^ this reads the number 0
+    |
+  note: map 'guess' has no key "absent", and a missing key yields the number 0 and sets the error flag
+  help: declare it as a number - `a number called n is guess's "absent".` - and catch the miss with `on error`
+```
+
+**What this deliberately does NOT fix.** An absent-key or out-of-range read
+into a `text`, `list` or `map` still compiles and still segfaults wherever
+the miss is **not** provable — a dynamic key, a variable index, a collection
+grown by `Append`, a non-literal initializer, a map some `Set` reaches. That
+residual is not new (0.4.8 segfaults identically) and it is the corner #54
+and #65 did not cover: they judge a *type mismatch*, and there the declared
+and inferred types agree while the runtime value is 0. It is candidate
+**C-ii** of `REPORT-CANDIDATES-ROUND-2.md` and wants its own number — the
+general answer is a runtime one (a miss must not hand back a raw 0 into a
+pointer slot), not another static proof.
+
+**Downstream — `gen leaf map oob` now encodes the bug as a rule.** The
+collections sweep, unable to decide whether finding C was a compiler bug or
+a manual gap, taught the leaf to live with it:
+`REPORT-SWEEP-COLLECTIONS.md` §"Per leaf" 4 records, under "Kept, with
+citations", that "the captured holder's type follows the map's values —
+Finding C, a compiler rule with a probe table". That is now the wrong rule:
+for an all-text map the leaf will declare a `text` holder for a
+missing-key read, and this fix rejects exactly that. The leaf must be
+changed to declare the holder a `number`, which is what the manual writes
+(LANGUAGE.md:2758) and what the read yields. `gen leaf list oob` (kind 5)
+needs the same look — its citation is the runtime claim (":2857 … returns
+0"), which stays true, but any captured-read form it draws has the same
+holder-type question.
+
+**Family.** #54 (the read-type check this over-reached), #65 (the
+declaration-site type check beside it, and the number/float ruling reused
+here), #45/#62/#63 (the diagnostic's shape), #46 (the caret).
+
+
+---
+
+### 73. A `To` definition swallowed into an open clause is accepted, and every call to it passes a `value` parameter's tag from an uninitialised register — an integer is then dereferenced as a text pointer
+
+**Status:** **fixed in 0.4.10** (unreleased, on top of 0.4.9 = `4b77934`).
+Severity: **memory safety** — an eleven-line program, compiled clean,
+faults on a pointer it was handed by an integer literal; the non-faulting
+half reports a text's type as `Number` and then as `Unknown`. Deterministic,
+no fuzzing needed: five runs, five × exit 139. Regression tests
+`tests/442_swallowed_definition_keeps_the_value_abi.vox` through
+`tests/449_a_swallowed_definition_returns_a_value.vox` (eight cases — the
+mis-tag, the segfault, the nearest working neighbour, a `number` and a
+`text` parameter, an `If` clause instead of a loop, a call at the true top
+level, and a `value` return).
+Found by the vox-fuzz claim ledger — the `gen_misc` "cast and break" leaf
+swallowed a `To` into an open clause and hit exit 95 twice in the
+2026-08-21 core sweep — then reduced and adjudicated as candidate **D** of
+`vox-notes/REPORT-CANDIDATES-ROUND-2.md` (2026-08-21/22 audit round 2);
+master-reproduced on 0.4.9 before the fix.
+
+```vox
+To probe with a value called sample.
+    a number called ignored is 1.
+
+For each attempt from 1 to 3,
+    probe of "t",
+    If attempt is 99 then, Break.
+To examine with a value called given.
+    Print given.
+
+examine of 42.
+Exit 0.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+```vox
+For each attempt from 1 to 3,
+    If attempt is 99 then, Break.
+To examine with a value called given.
+    Print "{given's type}".
+
+examine of "".
+Exit 0.
+```
+→ `Number (dynamic)`, then `Unknown (dynamic)` twice. The argument is a
+text.
+
+**Root cause.** A `To` written while a clause is still open is parsed into
+that clause's body — the termination rule (LANGUAGE.md, "The termination
+rule") names a period and a blank line as the closers, and a definition is
+a statement like any other. That parse is a separate question (see "The
+parse half", below) and is **unchanged** by this fix.
+
+What was wrong is what happened next. Both pre-passes that answer "what is
+this function's signature?" walked only the flat top-level list:
+
+- `collect_function_signatures` (`src/codegen/functions.rs`) —
+  `function_param_types`, `function_return_types`,
+  `function_return_full_types`
+- the analyzer's pre-pass (`src/analyzer/statements.rs`) — `functions`,
+  `function_param_counts`, `function_signatures`, and the #45 / #63
+  questions about the body
+
+A swallowed `FunctionDef` is not in that list, so it had no entry. At the
+call site `emit_function_call` (`src/codegen/functions.rs`) looks its
+callee up and falls back on `.unwrap_or_default()` — an empty signature,
+which spells "every parameter takes one argument word". A `value`
+parameter takes **two** (payload, then tag), so the tag word was never
+pushed:
+
+```asm
+; before — definition swallowed          ; before — definition at top level
+    lea rax, [rel str_8]                     lea rax, [rel str_8]
+                                             mov r11, 1  ; value tag (static)
+                                             push r11    ; value param tag word
+    push rax                                 push rax
+    pop rdi                                  pop rdi
+                 ; <- rsi never written      pop rsi
+    call examine                             call examine
+```
+
+The callee is byte-identical in both — the *definition* was always
+compiled correctly — so it reads its tag from `rsi & 0xFF`, a
+general-purpose register the caller never wrote. That is an uninitialised
+**register** read, not an out-of-bounds or freed-memory read; nothing out
+of bounds is touched. But the tag steers pointer-versus-integer dispatch,
+so the integer `42` arriving tagged `Text` makes `Print` dereference 42 as
+a text pointer. The mis-tag is stable and steerable, not noise: in the
+segfault repro the correct call `probe of "t"` leaves `rsi = 1` (Text) and
+the broken call inherits it.
+
+This is **register #43's exact shape** ("a conditional `value` return
+leaves a stale tag, and the caller dereferences an integer as text —
+segfault") reached by a different route, and it sits in the family of #45
+and #63, which fixed the *other* two questions the same analyzer pre-pass
+answers about a definition.
+
+**The fix.** One answer to "which statements define a function", used by
+both pre-passes.
+
+- `nested_function_defs` (`src/parser/ast.rs`) returns every definition
+  hidden inside a statement's block bodies, at any depth, in source order.
+  It descends through `If` (all three block kinds), `While`, `ForRange`,
+  `ForEach`, `Repeat`, `on error` and a `FunctionDef`'s own body, so a
+  definition nested two clauses deep is found as readily as one nested in a
+  loop.
+- Each pre-pass keeps its flat scan of the top level and, for each
+  top-level statement, sweeps that statement's nested definitions with the
+  library identity in force where it stands. The registration itself was
+  lifted into one method per pre-pass
+  (`CodeGenerator::record_function_signature`,
+  `Analyzer::register_function_definition`) so the flat scan and the sweep
+  cannot drift apart.
+
+`.lib` exports are deliberately **not** extended: a library interface
+lists what the library offers, and a definition swallowed into a block is
+not something the author wrote at a library's top level. A shared build's
+`.lib` output is byte-identical.
+
+**The matrix, each case its own program, measured on `4b77934` and on the
+fix:**
+
+| program | before | after |
+|---|---|---|
+| swallowed `To … with a value called v.` + `Print "{v's type}"`, called with `""` | `Number`, `Unknown`, `Unknown` | `Text` ×3 |
+| the eleven-line segfault repro above | **139** | prints `42` ×3 |
+| the same, with a blank line before the `To` (control) | `Text (dynamic)` | unchanged |
+| swallowed definition, `number` parameter (control) | `7`, `7` | unchanged |
+| swallowed definition, `text` parameter (control) | `hi`, `hi` | unchanged |
+| swallowed by an `If` instead of a loop | `Unknown (dynamic)` | `Number (dynamic)` |
+| call at the true top level, definition swallowed | `Unknown (dynamic)` | `Text (dynamic)` |
+| swallowed `To echo … Return a value, given.` round trip | `Number (dynamic)`, `4210906` | `Text (dynamic)`, `round trip` |
+| wrong arity against a swallowed definition (control) | `Function 'examine' expects 2 arguments but was called with 1.` | unchanged |
+| a genuinely undefined name (control) | `error: Unknown function: examine` | unchanged |
+
+**The parse half — a question for the designer, not fixed here.** Whether a
+`To` inside an open clause should force-close that clause or be refused
+outright is a language decision, and the manual states both answers:
+
+- LANGUAGE.md:88 — "A following `To` or `Library` **does** begin a new
+  top-level construct and so ends the body" (said of a function body,
+  which rule 2 calls the strongest clause there is).
+- LANGUAGE.md's termination rule — "1. A period closes the most recently
+  opened clause … 2. A blank line (paragraph break) force-closes every open
+  clause at once". A `To` is neither closer, so the definition belongs to
+  the open body.
+- LANGUAGE.md:1607, for the sibling case — a `thing` "definition inside an
+  `If`, a loop, or a function body is a compile error, and the message says
+  to move it above the block". `src/parser/things.rs` enforces exactly
+  that, with the comment "A definition is a top-level statement, **like a
+  function definition**". `Token::To => self.parse_function_def()`
+  (`src/parser/statements.rs`) has no such guard, though `at_top_level()`
+  is right there.
+
+The two options are one `if !self.at_top_level()` (refuse it, matching
+`thing` and :1607) or extending :88's closer rule to every clause. This
+entry fixes neither, because **the ABI must be right either way**: if the
+parse is refused the fix is dead code that costs nothing, and if the
+definition stays legal the fix is what makes it correct. Note for whoever
+answers it: a swallowed `To` also **eats the blank line** that would have
+closed the enclosing clause (the blank line closes the innermost thing,
+the new function body), which is why the statements after it keep being
+drawn into the loop.
+
+**A related blind spot, recorded not fixed.** The Stage A4 shadow warning
+(`src/analyzer/statements.rs`) — "'x' is defined in this program and also
+exported by library … the local definition wins" — is keyed off the same
+flat top-level scan, so a *swallowed* definition shadowing an imported one
+wins **silently**. The warning exists precisely so that adding a `see` can
+never redirect an existing call without a diagnostic. Repro and measurement
+are in `REPORT-73.md` ("Incidental"). It is a missing diagnostic, not a
+wrong-code bug, and belongs to #45/#62/#63's family rather than this one.
+
+**Also noted, outside this entry.** `#66`'s fix adds a third flat
+top-level pre-pass (`collect_global_declared_types`), so a global declared
+inside a nested block will be invisible to it in exactly the way a nested
+`FunctionDef` was invisible here. Not a fault in `#66` — a note that the
+"flat scan of the top level" assumption now has several dependents;
+`nested_function_defs` is the shape a fix would reuse.
+
+
+---
+
+### 74. A `'s length` / `'s size` / `'s capacity` / `'s empty` read is typeless to the type lock — `a text called t is xs's length.` compiles and segfaults
+
+**Status:** **fixed** (unreleased, on top of 0.4.9).
+Severity: **memory safety** — silent, no diagnostic, segfault on the first
+read, at the declaration site *and* the call site. It needs nothing unusual
+at all: `a text called t is xs's length.` is a plausible typo, not a corner.
+Regression tests: compile-fail cases
+`tests/compile_fail/182_list_length_into_a_text_declaration.vox` through
+`190_list_length_assigned_to_a_text.vox` (eighteen cases, covering the
+declaration, the argument, the return and the `Set`, on a list, a map, a
+buffer, a file, a number, a time and a timer), plus two passing controls —
+`tests/450_property_reads_into_the_types_the_manual_gives.vox`, which reads
+every property in the manual's tables into the type those tables give it and
+is byte-identical before and after, and
+`tests/451_mistyped_property_reads_written_correctly.vox`, which writes each
+refused program the two documented ways and checks the answers.
+Found 2026-08-21 during the round-2 candidate audit (candidate **E**), by a
+throwaway probe reducing candidate F that segfaulted for an unrelated
+reason; adjudicated as a bug and master-reproduced on 4b77934 (0.4.9).
+
+```vox
+a list called xs is ["a","b"].
+a text called t is xs's length.
+Print t.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+```vox
+To 'shout' with a text called word. Return a text, word.
+
+a list called xs is ["a","b"].
+Print 'shout' of xs's length.
+```
+→ **segfault (139)** as well — one frame from the sentence that caused it.
+
+**Root cause.** `arithmetic_operand_type` (`src/analyzer/types.rs`) is the
+one type oracle the whole family shares: bug #65's `check_initialiser_type`,
+`check_argument_type` and `check_return_type` reach it through
+`provable_value_type`, and the type lock (`check_type_lock`) calls it
+directly. Its property arm answered for exactly two properties —
+
+```rust
+Expr::PropertyAccess { object, property: ObjectProperty::First }
+| Expr::PropertyAccess { object, property: ObjectProperty::Last } => {
+    self.list_element_type_of(object)
+}
+Expr::ByteAccess { .. } => Some(Type::Integer),
+_ => None,                    // <- length, size, capacity, empty, full, ...
+```
+
+— so `length`, `size`, `capacity`, `empty`, `full`, `keys`, `values`, `type`,
+every file property, every number question, every time component and the
+timer's timestamps all fell to `_ => None`, which the whole function reads as
+"can't prove it, allow it". That policy is right where nothing *can* be
+proven; it is wrong here, because these are the properties the analyzer knows
+best. `xs's length` is as provable as `element 1 of xs`, which the same
+function resolves (#54's `list_element_type_of`), and the manual types every
+one of them outright: LANGUAGE.md's List, Buffer, File, Number, Time and
+Timer property tables give each property a Number or Boolean column, and
+codegen leaves exactly that in `rax`. A byte was already `Some(Type::Integer)`
+"by construction" on the line below; a length is a number by the same
+construction.
+
+**Fix.** One new arm and one new function in the same file. Every property
+whose runtime type is the same *whatever it is read from* now answers with
+that type — the measurements (`size`/`length`, `capacity`, a file's
+`descriptor`/`modified`/`accessed`/`permissions`, a number's `sign`, every
+time component, a timer's `start time`/`end time`) are `Integer`; the
+questions (`empty`, `full`, `readable`, `writable`, `even`, `odd`,
+`positive`, `negative`, `zero`, `running`) are `Boolean`; `keys`/`values`
+build a list; the universal `type` reports text. The properties whose type
+follows their **base** deliberately keep answering `None` and stay allowed:
+`first`/`last` (the list's element type, already resolved above), `absolute`
+(a float's absolute is a float), and a timer's `duration`/`elapsed`, which
+are a Duration and only readable through a unit cast. `render_value_hint`
+was widened the same way so the `help:` line is pasteable source rather than
+`<value>`; a multi-word base gets its quotes back
+(`'job timer''s start time`) and `current time's hour` is spelled the way it
+was written rather than as its synthetic object name.
+
+Nothing was added to codegen: every one of these reads already produced the
+right value at runtime. What was missing was only the compiler noticing where
+it was being stored.
+
+**The matrix, each case its own program, measured on this branch's parent
+(4b77934 = 0.4.9) and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| `a text called t is xs's length.` | 139 | rejected |
+| `a list called L is xs's length.` | prints `[`, then 139 | rejected |
+| `a text called t is b's capacity.` (buffer) | 139 | rejected |
+| `a text called t is m's keys.` (map) | prints an empty line | rejected |
+| `a number called n is xs's empty.` | prints `0` | rejected |
+| `a boolean called done is xs's length.` | prints `2` out of a boolean | rejected |
+| `a number called what is n's type.` | prints `4198488` — the literal's address | rejected |
+| `a text called t is n's even.` | 139 | rejected |
+| `a text called t is now's year.` | 139 | rejected |
+| `a text called t is src's descriptor.` (file) | 139 | rejected |
+| `a text called t is clock's running.` (timer) | 139 | rejected |
+| `'shout' of xs's length` (text param) | 139 | rejected |
+| `'shout' of m's length` (text param) | 139 | rejected |
+| `'shout' of b's size` (text param) | 139 | rejected |
+| `'shout' of xs's empty` (text param) | 139 | rejected |
+| `'ident' of xs's length` (list param) | prints `[`, then 139 | rejected |
+| `Return a text, items's length.` | 139 | rejected |
+| `Set label to xs's length.` on a text | 139 | rejected |
+| **controls — unchanged, before and after** | | |
+| `a number called count is xs's length.` | prints `2` | prints `2` |
+| `a text called t is xs's length as text.` | prints `2` | prints `2` |
+| `a boolean called drained is xs's empty.` | prints `0` | prints `0` |
+| `a list called ks is m's keys.` | prints `["a"]` | prints `["a"]` |
+| `a text called what is n's type.` | prints `Number (static)` | prints `Number (static)` |
+| `print xs's length add 1.` | prints `3` | prints `3` |
+| `If xs's empty then, ...` | takes the right branch | takes the right branch |
+| `a number called m is n's absolute.` | prints `4` | prints `4` |
+| `'doubled' of xs's first` (number param, text elem) | rejected (#54) | rejected (#54) |
+| `a number called d is clock's duration in seconds.` | prints `0` | prints `0` |
+| `tests/450` (every documented property read) | 31 lines | **byte-identical** |
+
+Eighteen of the twenty-nine are wrong; fourteen of those eighteen segfault
+and four just lie, and the four that lie are the worst of them, because
+nothing on screen says anything went wrong.
+
+**Two programs that worked and are now refused, deliberately.** `a number
+called n is xs's empty.` printed `0` and `a boolean called done is xs's
+length.` printed `2`. Both are the boolean/number confusion #65 already
+refuses when it is spelled with a literal — `a number called n is true.` has
+been a compile error since 0.4.9 — and `2` is not a value a boolean can hold.
+Both now report, and both help lines name the documented cast
+(`xs's empty as a number`, `xs's length as a boolean`), which is the same
+escape #65 offers for the literal form.
+
+**Family: #65 and #54.** This is the hole in the type oracle those two share.
+#54 built `list_element_type_of` and the `First`/`Last` arms; #65 added the
+declaration, argument and return checks that consult them. #74 is the next
+arm in the same `match`, and the caret-and-help shape is #45/#62/#63's and
+#46's.
+
+**One manual line changed.** LANGUAGE.md's "What this doesn't catch"
+paragraph under **Type Immutability** enumerated the shapes the check can
+prove — "a literal, a cast, a read from a list/map whose element type is
+provably uniform, ..." — and a property read was not among them, which was
+true before this fix and is not true after it. The sentence now names the
+property read and the five properties (`first`, `last`, `absolute`,
+`duration`, `elapsed`) that stay unproven because their type follows the
+thing they are read from. No behaviour is promised that the compiler does
+not now enforce.
+
+**Not in scope, noticed on the way.**
+
+- `arguments's` and `environment's` reads are not `PropertyAccess` at all —
+  the parser gives them their own `Expr` variants — so they have the same
+  hole under a different node. `arguments's count` and `environment's count`
+  were already typed `Integer`; the rest are not, and `a text called t is
+  arguments's empty.` still segfaults. That is #58's family, not this one's,
+  and closing it means typing seven more `Expr` variants.
+- `Print src's empty.` on a **file** segfaults, before and after. LANGUAGE.md's
+  File Properties table has no `empty` or `full`, but
+  `src/analyzer/expressions.rs` accepts both on a file handle and codegen then
+  reads `[fd + 8]` — the descriptor used as an address. Either the analyzer
+  should refuse it or codegen should answer from `_file_size`; that is a
+  language call, and this fix only types the read, it does not decide whether
+  it is legal.
+- `a float called g is f's absolute.` prints `4606619468846596096.0`. Codegen's
+  `Absolute` arm is `test rax, rax / neg rax` — integer negation applied to a
+  double's bit pattern. This is exactly why `absolute` is left unproven here;
+  typing it `Integer` would have asserted something false about a float.
+- `xs's empty as text` prints `0`, while `true as text` prints `true`. A
+  boolean rendered as text is only spelled out when it is a literal; out of a
+  property (or any non-literal) it renders as its digit. Cosmetic, unrelated
+  to the type oracle, and recorded here for the queue.
+
+
+---
+
+### 75. A list or map grown through a function parameter silently stops at the literal's capacity — the realloc is never stored back, and every call past that leaks a whole collection
+
+**Status:** **fixed** (unreleased, on top of 0.4.9). Regression tests:
+`tests/473_a_list_grown_through_a_parameter.vox` (the repro, plus every row
+of the capacity table below, plus two lists through one call and a literal
+argument), `tests/474_a_map_grown_through_a_parameter.vox` (the map half,
+including replace-not-insert through the parameter),
+`tests/476_a_collection_passed_on_and_grown.vox` (a collection passed on to
+a second function, three calls deep, and recursion), and the controls
+`tests/475_the_neighbours_of_a_grown_parameter.vox` (every shape that was
+already right — reading a parameter, an in-place write, return-and-assign,
+growth into a global, growth at the top level, a map at the top level,
+iteration over a parameter, and a collection past the sixth argument word).
+Found 2026-08-21 by the buffers-sweep worker (`vox-notes/REPORT-SWEEP-BUFFERS.md`
+§5 discrepancy **D-A**, recorded but not filed — "either a compiler bug or a
+manual gap; I have not decided which"), adjudicated as a bug by the
+candidate audit of 2026-08-22 (`vox-notes/REPORT-CANDIDATES-ROUND-2.md`
+section **F**), master-reproduced on this branch.
+
+```vox
+To 'add one to' with a list called items.
+    append "x" to items.
+
+a list called xs is ["a"].
+a number called n is 0.
+While n is less than 20,
+    'add one to' of xs,
+    Set n to n add 1.
+Print xs's length.
+```
+→ `8`. Expected 21. No error, no warning, exit 0.
+
+The reported number was eight; eight is not the rule. The cut-off is the
+capacity the list's own literal allocated — `max(8, element count)`, the
+capacity `_list_append` gives a fresh list (`coreasm/x86_64/list.asm`, double
+or 8 from zero) — so the allocator's internal sizing was visible in the
+language:
+
+| the list's own literal | caller's length after 40 calls | after the fix |
+|---|---|---|
+| `[]` | **8** | 40 |
+| `[1]` | **8** | 41 |
+| `[1,2,3]` | **8** | 43 |
+| `[1,…,8]` | **8** | 48 |
+| `[1,…,9]` | **9** | 49 |
+| `[1,…,12]` | **12** | 52 |
+
+**Maps have it too**, and for maps the manual had made the promise outright.
+LANGUAGE.md's Maps section says of `Set map's "key" to value`: "The map may
+reallocate on growth, so **the returned pointer is stored back into the
+variable automatically**" — and a parameter is a variable.
+
+```vox
+To 'store into' with a map called holder and a text called label.
+    Set holder's "{label}" to 1.
+
+a map called m is {"seed": 0}.
+… 20 calls …
+Print m's length.
+```
+→ `8`. Expected 21.
+
+**Why this is a bug and not copy semantics.** The strongest reading in which
+the compiler is right is that a collection parameter is a copy, like a
+`thing` parameter (LANGUAGE.md "A function receives a copy of a thing and
+hands one back by returning it; nudging the parameter cannot reach the
+caller's point"). The compiler refutes that reading twice. First, an in-place
+write through the same parameter **is** visible — `Set element 1 of items to
+"CHANGED"` reaches the caller, which a copy could not do; LANGUAGE.md says so
+directly of collections in a thing's fields, which are deferred because they
+"**carry references**". Second, and decisively, the caller saw the first N
+appends and then stopped: copy semantics would show none and reference
+semantics would show all, and no reading of the manual reaches "the first
+eight". It was not a semantic rule at all — it was an allocator's capacity
+leaking out.
+
+**Severity: wrong value (silent), plus unbounded memory growth.** Not a
+memory-safety fault — nothing was freed, so nothing dangled, and the runtime
+comment quoted below shows that was deliberate. But this is the class
+`docs/COLLECTIONS_ROADMAP.md`'s own preamble names as the reason Track 1
+exists: "silent data corruption in a language whose pitch is memory safety
+and predictability."
+
+**The runtime knew, and was wrong about the bound.** `coreasm/x86_64/list.asm`,
+in the realloc path, carried this note (`map.asm` had its twin):
+
+```asm
+; NOTE: the old block is intentionally NOT munmap'd. Lists passed as
+; function parameters keep the caller's pointer to the old block when a
+; realloc happens inside the callee; freeing it here would turn that
+; stale read into a use-after-free. The leak is bounded (geometric, at
+; most ~1x the final list size) and reclaimed at process exit.
+```
+
+That comment is this defect written down, and it is why the failure was a
+wrong answer rather than a use-after-free. Its bound was false for the very
+case it named: the geometric argument holds only when the store-back happens
+and the caller's pointer advances. In the parameter case it never advanced,
+so the caller re-entered at the old block's capacity on every call and leaked
+a whole fresh list each time — linear in call count. Measured at 200 000
+calls: **781 MiB resident for a list reporting eight elements**; after the
+fix, 3.9 MiB and the right answer, 200 001. Both comments have been corrected
+to name the case they actually protect (a second variable, or a thing's
+field) and to record that the parameter case no longer belongs to it.
+
+**The fix — carry the way back with the argument.** Family: **the store-back**.
+`Set m's "k" to …` and a top-level `append` both store the reallocated pointer
+back into the variable (`emit_store_back_after_realloc`, `src/codegen/vars.rs`);
+the parameter path was the one place that could not, because the caller's
+variable is not reachable from the callee. It is now, by the same shape a
+`thing` argument has used since plan 310 §5: the argument word is an
+**address**, not the value.
+
+- `src/codegen/functions.rs` — `emit_collection_argument_address` puts the
+  address of the caller's own storage in the argument word for a `list`/`map`
+  parameter. A named variable hands over its slot (local or global label); an
+  argument with no variable behind it — a literal, a call's result, an element
+  read — is parked in a slot the call site owns and the address of that is
+  passed, so the callee's store-back is a harmless write to a temporary and
+  the argument still arrives intact.
+- `src/codegen/statements.rs` — the `FunctionDef` prologue parks that address
+  in a `{name}_backptr` shadow slot (the shape `{name}_mixtag` already had for
+  a `value` parameter's tag) and reads the pointer out of it into the
+  parameter's own slot. **Every read inside the body is therefore unchanged**
+  — `'s length`, `element N of`, `for each`, `print`, passing it on — which is
+  what keeps the change small.
+- `src/codegen/vars.rs` — `emit_store_back_after_realloc` writes the new
+  pointer through that address as well as into the local slot, so every site
+  that already stored back (`_list_append`, `_map_insert`, and the buffer
+  sites, which have no backing slot and are untouched) reaches the caller.
+- `src/codegen/functions.rs` — `emit_resync_collection_after_call` carries a
+  collection onward after a call: a name that is itself a collection parameter
+  has our own caller's storage behind it, and a top-level name also has the
+  global BSS mirror a function body reads it by. Without this, growth stopped
+  one call short of home whenever a function passed its own collection
+  parameter along, and recursion — which is that shape — stayed at 8. It runs
+  after the `call` and works in `rbx`/`rcx`, both restored, so it touches
+  neither `rax` (the return value) nor `r11` (a `value` return's tag).
+
+**LANGUAGE.md.** The manual stated no rule for a collection parameter's
+aliasing in either direction — it was careful to say "copy" only of things.
+The Functions section now has "A collection parameter is the caller's
+collection", which states the rule, contrasts it with the `thing` copy one
+section down, names the one case that has nowhere to write back to (a
+collection built at the call itself), and carries the rebuild note below. The
+Maps store-back sentence now says a `map` parameter counts, and the Lists
+"Dynamic growth" bullet says where a list may be named from.
+
+**The ABI change, and what it costs.** An exported function's parameters
+changed shape, so a `.so` with a `list` or `map` parameter and the programs
+that `see` it must be built by the same version of Vox. Both directions of a
+mixed pair were checked and both are broken, as expected: a 0.4.9-built
+consumer calling a 0.4.10 `.so` segfaults; a 0.4.10-built consumer calling a
+0.4.9 `.so` answers silently wrong. Within one version the boundary is
+correct — a library with `To 'add one to' with a list called items.` grown
+twenty times through a `.lib` answers 21. Nothing in the `.lib` format
+records a compiler ABI, so nothing catches the mix; a stamp there is the
+obvious follow-up and is a feature, deliberately not added here.
+
+**Not fixed, in scope terms.** An untyped parameter (`with items`) is
+`Type::Unknown` on both sides of the call, so neither knows a collection is
+in flight and the old behaviour stands; a collection reached through a thing's
+field or any other non-variable argument has no storage to write back to, as
+above. Buffers are a **separate defect with a worse symptom** — see the
+Incidental note in `REPORT-75.md`: `_reallocate_buffer` does free the old
+block, so a buffer grown through a `buffer` parameter past one page
+segfaults rather than answering short. Extending this fix's two match arms
+to `Type::Buffer` was tried and does **not** close it — `Append <x> to
+<buffer>` writes the reallocated pointer straight into `dst_local`/
+`dst_global` and never reaches `emit_store_back_after_realloc`, so the hook
+is bypassed. It needs its own register entry and its own adjudication.
+
+
+---
+
+### 76. A `map` parameter is typed as nothing at all — `holder's length` emits `_file_size` and the program fails to ASSEMBLE, `Print holder` leaks a heap address, and `holder's length` reads `-1` where it links
+
+**Status:** **fixed** in 0.4.10 (unreleased). Severity: **the build failure
+is the headline** — a valid six-line Vox program is refused by NASM, not by
+Vox, naming a symbol that appears nowhere in the source; there is no Vox
+diagnostic at all, so nothing points at the cause. Behind it an **address
+leak** into program output (bug #44's exact disease, in a position #44 did
+not cover) and a **wrong value** (`-1`, bug #58's shape). Regression tests:
+`tests/477_map_parameter_length_assembles.vox` (the program assembles at
+all), `tests/478_map_parameter_properties_and_printing.vox`,
+`tests/480_map_returned_from_a_function.vox`,
+`tests/482_map_parameter_length_beside_a_keyed_read.vox` (the `-1`), plus
+two controls that were already right and must stay right —
+`tests/479_map_parameter_keyed_read_and_iteration.vox` and
+`tests/481_typed_parameter_properties_agree.vox`. Found by the vox-fuzz
+claim ledger / candidate audit 2026-08-21 (`REPORT-66.md` incidental 3,
+which asked whether the `VarType::Unknown` had any user-visible symptom;
+adjudicated in `REPORT-CANDIDATES-ROUND-2.md` §J, which found three) and
+master-reproduced on `4b77934` = v0.4.9.
+
+**Symptom 1 — the compiler emits assembly that will not assemble.**
+
+```vox
+To 'show' with a map called holder.
+    Print holder's length.
+
+a map called scores is {"a": 1, "b": 2}.
+'show' of scores.
+Exit 0.
+```
+→
+```
+j1.asm:76: error: symbol `_file_size' not defined
+NASM assembly failed
+[compile exit 1]
+```
+
+`_file_size` is only linked when the program uses files, and this program
+does not. Controls: the same with a **list** parameter prints `2`;
+`scores's length` at the **top level** prints `2`.
+
+**Symptom 2 — a raw heap address.**
+
+```vox
+To 'show' with a map called holder.
+    Print holder.
+
+a map called scores is {"a": 1, "b": 2}.
+'show' of scores.
+Print scores.
+Exit 0.
+```
+→
+```
+140376191160320
+{"a": 1, "b": 2}
+```
+
+The same map, printed from inside the function and from outside it.
+`Print "the map is {holder}"` leaks the address identically.
+
+**Symptom 3 — `-1` where the program does happen to link.** A keyed read in
+the same sentence pulls the file runtime in, so this one assembles:
+
+```vox
+To 'show' with a map called holder.
+    Print holder's length,
+    Print holder's "a",
+    Print holder's empty.
+
+a map called scores is {"a": 1, "b": 2}.
+'show' of scores.
+Exit 0.
+```
+→ `-1`, then `1`, then `0`. `-1` is a file size on a thing that is not a
+file. `holder's "a"` → `1` ✓ and `for each key in holder's keys` → `a`,
+`b` ✓, so the keyed read and the iteration were always fine; it was the
+**properties** and the **printing** that were lost.
+
+**A fourth symptom, the same omission one table over: a declared `map`
+return.**
+
+```vox
+To 'make' with a number called seed. Return a map, {"a": 1, "b": 2}.
+Print 'make' of 1.
+```
+→ `140612866650112`. `A map called got is 'make' of 1.` was already right,
+because there the *declaration* supplied the type the call could not.
+
+**Which reading the manual supports.** The rejecting one, and there is no
+reading in which the compiler is right — this was looked for.
+
+1. **LANGUAGE.md:722-725** is as explicit as the manual gets: "Parameters
+   may use any of the 11 expressible types — `number`, `float`, `text`,
+   `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`, `value` —
+   and **a typed parameter supports the same properties and operations as
+   a top-level variable of that type**." `map` is named in the 11, and the
+   promise is "the same", not "some".
+2. **LANGUAGE.md:2422-2424** says a map's `length` (live entry count) and
+   `empty` "work as for lists", and a top-level map delivers both.
+3. **LANGUAGE.md:725-727** — "The same 11 types are also legal as a
+   declared `Return a <type>,` return type (plan 296) — parameters and
+   returns share one vocabulary, not two" — which is why the return
+   position is the same defect and not a second one.
+4. No reading makes an **assembler** error correct. README's "Memory
+   Safety Model" and ROADMAP M0 are about runtime, but the weaker rule
+   above them holds too: a program Vox accepts must build.
+
+**The strongest reading in which the compiler is correct, and why it
+fails.** "The manual over-promises, and `map` was simply never wired
+through the parameter path." That dies on the evidence: `holder's "a"`
+works, `holder's keys` works, and `for each key in holder's keys` works, so
+the parameter *is* wired. It is one arm of one `match`, not a missing
+feature.
+
+**Mechanism.** The declared-type → codegen-`VarType` table had been copied
+out **four** times — the declaration (`src/codegen/statements.rs`), the
+parameter (same file, 940 lines away), a local function's declared return
+type and an imported one's (`src/codegen/functions.rs`) — and `Type::Map`
+had reached only the declaration's copy. The other three fell through to
+`_ => VarType::Unknown`, and every property and print dispatch that
+switches on `VarType` takes its default branch, which is the **file**
+branch: `ObjectProperty::Size` on an `Unknown` emits `mov rdi, rax` / `call
+_file_size` (`src/codegen/expr.rs`), and printing an `Unknown` pointer
+renders it as an integer. Hence all four symptoms from one missing row:
+unlinked symbol, `-1` (the file fallback's answer), and the address.
+
+**The fix.** One table, `vartype_of_declared_type` in `src/codegen/mod.rs`,
+beside the `VarType` enum it produces — carrying `Type::Map(_) =>
+VarType::Map` — and all four sites now call it. Fixing only the parameter
+arm would have left three copies to drift again, which is the shape this
+bug already is; the hoist is the point of the repair, not a tidy-up beside
+it. `file`, `time`, `timer` and `thing` stay `Unknown` deliberately (their
+property reads go through their own paths), so the change is exactly one
+new row and no behaviour moves for any other type — pinned by
+`tests/481_typed_parameter_properties_agree.vox`, which is byte-identical
+before and after.
+
+**Family:** **#44** (`{list}`/`{map}` renders as a raw heap address outside
+`Print` position — the same disease, in a position #44 did not cover),
+**#45** (a forgotten type read back as an integer), **#58** (a lost type
+falling through to `_file_size` and answering `-1` — the same wrong value
+from the same fallback, reached by a different route). All four are "the
+type was forgotten, so the integer formatter or the file path took it".
+
+**LANGUAGE.md.** The Key-points bullet at :743 listed what buffer, list and
+file parameters support and named no map at all, while :722-725 promised
+them everything a top-level map has. The bullet now says so: map parameters
+support `'s length`/`'s empty`/`'s keys`/`'s values` and keyed access, and
+print as a whole map. Nothing new is promised — the general sentence
+already promised it; the specific one had a hole where this bug lived.
+
+**Not in scope, noticed on the way.**
+
+- `Print "{key} is {holder's key}"` — a map read by a *dynamic* key inside
+  a format hole — is rejected with `Unknown variable: holder's key`. That
+  is `REPORT-CANDIDATES-ROUND-2.md` §K's territory (its "bug underneath"),
+  not this entry's, and is unchanged here.
+- A two-word variable name must be quoted: `A map called blank scores is
+  {}.` parses, but `Print blank scores's length.` then fails with `Expected
+  a statement, got Apostrophe`. Pre-existing on `4b77934`, unrelated to
+  this mechanism, recorded for the queue and deliberately not changed.
+
+
+---
+
+### 77. The `append` value slot refuses a negative literal, `nothing`, every collection read and `times` — `append -5 to xs.` is "Expected value to append"
+
+**Status:** **fixed in 0.4.10**.
+Severity: **diagnostic — rejects legal Vox**, twice over, and both messages
+name a cause that is not the cause: "Expected value to append" when a value
+is exactly what was written, and "Expected 'to' after value in append
+statement" with the `to` written right there. No wrong value and no memory
+unsafety; a correct program is simply refused.
+Regression tests: `tests/483_append_value_slot_takes_a_sign.vox`,
+`tests/484_append_value_slot_takes_every_read.vox`,
+`tests/485_append_value_slot_takes_times.vox`, plus two compile-fail
+guards, `tests/compile_fail/213_append_value_slot_names_its_own_slot.vox`
+and `tests/compile_fail/214_append_negative_to_buffer_is_still_a_type_rule.vox`.
+Found 2026-08-22 by the collections sweep (`vox-notes/REPORT-SWEEP-COLLECTIONS.md`,
+worktree `wt-sweep-collections`, Finding B) and by the core sweep
+(`vox-notes/REPORT-SWEEP-CORE.md`, worktree `wt-sweep-core`, D-D — operators
+ledger row **OPR-41**); adjudicated in `vox-notes/REPORT-CANDIDATES-ROUND-2.md`
+§B and `vox-notes/REPORT-CANDIDATES-ROUND-3.md` §O, which ruled the two one
+entry because they are one cause. Master-reproduced on 4b77934 (= 0.4.9).
+
+```vox
+a list called xs is [1].
+append -5 to xs.
+```
+→
+```
+error: Expected value to append
+  --> b1.vox:2:8
+    |
+  2 | append -5 to xs.
+    |        ^--- here
+```
+
+```vox
+a list called l1 is [].
+a number called v1 is 3.
+a number called v2 is 4.
+append v1 times v2 to l1.
+```
+→
+```
+error: Expected 'to' after value in append statement
+  --> o1.vox:4:11
+    |
+  4 | append v1 times v2 to l1.
+    |           ^--- here
+```
+
+**The matrix, each row its own program, measured on 4b77934 and on the fix.
+Every rejected form compiled the moment it was wrapped in braces — which is
+what proves the refusal belonged to the slot and not to the language.**
+
+| written in the append slot | before | braced, before | after |
+|---|---|---|---|
+| `append -5 to xs.` | Expected value to append | `-5` | `-5` |
+| `append -0.5 to xs.` | Expected value to append | `-0.5` | `-0.5` |
+| `append -n to xs.` (`n` a number) | Expected value to append | `-5` | `-5` |
+| `append -9223372036854775808 to xs.` | Expected value to append | `i64::MIN` | `i64::MIN` |
+| `append nothing to xs.` | Expected value to append | `nothing` | `nothing` |
+| `append element 1 of ys to xs.` | Expected value to append | `9` | `9` |
+| `append byte 1 of b to xs.` | Expected value to append | `65` | `65` |
+| `append ys's first to xs.` | Expected 'to' after value | `9` | `9` |
+| `append ys's last to xs.` | Expected 'to' after value | `8` | `8` |
+| `append ys's length to xs.` | Expected 'to' after value | `2` | `2` |
+| `append m's "k" to xs.` | Expected 'to' after value | `7` | `7` |
+| `append v1 times v2 to l1.` | Expected 'to' after value | `48` | `48` |
+| `append v1 multiply v2 to l1.` (control) | `48` | — | `48` |
+| `append 0 minus 5 to xs.` (control) | `-5` | — | `-5` |
+| `append 'A' to xs.` (control) | `65` | — | `65` |
+| `append 0xFF to xs.` (control) | `255` | — | `255` |
+| `append "s" to items.` (control) | `s` | — | `s` |
+| `append "v={n}" to xs.` (control) | `v=5` | — | `v=5` |
+| `append the n to xs.` (control) | `5` | — | `5` |
+| `append 'twice' of n to out.` (control) | `10` | — | `10` |
+| `append each item from src to out.` (control) | `3`, `4` | — | `3`, `4` |
+| `append , to xs.` (control) | Expected value to append | — | Expected value to append |
+
+The buffer overload takes the same primary, so `append -5 to b.` was
+rejected identically. It is still rejected — by the rule that owns the
+refusal ("Buffer append requires a buffer source or format/literal text"),
+not by the parser refusing to read the value. That is what
+`compile_fail/214` pins.
+
+**Which reading the manual supports.** The rejecting one has no sentence
+behind it, and the accepting one has four:
+
+1. **LANGUAGE.md:1822** puts `-5` in the literal table — `| Integer |
+   `42`, `0`, `-5` |` — alongside `42` and `0`, with no note attaching it
+   to a position.
+2. **LANGUAGE.md's append section** says the slot takes a `<value>`
+   (`- `append <value> to <list>` appends one list element.`) and then
+   "**Works with any value**: integers, strings, booleans, variables,
+   expressions". No sentence anywhere narrows it.
+3. **LANGUAGE.md's grammar summary settles `times` outright**:
+   `append_stmt ::= "append" expr "to" name "."`, and
+   `multiplicative ::= primary ((multiply | times | divide | modulo)
+   primary)*` inside `expr`. The manual's own EBNF derives
+   `append v1 times v2 to l1.`
+4. **LANGUAGE.md's operator table** lists `multiply` and `times` as two
+   spellings of one operator. The compiler accepted the first and refused
+   the second, in the same slot with the same operands.
+
+**The strongest reading in which the compiler is correct, and why it
+fails.** The slot really does need its own parser: `to` is the append
+separator, so a bare name must not read it as a call connector
+(`append id of item to out`), and that is why `parse_append_value_primary`
+and `parse_append_value_ops` exist at all. On that reading, refusing a
+leading `-` is the price of keeping `append "s" to items` unambiguous, and
+refusing `times` is the price of a slot terminated by a keyword.
+
+It fails on the lexer. `-` is `Token::Minus`, and `Token::Minus` has
+exactly one parser arm in the whole compiler: unary negation. It is **not**
+a binary operator anywhere in Vox — subtraction is the *words* `subtract`
+and `minus`, and `Print 7 - 2.` is "Expected a statement, got Minus". There
+is no ambiguity for the slot to protect: a `-` at the start of a value can
+only be a sign. And it fails on `times` twice over, because the other
+fourteen operator spellings all compile in that position, `multiply` among
+them — there is no separator that `multiply` protects and `times` does not.
+The second reading, "the restriction is deliberate, use braces", is refuted
+by the compiler's own behaviour: every rejected form above is accepted
+verbatim inside `{…}`, which routes the identical tokens to `parse_primary`.
+Braces changed nothing but which parser read them.
+
+**Root cause.** Two hand-rolled copies of the general parser, in
+`src/parser/collections.rs`, that had fallen behind the thing they copy:
+
+- `parse_append_value_primary` (`:48-126` at 4b77934) wrote out an arm per
+  value form. It knew literals, a string, a bare name and `the <name>`, and
+  had never learned `Token::Minus`, `Token::Nothing`, `Token::Element`,
+  `Token::Byte`, or any possessive `'s` — five value forms `parse_primary`
+  has had all along. The separator protection it exists for is not in those
+  arms at all: it lives in `suppress_to_connector`, one flag, consulted by
+  `parse_call_tail`.
+- `parse_append_value_ops` (`:136-165`) enumerated the operator tokens the
+  slot accepts and listed `Token::Multiply` without `Token::Times`.
+  `parse_multiplicative` has both. `times` and `multiply` are separate
+  tokens because `Repeat N times` claims one of them.
+
+This is the same shape as **#64** (a property table written out twice, so
+the same reading answered under one spelling and was a parse error under
+the other) and **#51**/**#58**: a second copy of a decision, kept by hand,
+drifting from the first. The lesson is the same — one path.
+
+**The fix.** The arms that do not need restricting now read one primary:
+`parse_append_value_primary` keeps its explicit token list and its string
+literal arm, and every other listed token goes to
+`parse_primary_reserving(true, false)` — the general primary with `to`
+reserved for the whole subtree. Nothing is copied any more, so a value form
+is added or diagnosed in exactly one place, and an index's own list operand
+(`element 1 of ys to xs`) is protected by the same flag rather than by a
+second hand-written rule. `Token::Times` joins `parse_append_value_ops`,
+making that list identical to `parse_multiplicative`'s.
+
+Two things deliberately kept:
+
+- **The string literal arm stays restricted.** `parse_primary` rejects
+  `"s"` followed by `to` as a string used as a name (plan 270 §S1.5); in
+  the append slot that `to` is the separator, so `append "s" to items.`
+  must stay an append of the literal. Delegating it would have broken the
+  most ordinary append in the language.
+- **The token list stays explicit**, so a token that cannot start a value
+  still answers with the slot's own diagnostic, caret on the offending
+  token (**#46**), rather than falling through to the general parser's
+  "Expected a statement, got Comma". `compile_fail/213` pins that.
+
+**Fail-before/pass-after**, against a clean `git archive 4b77934` extract
+built in a scratchpad: `425` stops at `append -5 to xs.` with "Expected
+value to append", `426` at `append nothing to xs.` with the same, `427` at
+`append v1 times v2 to xs.` with "Expected 'to' after value in append
+statement"; all three pass on the fix. `compile_fail/214` fails before —
+the baseline answers "Expected value to append", not the buffer rule — and
+passes after. `compile_fail/213` is a guard, not a fail-before case: it
+passes on both sides, pinning that the shared path still diagnoses a
+non-value as the append slot's problem.
+
+**LANGUAGE.md.** The manual was right and the compiler was behind it, so
+nothing was walked back. The loose half was "**Works with any value**:
+integers, strings, booleans, variables, expressions", a list of categories
+with no rule under it: it named neither the forms above nor the one real
+constraint on the slot. It now names them, and states that `to` is the
+separator rather than an operator, with the braces escape for a value that
+would otherwise read `to` as a word of its own (`append {'twice' to i} to
+nums.`). Every snippet added was compiled and run before it was written in.
+
+**Still refused, and left there deliberately — the residual of the same
+drift, outside this entry's adjudicated scope.** Each of these is one token
+in the same arm list, and each already compiles when braced, so none is a
+new capability; they were not part of what round 2 §B and round 3 §O ruled
+on, and they are recorded here rather than swept in:
+
+| still refused | message | braced |
+|---|---|---|
+| `append not true to xs.` | Expected value to append | `{not true}` → `0` |
+| `append current time to xs.` | Expected value to append | works |
+| `append arguments's count to xs.` | Expected value to append | works |
+| `append environment's "HOME" to xs.` | Expected value to append | works |
+| `append [1, 2] to xs.` | Expected value to append | works |
+| `append n as a text to xs.` | Expected 'to' after value | works |
+| `append n is less than 9 to xs.` | Expected 'a'/'an' and a type noun after 'is' in append value | **braces do not help** |
+
+The last row is a different defect and the only one with no workaround: the
+statement's own `is a <type>` predicate branch claims the `is` that follows
+a *closed* brace, so `append {n is less than 9} to xs.` is refused too. A
+comparison cannot be written in an append value at all.
+
+
+---
+
+### 78. A buffer sized from a variable escapes the size bound — `-1 bytes` is accepted and reports `capacity -1`, and a size past what can be mapped segfaults
+
+**Status:** **fixed** (unreleased, on top of 0.4.9).
+Severity: **memory safety**. The reported half is a wrong number — a
+`capacity -1` handed back to the author, the shape of #58 — but the arm
+that let it through validates nothing at all, so the same three words
+accept a size no mapping can serve: `_alloc_buffer_sized` answers 0, the 0
+is stored as the buffer, and the next read of it dereferences it. Three
+spellings reach that in three lines, one of them from a plain `2.5`.
+Regression tests: compile-fail cases
+`tests/compile_fail/219_buffer_size_named_is_negative.vox` through
+`178_buffer_size_named_is_a_float.vox` — six cases covering the floor,
+zero, the ceiling, the `Create ... with capacity N` spelling that was never
+bounded at all, and the two wrong-type sizes — plus three passing controls:
+`tests/505_buffer_sized_from_a_named_number.vox` (a named size within the
+bound, in every declaration spelling the manual gives, byte-identical
+before and after), `tests/506_buffer_size_only_run_time_can_decide.vox`
+(the size arrives on the command line — this program segfaulted) and
+`tests/507_buffer_size_from_arguments_good_and_bad.vox` (either side of the
+bound in one program). Found by the vox-fuzz `gen_buffers` derandomisation
+sweep (`REPORT-SWEEP-BUFFERS.md` §5, discrepancy D-B — the one bound
+`'gen buffer size'` keeps, because a draw outside it is a non-compiling
+program), adjudicated as candidate **G** of the round-2 candidate audit
+(`REPORT-CANDIDATES-ROUND-2.md`, written 2026-08-22 against 4b77934, which
+separated the manual gap **G-i** from the bug **G-ii**); master-reproduced
+on 0.4.9.
+
+```vox
+a number called wanted is 0 minus 1.
+a buffer called room is wanted bytes in size.
+Print room's capacity.
+```
+→ prints **`-1`**. Written as a literal, `a buffer called room is -1 bytes
+in size.` is refused.
+
+```vox
+a float called wanted is 2.5.
+a buffer called room is wanted bytes in size.
+Print room's capacity.
+```
+→ **segfault (139)**. The float's bit pattern is read as a byte count:
+`2.5` asks for 4612811918334230528 bytes.
+
+**The matrix, each case its own program, measured on this branch's parent
+(4e29c3c) and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| `a buffer called room is 0 bytes in size.` | rejected | rejected (unchanged) |
+| `a buffer called room is 1073741825 bytes in size.` | rejected | rejected (unchanged) |
+| `a buffer called room is -100 bytes.` | rejected | rejected (unchanged) |
+| `wanted is 0.` → `room is wanted bytes in size.` | prints `0` | rejected |
+| `wanted is 0 minus 1.` → same | prints `-1` | rejected |
+| `wanted is 1073741825.` → same | prints `1073741825` | rejected |
+| `wanted is 4611686018427387904.` → same | **139** | rejected |
+| `a float called wanted is 2.5.` → same | **139** | rejected |
+| `a text called wanted is "ten".` → same | prints `4206732` (the characters' address) | rejected |
+| `a boolean called wanted is true.` → same | prints `1` | rejected |
+| `Create a buffer called room with capacity 1073741825.` | prints `1073741825` | rejected |
+| `Create a buffer called room of size 4611686018427387904.` | **139** | rejected |
+| the size read from `arguments's first`, given `4611686018427387904` | **139** | prints `0`, error flag raised, exit 0 |
+| the size read from `arguments's first`, given `-1` | prints `-1` | prints `0`, error flag raised, exit 0 |
+| `wanted is 100.` `Set wanted to 0 minus 1.` → same | prints `-1` | prints `0` at run time (the proof declines a written name; the guard holds it) |
+| `To 'make one' with a number called wanted.` … `'make one' of 0 minus 5.` | prints `-5` | prints `0` at run time |
+| `wanted is 256.` → same (control) | prints `256` | prints `256` |
+| `base is 64.` `wanted is base multiply 4.` → same (control) | prints `256` | prints `256` |
+| `a buffer called room is 256 bytes in size.` (control) | prints `256` | prints `256` |
+| `a buffer called room.` (control, dynamic) | prints `4096` | prints `4096` |
+| `Create a buffer called room with size 0.` (control, dynamic) | prints `4096` | prints `4096` |
+
+**Which reading the manual supports.** The bound itself was undocumented —
+that is the audit's **G-i**, and this fix writes it down (LANGUAGE.md:3315,
+under "Fixed-Size Buffers"). But nothing in the manual made the bound a
+property of the *spelling*, and three sentences make the behaviour above
+wrong under any reading:
+
+1. **LANGUAGE.md:3309** — "Allocates exactly the specified capacity" — is
+   the only sentence about the number. `capacity -1` is not a capacity
+   that was allocated; it is a field written from an argument nobody
+   checked. `_alloc_buffer_sized` mapped 24 bytes (`-1 + BUF_DATA + 1`)
+   and stored `-1` in the header.
+2. **LANGUAGE.md:3310** — a fixed buffer "does NOT grow — a read or write
+   past capacity is truncated at capacity and sets the error flag" — is
+   the rule a negative capacity silently defeats: every write is "past
+   capacity", so the buffer holds nothing and reports `size 0`, which is
+   #58's symptom under a different cause.
+3. **README's Memory Safety Model** and **ROADMAP M0** ("no valid Vox
+   program may segfault") forbid the crash outright, and the crashing
+   programs are ones the compiler accepted.
+
+**The strongest reading in which the compiler is correct, and why it
+fails.** The source states one: `src/parser/declarations.rs:701-702` —
+"Validate that the size expression is a positive integer literal or
+constant variable. **This is critical for memory safety.**" On that
+reading a 1 GiB ceiling is a sane guard, a zero-byte fixed buffer is
+useless, and the only thing missing is a sentence in the manual.
+
+That reading dies on the next arm of the same `match`, which the same
+comment covers:
+
+```rust
+Expr::Identifier(_var_name) => {
+    // Allow variable references for size - validated at compile time
+}
+```
+
+It was validated nowhere — not in the analyzer, not in codegen, not in the
+runtime. The comment describes a check that did not exist, and the parser
+is the one place it could never have been written: the parser knows no
+values and no types. So the three refusals the compiler did make were
+rules about how the size was *written*, not about the size.
+
+**Mechanism.** Every buffer declaration spelling — `is N bytes`, `is N
+bytes in size`, `Create ... with size N`, `with capacity N`, `of size N`,
+and the sizeless dynamic form — parses to one `Statement::BufferDecl`, and
+codegen's arm evaluates the size expression into `rax` and calls
+`_alloc_buffer_sized` (`src/codegen/statements.rs:1698`). Nothing between
+the parser's literal arm and that call looked at the number:
+
+- a negative size mapped a header and nothing else, and reported the
+  negative capacity back (`_alloc_buffer_sized`,
+  `coreasm/x86_64/resource.asm:804` — `mov [rax + BUF_CAPACITY], r12`);
+- a size past what mmap can serve took the `.sized_failed` path, which
+  returns 0 — a null the declaration stored as the buffer pointer, so the
+  fault landed on the next read rather than at the declaration, exactly as
+  #57's and #65's crashes did;
+- a text or float name was never a byte count at all: its address, or its
+  mantissa's bits, went to `mmap` as a length.
+
+The `Create ... with size N` spelling (`src/parser/declarations.rs:405-427`)
+never reached the literal check either — it parses the size with
+`parse_primary` and returns, so `with capacity 1073741825` was accepted
+while `is 1073741825 bytes` was refused, one rule, two answers.
+
+**The fix — hold the bound wherever a size is decided.** The two numbers
+move to one place, `MIN_BUFFER_SIZE`/`MAX_BUFFER_SIZE` in
+`src/parser/ast.rs:1128`, and three sites read them:
+
+- **The parser** keeps the literal check it already had, unchanged, and
+  its identifier arm now says what is true — that a named size is decided
+  elsewhere.
+- **The analyzer** gains `check_buffer_size` (`src/analyzer/types.rs:1641`),
+  called from the one `Statement::BufferDecl` arm every spelling routes
+  through, so the bound is a rule about sizes rather than spellings. It
+  refuses what it can prove: a literal past the bound in the `Create`
+  spelling the parser does not check; a named size whose value is fixed
+  for the whole program and outside the bound; and a named size whose type
+  is not a whole number of bytes. The diagnostics are in #45/#62/#63's
+  family — they name the size, what it comes to, the bound, and the way
+  out — with the caret on the size token (#46).
+- **Codegen** guards the rest (`emit_buffer_size_guard`,
+  `src/codegen/buffers.rs:333`), emitted only for a size that is not a
+  literal. Out of bound at run time, the request becomes a fixed buffer of
+  no capacity and raises the error flag; in bound, it clears the flag, per
+  `_last_error`'s lifecycle rule. That is the buffer LANGUAGE.md:3332-3337
+  already describes — writes truncated, the flag set, "program continues
+  normally", `On error` able to catch it — and it is what closes the
+  segfault for a size no static check can see, like one read from
+  `arguments`.
+
+The value proof is `collect_constant_numbers` (`src/parser/ast.rs:1178`), a
+whole-program pre-pass in the shape of #54's `collect_widened_lists`: a
+name is only proved constant if it is declared once with an initializer
+`constant_integer` can evaluate and **nothing anywhere writes to it** —
+not an assignment, an increment, a second declaration, a loop variable or
+a parameter of that name. A value tracked as the walk proceeds would be
+whatever the last branch happened to store, and a size proved from a branch
+nobody takes would refuse a program that is legal on the other path. Losing
+the proof costs a diagnostic; a wrong proof would cost a correct program.
+`Set wanted to 0 minus 1.` after a good declaration is exactly that case:
+the proof declines, and the run-time guard holds the size instead.
+
+**What is deliberately still allowed:**
+
+- **`Expr::IntegerLit(0)`.** That is not an author writing `0` — the
+  parser gives every sizeless buffer (`a buffer called room.`, `Create a
+  buffer called room.`) exactly that tree, so at the declaration the two
+  are indistinguishable, and a literal `0 bytes` is already refused in the
+  parser where they can be told apart. `Create a buffer called room with
+  size 0.` therefore still makes a dynamic buffer.
+- **A dynamic buffer's `capacity` of 4096**, where LANGUAGE.md:3297 says
+  zero. That is round-1 candidate G, an open design question about what a
+  declared capacity *means*, and it is untouched here.
+- **A `value`, a parameter, a flag, or any size the compiler cannot
+  prove** — the same "can't prove it, so allow it" policy as every other
+  check in `types.rs`. The run-time guard is what stands behind it.
+- **`resize`.** See below.
+
+**Incidental, not fixed here.** `resize` takes a new capacity through a
+different statement (`Statement::BufferResize`) and has never had a bound
+at all — not even on a literal:
+
+```vox
+a buffer called room is 64 bytes in size.
+resize room to 0 minus 1 bytes.
+Print room's capacity.
+```
+→ **SIGBUS (135)**, and the same program with the size in a variable faults
+identically. It is the same family as this entry — a size that reaches the
+runtime unchecked — but a separate statement and a separate code path, so
+it is recorded rather than folded in; it wants its own entry and its own
+fail-before test.
+
+
+
+### 79. A top-level read before the variable's own declaration is accepted and prints the raw slot — no "used before its declaration" diagnostic exists
+
+**Status:** **fixed** (unreleased, on top of 0.4.9). Severity: **memory
+safety**. The audit filed this as a missing diagnostic with a wrong value
+behind it, which is what the scalar `Print` it was found through does — but
+the audit only measured that one shape. Every collection, map and buffer
+spelling of the same too-early read **segfaults**: eleven of them, measured
+below, none of them reported by the compiler. Regression tests: compile-fail
+cases
+`tests/compile_fail/230_top_level_read_before_declaration.vox` through
+`178_top_level_element_read_before_declaration.vox` (six cases — the bare
+read, the number twin, a format hole, a property read, an `append` and an
+element read), plus five passing controls,
+`tests/516_top_level_read_after_declaration.vox` (the nearest working
+neighbour),
+`tests/517_global_read_inside_a_function_defined_first.vox` (the shape
+that must NOT be rejected),
+`tests/518_top_level_write_before_the_declaration.vox`,
+`tests/519_declaration_in_every_branch_read_after.vox` and
+`tests/520_declaration_in_a_loop_body_read_after.vox` — all five
+byte-identical before and after. Found 2026-08-21 by the #66 fix worker
+(`REPORT-66.md`, incidental 1) and adjudicated by the language lawyer in
+the round-2 candidate audit, section H; master-reproduced on 4e29c3c.
+
+```vox
+Print label.
+a text called label is "hello".
+```
+→ prints `0`, exit 0, no diagnostic.
+
+```vox
+Print count.
+a number called count is 42.
+```
+→ prints `0` — right by accident, which is how the text case above went
+unnoticed.
+
+**Nearest working neighbour:** move the declaration above the read. That is
+the order every example in LANGUAGE.md's "Variables" section is written in.
+
+**The reading in which the compiler is right, and why it fails.** Top-level
+statements run in order, so at line 1 the declaration on line 2 has not
+executed. The storage exists — it is `.bss`, zeroed at load — and the read
+sees its zero. Nothing is undefined and nothing faults; on that reading Vox
+behaves like C with a zero-initialised global and the author's program is
+simply wrong.
+
+**That reading gets the wrong answer even on its own terms.** If the read
+sees "the variable before its initializer ran", LANGUAGE.md's bare-`Create`
+default table says what that is: a `text` defaults to the **empty string**.
+`Print label.` should print an empty line. It prints `0` — the raw slot,
+formatted as an integer, because `variable_types` has no entry for the name
+yet and codegen falls back to the integer formatter. **The type has been
+forgotten, not defaulted.**
+
+And the compiler already proves it knows the difference between "not yet"
+and "never":
+
+```vox
+Print label.
+```
+→ `error: Unknown variable: label`, caret on `label`.
+
+So the name **is** resolved; only its type is not. Typing the read would be
+worse than the diagnostic, not better: it would turn a printed `0` into a
+null-pointer dereference. The answer is a diagnostic.
+
+**Root cause.** `src/analyzer/statements.rs` seeded the top-level walk with
+the whole-program set — `self.variables = self.global_variables.clone()`
+immediately before the second pass — so every top-level name was available
+from the very first statement. `global_variables` comes from
+`collect_definite_decls` (`src/parser/ast.rs`), which is whole-program and
+order-independent by design, because a **function** body genuinely needs it:
+a function runs when it is called, after the whole file has been read, so a
+body written above a global's declaration may name it (LANGUAGE.md "Function
+Scope"). Top-level code has no such licence, and got it anyway. Meanwhile
+the *type* sets (`scalar_types`, and the label codegen reads) are filled by
+the walk, in order — so between the two, the name existed and its type did
+not. That split is the disease; the same split one scope in is #66's.
+
+**The fix.**
+
+- `src/analyzer/statements.rs` — the top-level walk now starts with nothing
+  available and fills `variables` in declaration order. The `FunctionDef`
+  arm already seeds itself from `global_variables`, so the case that needs
+  the whole-program set keeps it and nothing else does.
+- `src/analyzer/scope.rs` — `is_used_before_its_declaration` (a name the
+  pre-pass proved exists, that this walk has not reached, outside a function
+  body, and not a flag — a flag read before `parse flags.` has its own, more
+  specific diagnostic) and `push_used_before_declaration`, which names the
+  construct, says which line the declaration is on, and gives the way out.
+  The caret goes on the failing read via `find_use_site_location`, not on
+  the declaration that happens to contain the same name (#46).
+- `src/analyzer/scope.rs` — `push_unknown_variable` and `push_error_with_hint`
+  route to it. The second is the choke point that catches the twenty
+  `Unknown …: X` sites in `statements.rs` and `expressions.rs` —
+  `Unknown buffer:`, `Unknown list:`, `Unknown timer:` and so on. Each sits
+  behind `if !self.is_variable_available(X)`, so an error about a symbol that is
+  unavailable *here* but declared further down is always this defect,
+  whatever wording the arm chose. An error about a symbol that IS available
+  cannot reach it, so no type-lock or wrong-kind diagnostic is touched.
+- `src/analyzer/scope.rs` — `is_variable_declared_anywhere`, the old
+  order-blind predicate, kept for the two callers that must stay order-blind:
+  `was_already_declared` in the `VarDecl` and `Assignment` arms, which asks
+  "is this statement a declaration or a reassignment?" and decides whether
+  the type lock applies. Those two answers are byte-identical to before.
+- `src/analyzer/scope.rs` — `declare_variable_in_current_scope` now registers
+  the name **before** complaining that it starts with `_`. It used to push
+  that error while the name still looked unavailable, so the new choke point
+  read it as a use-before-declaration and reported
+  `'_foo' is used before it is declared`, pointing at the line *after* its
+  own declaration. Caught by `tests/compile_fail/071_reserved_underscore_variable.vox`.
+- `src/analyzer/statements.rs` — the `ListAppend` arm asked what **kind** the
+  name was before it asked whether the name was available, and both kind sets
+  are whole-program. `append 1 to items.` above `a list called items is [].`
+  therefore walked past the availability check into codegen and **segfaulted**
+  on a list header that did not exist yet. Order first, kind second.
+
+**The diagnostic:**
+
+```
+error: 'label' is used before it is declared
+  --> h1.vox:1:7
+    |
+  1 | Print label.
+    |       ^--- here
+    |
+  note: top-level statements run in the order they are written, and 'label' is declared at line 2
+  help: move the declaration of 'label' above this line; a function body may read a global declared further down, top-level code may not
+```
+
+**The matrix, each case its own program, measured on a clean extract of this
+branch's parent (4e29c3c) and on the fix:**
+
+In every row the read is written first and the declaration immediately
+below it. The declarations used are `a text called label is "hello".`,
+`a number called count is 42.`, `a number called total is 5.`,
+`a list called items is [1, 2].`, `a map called ages is {"bo": 3}.` and
+`a buffer called built is "seed".`
+
+| program | before | after |
+|---|---|---|
+| `Print label.` | prints `0` | rejected |
+| `Print count.` | prints `0` | rejected |
+| `Print "the label is {label}".` | prints `the label is 0` | rejected |
+| `a number called doubled is total multiply 2.` then `Print doubled.` | prints `0` | rejected |
+| `If total is 5 then, Print "yes".` | runs, branch not taken, prints nothing | rejected |
+| `Print label's size.` | rejected — *"Property 'size' requires a buffer, list, map, or file variable: label"* | rejected, and now names the real cause |
+| `append 1 to items.` | **139** | rejected |
+| `append "x" to built.` | **139** | rejected |
+| `Print element 1 of items.` | **139** | rejected |
+| `Print ages's "bo".` | **139** | rejected |
+| `Set element 1 of items to 9.` | **139** | rejected |
+| `Set ages's "bo" to 9.` | **139** | rejected |
+| `Set byte 1 of built to 65.` | **139** | rejected |
+| `Clear built.` | **139** | rejected |
+| `Resize built to 8 bytes.` | **139** | rejected |
+| `copy "hi" to built.` | **139** | rejected |
+| `For each part in items, Print part.` | **139** | rejected |
+| `a text called label is "hello".` + `Print label.` (control) | `hello` | `hello` |
+| a function reading a global declared **below the function** (control) | works | works |
+| `Set total to 9.` + `a number called total is 5.` + `Print total.` (control) | `5` | `5` |
+| a name declared in every branch of an `if`/`otherwise`, read after (control) | `first` | `first` |
+| a name declared in a loop body, read after (control) | `5`, `0` | `5`, `0` |
+| `Print nothingatall.` — never declared at all (control) | `Unknown variable: nothingatall` | **unchanged** |
+| a flag read before `parse flags.` (control) | `Flag variable 'verbose' is used before flags are parsed` | **unchanged** |
+
+Eleven of the seventeen shapes fault. The scalar `Print` the audit was
+found through is the *mildest* row in the table: it is the one where the
+zeroed slot happens to be a legal integer rather than a null pointer about
+to be dereferenced.
+
+**A write is deliberately untouched.** `Set total to 9.` above
+`a number called total is 5.` still compiles: the order it describes is well
+defined — store 9, then the declaration stores 5 — and nothing reads a slot
+nobody has written. #79 is about reads. Pinned by
+`tests/518_top_level_write_before_the_declaration.vox`.
+
+**LANGUAGE.md.** The manual stated no rule for the top level in either
+direction — it simply never wrote the program. LANGUAGE.md:707's
+"Referencing an unknown variable inside a function is a compile-time error"
+is scoped to function bodies. A new **Declaration Order** subsection under
+"Variables" states the order rule and the function-body exception, and the
+"Function Scope" bullet about globals now says explicitly that a function
+written *above* the declaration may still name it. No feature added; the
+sentence the manual was missing.
+
+**Incidental, not in scope, left alone.** A function body that reads a
+**text** global declared below the function prints the string's rodata
+address as a decimal number:
+
+```vox
+To announce.
+  Print label.
+
+a text called label is "hello".
+announce.
+```
+→ `4198488` (stable across 5 runs). Moving the declaration above the
+function prints `hello`. The manual explicitly permits the reference
+(LANGUAGE.md "Function Scope"), so the answer there is a **type**, not a
+diagnostic — the opposite of #79's answer, which is why it is not fixed
+here. It is the same forgotten-type split one scope in, and the round-2
+audit names it as #66's, not this entry's. Byte-identical before and after
+this fix. The number twin of the same program answers correctly, by the same
+accident as the `Print count.` row above.
+
+**Family:** #45 / #62 / #63 — the "silently accepted, silently wrong word"
+entries, whose answer is a helpful compile error. The diagnostic follows
+#46's caret rule (on the offending token, never on a comment or an unrelated
+earlier mention of the name). #66 is the same forgotten-type split inside a
+function body.
+
+---
+
+### 80. A `thing` instance declared below a function cannot be read inside it — `Expected property name, got Identifier("x")`, with the caret on the property name
+
+**Status:** **fixed** (this branch), for 0.4.10. Found 2026-08-21 by the
+#66 fix worker while probing the forward-global surface (`REPORT-66.md`,
+Incidental 1), adjudicated 2026-08-21 in the round-2 candidate audit
+(`REPORT-CANDIDATES-ROUND-2.md` §I) and master-confirmed against
+`4b77934`. Rejects legal Vox at compile time, so no program could
+silently do the wrong thing — the same diagnostic class as #64, and the
+loud half of the pair whose silent half is #66.
+
+```vox
+A thing called point has
+  a number called x is 7,
+  a number called y is 9.
+
+To 'show all'.
+  Print origin's x.
+
+a point called origin.
+
+'show all'.
+Exit 0.
+```
+```
+error: Expected property name, got Identifier("x")
+  --> repro.vox:6:18
+    |
+  6 |   Print origin's x.
+    |                  ^--- here
+```
+
+Move `a point called origin.` above the `To` and the same program prints
+`7`. The declaration is an ordinary top-level variable, and
+LANGUAGE.md:705 says *"Variables declared at top level are global and
+can be used inside functions"* — with no ordering condition attached.
+The ordering rule the manual does state (:1607, :1630) is about a thing
+**definition**: *"A thing is defined where a function is defined — at
+the top level"*, and *"the same defined-earlier rule that orders one
+file orders the pair — every use below stands after the definition it
+names"*. In the repro the definition is already above the function.
+Only the instance is below.
+
+**The message describes the wrong problem.** The caret lands on `x`
+under *"Expected property name"* — and `x` is the one token in that line
+that demonstrably is a property name. Nothing points at the
+declaration's position, which is the actual complaint.
+
+**One layer out of four still resolved by walk order.** The parser
+decides whether `origin's x` is a field chain or an object property from
+`thing_vars` (`src/parser/mod.rs:122`), and that table was filled as
+declarations were *parsed*, in source order
+(`src/parser/things.rs:742`). A function body parsed above the
+declaration therefore asked the table before the answer was in it, fell
+through to the generic property table in
+`Parser::parse_possessive_tail`, and reported the first token that
+matched none of its arms. The analyzer and codegen have had a
+whole-program answer to the same question all along —
+`collect_thing_vars` (`src/analyzer/things.rs:283`) walks the statement
+list, and both layers call it (`src/analyzer/things.rs:377`,
+`src/codegen/things.rs:25`). The parser was the one layer resolving by
+where the cursor had reached.
+
+**The whole surface, probed against `4b77934`.** Every row is one
+program: a thing definition, a function that reads the global, the
+global declared **below** that function. The last two rows are the
+controls.
+
+| read, inside a function defined above the declaration | before | after |
+|---|---|---|
+| `Print origin's x.` | ✗ *Expected property name, got Identifier("x")* | `7` |
+| `Print the origin's x.` | ✗ *…got Identifier("x")* | `7` |
+| `Set origin's x to 11.` | ✗ *Expected a statement, got Apostrophe* | `11` |
+| `Print "x is {origin's x}".` | ✗ *Unknown variable: origin's x* | `x is 7` |
+| `Print origin's doubled.` (instance possessive → call) | ✗ *…got Identifier("doubled")* | `14` |
+| `Print trip's outbound's start.` (chain through a nested thing) | ✗ *…got Identifier("outbound")* | `3` |
+| `Create a point called moved.` then `Print moved's x.` | ✗ *…got Identifier("x")* | `7` |
+| `see`n definition, instance declared below the function | ✗ *…got Identifier("x")* | `11` |
+| **control** — the declaration written above the function | `7` | `7` |
+| **control** — a `number` global declared below the function | `7` | `7` |
+
+The last control is the point of comparison: a *scalar* global read the
+same way already worked, which is why this pair's silent half (#66) and
+its loud half (this entry) had to be fixed separately. #66 is codegen;
+this is the parser.
+
+**Fix.** The parser gets the pre-pass the other three layers already
+have. `Parser::register_declared_thing_vars`
+(`src/parser/things.rs`) walks the token stream once before the first
+statement is parsed and registers every `a <thing> called <name>`
+declaration into `thing_vars`; `parse_statement_list` calls it, and
+`parse_include` calls it again after a `see` splices new definitions in,
+so a declaration naming a seen file's thing is registered too.
+
+Three things it deliberately does **not** do:
+
+- **It skips function bodies.** The set it walks is exactly the set
+  `collect_thing_vars` walks — the top level and the blocks written at
+  it, never a body's parameters or locals, which are registered when
+  that body is parsed and belong to it. Three tables describing
+  different sets are three answers waiting to disagree, which is #51's
+  and #58's lesson and #64's.
+- **It skips thing definitions.** The `a leg called outbound` inside
+  `A thing called route has` declares a field of `route`, not a variable.
+- **It does not lift the definition-ordering rule.** A type noun is only
+  read from a definition the scan has already passed, the same rule
+  `try_parse_thing_type_noun` applies during the walk, and the manual
+  states that rule outright.
+
+First declaration wins; the walk that follows overwrites each entry as
+it reaches it, so a name declared twice still reads as whichever
+declaration stands above the use — which is what the walk alone gave
+before this existed.
+
+**The residual rejection now says what is wrong.** A thing used above
+its *definition* is still refused — LANGUAGE.md:1630 says every use
+stands after the definition it names — but that case used to reach the
+same *"Expected property name"* message, and the arm in
+`parse_thing_possessive` that catches it was marked unreachable. It is
+reachable now (the declaration is known before the definition is read),
+and it names the construct and the way out, in #46's family:
+
+```
+error: Thing 'point' is defined below this line
+  A thing is defined at the top level, like a function, and every use of
+  its name stands after the definition.
+  Move the definition of 'point' above this line.
+```
+
+**LANGUAGE.md.** Two sentences tightened, no feature added: :705 now
+says a top-level variable is readable inside a function *"whether the
+declaration stands above the function or below it"*, and *Definitions
+are top-level only* now says in as many words that the ordering rule is
+about the definition and not about an instance of it.
+
+Regression tests: `tests/511_thing_global_below_function.vox` (the
+repro, now right), `tests/512_thing_global_above_function.vox` (the
+working neighbour, still right — a control that passes on both sides),
+`tests/513_thing_global_below_function_spellings.vox` (the article, the
+write target, the format hole and the nested chain),
+`tests/514_thing_global_below_function_instance_call.vox` (the instance
+possessive resolving to a declared member and to an ordinary function
+taking the thing first), and
+`tests/515_thing_global_below_function_seen_type.vox` (the definition
+arriving through a `see`). Four of the five are proven to fail against a
+clean extract of `4b77934`; 426 is the control.
+`tests/compile_fail/229_thing_defined_below_use.vox` pins the residual
+diagnostic.
+
+
+### 81. A dynamic map key inside a format hole — `"{m's \"{k}\"}"` — renders the value then two stray characters from the hole's own syntax
+
+**Status:** **fixed** (this branch, 0.4.10), found 2026-08-22 by the #68 fix
+worker as an incidental (`REPORT-68.md`, `wt-vox-68`) and adjudicated in the
+candidates round-2 audit (`REPORT-CANDIDATES-ROUND-2.md` §K, verdict
+**K-underneath: bug**, severity *wrong value (silent)*). Silent: the value is
+right, the two extra characters are not, and the program exits 0. Family of
+**#44** / **#59** / **#60** / **#61** (format-hole rendering) — and like #60
+and #61 it is the hole parser mis-splitting its own syntax rather than codegen
+emitting the wrong bytes.
+
+Note the register also closes **K-as-reported** — *"a map value by key cannot
+be spelled in a format hole"* — as a **misread**: `"` inside a `"`-delimited
+string ends the string, `\"` is the documented escape and works, and a bare
+identifier after `'s` is a property, not a key (LANGUAGE.md:2400). Both
+reported halves are the compiler applying documented rules. The bug is the
+composition *underneath* them.
+
+```vox
+a map called scores is {"a": 1}.
+a text called key is "a".
+Print "[{scores's \"{key}\"}]".    ([1"}]  — should be [1])
+Print "[{scores's \"a\"}]".        ([1]    — the static key was always right)
+```
+
+**Nearest working neighbour**, which is what makes it a bug and not a
+limitation — the same read, one line earlier, is exact:
+
+```vox
+a number called got is scores's "{key}".
+Print "[{got}]".                   ([1])
+```
+
+Both features are documented and the manual sanctions the composition.
+LANGUAGE.md:2400 — *"Read a value by key with `map's "key"` (the key is a
+text literal; a quoted key with `{...}` interpolation builds a dynamic
+key)"*. LANGUAGE.md:3147 — *"Embed variables and expressions directly in
+strings using curly braces `{}`"*, and :3169 says the hole holds *"a variable
+or expression"*, which a possessive map read is; the manual writes possessives
+in holes itself (`{arguments's count}` at :3191). Nothing marks a hole as
+unable to hold a quoted string, and no reading makes silent output corruption
+correct — even if the composition were refused, the answer would be a
+diagnostic.
+
+**The hole parser could not see a quoted string inside the hole.**
+`parse_format_string` in `src/parser/expressions.rs` did two things to a
+hole's contents, and both were blind to quoting:
+
+1. It scanned for the terminator with `if c == '}' { break }` — the *first*
+   `}`, wherever it sat. For `{scores's "{key}"}` that is the key's own
+   closing brace, so the hole content came out as `scores's "{key` and the
+   leftover `"}` fell through to the next iteration of the outer loop, which
+   pushed both into the literal run. Hence a correct value followed by `"}`:
+   the sub-parser recovered the key from the truncated `"{key` (an
+   unterminated string yields `{key`, which re-enters the format parser and
+   resolves `key`), which is exactly why the *value* looked right and hid the
+   defect.
+2. It split the format spec with `placeholder_content.find(':')` — again the
+   first one, so a key containing a colon was cut in half.
+
+Both now track whether the scan is inside a quoted string and ignore a `}`
+or a `:` that sits in one. Every `"` reaching this function was written `\"`
+in source — the lexer (`read_string`, `src/lexer/scan.rs`) unescapes it
+before the parser sees it — so each quote really does open or close a string
+and the toggle is exact.
+
+**The whole surface, probed on `main` (4b77934) and on this branch.** One
+map, `{"ada": 10, "grace": 20, "}": 1, "a}b": 3, "a:b": 5}`, and `key` is
+`"ada"`:
+
+| hole | `main` 4b77934 | this branch |
+|---|---|---|
+| `{scores's \"{key}\"}` | `10"}` | `10` |
+| `{scores's \"grace\"}` | `20` | `20` (unchanged) |
+| `{scores's \"{key}\"} and {scores's \"grace\"}` | `10"} and 20"}` | `10 and 20` |
+| `{scores's \"}\"}` | `0"}` — **wrong value** | `1` |
+| `{scores's \"a}b\"}` | `0b"}` — **wrong value** | `3` |
+| `{scores's \"a:b\"}` | `0` — **wrong value, no stray characters** | `5` |
+| `{scores's \"{key}\":6}` | `10":6}` — spec dropped | `    10` |
+| `{scores's \"{key}\":x}` | `10":x}` — spec dropped | `0xa` |
+| `{scores's \"ada\":6}` | `    10` | `    10` (unchanged) |
+
+The last three rows are why the colon split was fixed with the terminator
+scan rather than left for a second entry: it is the same blindness, in the
+same function, two lines apart, and it is the more dangerous of the two —
+a wrong value with *no* visible corruption to notice.
+
+**It is the shared parser, so the fix reaches every site.** `string_value_expr`
+routes every value-position string literal through `parse_format_string`, so
+the same hole was broken in a `Print`, a text initializer, a buffer `Append`
+and a list element, and all four are fixed by the one change:
+
+```vox
+a text called line is "as a text value: {scores's \"{key}\"}".   (was 10"}, now 10)
+Append "into a buffer: {scores's \"{key}\"}" to note.            (was 10"}, now 10)
+a list called lines is ["in a list: {scores's \"{key}\"}"].       (was 10"}, now 10)
+```
+
+**Untouched, and pinned:** quotes outside a hole (`"he said \"hi\" to
+{name}"`), the `{{`/`}}` escapes, every format specifier row, a static key,
+and the *"Unmatched `{` in a string literal"* diagnostic that
+`Append "{" to out.` still raises.
+
+**Tests.** `tests/508_dynamic_map_key_in_a_format_hole.vox` (the repro, the
+static key next to it, text either side of the hole, two dynamic keys in one
+string, keys holding the hole's own punctuation, and the working neighbour)
+and `tests/509_a_quoted_key_reads_at_every_format_hole.vox` (the colon key,
+the specs it composes with, and the same hole at each of the four sites).
+Both fail on a clean 4b77934 extract and pass here.
+
+**Not in scope, noticed on the way.** A key holding a *single* `{` — `{"{": 2}`
+— cannot be written at all: a lone `{` in any string literal is *"Unmatched
+`{` in a string literal"*, which is the documented `{{` escape rule doing its
+job, not this bug. But its caret lands on the **first string literal in the
+file** rather than on the offending one (in a 25-line test it pointed at line
+8's map literal and at an unrelated `Print` on line 12). That is a span
+misattribution in the #46 family, unrelated to this mechanism, left alone.
+
+
+---
+
+### 82. The runtime text→float parser rounded once per fractional digit, so `"0.88" as a float` was not `0.88` — 53 of the 1000 two-decimal values disagreed with their own literal
+
+**Status:** **fixed** (unreleased, for 0.4.10).
+Severity: **wrong value, silent** — no error flag, no diagnostic, and
+`_print_float` trims the answer back to the spelling you asked for, so the
+only way the difference ever surfaced was a comparison that mysteriously
+failed or a total that drifted. Regression tests:
+`tests/495_text_to_float_matches_the_literal.vox` (the headline repro
+through both the static cast and the `value` retype, plus the neighbours
+that were always right),
+`tests/496_text_to_float_over_the_reported_table.vox` (every row of the
+adjudication report's table, plus four values with an integer part),
+`tests/497_buffer_to_float_matches_the_literal.vox` (the length-bounded
+parser behind a buffer cast, including a buffer filled byte by byte and
+one cleared and refilled), and
+`tests/498_text_to_float_past_the_mantissas_room.vox` (decimals longer
+than the mantissa can hold). Found by the vox-fuzz claim ledger row
+**VAL-09** (`'gen leaf value retype'`, `src/gen_collections.vox`),
+surfaced as discrepancy **D-F** of the core sweep
+(`REPORT-SWEEP-CORE.md`) and adjudicated in
+`REPORT-CANDIDATES-ROUND-3.md` §L-i (2026-08-22). Master-reproduced on
+`4b77934` = v0.4.9; byte-identical on v0.4.8, so not a 0.4.9 regression.
+
+```vox
+a value called p is "00.88".
+p is a float.
+If p is not 00.88 then, Print "ASSERT: expected 00.88 got {p}", Exit 95.
+Print p.
+```
+→ `ASSERT: expected 00.88 got 0.88`, exit **95**. The assertion fired
+while printing a number that looked identical to the one it expected.
+
+It was never the `value` retype. The manual's own documented static cast
+had it too:
+
+```vox
+a text called s is "0.88".
+a float called viacast is s as a float.
+If viacast is not 0.88 then, Print "cast: differs". Otherwise, Print "cast: equal".
+a float called plain is 0.88.
+If plain is not 0.88 then, Print "literal: differs". Otherwise, Print "literal: equal".
+Print "{viacast:.17}".
+Print "{plain:.17}".
+```
+→ `cast: differs` / `literal: equal` / `0.88000000000000012` /
+`0.88000000000000000`. The printer was fine — `{:.17}` told the truth on
+both lines. The two parsers were one ulp apart.
+
+**Root cause.** `coreasm/x86_64/float.asm:399-497` (`_parse_f64`)
+accumulated the fractional digits as an integer and then divided by ten
+once per fractional digit:
+
+```asm
+.pf64_pow10_loop:
+    mov rax, 10
+    cvtsi2sd xmm2, rax
+    divsd xmm1, xmm2        ; one rounding per digit
+    dec rcx
+```
+
+Every `divsd` rounds. The compile-time parser is Rust's `f64` parse,
+which is correctly rounded in one step. For `0.88` the runtime walked
+88 → 8.8 → 0.8800000000000001 (bits `4606101554889448490`) where the
+literal gives 0.88 (`4606101554889448489`) — and the bit pattern the
+ledger's assertion printed is *exactly* the repeated-division answer, not
+the correctly-rounded one. `_parse_f64_bounded` (`:507-621`) carried the
+identical loop, so the buffer-typed cast had it too. Between them these
+two routines are reached by `<text> as a float`
+(`src/codegen/expr.rs:2068`), `<buffer> as a float` (`:2061`) and the
+`value` retype (`src/codegen/tags.rs:624`) — every way a Vox program can
+turn text into a float, including text read from a file, an argument or
+an environment variable.
+
+**Two corrections to the adjudication report.** Both of its headline
+figures were modelled rather than measured, and both are wrong in the
+compiler's favour:
+
+- It predicted **288 of 1000** two-decimal values in [0, 10). The
+  measured answer is **53** — 30 of the 100 below one, 11 in [1, 2), 6
+  in [2, 3), 6 in [3, 4), and none at all from 4 upward. The model
+  compared the fractional parse in isolation and multiplied by ten; in
+  the real routine a large integer part is added back afterwards, and
+  that addition re-rounds the sum onto the same double. The report's
+  twelve spot-checks were all below one, where the model happens to be
+  right, so all twelve confirmed.
+- It said the bug included "the manual's own example". It did not:
+  `"3.14" as a float` and the literal `3.14` were already the same
+  double before this fix, and `tests/495` pins that they still are.
+
+**What is true and was under-reported:** the same routines also wrapped
+their 64-bit accumulator with no room check, so a long decimal did not
+land an ulp away — it landed somewhere else entirely.
+`"3.141592653589793238462643"` read as **2.999995446079999**;
+`"123456789012345678901.5"` read as a **negative** number; twenty nines
+read as `7.7662796314522419e+18`. And `_parse_f64_bounded` jumped to its
+no-digits exit without ever writing its result register, so an empty
+buffer cast to a float handed back **whatever float had been computed
+last** (`tests/497` prints `-0.88` for that line on the old runtime).
+Neither could be left standing by a rewrite of the accumulator they live
+in; both are fixed here and pinned by `tests/497` and `tests/498`.
+
+**The fix.** Both parsers now read the whole decimal — every digit of
+both parts — into one integer mantissa, carrying a decimal exponent that
+says where the point sits, and hand both to a new `_f64_scale10`
+(`coreasm/x86_64/float.asm:440`) that places the point in a **single**
+rounding. The scaling is done on the x87 stack rather than in SSE,
+because x87 can be told how wide to round: `fild` loads any mantissa
+below 2^63 exactly, the powers of ten up to 10^22 are exact doubles that
+`fld` widens without loss, and with the precision-control field set to a
+53-bit significand the one `fmul`/`fdiv` rounds straight to what a double
+can hold — so the qword store afterwards is exact and the whole
+conversion has rounded once. That is the correctly-rounded result, bit
+for bit what Rust's parser gives the same digits at compile time.
+Nothing else in the compiler or the runtime uses the FPU, and the
+caller's control word is restored before returning.
+
+The window it covers — up to 18 significant digits with the point within
+22 places — is wider than a `float` can tell apart (17 digits round-trip
+a double). Digits past the eighteenth are dropped, and a dropped digit
+left of the point still counts towards the exponent, so the magnitude
+survives what the old accumulator used to corrupt. Past the window the
+point is walked in strides of 10^22 with the precision control left at
+the full 64-bit significand, which keeps eleven spare bits under the
+answer and leaves the final store to do the rounding that matters.
+
+**Measured, on the twelve rows the report listed plus the headline:**
+
+| text | before, `{:.17}` | the literal | after |
+|---|---|---|---|
+| `"0.07"` | 0.06999999999999999 | 0.07000000000000001 | agrees |
+| `"0.11"` | 0.11000000000000001 | 0.11000000000000000 | agrees |
+| `"0.14"` | 0.13999999999999999 | 0.14000000000000001 | agrees |
+| `"0.17"` | 0.16999999999999998 | 0.17000000000000001 | agrees |
+| `"0.21"` | 0.21000000000000002 | 0.20999999999999999 | agrees |
+| `"0.22"` | 0.22000000000000003 | 0.22000000000000000 | agrees |
+| `"0.23"` | 0.22999999999999998 | 0.23000000000000001 | agrees |
+| `"0.28"` | 0.27999999999999997 | 0.28000000000000003 | agrees |
+| `"0.33"` | 0.32999999999999996 | 0.33000000000000002 | agrees |
+| `"0.34"` | 0.33999999999999997 | 0.34000000000000002 | agrees |
+| `"0.42"` | 0.42000000000000004 | 0.41999999999999998 | agrees |
+| `"0.44"` | 0.44000000000000006 | 0.44000000000000000 | agrees |
+| `"0.88"` | 0.88000000000000012 | 0.88000000000000000 | agrees |
+
+**And in bulk**, both routines driven directly from a C harness against
+glibc's `strtod`, which is correctly rounded:
+
+| corpus | before | after |
+|---|---|---|
+| 817,466 decimals of ≤ 18 significant digits (every two-decimal value below 100, every three-decimal value below 10, and 800,000 random ones, half of them negative) | **183,534 wrong**, up to 6 ulp | **0 wrong** |
+| 200,000 decimals of 19–30 significant digits and points up to 60 places away | **143,344 wrong**, to the point of sign inversion | **799 wrong**, never more than 1 ulp |
+
+The 799 are the truncation residue: every one has 21 or more significant
+digits, well past what a double distinguishes, and each is one ulp from
+the correctly-rounded answer rather than a corrupted one.
+
+**Family.** #34 — a float *formatter* routed through an i64 — is the
+nearest neighbour; this is the float *parser*, and the shape it shares
+with #34 is a runtime numeric routine reaching for the cheap integer
+arithmetic that is right for a number and wrong for a double. #60's
+`{f:.N}` corruption is the same file from the other end. The
+uninitialised-result half is the shape of #58's silent re-type: a path
+out of a routine that skips the write everyone downstream assumes
+happened.
+
+**Not changed, deliberately.** `-0` still parses to `+0.0` (the sign is
+applied as `0.0 - x`, and `0.0 - 0.0` is `+0.0`); that is exactly what
+the old routine did, it is unrelated to the rounding, and glibc's
+disagreement with it is the only difference left in the ≤ 18-digit
+corpus. Exponent notation (`"1e5"`) is still not accepted by either
+parser — it never was, and adding it is a feature, not this fix.
+
+
+---
+
+### 83. `not` binds to a primary, so `If not v1 is v2 then,` compiles as `(not v1) is v2` and the guard never fires — no spelling of `not <comparison>` exists
+
+**Status:** **fixed in 0.4.10**.
+Severity: **wrong condition, silent** — the guard compiles, runs, and is
+false whatever the operands, so a program that means "if these differ"
+takes the other branch forever with no diagnostic anywhere.
+Regression tests: `tests/492_not_takes_the_whole_comparison.vox` (the
+repro rows), `tests/493_not_before_a_comparison_in_every_slot.vox` (every
+condition position — both operands of `and`, the left of `or`, `but if`,
+a guarded `print`, a plural-subject `are`, a returned condition and a
+`While` header), and `tests/494_is_not_and_not_a_boolean_unchanged.vox`,
+a control that pins the three spellings which were already right.
+Found by the vox-fuzz claim ledger: row **OPR-21** (`not <condition>`)
+was left deliberately unexercised by the `gen_core` derandomisation sweep
+because "emitting `If not <comparison>` would put a construct in every
+program whose meaning nobody has blessed"
+(`vox-notes/REPORT-SWEEP-CORE.md`, discrepancy **D-B**, 2026-08-21);
+adjudicated as candidate **M** of
+`vox-notes/REPORT-CANDIDATES-ROUND-3.md` (candidate audit, 2026-08-22)
+and master-reproduced on 0.4.9.
+
+```vox
+a number called v1 is 3.
+a number called v2 is 6.
+If not v1 is v2 then, Print "fires". Otherwise, Print "silent".
+```
+→ prints **`silent`**. So does the same program with `v2 is 3`, and with
+every other pair: `not v1` is `0` for any non-zero `v1`, and `0 is v2` is
+false for any non-zero `v2`.
+
+**The matrix, each row its own program, measured on this branch's parent
+(4b77934 = v0.4.9) and on the fix:**
+
+| condition | before | after |
+|---|---|---|
+| `not heat is limit` (3, 6) | silent | **fires** |
+| `not heat is depth` (3, 3) | silent | silent |
+| `not heat is greater than 5` (3) | silent | **fires** |
+| `not readings is empty` (empty list) | fires | **silent** |
+| `not heat is even` (3) | fires | fires |
+| `heat is 3 and not limit is 5` | silent | **fires** |
+| `not heat is 4 and limit is 6` | silent | **fires** |
+| `not heat is 4 or limit is 99` | silent | **fires** |
+| `not not heat is limit` | silent | silent |
+| `But if not heat is limit then,` | silent | **fires** |
+| `Print "d", but if not heat is limit print "g".` | `d` | **`g`** |
+| `not door_open, alarm_armed, and door_open are true` | silent | **fires** |
+| `Return a boolean, not temperature is greater than 10.` | silent | **fires** |
+| `While not tick is greater than 5,` (tick 3) | 0 iterations | **3 iterations** |
+| `heat is not limit` (control) | fires | fires |
+| `heat is not greater than 5` (control) | fires | fires |
+| `readings is not empty` (control) | silent | silent |
+| `If not door_open then,` on a boolean (control) | fires | fires |
+| `Print not door_open.` (control) | `1` | `1` |
+| `a boolean called door_shut is not door_open.` (control) | `1` | `1` |
+
+Row 4 is the decisive one: it is the only row where the two readings give
+*opposite* answers rather than one of them being accidentally right.
+`not heat is even` agrees under either binding, which is why a property
+check never exposed this.
+
+**Which reading the manual supports.** The clause reading, on three
+independent statements:
+
+1. **LANGUAGE.md's Logical Operators fence** writes the three operators
+   in parallel, and every operand slot is spelled `<condition>`:
+   `<condition> and <condition>`, `<condition> or <condition>`,
+   `not <condition>`. `and` and `or` demonstrably take whole comparisons
+   — `If v1 is 3 and v2 is 6 then,` fires — so `<condition>` in the third
+   line means what it means in the first two.
+2. **The Comparisons table** makes `v1 is v2` a comparison, which is
+   exactly what that `<condition>` slot then holds.
+3. **The stated goal of the language.** English `not` takes scope over
+   the clause it precedes: "if not v1 is v2" is heard as "if it is not
+   the case that v1 is v2", never as "if the negation of v1 equals v2".
+   A reader cannot arrive at the primary binding unaided, and the manual
+   never gave them anything to arrive at it from.
+
+**The strongest reading in which the compiler was correct, and why it
+fails.** The grammar summary gives `expr ::= or_expr`, `or_expr`,
+`and_expr`, `comparison`, down to `primary`, and **`not` appears nowhere
+in it**. Insert it at the primary level — which is where the
+implementation had it — and the summary is internally consistent; a unary
+operator over a primary is the ordinary C-family precedence, and the
+manual never stated another. Two things kill it:
+
+- The summary uses the nonterminal `condition` in `if_stmt` and
+  `while_stmt` and **never defines it**. A grammar that does not define
+  the nonterminal in question cannot settle a question about it.
+- The mis-parse was only *reachable* because `not` silently accepts a
+  number: `Print not v1.` prints `0` for `v1 = 20`. If `not` took
+  conditions, as the fence says, `not v1` on a number would be a type
+  error and `not v1 is v2` would have failed to compile rather than
+  silently evaluating `(not v1) is v2`. The compiler was not choosing a
+  precedence; it was falling through a hole. (That permissiveness is its
+  own entry and is deliberately untouched here — see "Not in scope".)
+
+And the deciding practical fact: **`not <comparison>` had no working
+spelling at all.** `If not {v1 is v2} then,` does not parse
+(`error: Expected a statement, got CloseBrace`), because a brace group
+takes an expression and a comparison lives above it. There was no way to
+write the thing the manual documents.
+
+**Mechanism.** `not` existed only as a `Token::Not` arm inside
+`parse_primary` (`src/parser/expressions.rs`), which recursed into
+`parse_primary` — so it consumed one primary and stopped. `parse_comparison`
+then took that `Not(v1)` as its left operand and read `is v2` on top of
+it. The precedence chain had no level for `not` between `and` and
+`comparison`, which is the level the manual's fence describes. Same family
+as **#50** (a chain-continuation keyword the parser's guard simply never
+listed) — a construct the manual documents that the grammar has no
+production for — and the mirror image of **#64**, where two spellings of
+one thing disagreed because only one had a parse path.
+
+**The fix — one new level in the precedence chain.**
+`parse_not_expr` (`src/parser/expressions.rs`) sits between `parse_and_expr`
+and `parse_comparison`: it claims a leading `Token::Not`, recurses on
+itself so `not not X` cancels, and otherwise falls straight through to
+`parse_comparison`. `parse_and_expr` now calls it for **both** operands of
+`and`, so a `not` on the right of an `and` reads the same as one on the
+left — putting the claim inside `parse_and_expr` itself would have fixed
+only the leading position. `or` inherits it through `and_expr`, and every
+condition site (`If`, `When`, `While`, `but if`, a guarded `print`, a
+typed or untyped `Return`, and the format-string sub-parser, which enters
+at `parse_and_expr`) inherits it through `parse_condition`.
+
+The `parse_primary` arm **stays**. It is what `not` in value position
+reads through — `Print not door_open.`, `a boolean called door_shut is
+not door_open.` — and it was already right; the two do not overlap,
+because `parse_not_expr` has consumed any leading `not` before
+`parse_primary` is reached.
+
+**The manual line.** LANGUAGE.md now states the precedence next to the
+fence that documents `not` ("`not` takes the whole condition after it …
+binds looser than every comparison and property check, and tighter than
+`and` and `or`"), and the grammar summary gains the two productions it was
+missing — `and_expr ::= not_expr ("and" not_expr)*`,
+`not_expr ::= "not" not_expr | comparison` — plus `condition ::= expr`,
+the nonterminal `if_stmt` and `while_stmt` had been using undefined. No
+behaviour is promised that the fix does not deliver.
+
+**Not in scope, noticed on the way.**
+
+- **`not` accepts any type, not just a condition.** `Print not v1.` on a
+  number answers `0`/`1` (unchanged by this fix, which does not touch the
+  value path), and on a text, list or map it segfaults — the round-3
+  audit's incidental **T-1**, filed separately. Typing `not` is what
+  would have made this bug a compile error instead of a wrong answer, but
+  it is a behaviour change of its own with its own blast radius.
+- **A brace group still cannot hold a comparison.** `If not {v1 is v2}
+  then,` is the same parse error before and after. It no longer matters
+  for `not`, which now has a working spelling without braces, but
+  `{a is b}` as a groupable condition remains unimplemented and
+  undocumented.
+
+
+---
+
+### 84. `isn't` and `aren't` — documented spellings of `not` at LANGUAGE.md:4662 — can never be lexed: `read_word` stops at the apostrophe, so six keyword-table entries are dead code
+
+**Status:** **fixed** in 0.4.10 (this branch). Severity: **diagnostic —
+rejects documented Vox**. Nothing silent and nothing unsafe: the program is
+refused, loudly and with the caret in the right column, for a reason the
+manual says is not a reason. Found by the vox-fuzz **operators** claim
+ledger — rows `OPR-22` and `OPR-23`, both recorded *not assertable, blocked
+on* its **Discrepancy 1** (probe `docs/ledger/probes/operators/D1.vox`) —
+re-confirmed byte-identical on 0.4.9 by the core sweep
+(`REPORT-SWEEP-CORE.md`, D-C) and adjudicated in the candidate audit of
+2026-08-22 (`REPORT-CANDIDATES-ROUND-3.md` §N). Regression tests:
+`tests/502_contraction_isnt.vox`, `tests/503_contraction_arent.vox`,
+`tests/504_apostrophe_meanings_unchanged.vox`, four compile-fail cases
+`tests/compile_fail/contraction_*.vox`, and six lexer unit tests in
+`src/lexer/tests.rs`.
+
+```vox
+a number called v1 is 20.
+a number called v2 is 6.
+If v1 isn't v2 then, Print "differ". Otherwise, Print "same".
+```
+→ `error: Expected a statement, got Apostrophe`, caret on the apostrophe.
+The same sentence spelled out — `If v1 is not v2 then,` — prints `differ`.
+
+**The intent was in the compiler and the word never reached it.** The
+keyword table at `src/lexer/scan.rs` claimed six contractions:
+
+```rust
+"is" | "it's"   => Token::Is,
+"are" | "they're" => Token::Are,
+"not" | "isn't" | "aren't" | "doesn't" | "don't" => Token::Not,
+```
+
+`read_word` accumulates only `is_alphanumeric() || '_' || '-'`, so it stops
+dead at `'` and can never produce a word containing one. No input could
+reach any of those six arms. The scanner's `'` arm then took the apostrophe
+as one of its three real meanings — character literal, quoted name, or the
+`'s` possessive marker — and the parser met a bare `Apostrophe` where a
+statement belonged.
+
+**The six, before and after:**
+
+| spelling | table entry | in the manual? | before | after |
+|---|---|---|---|---|
+| `isn't` | → `Token::Not` | **yes, :4662** | *Expected a statement, got Apostrophe* | **compiles**, as `is not` |
+| `aren't` | → `Token::Not` | **yes, :4662** | *…got Apostrophe* | **compiles**, as `are not` |
+| `doesn't` | → `Token::Not` | no | *…got Apostrophe* | entry removed; still refused |
+| `don't` | → `Token::Not` | no | *…got Apostrophe* | entry removed; still refused |
+| `it's` | → `Token::Is` | no | *…got Apostrophe* | entry removed; still refused |
+| `they're` | → `Token::Are` | no | *…got Apostrophe* | entry removed; still refused |
+
+**The fix is one look-ahead in `read_word`, and it had to produce two
+tokens.** `isn't` means `is not`, and `parse_comparison`
+(`src/parser/expressions.rs`) reads `Is`/`Are` and *then* an optional
+`Not`. Reaching the old table would have produced a lone `Token::Not`,
+which does not parse and never did — `If v1 not v2 then,` is
+`error: Expected a statement, got Not` before this fix and after it. So
+`read_word` now consumes the `'t` of a complete contraction and returns
+`Is`/`Are`, leaving the `Not` for `tokenize` to push behind it; both halves
+carry the contraction's own line and column, so a caret under either lands
+on the word the author wrote. A contraction is the one apostrophe that
+falls *inside* a word already in progress — the character literal, the
+quoted name and the `'s` possessive all begin where no word is being read —
+so the rule cannot take a byte from any of them.
+
+**Why only the two the manual documents.** Waking the table wholesale would
+have brought four undocumented spellings to life at once, and two of them
+take working code away: `it` and `they` are ordinary identifiers, so
+`print it's length.` is the possessive on a variable called `it` and prints
+a length today. The rule therefore admits `isn't` and `aren't` and nothing
+else, and the four unreachable entries were deleted rather than woken —
+a table that lies is what caused this entry. `tests/504_*` pins the
+possessives, and the four `tests/compile_fail/contraction_*` cases pin the
+refusals, so neither half can drift back.
+
+**Family: a table the lexer cannot reach.** Same shape as **#64**, where
+the parser had two possessive property sites that knew different languages
+and one of them silently implemented almost nothing — an internal list that
+does not match the manual it was written from. The diagnostic class is
+#45/#62/#63's: a refusal whose message names the token it tripped over and
+not the construct the author was writing. Here the right answer was to
+accept the construct, so no new diagnostic was added; the message for the
+four undocumented spellings is unchanged.
+
+**Not in scope, noticed on the way.** A stray apostrophe inside a word can
+silently swallow a *later* quoted name on the same line, and the caret then
+lands 30 columns from the mistake:
+
+```vox
+a number called v1 is 20.
+a text called 'a long name' is "hi".
+If v1 don't v2 then, print 'a long name'. Otherwise, print "no".
+```
+→ `error: Expected a statement, got Apostrophe` at **3:40**, the closing
+quote of `'a long name'` — because `is_single_quoted_identifier` scans to
+the next `'` on the line and reads `t v2 then, print ` as a name. The real
+mistake is at 3:10. Identical before and after this fix, which does not
+touch that path. It is the diagnostic half of this family and wants its own
+entry: a word interrupted by an apostrophe that completes no contraction
+and is not the possessive is always an error, and the lexer knows it at the
+apostrophe.
+
+
+
+---
+
+### 85. A width and a precision written together silently drop both — `{f:8.2}` prints `2.5` while `{f:.2}` prints `2.50`; and the manual never said whether `N.M` composes
+
+**Status:** **fixed in 0.4.10**. Severity: **wrong value, silent** — a
+specifier that works on its own is destroyed by writing a second one beside
+it, with no diagnostic anywhere. Regression test:
+`tests/521_a_width_or_a_precision_never_both.vox`, plus three codegen unit
+tests over `read_format_spec`. Found by the vox-fuzz seed sweep, whose
+`gen_text.vox` emits `{name:W.P}` specs.
+
+```vox
+a float called f is 2.5.
+Print "[{f:8.2}]".        (was: [2.5]   - neither half)
+Print "[{f:.2}]".         (        [2.50]  - the precision alone works)
+a number called n is 255.
+Print "[{n:8.2}]".        (was: [     255] - the width honoured, places gone)
+```
+
+**Root cause.** `read_format_spec` (`src/codegen/format.rs`) consumed the
+width, leaving `.2` in `remaining`. That matched none of the base specifiers
+(`x`, `X`, `b`, `o`), so it fell to their catch-all, which sets the base to
+decimal and returns — and `precision` was never assigned. Writing a width
+destroyed a precision, and on a float the width was not applied either
+(#36's residue), so `{f:8.2}` came out as neither.
+
+**The fix — both halves are read, and both are kept.** They compose under
+the rule #71 already states for the width: *"the width is the one exception
+— it applies to any value and is ignored where no padding exists for that
+type yet"*. So the precision decides the digits and the width decides the
+padding, and each is honoured wherever a primitive for it exists:
+
+| spec | value | renders | why |
+|---|---|---|---|
+| `{n:8.2}` | `a number called n is 255.` | `  255.00` | both: digits padded so the whole rendering is 8 wide |
+| `{n:08.2}` | the same | `00255.00` | a zero-pad is a width and composes the same way |
+| `{f:8.2}` | `a float called f is 2.5.` | `2.50` | the places print; there is no float padder, so the width is dropped — as a bare `{f:8}` already dropped it |
+| `{t:8.2}` | a `text` | refused | #71's check: a text has no decimal expansion. Untouched by this entry |
+
+The padding arithmetic is the same in every sink: a rendering of
+`<digits>.<zeros>` is the digit count plus one plus the precision, so
+padding the DIGITS out to `width - 1 - precision` brings the whole to
+exactly `width`. `emit_formatted_value` (Print) and
+`emit_append_int_with_decimal_places` (the buffer sinks) each do that, so a
+hole renders the same in a `Print`, a text initializer and a buffer.
+
+**Why honoured and not refused.** The first cut of this fix refused the pair
+with a diagnostic naming both halves. That was wrong twice over: it
+contradicts #71's own sentence, now in LANGUAGE.md, that a width "applies to
+any value and is ignored where no padding exists for that type yet" — a
+width beside a precision is that same case, not a new one — and it turned
+roughly a quarter of the vox-fuzz generator's legal-looking programs into
+compile errors (73 of 300 seeds), for a spelling every reader would expect
+to work. A count past `FORMAT_MAX_COUNT` on either half is still a fault
+(#61's rule, unchanged), and a specifier asked of a type that cannot answer
+it at all is still refused (#71's check, unchanged).
+
+**LANGUAGE.md.** The "Format Specifiers" section never said whether `N.M`
+composes. It now states the rule and both worked examples.
+
+### 86. A float's precision is dropped by every sink but `Print` — `copy "{ratio:.2}" to b` and `write "{ratio:.2}"` give `2.5` where `Print` gives `2.50`
+
+**Status:** **fixed in 0.4.10** (unreleased, on top of 0.4.9). Regression
+tests `tests/486_float_precision_in_every_sink.vox`,
+`tests/487_float_precision_matches_print_in_a_buffer.vox` and
+`tests/488_float_without_a_precision_in_every_sink.vox`, plus three codegen
+cases in `src/codegen/tests.rs`
+(`a_float_precision_in_a_text_initializer_carries_its_places`,
+`a_float_precision_in_every_buffer_sink_carries_its_places`,
+`a_float_precision_in_a_buffer_asks_for_the_render_writers`,
+`a_float_without_a_precision_still_appends_directly`). 425 and 426 and the
+first two unit tests were proven to fail on clean `main` (4b77934) and to
+pass after; 427 and `a_float_without_a_precision_still_appends_directly` —
+the working neighbour — pass on both. Found
+2026-08-21 by the vox-fuzz claim ledger / candidate audit (recorded as #71's
+incidental, where it was named for the buffer sinks only), adjudicated by
+the language lawyer as candidate **Q** and master-reproduced on this branch.
+
+```vox
+a float called ratio is 2.5.
+Print "print   : {ratio:.2}".
+a text called t is "text    : {ratio:.2}".
+Print t.
+Create a buffer called b.
+copy "buffer  : {ratio:.2}" to b.
+Print b.
+Open a file for writing called out at "qout.txt".
+write "file    : {ratio:.2}\n" to out.
+Close out.
+```
+
+```
+print   : 2.50
+text    : 2.5     (wrong)
+buffer  : 2.5     (wrong)
+file    : 2.5     (wrong)
+```
+
+**Every sink, not just the buffer ones.** The incidental that recorded this
+named `copy`/`set`/`append`; it is every sink the manual lists, including
+the one it names explicitly — a file.
+
+| sink | `{ratio:.2}` before |
+|---|---|
+| `Print "…"` | `2.50` ✓ |
+| `a text called t is "…"` | `2.5` ✗ |
+| `copy "…" to b` | `2.5` ✗ |
+| `set b to "…"` | `2.5` ✗ |
+| `append "…" to b` | `2.5` ✗ |
+| `write "…" to <file>` | `2.5` ✗ |
+| a function argument | `2.5` ✗ |
+
+**And exactly one arm wide.** Every other specifier already kept parity —
+measured, not assumed:
+
+```
+print : [0xff] [000255] [0o377] [11111111]
+text  : [0xff] [000255] [0o377] [11111111]
+buffer: [0xff] [000255] [0o377] [11111111]
+```
+
+Radix (`x`, `o`, `b`) and integer width (`06`) are identical in all three,
+and so is a float with no specifier at all (`2.5`, `-1.25`, `3.0`). Only the
+float-precision arm broke, which is why the fix adds a branch rather than
+rerouting the default rendering.
+
+**What the manual promises.** LANGUAGE.md "Format Strings Everywhere" —
+"All sinks share one name resolver, so special names like `{arguments's
+first}` and `{current time's hour}`, **format specifiers**, and the
+`0x`/`0o` hex/octal prefixes **render identically whether the result is
+printed, written to a file, or built into a** text or a **buffer**." The
+strongest reading in which the compiler is right is that the sentence's
+subject is the *name resolver*, so it promises only that names *resolve* the
+same everywhere. That reading does not survive the sentence's own list:
+"format specifiers" is a separate item, coordinate with "special names" and
+with the `0x`/`0o` prefixes, and the verb governing all three is "render
+identically". Nor does it survive the compiler's own behaviour, which kept
+the promise for every specifier but this one — a shared resolver that
+renders radix and width identically in every sink and precision only in
+`Print` is not implementing a narrower promise, it is missing an arm. The
+specifier table (`{var:.N}` | N decimal places) and the sentence below it
+("`{var:.N}` prints exactly `N` decimal places") carry no sink restriction
+either.
+
+**Severity: a wrong value, silently.** A program writing `{price:.2}` to a
+receipt file gets `2.5` where the same line shown on the terminal reads
+`2.50`. Nothing is diagnosed, and the two disagree in the one place a
+program is least likely to look.
+
+**Root cause.** `src/codegen/buffers.rs`, the `Some(VarType::Float)` arm of
+`emit_append_runtime_value_to_buffer_ptr` — the one point every non-`Print`
+sink funnels through — emitted `call _buffer_append_float`, and
+`_buffer_append_float` (`coreasm/x86_64/float.asm`) takes the destination
+and the raw bits and nothing else: there was no precision argument to pass
+and no routine to pass it to. `Print` goes through `emit_formatted_value`
+(`src/codegen/format.rs`), which has had a precision arm calling
+`_print_float_precision` all along. The spec was parsed correctly in both
+paths; it was dropped on the floor in one of them.
+
+**The fix**, in #44's shape — one renderer, redirected, never a second copy.
+#44 gave `{list}`/`{map}` sink parity by pointing `_render_sink` at the
+destination buffer and calling the very routine `Print` calls; the same move
+works here:
+
+- `coreasm/x86_64/format.asm` — `_fmt_write_all`, the single writer every
+  byte of `_print_float_precision` goes out through (digits, point and pad
+  alike), now consults `_render_sink`: zero means stdout, instruction for
+  instruction as before; a buffer pointer means the same bytes are appended
+  there, via `_render_bytes`. Gated on `__RESOURCE_ASM_INCLUDED__` and
+  `__IO_ASM_INCLUDED__` — where `_render_bytes` lives, and behind which
+  guard — the idiom io.asm's `RENDER_*` macros already use.
+- `coreasm/x86_64/format.asm` — new `_buffer_append_float_precision`: saves
+  the sink, points it at the destination, calls `_print_float_precision`,
+  restores, and answers with the (possibly reallocated) buffer. Its argument
+  and return contract is deliberately `_buffer_append_float`'s and
+  `_list_render_to_buffer`'s, so the codegen arm sits beside theirs as an
+  equal.
+- `src/codegen/buffers.rs` — the float arm emits `mov rsi, N` +
+  `call _buffer_append_float_precision` when a precision was written, and is
+  otherwise untouched. It sets `uses_format` (format.asm holds the printer)
+  and `uses_io` (io.asm guards the render-sink writers), the way `uses_maps`
+  already forces io.asm on. A program that builds `{ratio:.2}` into a buffer
+  and never prints has no other reason to include io.asm, and without that
+  flag it did not assemble at all — `symbol _render_bytes not defined`. That
+  case is pinned by the unit test
+  `a_float_precision_in_a_buffer_asks_for_the_render_writers`.
+
+Because it is a redirection and not a reimplementation, everything the
+precision printer knows arrives with it in every sink: the exact decimal
+expansion, round-half-to-even on a tie, the carry that lengthens the integer
+part, and the magnitudes at or beyond 2^63 that #60 was about. Test 426
+pins that by rendering the same value twice, through `Print` and through a
+buffer, and requiring the two lines to match — including at 400 places,
+which reallocates the destination part-way through the render.
+
+**Family.** Sink parity: #44 (`{list}`/`{map}` renders correctly only in
+`Print` position), #52 (a text-valued special name built into a buffer
+segfaults), #59 (a `treating` clause on a mixed-list loop variable prints a
+pointer). Same shape, one arm over. #60 is the neighbour whose work this
+now carries into every sink; #61 is the pad-width twin in the same file.
+
+**LANGUAGE.md.** The promise sentence named only "printed, written to a
+file, or built into a buffer", though a text initializer is a sink too (it
+is documented as one a paragraph earlier, under "Format Strings as
+Values"). Tightened to "or built into a text or a buffer", with the
+precision spelled out as the example. No behaviour is promised that the
+compiler does not now do.
+
+
+---
+
+### 87. A buffer in a `value` carries its struct pointer, not its bytes — `a value called carried is made.` prints an empty line, or the capacity byte (`@` at 64 bytes)
+
+**Status:** **fixed** (this branch, for 0.4.10). Severity: **wrong value,
+silent** — no error flag, no diagnostic, and the `type` property actively
+misreports the payload it is sitting on. Found 2026-08-22 by the round-3
+candidate audit (`REPORT-CANDIDATES-ROUND-3.md`, section **S**), which took
+the claim from the #67 fixer's incidental — #67's own position table left
+the `a value called c is <call>.` row for a buffer unfilled, and that hole
+was the bug. It is **not** attributable to a vox-fuzz ledger row: the audit
+names no ledger for **S**, and this entry does not invent one. The headline
+repro was re-run by the master on `4b77934` (= 0.4.9) before this branch
+opened. Byte-identical on 0.4.8, so it is not a 0.4.9 regression.
+
+Family: **#51 / #44** — a buffer's struct pointer used where its data
+pointer belongs. This is #51's *identical* defect in the one family of
+spellings #51's fix did not reach.
+
+```vox
+a buffer called made is "ABC".
+a value called carried is made.
+Print carried.
+```
+
+```
+$ VOX_CORE_PATH=$PWD/coreasm target/release/vox S1.vox -o S1 && ./S1 | cat -A
+$
+```
+
+An empty line. Also empty: `"{carried}"`, and `a text called back is
+carried.`
+
+**Proof it is the buffer's header and not memory noise — #51's own tell.**
+Change only the declared size; the printed character tracks the capacity
+field exactly, while the `text` beside it (which #51's fix repaired) is
+correct at every size:
+
+| declaration | `a value called carried is b.` → `Print carried` | `a text called t is b.` → `Print t` |
+|---|---|---|
+| `a buffer called b is 64 bytes in size.` | `@` (0x40 = 64) | `first` ✓ |
+| `a buffer called b is 65 bytes in size.` | `A` (0x41 = 65) | `first` ✓ |
+| `a buffer called b is 66 bytes in size.` | `B` (0x42 = 66) | `first` ✓ |
+
+A *dynamic* buffer's capacity has a zero low byte, which is why the
+headline repro prints an empty line rather than a character: the same
+defect with a quieter symptom. A 32-byte buffer printed a single space
+(0x20). There was never a case that did not read the header — only cases
+whose header byte happened to be printable.
+
+**Working neighbours, all correct before and after:** `a text called direct
+is made.` → `ABC`; `a text called viacast is made as text.` → `ABC`;
+`"{made}"` → `ABC`.
+
+**The cause.** `vartype_to_tag` (`src/codegen/tags.rs:8-18`) maps
+`VarType::String | VarType::Buffer => Some(TAG_STRING)`, so a buffer
+written into a `value` is *tagged text* — and the program agrees out loud:
+
+```
+Print carried's type.                        (Text (dynamic))
+If carried is a text then, ... Otherwise, ...   (takes the text branch)
+```
+
+Having declared the payload text, the compiler then stored the buffer's
+**struct pointer** as that payload. A buffer is a struct whose 24-byte
+header is `[capacity][length][flags]`, with the characters at
+`struct + BUF_DATA_OFFSET`, so every later read — `Print`, a format hole,
+a text initialised from the `value` — dereferenced the capacity field as a
+C string. The tag was right; the payload never caught up with it.
+
+**Why the "undefined territory" reading does not save it.** LANGUAGE.md's
+`value` section enumerates the tags a `value` carries (`Text (dynamic)`,
+`Number`, `Float`, `Boolean`, `List`, `Map`, `Nothing`) and the retype
+targets (`number`, `float`/`decimal`, `text`, `boolean`); a buffer is in
+neither list, so one could argue a buffer is simply not a `value` payload
+and an empty line is as good as anything. That reading dies on the `type`
+property and the predicate above. A compiler in undefined territory does
+not answer `Text (dynamic)` and `is a text` → true. It had committed to an
+answer; it just did not deliver it. Undefined behaviour that confidently
+self-describes is not undefined behaviour, it is a wrong value.
+
+And the manual reaches this case directly. LANGUAGE.md's Basic Conversions
+table gives `buffer → text` one meaning — "a copy of the buffer's bytes" —
+and the sentence under it says **the cast is optional for this one
+conversion**: "Every spelling that puts a buffer into a slot that holds
+text means the same thing and makes the same copy." By the compiler's own
+tag and its own predicate, a `value` holding a buffer **is** a slot that
+holds text, which puts it squarely inside "every spelling".
+
+**The ruling was already made.** #51 was adjudicated by the language
+designer (TheJostler, 2026-08-21): *"option 1, copy: helpful by default —
+the bare spelling means what `as text` means and what `"{b}"` has meant
+since v0.1.17."* That ruling answers this case; it was simply not carried
+to the `value` path. No new decision was needed here, and none was taken.
+
+**The sibling write sites, all of which had the same defect.** As with #51,
+the register found the declaration and the fix worker found the rest. Every
+one of the five stored the struct pointer; all five print `@` before and
+`first` after, with a 64-byte buffer holding `"first"`:
+
+| spelling | before | after |
+|---|---|---|
+| `a value called v is b.` | `@` | `first` |
+| `a value called v is 'a buffer-returning call'.` | `@` | `first` |
+| `Set v to b.` | `@` | `first` |
+| `the v is b.` | `@` | `first` |
+| `'show it' with b.` (a `value` parameter) | `@` | `first` |
+| `Return a value, b.` | `@` | `first` |
+
+(Six rows, five sites: the two declaration spellings are one site.)
+
+**Fix.** No new copy sequence: every site now routes through
+`generate_expr_as_text` (`src/codegen/buffers.rs:318`), the thin wrapper
+#51 added over `emit_buffer_to_text_copy` (`:256`) — generate the
+expression, and if it is a buffer, copy the bytes into a fresh dynamic
+buffer the exit cleanup already tracks. The wrapper converts *only* a
+buffer, so every other `value` payload reaches its slot untouched. The
+change is one widened condition per site:
+
+- `Statement::VarDecl` — `src/codegen/statements.rs:665`, now
+  `is_text_target || is_value_var` (the declaration, and `Set v to b.`,
+  which parses to `VarDecl` with no declared type of its own).
+- `Statement::Assignment` — `:846` (local slot) and `:890` (global
+  mirror), now matching `VarType::String | VarType::Mixed` (`the v is b.`).
+- `Statement::Return` — `:1149`, now `Some(Type::String) ||
+  Some(Type::Value)`. A copy is the only safe thing to return anyway: a
+  buffer local to the callee's frame does not outlive it.
+- `emit_function_call` — `src/codegen/functions.rs:83`, now
+  `is_text_param(i) || is_value_param(i)`, so the payload word matches the
+  `TAG_STRING` word pushed beside it.
+
+The tag half is untouched at every site — it was already right — and
+`emit_load_value_tag`'s register discipline is preserved: the copy runs
+*before* the tag is loaded into r11 at every site, so nothing clobbers it.
+
+**Independence, the #41 half.** The copy makes the `value` its own text,
+not a window onto the buffer: clearing and refilling the source leaves the
+`value` as it was, and *resizing* the source — which frees the old
+allocation — no longer leaves the `value` pointing at freed memory. This is
+why #51 fixed `as text` by copying rather than by adding an offset, and the
+same reasoning carries here. A buffer flowing into a `value` is a
+**conversion, not a retype**: the name is still a `value` afterwards, and
+`snapshot's type` still answers `Text (dynamic)`.
+
+**LANGUAGE.md.** Two sentences tightened, no feature added. The "cast is
+optional for this one conversion" paragraph now names the `value` slot
+among the spellings that make the copy, and the `type`-property paragraph
+now says its seven tags are the whole list and that a buffer put into a
+`value` arrives as text. Both describe what the compiler now does; neither
+grants a `value` a `Buffer (dynamic)` tag, which does not exist.
+
+**Tests.** `tests/489_value_from_buffer_copies.vox` (the register's repro
+at 64 and 65 bytes, so the old answer's dependence on the capacity field is
+what fails; the dynamic-buffer headline repro; the `as text` and `"{b}"`
+controls; an empty buffer, which must give empty text rather than a header
+read; and the `type`/predicate agreement),
+`488_value_from_buffer_at_every_write_site.vox` (the six rows above), and
+`489_value_from_buffer_is_an_independent_copy.vox` (#41's class through
+this spelling: clear-and-refill, then resize, plus the type check and a
+frame-local copy inside a function). All three fail on `4b77934`; 487's
+failure diff shows `@` then `A` where `first` belongs, which is the
+capacity tell in the test output itself. (Test numbers: the next free
+number at `4b77934` is 425, but eleven parallel fix branches have all
+claimed 425 upward from the same commit, so this entry takes the free 487
+block to keep the merge from being an add/add conflict on identical
+filenames.)
+
+**Not fixed here, and not this entry.** `append <buffer call> to <list>`
+stores a raw heap address (`140216441348096`) — a different predicate
+(`Statement::ListAppend`'s `is_buffer_value`, which matches only an
+identifier), which is why `append <buffer variable> to <list>` is correct.
+That is #67's incidental 2 and has its own entry; nothing here touches it.
+
+
+---
+
+### 88. `Print not <text | list | map>` segfaults — `infer_expr_type` and `is_float_expr` return a unary `not`'s OPERAND type, while `is_boolean_expr` twelve lines away and the declaration path both correctly call it a boolean
+
+**Status:** **Fixed in 0.4.10.** Severity: **memory safety** — a
+deterministic segfault from two lines of legal-looking Vox, with no
+diagnostic and no error flag. Found 2026-08-21 by the vox-fuzz claim
+ledger / candidate audit (round 3, candidate **T-1**), met while probing
+the `not`-precedence candidate's "does `not` accept a non-boolean"
+control; adjudicated and master-reproduced on 0.4.9 (4b77934).
+
+```vox
+a text called t is "hi".
+Print not t.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+**The matrix, each case its own program, measured on a clean extract of
+0.4.9 (4b77934) and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| `a text called t is "hi".` + `Print not t.` | **139** | `0` |
+| `a text called t is "".` + `Print not t.` | **139** | `0` |
+| `a list called xs is [1, 2, 3].` + `Print not xs.` | prints `[`, then **139** | `0` |
+| `a list called xs is [].` + `Print not xs.` | prints `[`, then **139** | `0` |
+| `a map called m is {"a": 1}.` + `Print not m.` | prints `{`, then **139** | `0` |
+| `a float called f is 2.5.` + `Print not f.` | prints `0.0` — a *float*, where a boolean belongs | `0` |
+| `a text called t is "hi".` + `Print "{not t}".` | **139** | `0` |
+| `a value called payload is "hi".` + `Print not payload.` (control) | `0` | `0` |
+| `a list called mixed is [1, "two", 3.5].` + `Print not element 2 of mixed.` (control) | `0` | `0` |
+| `a buffer called bf is 16 bytes in size.` + `Print not bf.` (control) | `0` — safe by accident | `0` |
+| `a number called v is 20.` + `Print not v.` (control) | `0` | `0` |
+| `a number called n is 0.` + `Print not n.` (control) | `1` | `1` |
+| `a boolean called b is true.` + `Print not b.` (control) | `0` | `0` |
+| `if not t, print "fired", otherwise print "silent".` (control) | `silent` | `silent` |
+| `if t is not empty, ...` (control) | `not empty` | `not empty` |
+| `a number called r is not t.` (control) | rejected, "with a boolean" | rejected, "with a boolean" |
+| `a float called f is 2.5.` + `Print -f.` (control) | `-2.5` | `-2.5` |
+| `To 'flip' with a float called ratio. Return a float, -ratio.` (control) | `-2.5` | `-2.5` |
+
+Only `Print` position — and format-string interpolation, which is the same
+sink — was unsafe, and only where the operand's type is known statically. A
+`value` and a mixed-list element were already safe: `infer_expr_type` answers
+`None` for both, so `Print` falls back to the runtime tag `generate_expr`
+leaves in `r11` — and `emit_time_expr_tag` (`src/codegen/tags.rs:335`) has
+tagged a `not` `TAG_BOOLEAN` all along. The bug was reachable exactly where
+the wrong static answer was available to believe.
+
+**Root cause**, two predicates in `src/codegen/expr.rs`:
+
+```rust
+// :51   — is_float_expr
+Expr::UnaryOp { operand, .. } => self.is_float_expr(operand),
+// :2477 — infer_expr_type
+Expr::UnaryOp { operand, .. } => self.infer_expr_type(operand),
+```
+
+Both returned the **operand's** type for *both* `Negate` and `Not`. For
+`Negate` that is right — `-x` really does have `x`'s type. For `Not` it is
+wrong: the result is always a boolean. `Print` consults `infer_expr_type`,
+was told "text", and emitted a text print of a value that is a boolean 0 —
+dereferencing address 0. A list or a map got as far as printing its opening
+bracket first, because the collection printers write the delimiter before
+they walk what they think is a header.
+
+**The rule was already written down, three times, and simply not applied
+here.** `is_boolean_expr`, twelve lines below the first site in the same
+file, has `Expr::UnaryOp { op: UnaryOperator::Not, .. } => true`.
+`prescan_expr_tag` in `src/codegen/tags.rs:126` spells it out in words —
+*"Logical negation is always a boolean, regardless of the operand's type
+(`not 5` is a boolean) … Other unary ops (e.g. arithmetic negation) keep
+the operand's tag"* — and `emit_time_expr_tag` at :335 agrees. The analyzer
+agrees twice more (`src/analyzer/types.rs:84` and `:448`, both
+`UnaryOperator::Not => Some(Type::Boolean)`), which is why the declaration
+path refuses `a number called r is not t.` with *"cannot initialise 'r',
+which is a number, with a boolean"* — the compiler naming the correct type
+of the very expression it elsewhere dereferenced as text. `is_float_expr`'s
+own `BinaryOp` arm, twelve lines above the first site, states the same
+distinction for `and` and `or`: *"Comparison and boolean operators return
+integers, not floats"*.
+
+**Fix:** one match arm added ahead of each of the two, leaving the existing
+arm to keep serving `Negate`:
+
+```rust
+Expr::UnaryOp { op: UnaryOperator::Not, .. } => false,               // is_float_expr
+Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(VarType::Integer), // infer_expr_type
+```
+
+`VarType::Integer` is the convention `infer_expr_type` already uses for
+every boolean-valued expression in the same function — `BoolLit`,
+`TypeCheck`, and each comparison operator. No analyzer, parser or runtime
+change; nothing outside these two arms is touched.
+
+**Why not a diagnostic.** The alternative reading — that `not` takes a
+`<condition>` (LANGUAGE.md:1890) and a bare text is not one, so
+`not <text>` should be refused the way `-t` and `t add 1` already are
+(LANGUAGE.md:1832) — was considered and rejected. It would contradict five
+sites that deliberately record `not` as boolean *whatever its operand*,
+including `tags.rs`'s explicit `not 5`; and it would break `if not t`,
+which compiles and behaves today. The defect reported here is a type
+error, and the type fix closes every row above.
+
+**What this fix does NOT decide.** On a text, list, map or buffer, `not`
+tests the value's *pointer*, which a declared variable always has — so
+`not ""` and `not []` both answer `0`, exactly the shape #33 fixed for
+`is empty`. That was true before this fix (reachable via `if not t` and
+`a boolean called r is not t.`) and is unchanged by it; the fix makes it
+printable instead of fatal. LANGUAGE.md gains a sentence saying so and
+sending the reader to `is empty`; whether `not <collection>` should
+instead mean "is empty", or be refused outright, is a language ruling that
+has not been taken.
+
+**Regression tests:**
+`tests/452_not_is_a_boolean_whatever_its_operand.vox` — every operand type
+through `Print`, plus the `value`, mixed-list-element and format-string
+sinks; and `tests/453_negate_still_carries_its_operand_type.vox` — the
+guard on the other side, that `-x` still carries `x`'s type (a negated
+float still prints `-2.5`, not `-2`) and that the `if not`, `is not empty`
+and `is not a <type>` paths are unmoved. Compile-fail case
+`tests/compile_fail/200_not_on_a_text_is_a_boolean.vox` pins the declaration
+path's "with a boolean" refusal — the reading the segfault contradicted.
+Proven to fail on a clean extract of 4b77934 — `425` faults on its first
+line there, with no output at all — while `426` and the compile-fail case
+pass identically on both sides, which is what makes them controls.
+
+**Family:** the predicate that asks only about its operand — #67's
+`is_float_expr` blind spot and #74's type lock, same file. The sink is
+#44's and #45's: an expression whose type is guessed wrong reaches a
+printer that dereferences it. The always-false-on-a-pointer half is #33's
+and #20's.
+
+**Incidental, recorded and not fixed** (found on the way, each its own
+defect):
+
+| program | answers | note |
+|---|---|---|
+| `a text called t is "hi".` + `a boolean called ready is true.` + `if t and b, ...` | `fired` | `and` and `or` accept a pointer operand as truthy, silently — the same always-true-on-a-pointer shape as `not`, one operator over. `not` is now type-correct; `and`/`or` were never mistyped, so they are outside #88 |
+| `a float called ratio is 2.5.` + `Print "{-ratio}".` | `error: Unknown variable: -ratio` | a negated variable inside a **format string** is not parsed as an expression — the `-` is taken into the name. `Print -ratio.`, `a float called flipped is -ratio.` and `Return a float, -ratio.` all work, so it is interpolation position only |
+| the same two lines preceded by `a float called flipped is -ratio.` and `Print flipped.` | the caret lands on **line 2**, `a float called flipped is -ratio.` | the line that compiles fine on its own — the caret is found by searching the source for the offending phrase, so it stops at the first textual occurrence. Round 3's candidate **T-2** exactly. Both rows pre-existing on 4b77934 and unchanged by this fix |
+
+
+---
+
+### 89. The "Unknown variable" caret for a bare literal in a format hole lands on the first textual occurrence of that literal anywhere in the file - a legal `a float called f is 3.14.` is marked as the error
+
+**Status:** **fixed in 0.4.10**, found 2026-08-22 by the language lawyer
+while reducing candidate M of the round-3 candidate audit
+(`REPORT-CANDIDATES-ROUND-3.md` §T-2, an incidental of that audit rather
+than a ledger row). Severity: **diagnostic only** - no wrong value, no
+unsafety; a correct error pointed at an innocent line. Family: **#46**, the
+same caret machinery.
+
+```vox
+a float called f is 3.14.
+Print "ok".
+Print "ok".
+Print "{3.14:.17}".
+```
+```
+error: Unknown variable: 3.14
+  --> T3.vox:1:21
+    |
+  1 | a float called f is 3.14.
+    |                     ^--- here
+```
+
+**The error is right and documented.** LANGUAGE.md:3169-3170: "The value
+inside `{}` must be a variable or expression, not a bare literal -
+`{255:x}` is rejected (`255` is read as a variable name)." Only the
+location is wrong. The caret sits three lines above the mistake, on a
+perfectly legal declaration, and tells the reader that a correct line
+contains an unknown variable.
+
+**Control.** Change only the declaration's value and the caret is right:
+
+```vox
+a float called f is 2.5.     (only this line changed)
+...
+Print "{3.14:.17}".
+```
+```
+  --> T4.vox:4:9
+  4 | Print "{3.14:.17}".
+    |         ^--- here
+```
+
+The caret moved because of a line the error has nothing to do with. That
+is what makes it a bug rather than a poor choice: the location is decided
+by unrelated text elsewhere in the file.
+
+**Mechanism.** `find_use_site_location` (`src/analyzer/scope.rs`) tries
+three patterns in order - `{symbol`, `"symbol"`, then the bare `symbol` -
+through `find_pattern_location`, which since #46 runs **two passes**: pass
+1 refuses a match sitting inside a text literal, pass 2 allows one, and
+only a text-seeking pattern (`{name`, `"name"`) may land there. The rule
+is #46's: *a hit in real code always beats one inside a text literal,
+however much earlier the literal sits.*
+
+That rule is right for a **name**. Here the symbol is `3.14`: the format
+parser hands the hole's contents back as the "variable" it could not find
+(`parse_format_string`, `src/parser/expressions.rs`), so the symbol is a
+literal, not an identifier. Both text-seeking patterns are skipped in pass
+1, leaving the bare pattern - which matches the float literal on line 1,
+genuine "real code". Pass 1 succeeds and pass 2 never runs. The rule
+assumes a bare-pattern hit in code is a *use of the name*; for this error
+the symbol is a number, and any numeric literal anywhere in the file
+satisfies it.
+
+**Fix.** One predicate, applied where the scan decides whether a match's
+region counts. `can_begin_a_name` asks whether the symbol could have been
+lexed as a name at all - the lexer starts a word on an alphabetic
+character or `_` (`src/lexer/scan.rs`), so `3.14`, `255` and `-3.14` never
+were one. For such a symbol `scan_patterns` inverts #46's rule: a match in
+**code** is now the coincidence and is refused, and a match inside a
+**text literal** is the real thing, so the bare pattern may reach into the
+literal in pass 2. The caret lands on the literal as written inside the
+hole. Nothing changes for a symbol that is a name: `can_begin_a_name` is
+true for every identifier, and #46's ordering, #55's word boundaries and
+the comment refusal are untouched. The empty symbol - the unmatched-`{`
+sentinel of #10 - answers true and keeps its caret, its match being
+zero-width and reported as code.
+
+The text-literal half of the fix is what makes the spaced spelling work: a
+hole's content is trimmed, so `{ 3.14 :.2}` reports the same unknown
+variable while no `{3.14` exists in the source to find it by. Without it
+that case has no location at all and falls back to `find_mention_location`
+- the pre-#46 first-occurrence scan - which puts the caret back on line 1.
+
+**Tests.** Compile-fail fixtures, each `.err` pinning file:line:column so a
+caret that drifts back fails the corpus:
+`tests/compile_fail/225_caret_for_a_literal_in_a_format_hole.vox` (the
+repro above, caret pinned at 10:9),
+`174_caret_for_a_literal_in_a_hole_without_a_decoy.vox` (the control,
+still 8:9), `175_caret_for_the_manuals_rejected_hex_literal.vox`
+(LANGUAGE.md:3169's own `{255:x}` with the declaration the manual suggests
+sitting above it, 6:9) and
+`176_caret_for_a_spaced_literal_in_a_format_hole.vox` (`{ 3.14 :.2}`,
+7:10). Each case's header comment names the literal, so the comment
+refusal of #46 is exercised at the same time. Run test
+`tests/510_a_literal_and_its_named_variable_in_a_hole.vox` pins the legal
+neighbour - the same number as a literal and as a named variable, `{f:.2}`
+and `{f:.17}` - still compiling and printing. #46's own fixtures
+`137`-`140` are unchanged and green.
+
+**LANGUAGE.md.** Nothing to tighten: :3169-3170 already predicts the error
+exactly, and the manual says nothing about where a caret goes.
+
+**Not closed by this fix.** The message is still `Unknown variable: 3.14`.
+With the caret in the right place it is now readable - the reader sees the
+literal it names sitting in the hole - but a hint in #45/#62/#63's family
+("a format hole names a variable or an expression, not a literal; declare
+it and interpolate the name") would say the rule outright. That is a
+diagnostic improvement rather than this entry's defect, and it is left for
+the queue. #46's own open end also still stands: the caret points at *an*
+occurrence, not at the token that failed, because `Expr` carries no span.
+
+
+---
+
+### 90. A `buffer` grown past its capacity through a parameter is a use-after-free — the caller's next read of its own buffer segfaults
+
+**Status:** **fixed** in 0.4.10 (unreleased, on top of 0.4.9 `4b77934`).
+Severity: **memory safety** — a six-line program, compiled clean, reads a
+block the runtime has already handed back to the kernel. Found 2026-08-21
+by the #75 fix worker while probing the sibling shapes of a list or map
+grown through a parameter, recorded as that report's Incidental (1)
+(`vox-notes/REPORT-75-incidentals.md`), and traced from there to the
+vox-fuzz buffers sweep (`vox-notes/REPORT-SWEEP-BUFFERS.md` §5, ledger row
+**D-A**) which found the list half. Master-reproduced on `4b77934`.
+Regression tests: `tests/454_a_buffer_grown_through_a_parameter.vox`
+through `tests/460_a_buffer_argument_with_no_name.vox` (seven fixtures,
+one behaviour each).
+
+```vox
+To 'pad out' with a buffer called sink.
+    append "0123456789" to sink.
+
+a buffer called journal is "start".
+a number called appended is 0.
+While appended is less than 2000,
+    'pad out' of journal,
+    Set appended to appended add 1.
+Print journal's size.
+```
+→ **segfault (139)**, deterministic, no output at all.
+
+Smaller still — one call, no loop, either spelling:
+
+```vox
+To 'widen' with a buffer called sink.
+    Resize sink to 9000.
+
+a buffer called journal is "start".
+'widen' of journal.
+Print journal's size.        (segfault 139)
+```
+
+```vox
+To 'poke far out' with a buffer called sink.
+    Set byte 9000 of sink to 65.
+
+a buffer called journal is "start".
+'poke far out' of journal.
+Print journal's size.        (segfault 139)
+```
+
+**Where the cut-off is, and what it is made of.** Ten bytes appended
+through the parameter, once per call count, on `4b77934`:
+
+| appends through the parameter | caller's `size` afterwards | expected |
+|---|---|---|
+| 1 | `15` | 15 |
+| 50 | `505` | 505 |
+| 200 | `2005` | 2005 |
+| 405 | `4055` | 4055 |
+| **409** | **`4095`** | 4095 |
+| **410** | **segfault** | 4105 |
+| 2000 | segfault | 20005 |
+
+`INITIAL_BUF_CAP` is 4096 (`coreasm/x86_64/resource.asm:25`). Every append
+that still fitted in the buffer's FIRST allocation was correct, because
+the block never moved; the first append that did not fit moved it, and the
+caller was left holding the address of the old one. The boundary is an
+allocator's page arithmetic, not a language rule. It is also the proof
+that a `buffer` parameter is a reference: `Set byte 1 of sink to 65`
+through the same parameter shows `Atart` in the caller, and 409 appends
+are all visible.
+
+**Freed, not merely stale — which is what separates this from #75.** The
+callee's own view is correct right up to the crash:
+
+```
+callee sees 4085
+callee sees 4095
+callee sees 4105          <- the callee is right
+Segmentation fault        <- the caller's next read, one instruction later
+```
+
+`_reallocate_buffer` (`coreasm/x86_64/resource.asm:979`) grows with
+`mremap`/`MREMAP_MAYMOVE` — *"the old mapping was consumed by mremap"*,
+says the code — and falls back to mmap + copy + `munmap`. **Both paths
+release the old block.** A list grown through a parameter (#75) left the
+caller reading a real, still-mapped, merely out-of-date block: a silent
+wrong answer. A buffer leaves the caller reading unmapped memory.
+
+**Which reading the manual supports.** Only the fixing one, and every
+statement that touches this says so:
+
+1. **LANGUAGE.md:3877** — the Safety vs C table — gives *"Use after
+   free"* the Vox column *"Not possible by design"*, and :3819's Memory
+   Safety Guarantees repeats *"No use-after-free"*. README's Memory Safety
+   Model and ROADMAP M0 (*"no valid Vox program may segfault"*) forbid the
+   crash outright.
+2. **LANGUAGE.md:722-726** — *"a typed parameter supports the same
+   properties and operations as a top-level variable of that type"*. The
+   same growth at the top level answers `20005`; through the parameter it
+   faults.
+3. **LANGUAGE.md:3306** — *"No buffer overflows possible - memory expands
+   dynamically"* — and :3469, *"Dynamic destination buffers grow
+   automatically as needed"*. The buffer did grow; the caller was not told
+   where to.
+
+**The strongest reading in which the compiler is right, and why it
+fails.** Copy semantics: LANGUAGE.md:1090-1092 says *"A function receives
+a copy of a thing … nudging the parameter cannot reach the caller's
+point"*. It fails three times. That sentence says **thing**, and
+:886-890 says the opposite of the collections — `text`, `list`, `map` and
+`buffer` are deferred as thing fields precisely because *"they carry
+references"*. The observed behaviour is neither semantics: a copy would
+show none of the callee's writes, and `Set byte 1 of sink` reaches the
+caller. And no reading of any manual makes a segfault the correct answer
+to a legal program.
+
+**Confirmed bug**, same family as **#75** (a list or map grown through a
+parameter), **#41** (`buffer as text` aliasing a block that resizing then
+frees) and **#28** (a buffer read through a pointer its declaration never
+wrote). Sibling of the store-back family pinned by `tests/300`–`305` and
+`tests/p302_storeback_refactor.rs`.
+
+**Root cause.** `src/codegen/vars.rs:126`, `emit_store_back_after_realloc`,
+is the one place a reallocated pointer is filed. It resolves a name to
+this frame's slot and mirrors that slot into the BSS label functions read
+through — which is why a top-level `append` and a global grown inside a
+function were always right. A parameter has neither home: its slot is the
+callee's private copy of a pointer, and nothing in the ABI told the callee
+where the caller kept its own.
+
+- `emit_function_call` (`src/codegen/functions.rs:90` on `4b77934`) pushed
+  the pointer **value** as the parameter's argument word.
+- the parameter-store loop in the `FunctionDef` arm
+  (`src/codegen/statements.rs:1424` on `4b77934`) stored that word straight
+  into the parameter's slot.
+
+So the callee's realloc reached the callee's slot and stopped. For a list
+that was the end of it. For a buffer, `_reallocate_buffer` had already
+released the block the caller's copy pointed at.
+
+**The fix — give the parameter the cell the store-back was missing.** A
+`buffer` parameter's argument word is now the **address of the cell
+holding the pointer** instead of the pointer itself:
+
+| file | change |
+|---|---|
+| `src/codegen/functions.rs` | `is_buffer_param`; `emit_buffer_arg_cell_address` at the call site (the name's BSS mirror at top level, this frame's slot inside a function, the mirror for a global, or a temporary for an argument with no name); `emit_buffer_arg_fixups` after the call |
+| `src/codegen/statements.rs` | a hidden `{name}_cell` slot per buffer parameter (the shape a `value`'s shadow tag slot already has), a prologue that parks the caller's address there before taking its own copy of the pointer out of it, and the two declaration sites that disown the cell when a body redeclares the parameter's name |
+| `src/codegen/buffers.rs` | `emit_store_buffer_ptr_to_slot` / `emit_buffer_param_cell_writeback`, and the four buffer-slot stores routed through them |
+| `src/codegen/format.rs`, `src/codegen/vars.rs` | the remaining two buffer-slot stores routed the same way |
+| `src/codegen/mod.rs` | the `buffer_param_cells` table, saved and restored per function like every other per-frame table |
+
+No runtime change: `coreasm/` is untouched.
+
+**The argument word count is unchanged** — one word, like every other
+non-`value` parameter — so the `value` two-word layout, `thing` address
+passing, the stack argument words the seventh parameter and beyond ride
+on, and the recursion guard are all untouched (`tests/459`). Only the
+meaning of the word moved.
+
+**The write-back happens at the reallocation, not when the call returns.**
+Between the two, the callee can call a function that reaches the same
+buffer through its global mirror, and that read must not land in the freed
+block either. That is why a top-level name hands over its **mirror** as
+the cell — the holder every function reads — and the frame slot, which
+only the top level reads and only after the call returns, is refreshed
+from it afterwards. `tests/456` is that window: on `4b77934` it faults
+*inside* the call, after the watcher has printed the literal half of its
+own line.
+
+**A buffer grown two or thirty calls deep still reaches the variable that
+owns it** (`tests/457`): each frame knows only where the frame above it
+keeps its copy, so the call site carries the new pointer on out through
+its own parameter's cell.
+
+**Deliberately unchanged:**
+
+- **Rebinding stays local.** `a buffer called sink is "…"` inside a
+  function whose parameter is `sink` names a buffer of that function's own
+  from there on, and the caller keeps its own — 0.4.9's behaviour, kept,
+  by disowning the cell at the declaration. `Set sink to "…"` is *not* a
+  rebinding: on a buffer it copies bytes into the buffer the name already
+  denotes, so the caller sees the new bytes, before and after
+  (`tests/458`).
+- **An argument with no variable of its own** — a literal, an element
+  read, a call's result — gets a temporary cell: the callee is correct for
+  the length of the call and the growth dies with the temporary, because
+  there is no caller variable for it to reach (`tests/460`).
+- **A fixed-size buffer still refuses to grow** and sets the error flag
+  through a parameter exactly as it does at the top level (`tests/458`).
+- **Nothing new is freed.** `_reallocate_buffer` already released the old
+  block; with the caller's pointer advancing again, that release is now
+  correct rather than fatal. 200 000 appends through a parameter measure
+  **under 2 MiB resident for 2 000 005 bytes**, exit 0 (was: signal 11).
+
+**What this does NOT fix, and the repro for it.** A buffer reallocated
+inside a **shared library** still leaves the *consumer's* cleanup table on
+the freed block, because each module gets its own `buf_table` (it is a
+local BSS symbol — `nm consumer` shows `b buf_table`, and the `.so`
+exports only its function). The program now prints the right answer and
+then faults in `_cleanup_buffers` at exit instead of faulting on the
+caller's read:
+
+```vox
+(lib.vox, built --shared)   Library bufkit version "1.0".
+                            To 'pad out' with a buffer called sink.
+                                … 600 appends of ten bytes …
+(consumer.vox)              see bufkit version "1.0" from "libbufkit.lib".
+                            a buffer called journal is "start".
+                            'pad out' of journal.
+                            Print "consumer sees: {journal's size}".
+```
+| | `4b77934` | this fix |
+|---|---|---|
+| output | *(nothing)* | `consumer sees: 6005` |
+| exit | 139, in the caller's read | 139, in `_cleanup_buffers.free_loop` |
+
+Two modules, two buffer tables, one block: the module that grows the
+buffer updates its own table and cannot reach the other's. It wants its
+own entry, its own fail-before tests and its own review — either a
+`_retable_buffer(old, new)` at the boundary, or one table shared across
+modules — and not a ride in this diff.
+
+The same is true of a **top-level buffer declared without an initializer**
+and grown inside a function BY NAME — no parameter anywhere:
+
+```vox
+a buffer called journal.
+To 'grow the global by name'.  … 600 appends of ten bytes …
+'grow the global by name'.
+Print "after the global grew: {journal's size}".    (139, before and after)
+```
+
+`a buffer called journal.` (and the sized spelling) goes through
+`BufferDecl`, which gives the name a frame slot AND a BSS mirror; a
+function can only reach the mirror, and nothing carries its growth back
+into the slot the top level reads. Written `a buffer called journal is
+"start".` the same program answers `6005` on both sides, because a
+top-level initialised buffer resolves straight to the BSS label and has
+only one holder. Identical on `4b77934` and here: this fix cannot close it
+from where it stands, because the top level's frame slot is not
+addressable from inside the callee. Its own entry too — the answer is
+either to stop giving a mirrored top-level buffer a frame slot, or to
+refresh that slot from the mirror after every call.
+
+**One ABI note for shared libraries.** A `.so` exporting a function with a
+`buffer` parameter must be rebuilt with 0.4.10 alongside its consumer:
+both sides derive the meaning of that argument word from the same
+signature table, and a 0.4.9 `.so` called from 0.4.10 code (or the
+reverse) would disagree about it. The same note applies to #75's `list`
+and `map` parameters. Every shape the repo builds builds both sides from
+source in the same run.
+
+**LANGUAGE.md.** The manual stated the rule for neither direction: :886-890
+says a buffer carries a reference, :1090-1092 says a *thing* is a copy,
+and nothing said what an `append` through a `buffer` parameter does. One
+bullet added to *Parameter and Local Types → Key points* (LANGUAGE.md:746)
+saying that a `buffer` parameter is the caller's buffer including across a
+growth, that redeclaring the name is local, and that `Set` on it copies
+bytes rather than rebinding. No feature is added; this is the behaviour
+the fix makes true, written where a reader looks for it.
+
+
+---
+
+### 91. A non-provable absent-key or out-of-range read into a `text`, `list` or `map` slot hands the raw 0 to a pointer and segfaults
+
+**Status:** **fixed** in 0.4.10. Severity: **memory safety** — a four-line
+program, compiled clean, faults on the first read of a value the manual
+promises is safe to take. Regression tests:
+`tests/499_missed_list_read_into_a_text_slot.vox`,
+`tests/500_missed_map_read_into_a_pointer_slot.vox`,
+`tests/501_missed_read_into_a_pointer_slot_across_frames.vox`.
+Found by the vox-fuzz claim ledger — the `gen leaf list oob` (kind 5) and
+`gen leaf map oob` (kind 10) leaves of `src/gen_collections.vox`, whose
+"Kept, with citations" lists pin exactly the two manual sentences this
+entry is about — and separated out by the candidate audit of 2026-08-21
+(`vox-notes/REPORT-CANDIDATES-ROUND-2.md` §C, sub-case **C-ii**;
+`vox-notes/REPORT-SWEEP-COLLECTIONS.md` Finding C). Master-reproduced on
+`4b77934` (= 0.4.9); byte-identical on 0.4.8, so this is not a 0.4.9
+regression — it is the corner #54 and #65 never covered.
+
+```vox
+a list called grown is ["a", "b"].
+Append "c" to grown.
+a text called third is element 5 of grown.
+Print third.
+```
+→ **segfault (139)**, no output at all.
+
+The working neighbour, `element 2 of grown`, prints `b`.
+
+**Where it comes from.** LANGUAGE.md says what a miss yields, twice:
+
+> "A missing key does not crash: the lookup **yields 0** and sets the error
+> flag, so an `on error` handler can react." (Maps)
+>
+> "Out-of-bounds access sets an error flag and **returns 0**" (Lists, twice)
+
+Both sentences are about the *number* 0, and for a `number` destination
+they are exactly right — `a number called missed is element 5 of counts.`
+prints `0` before this fix and after it. But the 0 is untyped, and codegen
+hands it to whatever the read's **static** type says: for a list of texts
+that type is `text`, and a `text` is a pointer. The first read dereferences
+address 0.
+
+`src/codegen/expr.rs` — the miss paths of `ElementAccess`, `ListAccess`,
+`First` and `Last` — all emitted `xor rax, rax  ; return 0 on error`, and
+`_map_lookup` (`coreasm/x86_64/map.asm:455`) returns `rax=0, r11=0` on a
+miss. A map read carries a runtime tag, so `Print found's "zebra".` was
+always safe (the tag says "number", and it prints `0`); a list read of a
+homogeneous list carries no tag at all, so `Print element 5 of grown.`
+faulted too.
+
+**Why the static checks do not reach it.** #54's `check_declared_read_type`
+and #65's initializer check both judge a **type mismatch**, and here the
+declared type and the inferred type *agree* — `element 5 of grown` is a
+text read into a `text`. It is the runtime *value* that is wrong. #72
+closes every case where the miss is provable from a literal, with a
+diagnostic; what is left is every case where it is not — a variable index,
+a dynamic key, an `Append`-grown list, a `Set`-grown map, a collection
+reached through a parameter — and **no static proof reaches a dynamic key**.
+The answer therefore had to be a runtime one.
+
+**The fix: a miss yields the destination's default value, never a raw 0.**
+The manual already has the table — the one under
+[Two Canonical Forms](../LANGUAGE.md) that says what `Create a text called
+n.` leaves in the slot: `0` for a `number`, the empty text for a `text`,
+`[]` for a `list`, `{}` for a `map`. Since #25 the compiler has written
+exactly those values into a slot no initializer reached
+(`emit_type_default`, `src/codegen/vars.rs`), for exactly this reason — its
+own comments read "a null pointer here makes the first read dereference 0".
+A missed read is the same situation arriving by a different road, so it now
+gets the same answer, in the same two places a static pointer type is
+asserted about the value:
+
+1. **At the read** (`src/codegen/expr.rs`). When the list's element type is
+   statically known and is a pointer type, the miss path emits that type's
+   empty value instead of `xor rax, rax`. This is what makes the *tagless*
+   consumers safe — `Print element 5 of grown.`, a format hole, an
+   `Append` of the result — because every one of them reads the value as
+   that same static type. A **mixed** list is untouched: its miss still
+   yields `rax=0, r11=0`, and the tag says "number", which is honest and
+   is what the manual prints.
+2. **At the destination** (`src/codegen/statements.rs`,
+   `src/codegen/functions.rs`). A declaration, a bare assignment, a
+   `Return` and an argument all name a slot whose declared type may be a
+   pointer. When the initializer is one of the reads that can miss, the
+   value is null-checked and a `text`/`list`/`map` slot takes its own empty
+   value. This is what catches the map (no static value type exists to key
+   on at the read) and the read that happens inside another frame.
+
+Shared machinery, so the two halves cannot drift apart:
+`emit_empty_value_for` (the value half of #25's `emit_type_default`, which
+now calls it), `emit_empty_value_if_missed`, `is_fallible_collection_read`
+and `static_list_element_type` — the last extracted from
+`src/codegen/print.rs`, which had the only copy of the "what type is this
+element read?" answer that the miss paths also needed.
+
+**The error flag is not touched.** The read sets it exactly as before, so
+`On error` still fires on every row below; the miss is still an error, and
+that is the whole point of yielding a value rather than crashing.
+
+**The matrix, each row its own program, measured on a clean `git archive
+4b77934` extract (md5 `7936b6d5f1780a640c5672f4695bdb34`, byte-identical
+to the build the candidates report quotes) and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| Append-grown list, `element 5` → `text` | **139** | prints an empty line |
+| Append-grown list, variable index `9` → `text` | **139** | prints an empty line |
+| Append-grown list, `element 5` printed directly | **139** | prints an empty line |
+| Append-grown list, `Set seeded to element 5` | **139** | prints an empty line |
+| the missed text then appended to a list | **139** | prints `[""]` |
+| `first` of an empty list → `text` | **139** | prints an empty line |
+| `last` of an empty list → `text` | **139** | prints an empty line |
+| `Set`-grown map, absent key → `text` | **139** | prints an empty line |
+| map of lists, absent key → `list` | **139** | prints `[]` |
+| map of maps, absent key → `map` | **139** | prints `{}` |
+| `Return a text, element 5 of shelf.` → caller's `text` | **139** | prints an empty line |
+| a missed read passed to a `text` parameter | **139** | prints `announced: []` |
+| Append-grown list, `element 5` → `number` (control) | prints `0` | prints `0` |
+| `Set`-grown map, absent key → `number` (control) | prints `0` | prints `0` |
+| `Print found's "zebra".`, tag-driven (control) | prints `0` | prints `0` |
+| `Set kept's "k" to found's "zebra".` (control) | prints `{"k": 0}` | prints `{"k": 0}` |
+| `element 2 of grown`, in range (control) | prints `b` | prints `b` |
+| `On error` after a missed read (control) | fires | fires |
+
+Twelve of eighteen faulted; the six controls are byte-identical.
+
+**LANGUAGE.md tightened, three sentences.** "the lookup yields 0" (Maps)
+and the two "Out-of-bounds access sets an error flag and returns 0" bullets
+(Lists, and List Properties) each now name the destination's default value
+and point at the table that already defines it. Nothing new is promised —
+the sentences were loose about a case the manual's own default table had
+already answered, and a reader who took "returns 0" literally for a `text`
+would have written the program at the top of this entry.
+
+**Family.** #25 (a slot no initializer reached gets its type's default, for
+this same reason), #24 and #26 (`emit_text_or_empty_on_null` — a fallible
+positional read that misses substitutes the shared empty text, so `On
+error` catches it and nothing dereferences 0; this entry is that discipline
+carried to collection reads), #54 and #65 (the static read/initializer
+type checks, which judge a mismatch and so cannot see this), and #72 (the
+provable half of the same miss, closed with a diagnostic — its report's
+"What #72 does not fix" section is this entry).
+
+**For the fuzzer.** The `gen leaf list oob` and `gen leaf map oob` leaves
+draw only holders whose type matches the collection's values, and their
+notes say a missing-key read "yields 0". That is still true for a `number`
+holder and the leaves keep passing unchanged. What is now *also* legal, and
+was not before, is a `text`/`list`/`map` holder for a missed read — it no
+longer crashes, and it yields that type's empty value. Both leaves can
+widen to draw it.
+

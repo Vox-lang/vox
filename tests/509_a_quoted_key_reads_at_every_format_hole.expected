@@ -1,0 +1,7 @@
+colon in the key: 5
+padded dynamic: [    10]
+padded static: [    10]
+hex: 0xa
+as a text value: 10
+into a buffer: 10
+in a list: 10

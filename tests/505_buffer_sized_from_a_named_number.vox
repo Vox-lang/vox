@@ -1,0 +1,43 @@
+(Bug #78: the buffer size bound lived in the parser's literal arm alone,
+ so a size named in a variable escaped it entirely - and the arm that let
+ the name through called itself "validated at compile time". The bound is
+ now a rule about sizes rather than about spellings, which means a named
+ size WITHIN the bound must still size the buffer in every spelling the
+ manual gives. This is the working neighbour of the refusals in
+ tests/compile_fail/173-178.)
+
+a number called wanted is 256.
+
+a buffer called first is wanted bytes in size.
+Print "first: {first's capacity}".
+
+a buffer called second is wanted bytes.
+Print "second: {second's capacity}".
+
+Create a buffer called third with size wanted.
+Print "third: {third's capacity}".
+
+Create a buffer called fourth with capacity wanted.
+Print "fourth: {fourth's capacity}".
+
+Create a buffer called fifth of size wanted.
+Print "fifth: {fifth's capacity}".
+
+(A size the compiler works out for itself is a size it can measure.)
+a number called doubled is wanted multiply 2.
+a buffer called sixth is doubled bytes in size.
+Print "sixth: {sixth's capacity}".
+
+(The literal spelling is untouched.)
+a buffer called seventh is 512 bytes in size.
+Print "seventh: {seventh's capacity}".
+
+(So is the sizeless dynamic buffer, which parses to the same size-0 tree a
+ literal `0 bytes` would and must not be mistaken for one.)
+a buffer called eighth.
+Set eighth to "grows as needed".
+Print "eighth: {eighth}".
+
+(A buffer sized from a name holds what is written into it, as ever.)
+Set first to "hello".
+Print "written: {first} ({first's size} of {first's capacity} bytes)".

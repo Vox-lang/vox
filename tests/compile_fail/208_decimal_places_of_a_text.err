@@ -1,0 +1,3 @@
+cannot render 'label', which is text, to 2 decimal places
+note: `:.N` writes a number to N decimal places, and text is not one
+help: convert it first - `{label as a number:.2}`, or drop the specifier to render `{label}`

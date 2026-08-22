@@ -1,0 +1,6 @@
+(Bug #74 on a buffer. LANGUAGE.md's Buffer Properties table types `capacity`
+ Number, and 16 is not the address of any text.)
+
+a buffer called ledger is 16 bytes in size.
+a text called room is ledger's capacity.
+Print room.

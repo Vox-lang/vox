@@ -1,0 +1,13 @@
+(Bug #79's nearest working neighbour, and the only order the manual ever
+ writes: the declaration above the read. Every example in LANGUAGE.md's
+ "Variables" section has this shape, and it is what the author who wrote
+ the rejected program meant. Both scalar types the bug printed as 0 are
+ checked here, so a fix that rejected too much would fail this first.)
+
+a text called label is "hello".
+Print label.
+
+a number called count is 42.
+Print count.
+
+Print "{label} {count}".

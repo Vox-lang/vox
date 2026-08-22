@@ -1,0 +1,4 @@
+cannot initialise 'room', which is text, with a number
+184_buffer_capacity_into_a_text_declaration.vox:5:15
+note: a variable's type is fixed at its declaration, so 'room' can only be initialised with text
+help: declare it as a number - `a number called room is ledger's capacity.` - or convert it explicitly:  a text called room is ledger's capacity as text.

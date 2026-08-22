@@ -1,0 +1,62 @@
+(Regression test for bug #68: LANGUAGE.md ("Format Strings Everywhere")
+ promises a format string renders identically in every sink, and bug #44
+ made that true for a `{list}` variable part. A tagged EXPRESSION part
+ never reached those arms - `emit_append_runtime_value_to_buffer_ptr` had
+ no case for a value whose type is only known at runtime - so a text
+ initializer, a buffer, a `write` and a function argument each got the
+ integer formatter and stored an address.
+
+ Acceptance: the same hole produces the same bytes in Print, in a text, in
+ a fixed buffer, in a file read back from disk, and inside a function.)
+
+To 'announce the text' with a text called line.
+  Print line.
+
+a list called nested is [1, [2, 3], "four"].
+
+(Print position, the control.)
+Print "{element 2 of nested} and {element 3 of nested}".
+
+(A text initializer.)
+a text called captured is "{element 2 of nested} and {element 3 of nested}".
+Print captured.
+
+(A fixed-size buffer.)
+a buffer called sink is 128 bytes in size.
+copy "{element 2 of nested} and {element 3 of nested}" to sink.
+Print sink.
+
+(A function argument.)
+'announce the text' of "{element 2 of nested} and {element 3 of nested}".
+
+(A real file, read back so the assertion is on the stored bytes.)
+open a file for writing called record at "./test_bug68_write.txt".
+Write "{element 2 of nested} and {element 3 of nested}\n" to record.
+Close record.
+open a file for reading called stored at "./test_bug68_write.txt".
+a buffer called line is 256 bytes in size.
+Read line from stored into line.
+Print line without newline.
+Close stored.
+Delete the file "./test_bug68_write.txt".
+
+(#81's other half, the same promise one specifier further on. A tagged
+ NUMBER - a mixed list's integer element, a map read - carries its own
+ runtime tag, and the buffer sinks have applied the hole's format spec to
+ it since #68. Print's twin took no spec at all, so the same hole padded in
+ a text and did not pad on screen. Both now agree. A tagged TEXT still
+ ignores a width: there is no text-padding primitive behind the tag
+ dispatch, which is #36's recorded residue and not this entry's to close.)
+a list called sizes is [1, "two"].
+a map called scores is {"ada": 10}.
+
+a text called padded is "[{element 1 of sizes:5}]".
+Print padded.
+Print "[{element 1 of sizes:5}]".
+
+a text called keyed is "[{scores's \"ada\":6}]".
+Print keyed.
+Print "[{scores's \"ada\":6}]".
+
+Print "hex: {scores's \"ada\":x}".
+Print "a tagged text ignores a width: [{element 2 of sizes:5}]".

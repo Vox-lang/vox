@@ -78,6 +78,7 @@ impl Analyzer {
         occurrence: usize,
         exclude_line: Option<usize>,
         guard_against_called: bool,
+        hole_symbol: bool,
     ) -> Option<SourceLocation> {
         // Two passes. A hit in real code always beats one inside a text
         // literal, however much earlier the literal sits: `Print "hello".`
@@ -85,10 +86,12 @@ impl Analyzer {
         // is (docs/BUGS_FOUND.md #46). The second pass is for the name that
         // genuinely only ever appears inside a literal - interpolated as
         // `{name}`, or quoted - and it is the only pass a text-seeking
-        // pattern can land in.
-        self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, false)
+        // pattern can land in. A symbol that could never be a name in
+        // code - the literal a format hole hands back as its "variable" -
+        // has nothing for the first pass to find (docs/BUGS_FOUND.md #89).
+        self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, false, hole_symbol)
             .or_else(|| {
-                self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, true)
+                self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, true, hole_symbol)
             })
     }
 
@@ -96,7 +99,9 @@ impl Analyzer {
     /// matches at all. `allow_text` opens the pass to matches sitting
     /// inside a text literal, and only to patterns that ask for one: a
     /// match inside a `( … )` comment is never a use of the name and is
-    /// refused in both passes.
+    /// refused in both passes. A symbol that cannot be a name in code at
+    /// all (`can_begin_a_name`) inverts that: for it, a match in code is
+    /// the coincidence and the text literal is the real thing (#89).
     fn scan_patterns(
         &self,
         symbol: &str,
@@ -105,8 +110,24 @@ impl Analyzer {
         exclude_line: Option<usize>,
         guard_against_called: bool,
         allow_text: bool,
+        hole_symbol: bool,
     ) -> Option<SourceLocation> {
         let source = self.source_file.as_ref()?;
+        // Could `symbol` be a bare name in code at all? A format hole
+        // holding a literal - the manual's own rejected `{255:x}`
+        // (LANGUAGE.md:3169), or `{3.14:.17}` - hands the analyzer the
+        // literal's own text as the "variable" it could not find. No
+        // occurrence of that text in real code is a use of it: it is some
+        // unrelated number, and a legal `a float called f is 3.14.` three
+        // lines above the hole was being marked as the mistake
+        // (docs/BUGS_FOUND.md #89).
+        // ...but only where the symbol REACHED us from a format hole. Every
+        // other caller is looking for something genuinely written in code and
+        // may legitimately be looking for a numeral: #78's buffer-size
+        // diagnostic searches for the size as written, and refusing its code
+        // match cost it its caret, note and help (docs/BUGS_FOUND.md #78 and
+        // its corpus case 222).
+        let names_code = !hole_symbol || can_begin_a_name(symbol);
         for pattern in patterns {
             let Some(name_offset) = pattern.find(symbol) else {
                 continue;
@@ -115,11 +136,18 @@ impl Analyzer {
             // literal. `{name` (interpolation) and `"name"` (the literal
             // itself) both put the symbol behind a delimiter the lexer
             // keeps inside a text token, so a hit there is the real thing.
+            // A pattern that STARTS at the `:` of a `{name:SPEC}` clause
+            // asks for one too, and by construction: a format spec exists
+            // nowhere but inside a text literal, so a bare-count pattern
+            // was refused in code, refused in the literal, and fell
+            // through to the mention scan - which put the caret on the
+            // first `8.2` anywhere in the file, a header comment included,
+            // the exact miss #46 fixed for names (docs/BUGS_FOUND.md #85).
             // Every other pattern describes code, and a hit inside a
             // literal is then a coincidence.
             let reaches_into_text = {
                 let before = &pattern[..name_offset];
-                before.ends_with('{') || before.ends_with('"')
+                before.ends_with('{') || before.ends_with('"') || before.starts_with(':')
             };
             let mut seen = 0usize;
             for (idx, line) in source.content.lines().enumerate() {
@@ -142,8 +170,13 @@ impl Analyzer {
                         .map_or(true, |b| !(b.is_ascii_alphanumeric() || *b == b'_'));
                     let excluded_by_called = guard_against_called && line[..pat_col].ends_with("called ");
                     let region_ok = match source.region_of(line_no, name_col, name_end) {
-                        SourceRegion::Code => true,
-                        SourceRegion::Text => allow_text && reaches_into_text,
+                        SourceRegion::Code => names_code,
+                        // The bare pattern reaches into a literal only for
+                        // a symbol that has nowhere else to be, and then
+                        // the literal is where the mistake was written -
+                        // `{ 3.14 :.2}`, whose spacing no text-seeking
+                        // pattern matches (#89).
+                        SourceRegion::Text => allow_text && (reaches_into_text || !names_code),
                         SourceRegion::Comment => false,
                     };
                     if left_ok && right_ok && region_ok && !excluded_by_called {
@@ -173,7 +206,7 @@ impl Analyzer {
             format!("the {} is ", symbol),
             format!("{} is ", symbol),
         ];
-        self.find_pattern_location(symbol, &write_patterns, occurrence, decl_line, true)
+        self.find_pattern_location(symbol, &write_patterns, occurrence, decl_line, true, false)
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
@@ -194,7 +227,7 @@ impl Analyzer {
             format!("\"{}\"", symbol),
             symbol.to_string(),
         ];
-        self.find_pattern_location(symbol, &patterns, occurrence, decl_line, true)
+        self.find_pattern_location(symbol, &patterns, occurrence, decl_line, true, true)
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
@@ -214,7 +247,7 @@ impl Analyzer {
         guard_against_called: bool,
     ) -> Option<SourceLocation> {
         let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
-        self.find_pattern_location(symbol, patterns, occurrence, decl_line, guard_against_called)
+        self.find_pattern_location(symbol, patterns, occurrence, decl_line, guard_against_called, false)
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
@@ -230,10 +263,10 @@ impl Analyzer {
     /// have no `called` keyword at all (`NAME is <value>.`, `each NAME `).
     pub(crate) fn find_declaration_location(&self, name: &str) -> Option<SourceLocation> {
         let called_patterns = [format!("called {} is", name), format!("called {} ", name)];
-        self.find_pattern_location(name, &called_patterns, 0, None, false)
+        self.find_pattern_location(name, &called_patterns, 0, None, false, false)
             .or_else(|| {
                 let bare_patterns = [format!("{} is ", name), format!("each {} ", name)];
-                self.find_pattern_location(name, &bare_patterns, 0, None, false)
+                self.find_pattern_location(name, &bare_patterns, 0, None, false, false)
             })
             .or_else(|| self.find_symbol_location(name, 0))
     }
@@ -247,7 +280,7 @@ impl Analyzer {
     /// code, never in a `( … )` comment and never inside a text literal
     /// the pattern did not ask for (#46).
     pub(crate) fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
-        self.find_pattern_location(symbol, &symbol_patterns(symbol), occurrence, None, false)
+        self.find_pattern_location(symbol, &symbol_patterns(symbol), occurrence, None, false, false)
             .or_else(|| self.find_mention_location(symbol, occurrence))
     }
 
@@ -285,6 +318,22 @@ impl Analyzer {
     }
 
     pub(crate) fn push_error_with_hint(&mut self, message: String, symbol: Option<&str>, hint: Option<&str>) {
+        // Every "Unknown buffer/list/map/file/timer: X" in the statement arms
+        // sits behind `if !self.is_variable_available(X)`, so an error pushed
+        // about a symbol that is unavailable HERE but declared further down at
+        // top level is always the same defect, whatever wording the arm chose:
+        // the read is too early (docs/BUGS_FOUND.md #79). Answer it once, in
+        // the words that name the construct and the way out, instead of
+        // leaving each arm to call the name unknown. An error about a symbol
+        // that IS available cannot reach this - `is_used_before_its_
+        // declaration` requires unavailability - so no type-lock or
+        // wrong-kind diagnostic is touched.
+        if let Some(name) = symbol {
+            if self.is_used_before_its_declaration(name) {
+                self.push_used_before_declaration(name);
+                return;
+            }
+        }
         let mut err = CompileError::new(&message);
         if let Some(name) = symbol {
             let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
@@ -322,6 +371,14 @@ impl Analyzer {
     }
 
     pub(crate) fn push_unknown_variable(&mut self, name: &str) {
+        // "Unknown" is the wrong word for a name the pre-pass has already
+        // proved exists: the read is too early, not misspelled, and the way
+        // out is to move a line rather than to fix a typo
+        // (docs/BUGS_FOUND.md #79).
+        if self.is_used_before_its_declaration(name) {
+            self.push_used_before_declaration(name);
+            return;
+        }
         let hint = self.pending_blank_line_truncation.as_ref().and_then(|(func, params, loc)| {
             if params.iter().any(|p| p == name) {
                 Some(format!(
@@ -376,17 +433,84 @@ impl Analyzer {
         })
     }
 
-    pub(crate) fn declare_variable_in_current_scope(&mut self, name: &str) {
-        if name.starts_with('_') {
-            self.push_error(
-                format!(
-                    "Variable name '{}' starts with '_', which is reserved for \
-                     the Vox runtime; choose a name without the leading underscore.",
-                    name
-                ),
-                Some(name),
-            );
+    /// Whether `name` is declared ANYWHERE in this program, ignoring where
+    /// the walk has got to - the question "is this statement a declaration
+    /// or a reassignment?" asks, and the only question that may ignore
+    /// declaration order. `Set n to 5.` and `a text called n is "x".` both
+    /// parse into the same statement whether `n` is brand-new or not, and
+    /// which it is decides whether the type lock applies; that answer must
+    /// not change just because the top-level walk now starts empty
+    /// (docs/BUGS_FOUND.md #79). Every other caller wants
+    /// `is_variable_available`, which answers for *here*.
+    pub(crate) fn is_variable_declared_anywhere(&self, name: &str) -> bool {
+        self.is_variable_available(name) || self.global_variables.contains(name)
+    }
+
+    /// Whether a read of `name` right here is a use of a top-level variable
+    /// whose own declaration is further down the file. The whole-program
+    /// pre-pass proved the name exists; this walk has not reached the
+    /// declaration, and top-level statements run in order, so the storage
+    /// still holds its zeroed .bss slot (docs/BUGS_FOUND.md #79).
+    ///
+    /// Never true inside a function body: a function runs when it is called,
+    /// so a global declared further down IS in scope there, and LANGUAGE.md
+    /// "Function Scope" says so. Never true of a flag either - a flag read
+    /// before `parse flags.` has its own, more specific diagnostic.
+    pub(crate) fn is_used_before_its_declaration(&self, name: &str) -> bool {
+        !self.in_function_scope
+            && self.global_variables.contains(name)
+            && !self.flag_variables.contains_key(name)
+            && !self.is_variable_available(name)
+    }
+
+    /// The diagnostic for `is_used_before_its_declaration`: name the
+    /// construct, say where the declaration actually is, and give the way
+    /// out. In #45/#62/#63's family - a program the compiler silently
+    /// accepted and silently answered wrong - so it is an error, not a
+    /// warning. The caret goes on the failing read, not on the declaration
+    /// that happens to contain the same name (#46, plan 318 §3), which is
+    /// what `find_use_site_location` exists for.
+    pub(crate) fn push_used_before_declaration(&mut self, name: &str) {
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let location = self.find_use_site_location(name, occurrence);
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+
+        let mut err = CompileError::new(&format!("'{}' is used before it is declared", name));
+        if let Some(loc) = location {
+            err = err.with_location(loc);
         }
+        let where_declared = match self.declaration_line_of(name) {
+            Some(line) => format!("'{}' is declared at line {}", name, line),
+            None => format!("'{}' is declared further down this file", name),
+        };
+        err = err.with_note_line(&format!(
+            "top-level statements run in the order they are written, and {}",
+            where_declared
+        ));
+        err = err.with_help_line(&format!(
+            "move the declaration of '{}' above this line; a function body may \
+             read a global declared further down, top-level code may not",
+            name
+        ));
+        self.errors.push(err);
+    }
+
+    /// Which line `name`'s declaration is on, for
+    /// `push_used_before_declaration`'s `note:`. `declared_locations` is
+    /// filled as the walk reaches each declaration, and this read happens
+    /// BEFORE that, so the location has to be found in the source text.
+    fn declaration_line_of(&self, name: &str) -> Option<usize> {
+        self.find_declaration_location(name).map(|loc| loc.line)
+    }
+
+    pub(crate) fn declare_variable_in_current_scope(&mut self, name: &str) {
+        // Register the name BEFORE complaining about it: this statement is
+        // the declaration, so from here on the name is available, and an
+        // error pushed while it still looks unavailable is read as a
+        // use-before-declaration instead of what it is (docs/BUGS_FOUND.md
+        // #79 - the reserved-underscore diagnostic used to come out as
+        // "'_foo' is used before it is declared", pointing at the line after
+        // its own declaration).
         if self.active_guards.is_empty() {
             self.variables.insert(name.to_string());
         } else {
@@ -396,6 +520,16 @@ impl Analyzer {
                     .or_default()
                     .insert(name.to_string());
             }
+        }
+        if name.starts_with('_') {
+            self.push_error(
+                format!(
+                    "Variable name '{}' starts with '_', which is reserved for \
+                     the Vox runtime; choose a name without the leading underscore.",
+                    name
+                ),
+                Some(name),
+            );
         }
     }
 
@@ -653,6 +787,21 @@ impl Analyzer {
         }
     }
 
+}
+
+/// Whether `symbol` could be a name in code, where the bare pattern
+/// looks for one. The lexer begins a word on an alphabetic character or
+/// `_` (`src/lexer/scan.rs`), so a symbol starting with anything else was
+/// never lexed as a name: it is a literal the format parser handed back
+/// as a hole's "variable", and it exists only inside the text literal it
+/// was written in. The empty symbol is the unmatched-`{` sentinel of
+/// docs/BUGS_FOUND.md #10 and answers `true` to keep its caret: its match
+/// is zero-width, which `region_of` reports as code.
+fn can_begin_a_name(symbol: &str) -> bool {
+    match symbol.chars().next() {
+        Some(first) => first.is_alphabetic() || first == '_',
+        None => true,
+    }
 }
 
 /// The patterns `find_symbol_location` looks for, in preference order: a

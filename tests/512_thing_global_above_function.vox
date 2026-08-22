@@ -1,0 +1,15 @@
+(Bug #80's working neighbour, unchanged: the same program with the
+ declaration written above the function it is read in.)
+
+A thing called point has
+  a number called x is 7,
+  a number called y is 9.
+
+a point called origin.
+
+To 'show all'.
+  Print origin's x.
+  Print origin's y.
+
+'show all'.
+Exit 0.

@@ -1,0 +1,29 @@
+(Bug #80, every spelling of the possessive that the order dependence
+ reached: the bare read, the article, the write target, the format hole,
+ and a chain through a nested thing. All five name globals declared below
+ the functions that read them.)
+
+A thing called leg has
+  a number called start is 3.
+
+A thing called route has
+  a number called length is 12,
+  a leg called outbound.
+
+To 'read it'.
+  Print trip's length.
+  Print the trip's length.
+  Print "length is {trip's length}".
+  Print trip's outbound's start.
+
+To 'write it'.
+  Set trip's length to 20.
+  Set trip's outbound's start to 5.
+
+a route called trip.
+
+'read it'.
+'write it'.
+Print trip's length.
+Print trip's outbound's start.
+Exit 0.

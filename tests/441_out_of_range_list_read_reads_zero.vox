@@ -1,0 +1,58 @@
+(Bug #72: an out-of-range list read reads the NUMBER 0 - LANGUAGE.md:2855,
+ "Out-of-bounds access sets an error flag and returns 0". 0.4.9 typed such
+ a read from the list's ELEMENTS, so a miss out of a list of text was
+ refused into the very `number` the manual declares at LANGUAGE.md:2859.)
+
+(The manual's own worked example, LANGUAGE.md:2858-2861.)
+a list called items is [1, 2, 3].
+a number called bad is element 100 of items.
+On error print "Cannot access element 100 - out of bounds!".
+
+(A list of text misses the same way. This is the row 0.4.9 refused.)
+a list called words is ["a", "b"].
+a number called 'missing word' is element 5 of words.
+Print 'missing word'.
+
+(A mixed list proves no element type, but its length is still known.)
+a list called oddments is [1, "b"].
+a number called 'missing oddment' is element 5 of oddments.
+Print 'missing oddment'.
+
+(Lists are 1-indexed, so index 0 is out of range too.)
+a number called 'the zeroth' is element 0 of words.
+Print 'the zeroth'.
+
+(An empty list has no first and no last.)
+a list called blank is [].
+a number called 'no first word' is blank's first.
+Print 'no first word'.
+
+(A read the compiler cannot prove misses is left exactly as it was: an
+ Append means the length is no longer known, so no proof is offered and
+ the read is allowed through to answer at runtime.)
+a list called grown is ["a", "b"].
+Append "c" to grown.
+a number called 'missing grown' is element 5 of grown.
+Print 'missing grown'.
+
+(A miss yields the number 0, and 0 is a value a float slot and a boolean
+ slot can hold - 0.0 and false. Both of these compiled before this entry
+ and must keep compiling: only a POINTER slot cannot hold 0.)
+a list called measures is [1.5, 2.5].
+a float called 'missing measure' is element 100 of measures.
+Print 'missing measure'.
+
+a list called bools is [true, false, true].
+a boolean called 'missing flag' is element 100 of bools.
+Print 'missing flag'.
+
+(The same rule at a function boundary. #65's argument and return checks
+ read the type from the same place, so a miss handed to a boolean parameter
+ is the number 0 in a slot that holds it, and the call still compiles.)
+To announce with a boolean called verdict. Print verdict.
+
+announce with element 100 of bools.
+
+(An in-range read still answers its own element.)
+Print element 1 of words.
+Print words's last.

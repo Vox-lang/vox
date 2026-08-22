@@ -1,0 +1,6 @@
+(Bug #74 on a file property. LANGUAGE.md's File Properties table types
+ `descriptor` Number; read into a text, Print dereferenced the fd.)
+
+open a file for reading called source at "/dev/null".
+a text called handle is source's descriptor.
+Print handle.

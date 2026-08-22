@@ -1,0 +1,2 @@
+cannot initialise 'n', which is a number, with a text read out of map 'guess'
+note: the read yields a text, and 'n' is declared as a number

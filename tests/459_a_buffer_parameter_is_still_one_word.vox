@@ -1,0 +1,47 @@
+(docs/BUGS_FOUND.md #90 changed what a `buffer` parameter's argument word
+ MEANS, not how many words it takes. One word, like every other non-`value`
+ parameter — so the two-word `value` layout, `thing` address passing and the
+ stack argument words the seventh parameter and beyond ride on all still line
+ up on both sides of the call. A buffer in the seventh position is the case
+ that would break first if the count had moved.)
+
+To 'the seventh is a buffer' with a number called one and a number called two and a number called three and a number called four and a number called five and a number called six and a buffer called sink.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    Print "the first six arrived: {one} {two} {three} {four} {five} {six}".
+
+To 'beside a value' with a value called anything and a buffer called sink and a text called label.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    Print "the value: {anything}".
+    Print "the label: {label}".
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+To 'beside a thing' with a point called corner and a buffer called sink.
+    a number called appended is 0.
+    While appended is less than 600,
+        append "0123456789" to sink,
+        Set appended to appended add 1.
+    Print "the thing arrived: {corner's x} {corner's y}".
+
+a buffer called seventh is "start".
+'the seventh is a buffer' of 1 and 2 and 3 and 4 and 5 and 6 and seventh.
+Print "the seventh parameter: {seventh's size}".
+
+a buffer called beside is "start".
+'beside a value' of 7 and beside and "tail".
+Print "beside a value: {beside's size}".
+
+a point called corner.
+Set corner's x to 3.
+Set corner's y to 4.
+a buffer called alongside is "start".
+'beside a thing' of corner and alongside.
+Print "beside a thing: {alongside's size}".

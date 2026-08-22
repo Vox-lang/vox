@@ -1,0 +1,38 @@
+(Bug #66: a top-level declaration is global wherever it sits - LANGUAGE.md's
+ "Variables declared at top level are global and can be used inside
+ functions" attaches no ordering condition, and the analyzer already accepts
+ the name. Codegen learned a global's type only when the walk reached the
+ declaration, so a function generated above it read the slot as a raw
+ machine word: a text printed its rodata address, a float its IEEE-754 bits,
+ a list or a buffer a live heap address. Every read below is of a global
+ declared AFTER the function that reads it, and must answer exactly what the
+ same read at top level answers.)
+
+To 'show all'.
+    Print counter.
+    Print label.
+    Print ratio.
+    Print items.
+    Print payload.
+    Print scores.
+    Print flagged.
+
+a number called counter is 42.
+a text called label is "hello".
+a float called ratio is 2.5.
+a list called items is [1, 2, 3].
+a buffer called payload is "ABC".
+a map called scores is {"a": 1}.
+a boolean called flagged is yes.
+
+'show all'.
+
+(The same reads at top level, where the declaration is already in scope -
+ the two columns of the register's table, and they must agree.)
+Print counter.
+Print label.
+Print ratio.
+Print items.
+Print payload.
+Print scores.
+Print flagged.

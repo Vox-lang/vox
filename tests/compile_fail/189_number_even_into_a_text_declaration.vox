@@ -1,0 +1,6 @@
+(Bug #74 on a number property. LANGUAGE.md's Number Properties table types
+ `even` Boolean; read into a text, Print dereferenced 1 as a pointer.)
+
+a number called gauge is 4.
+a text called halves is gauge's even.
+Print halves.

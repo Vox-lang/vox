@@ -1,0 +1,4 @@
+cannot return a number from a function that returns text
+198_list_length_returned_as_text.vox:4:5
+note: a function's return type is fixed by its signature, so it can only hand back text
+help: convert it explicitly:  Return text, items's length as text.

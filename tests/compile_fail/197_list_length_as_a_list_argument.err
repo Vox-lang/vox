@@ -1,0 +1,4 @@
+cannot pass a number to 'items', which 'ident' declares as a list
+197_list_length_as_a_list_argument.vox:4:31
+note: a parameter's type is fixed by the signature, so 'items' can only be given a list
+help: pass a list - or declare 'items' as a number

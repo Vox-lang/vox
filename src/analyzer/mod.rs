@@ -1,7 +1,7 @@
 use crate::parser::ast::*;
 use crate::errors::{CompileError, SourceFile, SourceLocation, find_similar_keyword, ENGLISH_KEYWORDS};
 use std::collections::{HashMap, HashSet};
-use crate::codegen::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
+use crate::codegen::{read_format_spec, read_format_spec_ask, FormatSpecAsk, FormatSpecFault, FORMAT_MAX_COUNT};
 
 const FD_MAX: i64 = 2_147_483_647;
 
@@ -136,6 +136,12 @@ pub struct Analyzer {
     /// answers `None` for a read from it, the same "can't prove it, so
     /// allow" policy as everywhere else in this file.
     list_element_type: HashMap<String, Type>,
+    /// Names that hold one fixed integer for the whole program - see
+    /// `collect_constant_numbers`. Filled once, before the walk, so a size
+    /// named before its own declaration line gets the same answer as one
+    /// named after it, and a name anything writes to is simply absent
+    /// (bug #78: a buffer sized from a variable escaped the size bound).
+    number_constants: HashMap<String, i64>,
     /// Every list name some statement in the program can widen or alias -
     /// see `collect_widened_lists`. Filled once, before the walk, so the
     /// answer does not depend on where in the file a read appears.
@@ -145,6 +151,36 @@ pub struct Analyzer {
     /// That is the one widening move no name can be pinned on, so while it
     /// is true no list gets an element-type proof at all.
     functions_widen_lists: bool,
+    /// How many elements a list literal wrote, for every list the program
+    /// declares exactly once - mixed literals included, unlike
+    /// `list_element_type`, because a length is provable whether or not
+    /// the elements share a type (bug #72). Filled by
+    /// `collect_literal_collection_shapes` before the walk. Read through
+    /// `list_literal_len_of`, which withholds it under exactly the
+    /// conditions `list_element_type_of` withholds an element type: an
+    /// `Append` makes the list longer, so a proof that index N is past the
+    /// end only holds while nothing can grow it.
+    list_literal_len: HashMap<String, usize>,
+    /// The exact key set a map literal wrote, for every map the program
+    /// declares exactly once and whose keys are all string literals (bug
+    /// #72). A key the literal does not contain is absent, and
+    /// LANGUAGE.md:2429 says an absent key's read yields the number 0 -
+    /// which is a different type from the map's values, and the type the
+    /// read must be judged as. Filled by
+    /// `collect_literal_collection_shapes` before the walk. Read through
+    /// `map_literal_keys_of`, which withholds it for any map some `Set` or
+    /// alias can reach.
+    map_literal_keys: HashMap<String, HashSet<String>>,
+    /// Every map name some `Set <map>'s "k" to <value>.` in the program can
+    /// insert a key into - see `collect_map_key_writers`. Filled once,
+    /// before the walk, so the answer does not depend on where in the file
+    /// a read appears.
+    map_key_writers: HashSet<String>,
+    /// Set when some function in the program inserts a key into a map it
+    /// was handed - see `any_function_writes_a_map_parameter`. The map
+    /// twin of `functions_widen_lists`, and equally blunt: while it is
+    /// true no map gets a key-set proof at all.
+    functions_write_map_keys: bool,
     loop_depth: usize,
     /// True when compiling `--shared`. A shared library has no `_start`, so a
     /// top-level executable statement would be generated into the discarded
@@ -252,7 +288,12 @@ impl Analyzer {
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),
             list_element_type: HashMap::new(),
+            number_constants: HashMap::new(),
             widened_lists: HashSet::new(),
+            list_literal_len: HashMap::new(),
+            map_literal_keys: HashMap::new(),
+            map_key_writers: HashSet::new(),
+            functions_write_map_keys: false,
             functions_widen_lists: false,
             loop_depth: 0,
             shared_mode: false,

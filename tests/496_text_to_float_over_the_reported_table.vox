@@ -1,0 +1,32 @@
+(Bug #82: every row of the adjudication report's table - each one a
+ two-decimal value the old runtime parser landed one ulp away from its
+ own literal. The report listed twelve; sweeping all one thousand
+ two-decimal values from zero up to ten against their literals found
+ fifty-three, thirty of them below one, so the last four rows here are
+ the proof that the fix reaches past the fractional part into values
+ with an integer part too.)
+
+a number called differing is 0.
+
+To 'check that the text matches the literal' with a text called spelling and a float called written.
+    a float called parsed is spelling as a float.
+    If parsed is written then, Print "{spelling}: same double". Otherwise, Print "{spelling}: DIFFERENT", increment differing.
+
+'check that the text matches the literal' of "0.07" and 0.07.
+'check that the text matches the literal' of "0.11" and 0.11.
+'check that the text matches the literal' of "0.14" and 0.14.
+'check that the text matches the literal' of "0.17" and 0.17.
+'check that the text matches the literal' of "0.21" and 0.21.
+'check that the text matches the literal' of "0.22" and 0.22.
+'check that the text matches the literal' of "0.23" and 0.23.
+'check that the text matches the literal' of "0.28" and 0.28.
+'check that the text matches the literal' of "0.33" and 0.33.
+'check that the text matches the literal' of "0.34" and 0.34.
+'check that the text matches the literal' of "0.42" and 0.42.
+'check that the text matches the literal' of "0.44" and 0.44.
+'check that the text matches the literal' of "1.34" and 1.34.
+'check that the text matches the literal' of "1.93" and 1.93.
+'check that the text matches the literal' of "2.53" and 2.53.
+'check that the text matches the literal' of "3.97" and 3.97.
+
+Print "values differing from their literal: {differing}".

@@ -1,0 +1,20 @@
+(Bug #69, the case #59 recorded and left. A `value` carries its runtime tag
+ alongside its payload (LANGUAGE.md:2548-2556), so a `treating` clause whose
+ match is a `value` does have a tag to compare against the element's - it
+ just arrives at runtime. Without it the clause fell back to the static
+ path, which over a mixed list compared raw pointers and printed the
+ element's address.)
+
+a value called probe is "-".
+print each item from [1, "-"] treating probe as "X".
+
+(A value match that holds a number fires on the number element only: the
+ text element's tag disagrees with the match's, so it comes through wearing
+ its own tag.)
+a value called two is 2.
+print each item from [1, 2, "-"] treating two as "second".
+
+(A value match that matches nothing in the list: every element unchanged,
+ and still printed as what it is.)
+a value called seven is 7.
+print each item from [1, "-"] treating seven as "X".

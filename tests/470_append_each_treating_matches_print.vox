@@ -1,0 +1,18 @@
+(Bug #70: `append each ... treating ...` now answers what `print each ...
+ treating ...` answers over the same collection - including a mixed list,
+ where every element keeps its own runtime tag (#59). The print lines are
+ the working neighbour, unchanged by the fix.)
+
+a list called names is ["ann", "-"].
+print each name from names treating "-" as "anon".
+
+a list called out is [].
+append each name from names treating "-" as "anon" to out.
+print out.
+
+(A mixed list: the tag survives the clause in both positions)
+print each item from [1, "a"] treating "a" as "b".
+
+a list called mixed is [].
+append each item from [1, "a"] treating "a" as "b" to mixed.
+print mixed.

@@ -85,7 +85,23 @@ impl CodeGenerator {
                     match self.resolve_format_variable(name) {
                         FormatPartValue::Loaded(value_type) => {
                             let fmt_spec = self.parse_format_spec(format.as_deref());
-                            self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                            // A `value` keeps its type in a shadow tag slot, not
+                            // in its static type - render by the tag, the way
+                            // Print already does (src/codegen/print.rs, the
+                            // Mixed arm). Without this the pointer fell to the
+                            // integer formatter and a text `value` interpolated
+                            // as its own address (docs/BUGS_FOUND.md #68).
+                            match self.mixed_value_tag_location(name, value_type.clone()) {
+                                Some(operand) => {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte {}  ; value's runtime type tag", operand
+                                    ));
+                                    self.emit_append_mixed_value_to_buffer_slot(offset, fmt_spec);
+                                }
+                                None => {
+                                    self.emit_append_runtime_value_to_buffer_slot(offset, value_type, fmt_spec);
+                                }
+                            }
                         }
                         FormatPartValue::Literal(s) => {
                             self.emit_append_literal_to_buffer_slot(offset, &s);
@@ -98,10 +114,30 @@ impl CodeGenerator {
                     }
                 }
                 FormatPart::Expression { expr, format } => {
+                    // Where the value's type is only known at runtime - a mixed
+                    // list's element, a `value`, a map read - the tag is the
+                    // answer and the static guess is not. Asked before the value
+                    // is generated, because `runtime_tag_source` reports where
+                    // the tag WILL be (docs/BUGS_FOUND.md #68).
+                    let tag_source = self.runtime_tag_source(expr);
                     self.generate_expr(expr);
+                    // #91: a format hole has no declared destination either.
+                    self.emit_empty_value_if_missed(expr, self.tagless_read_type(expr));
                     let expr_type = self.infer_expr_type(expr);
                     let fmt_spec = self.parse_format_spec(format.as_deref());
-                    self.emit_append_runtime_value_to_buffer_slot(offset, expr_type, fmt_spec);
+                    match tag_source {
+                        Some(src) => {
+                            if let Some(operand) = src.shadow_operand() {
+                                self.emit_indent(&format!(
+                                    "movzx r11, byte {}  ; value's runtime type tag", operand
+                                ));
+                            }
+                            self.emit_append_mixed_value_to_buffer_slot(offset, fmt_spec);
+                        }
+                        None => {
+                            self.emit_append_runtime_value_to_buffer_slot(offset, expr_type, fmt_spec);
+                        }
+                    }
                 }
             }
         }
@@ -149,8 +185,22 @@ impl CodeGenerator {
                     match self.resolve_format_variable(name) {
                         FormatPartValue::Loaded(value_type) => {
                             let fmt_spec = self.parse_format_spec(format.as_deref());
-                            load_dst(self);
-                            self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt_spec);
+                            // The tag load and `load_dst` are both `mov`s, so
+                            // r11 still holds the tag when the dispatch runs
+                            // (docs/BUGS_FOUND.md #68).
+                            match self.mixed_value_tag_location(name, value_type.clone()) {
+                                Some(operand) => {
+                                    self.emit_indent(&format!(
+                                        "movzx r11, byte {}  ; value's runtime type tag", operand
+                                    ));
+                                    load_dst(self);
+                                    self.emit_append_mixed_value_to_buffer_ptr(fmt_spec);
+                                }
+                                None => {
+                                    load_dst(self);
+                                    self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt_spec);
+                                }
+                            }
                         }
                         FormatPartValue::Literal(s) => {
                             let label = self.add_string(&s);
@@ -170,15 +220,33 @@ impl CodeGenerator {
                     }
                 }
                 FormatPart::Expression { expr, format } => {
+                    // The pointer-sink twin of the buffer-slot arm above
+                    // (docs/BUGS_FOUND.md #68).
+                    let tag_source = self.runtime_tag_source(expr);
                     self.generate_expr(expr);
+                    // #91: a format hole has no declared destination either.
+                    self.emit_empty_value_if_missed(expr, self.tagless_read_type(expr));
                     let expr_type = self.infer_expr_type(expr);
                     let fmt_spec = self.parse_format_spec(format.as_deref());
-                    load_dst(self);
-                    self.emit_append_runtime_value_to_buffer_ptr(expr_type, fmt_spec);
+                    match tag_source {
+                        Some(src) => {
+                            if let Some(operand) = src.shadow_operand() {
+                                self.emit_indent(&format!(
+                                    "movzx r11, byte {}  ; value's runtime type tag", operand
+                                ));
+                            }
+                            load_dst(self);
+                            self.emit_append_mixed_value_to_buffer_ptr(fmt_spec);
+                        }
+                        None => {
+                            load_dst(self);
+                            self.emit_append_runtime_value_to_buffer_ptr(expr_type, fmt_spec);
+                        }
+                    }
                 }
             }
             if let Some(offset) = dst_local {
-                self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                self.emit_store_buffer_ptr_to_slot(offset, "rax", "");
             } else if let Some(label) = dst_global {
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
@@ -195,83 +263,118 @@ impl CodeGenerator {
         read_format_spec(fmt).0
     }
 
+    /// Render one `{value:SPEC}` hole to stdout.
+    ///
+    /// **The value's type decides the routine; the specifier only decorates
+    /// it** (docs/BUGS_FOUND.md #71). Every arm below dispatches on
+    /// `value_type` FIRST, exactly as the buffer sink's
+    /// `emit_append_runtime_value_to_buffer_ptr` has always done, because a
+    /// specifier that reaches an integer routine holding a float or a
+    /// pointer prints the raw 64 bits: a `float` printed its IEEE-754
+    /// pattern and a `text` printed the string's ADDRESS.
+    ///
+    /// v0.4.7 fixed that for the WIDTH specifier only (#36), by gating the
+    /// type check on `IntegerBase::Decimal` - so a precision, which was
+    /// handled before any type check at all, and a radix, which is by
+    /// definition not `Decimal`, both still fell through to the integer
+    /// routines. `{n:.2}` on a number rendered the integer's bits as a
+    /// double (`0.00`), and `{t:x}` on a text emitted a live pointer.
+    ///
+    /// The analyzer refuses the combinations that have no meaning at all -
+    /// a radix on a float or a text, a precision on a text
+    /// (`check_format_spec_against_type`) - so most of them never arrive
+    /// here. These arms are what makes the wrong answer impossible rather
+    /// than merely unreachable: a type the analyzer could not prove still
+    /// renders as its own type, never as raw bits.
     pub(crate) fn emit_formatted_value(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
-        // Handle precision format for floats
+        match value_type {
+            Some(VarType::Float) => {
+                self.emit_indent("movq xmm0, rdi");
+                if let Some(precision) = fmt.precision {
+                    self.emit_indent(&format!("mov rdi, {}", precision));
+                    self.emit_indent("call _print_float_precision");
+                    self.uses_format = true;
+                } else {
+                    // A width or a radix on a float is not applied: there is
+                    // no float padding primitive in coreasm (#36's residue),
+                    // and a radix is refused before it gets here. The VALUE
+                    // is what matters and it is now always right.
+                    self.emit_indent("PRINT_FLOAT");
+                }
+                self.uses_floats = true;
+                return;
+            }
+            Some(VarType::String) => {
+                self.emit_indent("PRINT_CSTR rdi");
+                return;
+            }
+            Some(VarType::Buffer) => {
+                // The two callers differ, deliberately. With a spec present
+                // print.rs has already advanced rdi to the buffer's DATA
+                // area, which is NUL-terminated, so it prints as a C string;
+                // the struct-pointer macro PRINT_BUF would read the header
+                // as bytes. With no spec at all rdi is still the struct
+                // pointer and PRINT_BUF is the length-bounded, correct one.
+                if fmt.width.is_none()
+                    && fmt.precision.is_none()
+                    && matches!(fmt.base, IntegerBase::Decimal)
+                {
+                    self.emit_indent("PRINT_BUF rdi");
+                } else {
+                    self.emit_indent("PRINT_CSTR rdi");
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        // The integer family: a `number`, a `boolean` (which renders as its
+        // 1/0, LANGUAGE.md:2229), and anything whose type codegen could not
+        // name. rdi holds the value itself, so every routine below is safe.
+
+        // `{n:.2}` on a whole number is `255.00`, not `0.00`. A precision is
+        // a count of decimal places (LANGUAGE.md:3175) and the manual writes
+        // it of `{var:.N}` with no type attached; number and float are one
+        // family by the designer's ruling recorded on #65, so the count
+        // applies to a whole number the same way. It is rendered as the
+        // integer, a point, and N zeros rather than by converting to a
+        // double first: an i64 past 2^53 has no exact double, and rounding a
+        // value on its way to being printed "exactly, correctly rounded" is
+        // the very defect #34 records. Digits then zeros is exact for every
+        // i64, because a whole number's decimal expansion IS the integer
+        // followed by zeros.
         if let Some(precision) = fmt.precision {
-            self.emit_indent("movq xmm0, rdi");
-            self.emit_indent(&format!("mov rdi, {}", precision));
-            self.emit_indent("call _print_float_precision");
-            self.uses_floats = true;
+            // `{n:8.2}` - a width AND a precision. #71's rule is that the
+            // width "applies to any value and is ignored where no padding
+            // exists for that type yet", and for a whole number a padder
+            // does exist, so both halves are honoured (docs/BUGS_FOUND.md
+            // #85). The rendering is `<digits>.<zeros>`, whose length is
+            // the digit count + 1 + precision, so padding the DIGITS out to
+            // `width - 1 - precision` brings the whole rendering to exactly
+            // `width`. A width too small to hold the digits and the places
+            // pads nothing, which is what every other padder here does.
+            let digit_width = fmt.width.map(|w| w - 1 - precision).unwrap_or(0);
+            match (digit_width > 0, fmt.zero_pad) {
+                (true, true) => {
+                    self.emit_indent(&format!("PRINT_INT_ZEROPAD rdi, {}", digit_width))
+                }
+                (true, false) => {
+                    self.emit_indent(&format!("PRINT_INT_PADDED rdi, {}", digit_width))
+                }
+                _ => self.emit_indent("PRINT_INT rdi"),
+            }
+            if precision > 0 {
+                let point = self.add_string(".");
+                self.emit_indent(&format!("PRINT_STR {}, {}_len", point, point));
+                self.emit_indent(&format!("PRINT_INT_ZEROPAD 0, {}", precision));
+            }
             self.uses_format = true;
             return;
-        }
-        
-        // A width must never change what a value IS (docs/BUGS_FOUND.md #36).
-        //
-        // The integer paths further down reinterpret rdi as a signed 64-bit
-        // integer, which is right for a `number` and catastrophic for anything
-        // else: a `float` printed its raw IEEE-754 bits, and a `text` printed
-        // the string's ADDRESS - silent wrong data, and an information leak in
-        // the text case. This dispatch used to be gated on `fmt.width.is_none()`,
-        // so writing a width skipped the type check entirely, precisely when
-        // the compiler knows the type best.
-        //
-        // Non-integer types are therefore rendered by type whether or not a
-        // width was given. The width itself is not yet APPLIED to them - there
-        // is no string/float padding primitive in coreasm, only the integer and
-        // hex ones - so a width on a float or text is currently ignored rather
-        // than honoured. That matches what the runtime-tagged `value` path
-        // already does, so both paths now agree, and it turns the worst class
-        // of defect (a wrong value) into the mildest (a cosmetic gap).
-        if matches!(fmt.base, IntegerBase::Decimal) {
-            match value_type {
-                Some(VarType::Float) => {
-                    self.emit_indent("movq xmm0, rdi");
-                    self.emit_indent("PRINT_FLOAT");
-                    self.uses_floats = true;
-                    return;
-                }
-                Some(VarType::String) => {
-                    self.emit_indent("PRINT_CSTR rdi");
-                    return;
-                }
-                Some(VarType::Buffer) if fmt.width.is_some() => {
-                    // With a spec present, print.rs has already advanced rdi to
-                    // the buffer's DATA area, so the struct-pointer macro
-                    // PRINT_BUF would read the header as bytes. The data area is
-                    // NUL-terminated, so print it as a C string. The no-width
-                    // case below still receives the struct pointer and still
-                    // uses PRINT_BUF - the two callers differ, deliberately.
-                    self.emit_indent("PRINT_CSTR rdi");
-                    return;
-                }
-                _ => {}
-            }
         }
 
         // If no specific format (default case), handle by type
         if fmt.width.is_none() && matches!(fmt.base, IntegerBase::Decimal) {
-            match value_type {
-                Some(VarType::Float) => {
-                    self.emit_indent("movq xmm0, rdi");
-                    self.emit_indent("PRINT_FLOAT");
-                    self.uses_floats = true;
-                }
-                Some(VarType::Buffer) => {
-                    // rdi must be the struct pointer (not data area) here.
-                    // The fixed call sites guarantee this; it's documented on
-                    // each one. Kept separate from VarType::String to make the
-                    // contract explicit and catch any future callers that get
-                    // it wrong (PRINT_BUF on a data pointer would print garbage).
-                    self.emit_indent("PRINT_BUF rdi");
-                }
-                Some(VarType::String) => {
-                    self.emit_indent("PRINT_CSTR rdi");
-                }
-                _ => {
-                    self.emit_indent("PRINT_INT rdi");
-                }
-            }
+            self.emit_indent("PRINT_INT rdi");
             return;
         }
         
@@ -374,6 +477,42 @@ impl CodeGenerator {
 /// simply the largest count the runtime can hold and count down.
 pub(crate) const FORMAT_MAX_COUNT: i64 = i64::MAX;
 
+/// What a `{value:SPEC}` clause ASKS OF THE VALUE, which is the only part
+/// of a spec the analyzer's type check needs to see (docs/BUGS_FOUND.md
+/// #71). Kept as its own small vocabulary so `FormatSpec` and `IntegerBase`
+/// stay private to codegen: the analyzer decides whether the ask is
+/// answerable by a type, not how the answer is emitted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FormatSpecAsk {
+    /// No specifier, or a width alone. A width is a count of characters,
+    /// which any rendering has, so it asks nothing of the type - v0.4.7
+    /// settled that a width on a float or a text renders the value and
+    /// drops the padding rather than reinterpreting anything (#36).
+    AnyType,
+    /// `{v:.N}` - N decimal places. A decimal place is a place in a
+    /// NUMBER's expansion; a text has none.
+    DecimalPlaces(i64),
+    /// `{v:x}` / `{v:X}` / `{v:b}` / `{v:o}` - the value written in another
+    /// base. Carries the base's English name for the diagnostic.
+    Base(&'static str),
+}
+
+/// Read a `{value:SPEC}` clause for the type check. Any count fault is
+/// dropped here for the same reason `parse_format_spec` drops it: the count
+/// check is `check_format_spec`'s job and reports separately.
+pub(crate) fn read_format_spec_ask(fmt: Option<&str>) -> FormatSpecAsk {
+    let spec = read_format_spec(fmt).0;
+    if let Some(places) = spec.precision {
+        return FormatSpecAsk::DecimalPlaces(places);
+    }
+    match spec.base {
+        IntegerBase::Decimal => FormatSpecAsk::AnyType,
+        IntegerBase::HexLower | IntegerBase::HexUpper => FormatSpecAsk::Base("hexadecimal"),
+        IntegerBase::Binary => FormatSpecAsk::Base("binary"),
+        IntegerBase::Octal => FormatSpecAsk::Base("octal"),
+    }
+}
+
 /// A count in a `{value:SPEC}` clause that the compiler read but cannot
 /// honour as written. Carries the digits the author actually wrote, so the
 /// diagnostic can quote them and the caret can find them.
@@ -399,6 +538,10 @@ pub(crate) enum FormatSpecFault {
 /// A count that is not all digits (`{x:.2z}`) is not a fault - it is not a
 /// count at all, and is left alone for the base-specifier match below,
 /// exactly as before.
+///
+/// Two counts that ARE both there is the other fault: `{f:8.2}` writes a
+/// width and a precision, and nothing can render both (#85). That pair is
+/// read out of the spec rather than walked past, so it can be reported.
 pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatSpecFault>) {
     let mut spec = FormatSpec {
         width: None,
@@ -459,6 +602,52 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
                 has_width = true;
                 let consumed = fmt_str.len() - width_str.len() + width_end;
                 remaining = &fmt_str[consumed..];
+            }
+        }
+    }
+
+    // A precision that FOLLOWS a width - `{f:8.2}`. `remaining` is ".2"
+    // here, which matches none of the base specifiers below, so the spec
+    // used to fall through to their catch-all and `precision` was never
+    // assigned: writing a width silently destroyed a precision that works
+    // perfectly on its own (`{f:.2}` prints 2.50, `{f:8.2}` printed 2.5),
+    // and the width was not applied to the float either
+    // (docs/BUGS_FOUND.md #85, #36).
+    //
+    // Both halves are now READ and both are kept. They compose under the
+    // rule #71 already states for the width: "the width is the one
+    // exception - it applies to any value and is ignored where no padding
+    // exists for that type yet". So the precision decides the DIGITS and
+    // the width decides the PADDING, and each is honoured wherever its own
+    // primitive exists:
+    //
+    // - a whole number: the digits are rendered to M places by #71's
+    //   integer-precision path, and the result padded out to N - both.
+    // - a float: rendered to M places by `_print_float_precision`; the
+    //   width is dropped, because coreasm has no float padder (#36's
+    //   recorded residue), exactly as a bare `{f:8}` already drops it.
+    // - a text: neither applies, and a bare `{t:8}` already drops the
+    //   width for the same reason.
+    //
+    // No diagnostic: a width that finds no padder is silence by #71's
+    // rule, not an error, and refusing the pair turned a quarter of the
+    // fuzzer's legal-looking programs into compile errors. A specifier
+    // asked of a type that cannot answer it at all is still refused - that
+    // is #71's check and it is untouched.
+    if has_width && remaining.starts_with('.') {
+        let precision_digits = &remaining[1..];
+        match read_count(precision_digits) {
+            CountRead::None => {}
+            CountRead::Count(n) => {
+                spec.precision = Some(n);
+                remaining = "";
+            }
+            CountRead::TooLarge => {
+                spec.precision = Some(FORMAT_MAX_COUNT);
+                fault = Some(FormatSpecFault::PrecisionTooLarge(
+                    precision_digits.to_string(),
+                ));
+                remaining = "";
             }
         }
     }

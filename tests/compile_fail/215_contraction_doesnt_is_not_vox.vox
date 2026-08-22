@@ -1,0 +1,9 @@
+(Compile-fail: bug #84. `doesn't` sat in the lexer's keyword table as a
+ spelling of `not`, unreachable because `read_word` stopped at the
+ apostrophe. LANGUAGE.md documents `isn't` and `aren't` and no others, so
+ the entry was removed rather than woken: waking an undocumented spelling
+ would have added language nobody could read about.)
+
+a number called v1 is 20.
+a number called v2 is 6.
+If v1 doesn't v2 then, print "differ". Otherwise, print "same".

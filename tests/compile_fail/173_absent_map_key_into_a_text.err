@@ -1,0 +1,4 @@
+cannot initialise 'n', which is a text, with a number read out of map 'guess'
+this reads the number 0
+note: map 'guess' has no key "absent", and a missing key yields the number 0 and sets the error flag
+help: declare it as a number - `a number called n is guess's "absent".` - and catch the miss with `on error`

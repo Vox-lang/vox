@@ -1,0 +1,6 @@
+(Bug #71: `:o` leaked the same address `:x` did - one dispatch, four
+ specifiers. LANGUAGE.md:3166 illustrates the octal row with a declared
+ number, and a whole number is what a base is written from.)
+
+a text called label is "hi".
+Print "{label:o}".

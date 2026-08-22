@@ -1,0 +1,27 @@
+(Regression test for bug #68: it is not only nested lists. Every element of
+ a mixed list came back through a format hole as the compiler's static
+ guess - integer - whatever its runtime tag said: a rodata address for a
+ text element, the raw IEEE-754 bits for a float. A UNIFORM list was fine
+ only because the static guess happened to be right, which is why the bug
+ hid.
+
+ LANGUAGE.md ("Lists"): "Each element renders by its own type, not the
+ list's."
+
+ Acceptance: every row of the mixed lists renders as its own type, and the
+ uniform lists - the rows that already worked - still do.)
+
+a list called nested is [1, [2, 3], "four"].
+a list called 'the mixed row' is [1, "two", 2.5].
+a list called letters is ["a", "b"].
+a list called scores is [10, 20].
+
+(A mixed list, element by element.)
+Print "{element 1 of nested}".
+Print "{element 2 of nested}".
+Print "{element 3 of nested}".
+Print "{element 3 of 'the mixed row'}".
+
+(The uniform controls, which the static guess already got right.)
+Print "{element 1 of letters}".
+Print "{element 1 of scores}".

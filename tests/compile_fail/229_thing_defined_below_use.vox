@@ -1,0 +1,17 @@
+(Bug #80: the instance may be declared below the function that reads it,
+ but the DEFINITION may not. LANGUAGE.md states that rule outright - "the
+ same defined-earlier rule that orders one file orders the pair - every use
+ below stands after the definition it names" - so this is a rejection, and
+ the message now says which line to move instead of complaining about the
+ field name.)
+
+To 'show all'.
+  Print origin's x.
+
+A thing called point has
+  a number called x is 7.
+
+a point called origin.
+
+'show all'.
+Exit 0.

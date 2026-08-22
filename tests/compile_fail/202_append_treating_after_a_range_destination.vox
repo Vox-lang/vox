@@ -1,0 +1,7 @@
+(Bug #70, the same misplacement over a range source: proving the range
+ reads past the clause, finds no second `to`, and rewinds to the list
+ reading - so the sentence lands on this diagnostic rather than on a
+ confusing complaint about a missing list name.)
+
+a list called out is [].
+append each n from 1 to 3 to out treating 2 as 99.

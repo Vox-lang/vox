@@ -1,0 +1,2 @@
+cannot give the buffer 'room' a size of 0 bytes
+a fixed buffer's size must be between 1 and 1073741824 bytes (1 GiB)

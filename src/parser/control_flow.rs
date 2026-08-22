@@ -874,6 +874,10 @@ impl Parser {
         // Check if this is a range: <start> to <end>
         // But only if first is a simple value (number/identifier), not a list or other collection
         let is_list_or_collection = matches!(first, Expr::ListLit { .. } | Expr::PropertyAccess { .. });
+        // A `treating` clause read while proving the range below; the clause
+        // sits between the range and the append separator, so the range test
+        // has to read past it and then hand it on (BUGS_FOUND #70).
+        let mut range_treating: Option<TreatingClause> = None;
         let collection = if *self.current() == Token::To && !is_list_or_collection {
             if expect_trailing_to {
                 // Range source (`from 1 to 5 to rl`) vs list source
@@ -888,7 +892,16 @@ impl Parser {
                 self.skip_noise();
                 let end = self.parse_primary_reserving(true, false)?;
                 self.skip_noise();
+                // `from 1 to 5 treating 2 as 99 to out` puts the clause
+                // between the range and the separator, so the second `to`
+                // this test depends on is behind it. Read the clause here,
+                // speculatively like the end bound, and keep it only when
+                // the range holds; on a list source (`from names to out
+                // treating ...`) the rewind gives it back and the caller
+                // reports the misplaced clause.
+                let clause = self.try_parse_treating()?;
                 if *self.current() == Token::To {
+                    range_treating = clause;
                     Expr::Range {
                         start: Box::new(first),
                         end: Box::new(end),
@@ -916,9 +929,13 @@ impl Parser {
         };
         self.skip_noise();
         
-        // Check for optional "treating X as Y" clause
-        let treating = self.try_parse_treating()?;
-        
+        // Check for optional "treating X as Y" clause - unless proving the
+        // range above already read it.
+        let treating = match range_treating {
+            Some(clause) => Some(clause),
+            None => self.try_parse_treating()?,
+        };
+
         Ok(Some((variable, collection, treating)))
     }
 

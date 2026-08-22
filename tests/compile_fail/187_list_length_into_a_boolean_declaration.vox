@@ -1,0 +1,6 @@
+(Bug #74 the other way round: a Number property into a boolean. This printed
+ `3` out of a variable that can only be true or false.)
+
+a list called counts is [10, 20, 30].
+a boolean called done is counts's length.
+Print done.

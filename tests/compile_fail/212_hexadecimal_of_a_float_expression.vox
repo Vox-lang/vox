@@ -1,0 +1,9 @@
+(Bug #71 reaches the expression form of a hole too - `{ratio multiply 2.0:x}`
+ printed the product's IEEE-754 bits. An expression hole has no name of its
+ own to quote back, so the caret anchors on the first name inside it and the
+ help names the way out that works: a cast cannot be written inside the hole,
+ because the braces a whole-expression cast needs (LANGUAGE.md:1860) are the
+ hole's own.)
+
+a float called ratio is 2.5.
+Print "{ratio multiply 2.0:x}".

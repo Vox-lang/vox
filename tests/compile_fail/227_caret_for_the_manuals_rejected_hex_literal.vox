@@ -1,0 +1,6 @@
+(Bug #89 on LANGUAGE.md:3169's own example: `{255:x}` is rejected because
+ 255 is read as a variable name. The caret belongs on that 255, not on the
+ declaration the manual tells you to write instead.)
+
+a number called n is 255.
+Print "{255:x}".

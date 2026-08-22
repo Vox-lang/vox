@@ -1,0 +1,8 @@
+is not: fires
+is not greater: fires
+is not empty: silent
+not a boolean: fires
+not a true boolean: silent
+1
+0
+stored negation: 1

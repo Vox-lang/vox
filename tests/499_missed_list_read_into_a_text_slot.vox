@@ -1,0 +1,69 @@
+(Bug #91: an out-of-range read yields the number 0 and sets the error flag
+ (LANGUAGE.md, Lists: "Out-of-bounds access sets an error flag and returns
+ 0"). Where the miss is not provable - an Append-grown list, a variable
+ index - that 0 used to reach a `text` destination and be dereferenced as a
+ pointer on the first read, so the program segfaulted. A text destination
+ takes the empty text instead, which is what an unwritten `text` slot has
+ held since #25. The error flag is untouched, so `On error` still fires.)
+
+a list called grown is ["a", "b"].
+Append "c" to grown.
+
+(The working neighbour: an in-range read is unchanged.)
+a text called second is element 2 of grown.
+Print "in range: {second}".
+
+(The headline: a literal index past the end.)
+a text called 'past the end' is element 5 of grown.
+Print "past the end: [{'past the end'}]".
+
+(A variable index no static proof can reach.)
+a number called wanted is 9.
+a text called 'by index' is element wanted of grown.
+Print "by index: [{'by index'}]".
+
+(An index below the first element is the same miss.)
+a number called 'before the first' is 0.
+a text called below is element 'before the first' of grown.
+Print "below: [{below}]".
+
+(A miss with no destination at all still prints as the empty text.)
+Print "direct: [" without newline.
+Print element 5 of grown without newline.
+Print "]".
+
+(Reassignment is the declaration's twin.)
+a text called seeded is "seed".
+Set seeded to element 5 of grown.
+Print "reassigned: [{seeded}]".
+
+(An empty list has no first and no last.)
+a list called 'no letters' is [].
+(#72 proves a literal empty list has no first, and refuses a text
+ destination outright - its compile_fail case 178. #91 owns the other half:
+ the miss the compiler CANNOT prove. This Append never runs, so the list is
+ still empty, but an Append reaches it and the proof is withheld.)
+a number called 'never grows' is 0.
+While 'never grows' is less than 0,
+    Append "x" to 'no letters',
+    Set 'never grows' to 'never grows' add 1.
+a text called 'first of nothing' is 'no letters''s first.
+a text called 'last of nothing' is 'no letters''s last.
+Print "first of empty: [{'first of nothing'}]".
+Print "last of empty: [{'last of nothing'}]".
+
+(The empty text is a real text, so every later read of the slot works.)
+a list called collected is [].
+Append 'past the end' to collected.
+Print "appended: {collected}".
+
+(A number destination still takes the manual's own 0, unchanged.)
+a list called counts is [1, 2].
+Append 3 to counts.
+a number called 'missing count' is element 5 of counts.
+Print "number destination: {'missing count'}".
+
+(And the miss is still an error, which is the whole point of yielding a
+ value rather than crashing.)
+a text called 'last miss' is element 5 of grown.
+On error Print "the error flag was set".

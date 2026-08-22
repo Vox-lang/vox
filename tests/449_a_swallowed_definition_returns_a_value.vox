@@ -1,0 +1,13 @@
+(Bug #73: the signature tables carry the return type as well as the
+ parameters. A swallowed definition's `value` return had no entry either,
+ so the caller could not know the tag rides home in r11 beside the payload.)
+
+For each attempt from 1 to 2,
+    If attempt is 99 then, Break.
+To echo with a value called given.
+    Return a value, given.
+
+a value called returned is echo of "round trip".
+Print "{returned's type}".
+Print returned.
+Exit 0.
