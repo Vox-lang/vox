@@ -307,7 +307,7 @@ The action executes once per item in the collection or range, with the loop vari
 
 **Works with:**
 - `print each X from Y` - print each item
-- `function of each X from Y` - call function for each item  
+- `function of each X from Y` - call function for each item
 - `open ... at each X from Y` - open file for each path
 - Any action that takes an argument
 
@@ -1688,8 +1688,8 @@ fields across the boundary instead. A library that exports a function
 `To 'nudged east' with a point called start.` — taking a point and, in the
 same case, returning one — is refused when compiled with `--shared`:
 
-> takes a point ('start'), which a library interface cannot describe yet
-> returns a point, which a library interface cannot describe yet
+> takes a point ('start'), which a library interface cannot describe yet  
+> returns a point, which a library interface cannot describe yet  
 > A thing is a layout private to one compilation
 
 The same source compiles fine as an ordinary program; the refusal fires
@@ -1779,30 +1779,29 @@ deferred. Things live in the compile-time type table, not the runtime tag.
 The four items below are judgement calls the implementation made on the
 way; they are marked here so they are visible without hunting.
 
-<!-- REVIEW: members-only definitions -->
 1. **Members-only definitions are rejected.** A thing listing only `a
    function called ...` entries and no data fields is a zero-byte thing,
    so v1 refuses it (see [Definition diagnostics](#definition-diagnostics)).
    Conservative and reversible: a later version could admit a member-only
    thing as a pure interface.
+   <!-- REVIEW: members-only definitions -->
 
-<!-- REVIEW: .lib export refused -->
 2. **`.lib` export of a thing is refused.** An exported library signature
    cannot take or return a thing yet; the diagnostic says to pass its
    fields across the boundary instead (see
    [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported)).
    Ordinary compilation is unaffected. A cross-boundary type system that
    knows about user things would lift this.
+   <!-- REVIEW: .lib export refused -->
 
-<!-- REVIEW: origin naming -->
 3. **The `origin` naming question.** The tests (and STYLE.md's own model
    line `Print magnitude of origin.`) declare `a point called origin` then
    set it to `(3,4)`. The origin is `(0,0)`, so the name is arguably
    untruthful under the read-aloud guide. This is a guide-level question,
    not a things-feature one — flagged here for a STYLE pass, not a
    compiler change.
+   <!-- REVIEW: origin naming -->
 
-<!-- REVIEW: acyclicity correction -->
 4. **Acyclicity — corrected from the plan.** Plan 310 framed things as
    "acyclic by grammar"; that framing is wrong. Things are acyclic by two
    mechanisms: the within-file defined-earlier ordering rule (a field type
@@ -1810,6 +1809,7 @@ way; they are marked here so they are visible without hunting.
    files reached by `see`. The DFS is load-bearing across the merged
    registry, not redundant — it is what proves the multi-file registry
    acyclic.
+   <!-- REVIEW: acyclicity correction -->
 
 ---
 
@@ -2114,7 +2114,7 @@ While the counter is less than 10, print the counter, increment the counter.
 ```
 
 **Multi-action loops** are comma-separated actions within one sentence:
- 
+
 ```vox fragment
 While x is less than 5, print x, increment x, print "looping".
 ```
@@ -3065,7 +3065,7 @@ print each x from [1, 2, 3].  (prints 1, 2, 3)
 print the x.                  (prints 3 - last iteration value)
 ```
 
-### Conditional Branching with `but if`
+### Conditional Branching with `but if` (Lists and Collections)
 
 Use `but if` as a generic conditional branch over any base action, including inside loops and loop expansion:
 
@@ -3433,8 +3433,8 @@ example below depends on it. A **write** (`Set byte N of buf to ...`)
 accepts any position from 1 up to the buffer's *capacity*: writing past
 the current size extends `size` to that position, zero-filling any gap
 (a dynamic buffer grows its capacity as needed). A **read**
-(`byte N of buf`) accepts positions from 1 up to the current *size* only
-- a byte that has never been written or appended is out of bounds even
+(`byte N of buf`) accepts positions from 1 up to the current *size* only -
+a byte that has never been written or appended is out of bounds even
 when the capacity has room for it. Position 0 is out of bounds for both.
 
 #### Buffer Append and Copy
@@ -3524,7 +3524,7 @@ A path-level `exists` predicate — asked before opening, with no handle
 involved — is a planned future addition; today the `On error` idiom
 above is how a program finds out.
 
-#### List Properties
+#### List Properties (Object Properties)
 
 | Property | Description | Type |
 |----------|-------------|------|
@@ -3544,7 +3544,7 @@ If names's empty then,
     print "No names in list".
 ```
 
-#### List Element Access
+#### List Element Access (Object Properties)
 
 Access list elements by index. Indexes are **1-indexed** (like natural language: "the first element", "the second element").
 
@@ -3846,7 +3846,7 @@ Read from source into inputbuf. (Safe regardless of file size)
 Files are tracked at runtime for guaranteed cleanup:
 
 1. **On open**: FD registered in tracking table
-2. **On close**: FD unregistered from table  
+2. **On close**: FD unregistered from table
 3. **On exit**: All remaining FDs automatically closed
 
 This works correctly even with conditional file operations:
@@ -4362,7 +4362,7 @@ Print the 'job timer''s end time.
 #### Formatted Time Output
 
 Combine time properties with the zero-pad format specifier (see
-[Formatted Output](#formatted-output)) for formatted output. A time
+[Format Specifiers](#format-specifiers)) for formatted output. A time
 property can be read directly inside a format slot:
 
 ```
@@ -4653,7 +4653,7 @@ Print the user.
 | Greater or Equal | `is greater than or equal to` |
 | Less or Equal | `is less than or equal to` |
 
-### Logical Operators
+### Logical Operators (table)
 
 | Operator | Keyword |
 |----------|---------|
@@ -5224,7 +5224,7 @@ driver above is exactly that, linked with `ld` rather than `--link`.
 
 ## Compiler Usage
 
-### Basic Usage
+### Basic Usage (Compiler Invocation)
 
 ```bash
 vox <source.vox> [options]
@@ -5264,7 +5264,7 @@ vox main.vox --link math --lib-path ./libs
 
 ```ebnf
 program     ::= statement*
-statement   ::= print_stmt | var_decl | assignment | if_stmt | while_stmt 
+statement   ::= print_stmt | var_decl | assignment | if_stmt | while_stmt
               | for_stmt | func_def | thing_def | member_def | increment | decrement
               | break | continue | append_stmt
 
@@ -5292,8 +5292,8 @@ member_decl ::= "a" "function" "called" name
 member_def  ::= "To" "do" "the" name "'s" name (("," ("with" | "of"))? params)? "."
                 body "Return" "a" name "," expr "."
 
-if_stmt     ::= ("If" | "When") condition "then" "," block 
-                ("but if" condition "then" "," block)* 
+if_stmt     ::= ("If" | "When") condition "then" "," block
+                ("but if" condition "then" "," block)*
                 ("otherwise" | "else")? ","? block? "."
 
 while_stmt  ::= "While" condition "," block "."
@@ -5302,7 +5302,7 @@ for_stmt    ::= "For each" name "from" expr "to" expr "," block "."
               | "For each" name "in" expr "," block "."
 
 print_stmt  ::= "Print" expr ("," "but if" condition "print" expr)* "."
-              | "Print" "each" name "from" expr ("treating" expr "as" expr)? 
+              | "Print" "each" name "from" expr ("treating" expr "as" expr)?
                 ("," "but if" condition "print" expr)* "."
               | "Print" identifier "of" "each" name "from" expr ("treating" expr "as" expr)?
                 ("," "but if" condition "print" expr)* "."
