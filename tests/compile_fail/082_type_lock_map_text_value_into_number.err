@@ -1,4 +1,4 @@
 cannot assign text to 'n', which is a number
 082_type_lock_map_text_value_into_number.vox:3:1
 note: 'n' was declared as a number at 082_type_lock_map_text_value_into_number.vox:2:17
-help: convert it explicitly:  n is <value> as a number.
+help: convert it explicitly:  n is m's "k" as a number.

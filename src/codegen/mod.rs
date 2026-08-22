@@ -34,7 +34,11 @@ pub struct CodeGenerator {
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
-    file_writable: HashMap<String, bool>,
+    // The single source of truth for a file handle's open mode. `readable`
+    // and `writable` are both derived from this at the point they are read,
+    // instead of one being derived (writable) and the other left as a
+    // constant true (readable) - see bug #37.
+    file_mode: HashMap<String, FileMode>,
     // Per-function partitions of `mixed_lists`/`unprovable_scalars`, keyed by
     // the function's assembly label. The pre-scan walks each function body on
     // a SNAPSHOT of the global env so a function's own locals never leak into
@@ -118,6 +122,12 @@ pub struct CodeGenerator {
     // level). When it is `Type::Value`, the `Return` path must leave the
     // value's runtime tag in r11 for the caller to consume.
     current_function_return_type: Option<Type>,
+    // Frame slot holding the caller's destination address for a function that
+    // returns a whole thing (plan 310 §5). The address arrives as a hidden
+    // first argument word; `Return` copies the thing into it and hands it
+    // back in rax, so a thing-returning call is an address like every other
+    // thing-valued expression. `None` for every other function.
+    current_thing_return_slot: Option<i64>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -147,6 +157,16 @@ pub struct CodeGenerator {
     initialized_globals: std::collections::HashSet<String>,
     in_function_codegen: bool,
     target_arch: String,
+    /// Every thing defined in the program (plan 310), keyed by name. Sizes and
+    /// field offsets are read from `analyzer::things`, so validation and
+    /// emission compute one layout from one place.
+    things: crate::analyzer::things::ThingRegistry,
+    /// Which thing each thing variable holds, by variable name. Seeded from
+    /// the whole main line before any label or statement is emitted, then
+    /// extended by each declaration as it is generated. Clone-and-restored
+    /// around a function body like `declared_types`, so a function's own
+    /// locals do not leak into what is generated after it.
+    thing_vars: HashMap<String, String>,
 }
 
 
@@ -201,6 +221,7 @@ use flags::FlagSchemaRuntime;
 mod syscalls;
 mod buffers;
 mod format;
+pub(crate) use format::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
 mod vars;
 mod functions;
 mod tags;
@@ -209,6 +230,7 @@ mod collections;
 mod print;
 mod expr;
 mod statements;
+mod things;
 
 // ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
 //
@@ -313,12 +335,19 @@ enum IntegerBase {
     Octal,
 }
 
+/// A `{value:SPEC}` clause, read. Both counts are i64 because both render
+/// literally - `width` characters of padding, `precision` decimal places -
+/// and nothing in LANGUAGE.md:3101-3119 caps either one, so the only limit
+/// is the largest count the runtime can hold. They were i32, and the parse
+/// that filled them dropped its `Err` on the floor: `{n:2147483648}` built
+/// the same spec as a bare `{n}` and printed with no padding and no
+/// diagnostic (docs/BUGS_FOUND.md #61).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FormatSpec {
-    width: Option<i32>,
+    width: Option<i64>,
     zero_pad: bool,
     base: IntegerBase,
-    precision: Option<i32>,
+    precision: Option<i64>,
 }
 
 /// Outcome of resolve_format_variable - how a `{name}` format part's value
@@ -354,7 +383,7 @@ impl CodeGenerator {
             mixed_lists: std::collections::HashSet::new(),
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
-            file_writable: HashMap::new(),
+            file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
             local_unprovable_scalars: HashMap::new(),
             local_names: HashMap::new(),
@@ -381,6 +410,7 @@ impl CodeGenerator {
             function_param_types: std::collections::HashMap::new(),
             function_return_full_types: std::collections::HashMap::new(),
             current_function_return_type: None,
+            current_thing_return_slot: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,
@@ -391,6 +421,8 @@ impl CodeGenerator {
             initialized_globals: std::collections::HashSet::new(),
             in_function_codegen: false,
             target_arch: "x86_64".to_string(),
+            things: HashMap::new(),
+            thing_vars: HashMap::new(),
         }
     }
 

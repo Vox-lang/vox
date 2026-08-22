@@ -1,0 +1,56 @@
+(Regression test for bug #48: the three write macros issued their write
+syscall and never looked at the result, and `Write` itself never touched the
+error flag, so from inside Vox a write that did not happen was
+indistinguishable from one that did. `Read from` a handle whose open failed
+was silent in the same way, where `Read line from` the identical handle
+already set the flag.)
+
+(The control: a write that succeeds must NOT fire the handler.)
+open a file for writing called 'the good file' at "/tmp/vox_test_write_errors.txt".
+Write "written" to 'the good file'.
+On error print "BUG: a successful write fired the error handler", exit 1.
+Write a newline to 'the good file'.
+On error print "BUG: a successful newline write fired the error handler", exit 1.
+a buffer called payload is "payload".
+Write payload to 'the good file'.
+On error print "BUG: a successful buffer write fired the error handler", exit 1.
+Close 'the good file'.
+print "the successful writes did not fire the handler".
+
+(A full device accepts the open and fails every write with ENOSPC - a real
+failure on a valid, writable handle, not a bad descriptor.)
+open a file for writing called 'the full device' at "/dev/full".
+Write "x" to 'the full device'.
+On error print "the write to a full device set the error flag".
+Write a newline to 'the full device'.
+On error print "the newline write to a full device set the error flag".
+Write payload to 'the full device'.
+On error print "the buffer write to a full device set the error flag".
+Close 'the full device'.
+
+(A handle opened for reading is not writable.)
+open a file for reading called 'the reading handle' at "/tmp/vox_test_write_errors.txt".
+Write "x" to 'the reading handle'.
+On error print "the write to a read-only handle set the error flag".
+Close 'the reading handle'.
+
+(A closed handle's descriptor is no longer open.)
+open a file for writing called 'the closed handle' at "/tmp/vox_test_write_errors_closed.txt".
+Close 'the closed handle'.
+Write "x" to 'the closed handle'.
+On error print "the write to a closed handle set the error flag".
+
+(A handle whose open failed carries a negative descriptor. Both read forms and
+the write must agree that using it is an error.)
+open a file for reading called missing at "/tmp/vox_test_write_errors_absent.txt".
+On error print "the failed open set the error flag".
+a buffer called chunk is 16 bytes in size.
+Read from missing into chunk.
+On error print "Read from a failed handle set the error flag".
+Read line from missing into chunk.
+On error print "Read line from a failed handle set the error flag".
+Write "x" to missing.
+On error print "the write to a failed handle set the error flag".
+
+Delete the file "/tmp/vox_test_write_errors.txt".
+Delete the file "/tmp/vox_test_write_errors_closed.txt".

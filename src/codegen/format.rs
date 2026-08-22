@@ -121,26 +121,42 @@ impl CodeGenerator {
             }
         };
 
+        // Every `_buffer_append_*` helper takes the destination buffer in rdi,
+        // and resolving a part's value is free to destroy rdi on the way: the
+        // shared name resolver lowers `{arguments's first}` to `mov rdi, 1` /
+        // `call _get_arg` (src/codegen/expr.rs), and an arbitrary `{expression}`
+        // lowers to whatever generate_expr needs. Loading the destination once
+        // before resolution and appending afterwards therefore called the
+        // helper with an argument index — or any other leftover — in place of
+        // the buffer, and the append dereferenced it: a segfault on a legal,
+        // documented program (docs/BUGS_FOUND.md #52). The destination is now
+        // loaded from its home slot immediately before each append, once the
+        // value is settled in rax - the same order the buffer-slot sink above
+        // already used, which is why that one never crashed. (The
+        // loop used to push rdi here and pop it into rsi afterwards, saving a
+        // copy it never restored; reading the home slot picks up a destination
+        // that resolution itself reallocated, which a saved copy would not.)
         for part in parts {
-            load_dst(self);
-            self.emit_indent("push rdi  ; save destination buffer pointer");
             match part {
                 FormatPart::Literal(s) => {
                     let label = self.add_string(s);
                     self.emit_indent(&format!("lea rsi, [rel {}]", label));
                     self.emit_indent(&format!("mov rdx, {}_len", label));
+                    load_dst(self);
                     self.emit_indent("call _buffer_append_bytes");
                 }
                 FormatPart::Variable { name, format } => {
                     match self.resolve_format_variable(name) {
                         FormatPartValue::Loaded(value_type) => {
                             let fmt_spec = self.parse_format_spec(format.as_deref());
+                            load_dst(self);
                             self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt_spec);
                         }
                         FormatPartValue::Literal(s) => {
                             let label = self.add_string(&s);
                             self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
+                            load_dst(self);
                             self.emit_indent("call _buffer_append_bytes");
                         }
                         FormatPartValue::Unknown => {
@@ -148,6 +164,7 @@ impl CodeGenerator {
                             let label = self.add_string(&placeholder);
                             self.emit_indent(&format!("lea rsi, [rel {}]", label));
                             self.emit_indent(&format!("mov rdx, {}_len", label));
+                            load_dst(self);
                             self.emit_indent("call _buffer_append_bytes");
                         }
                     }
@@ -156,6 +173,7 @@ impl CodeGenerator {
                     self.generate_expr(expr);
                     let expr_type = self.infer_expr_type(expr);
                     let fmt_spec = self.parse_format_spec(format.as_deref());
+                    load_dst(self);
                     self.emit_append_runtime_value_to_buffer_ptr(expr_type, fmt_spec);
                 }
             }
@@ -164,80 +182,17 @@ impl CodeGenerator {
             } else if let Some(label) = dst_global {
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
-            self.emit_indent("pop rsi  ; discard saved pointer copy");
         }
     }
 
+    /// Read a `{value:SPEC}` clause for codegen. Any fault the reader found
+    /// is dropped here on purpose: the analyzer has already refused the
+    /// program (`check_format_spec`), and the spec the reader returns
+    /// alongside a fault is saturated rather than emptied, so even a path
+    /// that reached codegen unanalyzed renders the largest width Vox can
+    /// count to instead of silently rendering none.
     pub(crate) fn parse_format_spec(&self, fmt: Option<&str>) -> FormatSpec {
-        match fmt {
-            None => FormatSpec {
-                width: None,
-                zero_pad: false,
-                base: IntegerBase::Decimal,
-                precision: None,
-            },
-            Some(fmt_str) => {
-                let mut spec = FormatSpec {
-                    width: None,
-                    zero_pad: false,
-                    base: IntegerBase::Decimal,
-                    precision: None,
-                };
-                
-                // Check for precision format first (starts with '.')
-                if fmt_str.starts_with('.') {
-                    // Float precision format like .2, .4, etc.
-                    if let Some(precision) = fmt_str.strip_prefix('.').and_then(|s| s.parse::<i32>().ok()) {
-                        spec.precision = Some(precision);
-                    }
-                    return spec;
-                }
-                
-                // Parse width and zero padding
-                let mut remaining = fmt_str;
-                let mut has_width = false;
-                
-                // Check if it starts with digit or '0' for width/padding
-                if remaining.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) {
-                    let zero_pad = remaining.starts_with('0');
-                    let width_str = if zero_pad {
-                        remaining.trim_start_matches('0')
-                    } else {
-                        remaining
-                    };
-                    
-                    // Extract digits for width
-                    let width_end = width_str.chars().take_while(|c| c.is_ascii_digit()).count();
-                    if width_end > 0 {
-                        let width_digits = &width_str[..width_end];
-                        if let Ok(width) = width_digits.parse::<i32>() {
-                            spec.width = Some(width);
-                            spec.zero_pad = zero_pad;
-                            has_width = true;
-                            remaining = &fmt_str[if zero_pad { 1 + width_end } else { width_end }..];
-                        }
-                    }
-                }
-                
-                // Parse base specifier from remaining characters
-                if !remaining.is_empty() {
-                    match remaining {
-                        "x" => spec.base = IntegerBase::HexLower,
-                        "X" => spec.base = IntegerBase::HexUpper,
-                        "b" => spec.base = IntegerBase::Binary,
-                        "o" => spec.base = IntegerBase::Octal,
-                        _ => {
-                            // If we parsed a width but no base, treat as decimal
-                            if has_width {
-                                spec.base = IntegerBase::Decimal;
-                            }
-                        }
-                    }
-                }
-                
-                spec
-            }
-        }
+        read_format_spec(fmt).0
     }
 
     pub(crate) fn emit_formatted_value(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
@@ -251,6 +206,49 @@ impl CodeGenerator {
             return;
         }
         
+        // A width must never change what a value IS (docs/BUGS_FOUND.md #36).
+        //
+        // The integer paths further down reinterpret rdi as a signed 64-bit
+        // integer, which is right for a `number` and catastrophic for anything
+        // else: a `float` printed its raw IEEE-754 bits, and a `text` printed
+        // the string's ADDRESS - silent wrong data, and an information leak in
+        // the text case. This dispatch used to be gated on `fmt.width.is_none()`,
+        // so writing a width skipped the type check entirely, precisely when
+        // the compiler knows the type best.
+        //
+        // Non-integer types are therefore rendered by type whether or not a
+        // width was given. The width itself is not yet APPLIED to them - there
+        // is no string/float padding primitive in coreasm, only the integer and
+        // hex ones - so a width on a float or text is currently ignored rather
+        // than honoured. That matches what the runtime-tagged `value` path
+        // already does, so both paths now agree, and it turns the worst class
+        // of defect (a wrong value) into the mildest (a cosmetic gap).
+        if matches!(fmt.base, IntegerBase::Decimal) {
+            match value_type {
+                Some(VarType::Float) => {
+                    self.emit_indent("movq xmm0, rdi");
+                    self.emit_indent("PRINT_FLOAT");
+                    self.uses_floats = true;
+                    return;
+                }
+                Some(VarType::String) => {
+                    self.emit_indent("PRINT_CSTR rdi");
+                    return;
+                }
+                Some(VarType::Buffer) if fmt.width.is_some() => {
+                    // With a spec present, print.rs has already advanced rdi to
+                    // the buffer's DATA area, so the struct-pointer macro
+                    // PRINT_BUF would read the header as bytes. The data area is
+                    // NUL-terminated, so print it as a C string. The no-width
+                    // case below still receives the struct pointer and still
+                    // uses PRINT_BUF - the two callers differ, deliberately.
+                    self.emit_indent("PRINT_CSTR rdi");
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // If no specific format (default case), handle by type
         if fmt.width.is_none() && matches!(fmt.base, IntegerBase::Decimal) {
             match value_type {
@@ -368,4 +366,140 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// The largest count a `{value:SPEC}` clause can name. A width is a number
+/// of characters and a precision a number of decimal places; both are
+/// rendered literally and neither is capped by the manual, so the limit is
+/// simply the largest count the runtime can hold and count down.
+pub(crate) const FORMAT_MAX_COUNT: i64 = i64::MAX;
+
+/// A count in a `{value:SPEC}` clause that the compiler read but cannot
+/// honour as written. Carries the digits the author actually wrote, so the
+/// diagnostic can quote them and the caret can find them.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FormatSpecFault {
+    /// `{x:N}` or `{x:0N}` with N past `FORMAT_MAX_COUNT` characters.
+    WidthTooLarge(String),
+    /// `{f:.N}` with N past `FORMAT_MAX_COUNT` decimal places.
+    PrecisionTooLarge(String),
+}
+
+/// Read the text after the `:` in `{value:SPEC}`.
+///
+/// Returns the spec every sink formats from, and - separately - whatever
+/// the author wrote that it could not honour. A too-large count still comes
+/// back saturated to `FORMAT_MAX_COUNT` rather than absent, because every
+/// caller of this function renders from the spec alone: an absent width is
+/// indistinguishable from a width that was never written, which is exactly
+/// how `{n:2147483648}` came to print with no padding and no diagnostic
+/// (docs/BUGS_FOUND.md #61). The fault is what the analyzer turns into the
+/// error the author actually sees.
+///
+/// A count that is not all digits (`{x:.2z}`) is not a fault - it is not a
+/// count at all, and is left alone for the base-specifier match below,
+/// exactly as before.
+pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatSpecFault>) {
+    let mut spec = FormatSpec {
+        width: None,
+        zero_pad: false,
+        base: IntegerBase::Decimal,
+        precision: None,
+    };
+    let Some(fmt_str) = fmt else {
+        return (spec, None);
+    };
+
+    // Check for precision format first (starts with '.')
+    if fmt_str.starts_with('.') {
+        // Float precision format like .2, .4, etc.
+        let digits = &fmt_str[1..];
+        return match read_count(digits) {
+            CountRead::None => (spec, None),
+            CountRead::Count(n) => {
+                spec.precision = Some(n);
+                (spec, None)
+            }
+            CountRead::TooLarge => {
+                spec.precision = Some(FORMAT_MAX_COUNT);
+                (spec, Some(FormatSpecFault::PrecisionTooLarge(digits.to_string())))
+            }
+        };
+    }
+
+    // Parse width and zero padding
+    let mut remaining = fmt_str;
+    let mut has_width = false;
+    let mut fault = None;
+
+    // Check if it starts with digit or '0' for width/padding
+    if remaining.chars().next().map(|c| c.is_ascii_digit() || c == '0').unwrap_or(false) {
+        let zero_pad = remaining.starts_with('0');
+        let width_str = if zero_pad {
+            remaining.trim_start_matches('0')
+        } else {
+            remaining
+        };
+
+        // Extract digits for width
+        let width_end = width_str.chars().take_while(|c| c.is_ascii_digit()).count();
+        if width_end > 0 {
+            let width_digits = &width_str[..width_end];
+            let width = match read_count(width_digits) {
+                CountRead::Count(n) => Some(n),
+                CountRead::TooLarge => {
+                    fault = Some(FormatSpecFault::WidthTooLarge(width_digits.to_string()));
+                    Some(FORMAT_MAX_COUNT)
+                }
+                CountRead::None => None,
+            };
+            if let Some(width) = width {
+                spec.width = Some(width);
+                spec.zero_pad = zero_pad;
+                has_width = true;
+                let consumed = fmt_str.len() - width_str.len() + width_end;
+                remaining = &fmt_str[consumed..];
+            }
+        }
+    }
+
+    // Parse base specifier from remaining characters
+    if !remaining.is_empty() {
+        match remaining {
+            "x" => spec.base = IntegerBase::HexLower,
+            "X" => spec.base = IntegerBase::HexUpper,
+            "b" => spec.base = IntegerBase::Binary,
+            "o" => spec.base = IntegerBase::Octal,
+            _ => {
+                // If we parsed a width but no base, treat as decimal
+                if has_width {
+                    spec.base = IntegerBase::Decimal;
+                }
+            }
+        }
+    }
+
+    (spec, fault)
+}
+
+enum CountRead {
+    /// Not a count at all (empty, or something other than digits follows).
+    None,
+    Count(i64),
+    /// All digits, but more of them than `FORMAT_MAX_COUNT` can hold.
+    TooLarge,
+}
+
+/// A count in a format spec is written as plain digits and nothing else, so
+/// once the string is known to be all digits the only way it can fail to
+/// parse is by being too large - which is the case that must not be
+/// mistaken for "no count was written".
+fn read_count(digits: &str) -> CountRead {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return CountRead::None;
+    }
+    match digits.parse::<i64>() {
+        Ok(n) => CountRead::Count(n),
+        Err(_) => CountRead::TooLarge,
+    }
 }

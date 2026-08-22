@@ -1,4 +1,5 @@
 use super::*;
+use crate::lexer::SourceRegion;
 
 impl Analyzer {
     pub(crate) fn check_for_typos(&mut self) {
@@ -39,8 +40,12 @@ impl Analyzer {
         self.typo_candidates.insert(name.to_string());
     }
 
-    /// Core of `find_write_site_location`/`find_bind_site_location`: search
-    /// `patterns` in order, skipping `exclude_line` (the declaration, when
+    /// Core of `find_symbol_location`/`find_write_site_location`/
+    /// `find_bind_site_location`: search `patterns` in order, skipping
+    /// any match that is not real code - a name mentioned in a `( … )`
+    /// comment is not a use of it, and a text literal only counts for a
+    /// pattern that asks for one (docs/BUGS_FOUND.md #46) - and skipping
+    /// `exclude_line` (the declaration, when
     /// known) and requiring a left word boundary so a shorter name doesn't
     /// match as a suffix of a longer one (symbol "x", pattern "x is "
     /// matching inside "max is " - each pattern's own trailing space
@@ -74,10 +79,47 @@ impl Analyzer {
         exclude_line: Option<usize>,
         guard_against_called: bool,
     ) -> Option<SourceLocation> {
+        // Two passes. A hit in real code always beats one inside a text
+        // literal, however much earlier the literal sits: `Print "hello".`
+        // above `append hello to items.` is not where the unknown variable
+        // is (docs/BUGS_FOUND.md #46). The second pass is for the name that
+        // genuinely only ever appears inside a literal - interpolated as
+        // `{name}`, or quoted - and it is the only pass a text-seeking
+        // pattern can land in.
+        self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, false)
+            .or_else(|| {
+                self.scan_patterns(symbol, patterns, occurrence, exclude_line, guard_against_called, true)
+            })
+    }
+
+    /// One pass of `find_pattern_location`, taking the first pattern that
+    /// matches at all. `allow_text` opens the pass to matches sitting
+    /// inside a text literal, and only to patterns that ask for one: a
+    /// match inside a `( … )` comment is never a use of the name and is
+    /// refused in both passes.
+    fn scan_patterns(
+        &self,
+        symbol: &str,
+        patterns: &[String],
+        occurrence: usize,
+        exclude_line: Option<usize>,
+        guard_against_called: bool,
+        allow_text: bool,
+    ) -> Option<SourceLocation> {
         let source = self.source_file.as_ref()?;
         for pattern in patterns {
             let Some(name_offset) = pattern.find(symbol) else {
                 continue;
+            };
+            // Whether this pattern is *asking* to land inside a text
+            // literal. `{name` (interpolation) and `"name"` (the literal
+            // itself) both put the symbol behind a delimiter the lexer
+            // keeps inside a text token, so a hit there is the real thing.
+            // Every other pattern describes code, and a hit inside a
+            // literal is then a coincidence.
+            let reaches_into_text = {
+                let before = &pattern[..name_offset];
+                before.ends_with('{') || before.ends_with('"')
             };
             let mut seen = 0usize;
             for (idx, line) in source.content.lines().enumerate() {
@@ -99,7 +141,12 @@ impl Analyzer {
                         .get(name_end)
                         .map_or(true, |b| !(b.is_ascii_alphanumeric() || *b == b'_'));
                     let excluded_by_called = guard_against_called && line[..pat_col].ends_with("called ");
-                    if left_ok && right_ok && !excluded_by_called {
+                    let region_ok = match source.region_of(line_no, name_col, name_end) {
+                        SourceRegion::Code => true,
+                        SourceRegion::Text => allow_text && reaches_into_text,
+                        SourceRegion::Comment => false,
+                    };
+                    if left_ok && right_ok && region_ok && !excluded_by_called {
                         if seen == occurrence {
                             return Some(SourceLocation::new(&source.filename, line_no, name_col + 1, line));
                         }
@@ -127,6 +174,27 @@ impl Analyzer {
             format!("{} is ", symbol),
         ];
         self.find_pattern_location(symbol, &write_patterns, occurrence, decl_line, true)
+            .or_else(|| self.find_symbol_location(symbol, occurrence))
+    }
+
+    /// Like `find_symbol_location`, but excludes `symbol`'s own declaration
+    /// line. `find_symbol_location`'s first-occurrence search makes an
+    /// "Unknown variable" error for a cross-condition use (declared only in
+    /// an `if` branch, read after it) anchor on the declaration itself - the
+    /// textually first place the name appears - instead of the read that
+    /// actually failed (plan 318 §3, same class as the accepted #11
+    /// finding). Falls back to `find_symbol_location` when there is no
+    /// recorded declaration to exclude, or every occurrence found IS that
+    /// declaration (a name reported unknown with no other occurrence at all -
+    /// better to point at something than nothing).
+    pub(crate) fn find_use_site_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
+        let decl_line = self.declared_locations.get(symbol).map(|l| l.line);
+        let patterns = [
+            format!("{{{}", symbol),
+            format!("\"{}\"", symbol),
+            symbol.to_string(),
+        ];
+        self.find_pattern_location(symbol, &patterns, occurrence, decl_line, true)
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
@@ -170,15 +238,29 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(name, 0))
     }
 
+    /// Where `symbol` appears, for a diagnostic that has nothing but a
+    /// name to go on. Prefers the interpolation form `{symbol` and the
+    /// literal form `"symbol"` over the bare name, and goes through
+    /// `find_pattern_location` so it inherits that scan's two guarantees:
+    /// the match is a whole word (the symbol `n` no longer anchors on the
+    /// `n` inside `print`, docs/BUGS_FOUND.md #55) and it sits in real
+    /// code, never in a `( … )` comment and never inside a text literal
+    /// the pattern did not ask for (#46).
     pub(crate) fn find_symbol_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
-        let source = self.source_file.as_ref()?;
-        let preferred_patterns = [
-            format!("{{{}", symbol),
-            format!("\"{}\"", symbol),
-            symbol.to_string(),
-        ];
+        self.find_pattern_location(symbol, &symbol_patterns(symbol), occurrence, None, false)
+            .or_else(|| self.find_mention_location(symbol, occurrence))
+    }
 
-        for pattern in preferred_patterns {
+    /// Last resort for `find_symbol_location`: the pre-#46 scan - first
+    /// textual occurrence of the name anywhere, comments and literals
+    /// included. Only reached when the name occurs nowhere in code at all,
+    /// where a caret on a comment is poor but an error with no `-->` line
+    /// is worse; this file's standing policy is that pointing at something
+    /// beats pointing at nothing.
+    fn find_mention_location(&self, symbol: &str, occurrence: usize) -> Option<SourceLocation> {
+        let source = self.source_file.as_ref()?;
+
+        for pattern in symbol_patterns(symbol) {
             let mut seen = 0usize;
             for (idx, line) in source.content.lines().enumerate() {
                 if let Some(column) = line.find(&pattern) {
@@ -217,6 +299,28 @@ impl Analyzer {
         self.errors.push(err);
     }
 
+    /// Same as `push_error_with_hint`, but for a caller that already has a
+    /// real `SourceLocation` in hand (from parser state, not a textual
+    /// symbol search) - e.g. `Statement::Return`'s "only valid inside a
+    /// function" error, which has no symbol name to search for and instead
+    /// points at wherever the body-level Return or blank line closed the
+    /// enclosing function early.
+    pub(crate) fn push_error_with_hint_at(
+        &mut self,
+        message: String,
+        location: Option<SourceLocation>,
+        hint: Option<&str>,
+    ) {
+        let mut err = CompileError::new(&message);
+        if let Some(loc) = location {
+            err = err.with_location(loc);
+        }
+        if let Some(h) = hint {
+            err = err.with_hint(h);
+        }
+        self.errors.push(err);
+    }
+
     pub(crate) fn push_unknown_variable(&mut self, name: &str) {
         let hint = self.pending_blank_line_truncation.as_ref().and_then(|(func, params, loc)| {
             if params.iter().any(|p| p == name) {
@@ -227,8 +331,24 @@ impl Analyzer {
             } else {
                 None
             }
+        }).or_else(|| {
+            // `declared_locations` records EVERY declaration this walk has
+            // seen, including a some-branches-only one that didn't survive
+            // the if/otherwise merge (LANGUAGE.md "Declarations in
+            // Branches") - so its presence here, when nothing else
+            // explains the error, means `name` isn't a typo: it exists,
+            // just not on every path that reaches this read.
+            self.declared_locations.get(name).map(|_| format!(
+                "`{}` is declared only in some branches of an `if`/`otherwise`, so it is not in scope after it - declare it in every branch, or before the `if`",
+                name
+            ))
         });
-        self.push_error_with_hint(format!("Unknown variable: {}", name), Some(name), hint.as_deref());
+        // Anchor on the actual failing read, not the (textually earlier)
+        // declaration that happens to contain the same name (plan 318 §3).
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let location = self.find_use_site_location(name, occurrence);
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+        self.push_error_with_hint_at(format!("Unknown variable: {}", name), location, hint.as_deref());
     }
 
     pub(crate) fn current_env(&self) -> AnalysisEnv {
@@ -394,6 +514,110 @@ impl Analyzer {
         self.map_variables.contains(name)
     }
 
+    /// The English name of a `for each` collection's kind when the analyzer
+    /// can PROVE that kind cannot be walked as a list, `None` otherwise.
+    ///
+    /// A loop expansion lowers to a list-header read - codegen takes the
+    /// collection's value as a pointer and loads `[ptr + 8]` as the element
+    /// count. Hand it a number and the number itself is dereferenced
+    /// (segfault); hand it a map or a buffer and that object's own header is
+    /// misread as a list's, so the loop runs a garbage number of iterations
+    /// over garbage elements, silently (bug #49).
+    ///
+    /// This is deliberately a known-scalar rejection and NOT a
+    /// list-whitelist: Vox is dynamically typed and this pass cannot see the
+    /// shape of an untyped parameter, a `value`, a function result or a
+    /// property read, all of which iterate correctly today. Only a name this
+    /// pass has positively categorised as a scalar/map/buffer - or a literal
+    /// scalar written straight into the clause - is refused.
+    pub(crate) fn non_collection_kind(&self, collection: &Expr) -> Option<&'static str> {
+        match collection {
+            Expr::IntegerLit(_) => Some("number"),
+            Expr::FloatLit(_) => Some("float"),
+            Expr::BoolLit(_) => Some("boolean"),
+            // `For each x from/in <expr>` rewrites a quoted name into an
+            // `Identifier` while parsing, so a `StringLit` surviving to here
+            // is a real text literal from a loop-expansion clause
+            // (`print each part from "abc".`), never a variable reference.
+            Expr::StringLit(_) | Expr::FormatString { .. } => Some("text"),
+            // A map literal written straight into the clause is the same
+            // defect as a map variable: its header is not a list's.
+            Expr::MapLit { .. } => Some("map"),
+            Expr::Identifier(name) => {
+                // An undeclared name is already reported as an unknown
+                // variable; a second error about its kind would only be
+                // noise, and its kind is unknowable anyway.
+                if !self.is_variable_available(name) {
+                    return None;
+                }
+                if self.is_buffer_variable(name) {
+                    return Some("buffer");
+                }
+                if self.is_map_variable(name) {
+                    return Some("map");
+                }
+                // A list, or a name whose runtime shape is chosen elsewhere,
+                // keeps working untouched.
+                if self.is_list_variable(name) || self.value_typed_names.contains(name) {
+                    return None;
+                }
+                match self.scalar_types.get(name) {
+                    Some(Type::Integer) => Some("number"),
+                    Some(Type::Float) => Some("float"),
+                    Some(Type::Boolean) => Some("boolean"),
+                    Some(Type::String) => Some("text"),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Reject a `for each` collection `non_collection_kind` can prove is not
+    /// one, naming the kind and - for a map - the accessor that does work.
+    /// LANGUAGE.md's supported collections are a list, a range, and
+    /// `arguments's all`; a map is iterated through `'s keys` or `'s values`.
+    pub(crate) fn check_loop_collection(&mut self, variable: &str, collection: &Expr) {
+        let Some(kind) = self.non_collection_kind(collection) else {
+            return;
+        };
+        // `text` takes no article, exactly as `typed_phrase` spells it for
+        // the type-lock diagnostics.
+        let phrase = if kind == "text" {
+            "text".to_string()
+        } else {
+            format!("a {}", kind)
+        };
+        // A literal has no name to quote back, so the message names the kind
+        // that was written instead, and the error points at the loop variable
+        // - the one name on that line the source search can find.
+        let name = match collection {
+            Expr::Identifier(name) => Some(name.clone()),
+            _ => None,
+        };
+        let subject = name.clone().unwrap_or_else(|| phrase.clone());
+        let symbol = name.clone().unwrap_or_else(|| variable.to_string());
+        let hint = match (kind, &name) {
+            ("map", Some(name)) => format!(
+                "{} is a map - iterate `{}'s keys` or `{}'s values`",
+                subject, name, name
+            ),
+            ("map", None) => "a map is iterated through its `'s keys` or `'s values`".to_string(),
+            (_, Some(_)) => format!(
+                "{} is {} - `each ... from` walks a list, a range, or `arguments's all`",
+                subject, phrase
+            ),
+            // The message already named the literal's kind; repeating it
+            // here would say the same thing twice.
+            (_, None) => "`each ... from` walks a list, a range, or `arguments's all`".to_string(),
+        };
+        self.push_error_with_hint(
+            format!("Loop collection must be a list: {}", subject),
+            Some(&symbol),
+            Some(&hint),
+        );
+    }
+
     /// A "scalar" variable holds a raw 64-bit value (a number, a boolean
     /// flag, or a unix timestamp) rather than a pointer or handle. Number
     /// and time properties read the raw slot, so applying them to a
@@ -429,4 +653,17 @@ impl Analyzer {
         }
     }
 
+}
+
+/// The patterns `find_symbol_location` looks for, in preference order: a
+/// name interpolated into a text (`{name`), a name written as a text
+/// literal (`"name"`), then the bare name. The first two only ever match
+/// inside a literal, and `find_pattern_location` lets them do so only
+/// after the bare name has failed to turn up anywhere in real code.
+fn symbol_patterns(symbol: &str) -> [String; 3] {
+    [
+        format!("{{{}", symbol),
+        format!("\"{}\"", symbol),
+        symbol.to_string(),
+    ]
 }

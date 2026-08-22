@@ -1,0 +1,1 @@
+Cannot write value gap to a file; a value's type is only known at runtime, and Write must know whether it holds text (which it writes) or a number (whose value it would use as an address). Copy it into a typed variable first - 'a text called plain is gap.' - and write that.

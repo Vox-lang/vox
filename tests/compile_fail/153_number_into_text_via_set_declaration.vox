@@ -1,0 +1,7 @@
+(Bug #65 through `Set a <type> called <name> to <value>.` - a declaration
+ wearing Set's syntax, which parses into the same statement as `a text called
+ n is 5.` and faulted identically. Checked here so the spelling cannot be
+ used to walk round the rule.)
+
+Set a text called n to 5.
+Print n.

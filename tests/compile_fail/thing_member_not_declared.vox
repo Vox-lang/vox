@@ -1,0 +1,17 @@
+(Compile-fail: plan 310 §4/§10 - membership is declared in the type, so a
+ `To do` naming a member the manifest does not list has nothing to attach
+ to. The error is at the definition and names the entry to add, because the
+ fix is a line in the type rather than a rename here.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's sparkle, with a point called original.
+  Return a point, original.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.

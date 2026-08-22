@@ -1,0 +1,3 @@
+cannot initialise 'total', which is a number, with nothing
+122_nothing_into_number_declaration.vox:7:17
+help: declare 'total' as a value, the type that can be absent - or give it number's own empty value, 0

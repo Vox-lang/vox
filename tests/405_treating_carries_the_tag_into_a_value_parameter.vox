@@ -1,0 +1,11 @@
+(Bug #59 in the call form LANGUAGE.md:419 documents - `<function> of each
+ <var> from <collection> treating <match> as <replacement>`. A `value`
+ parameter carries its argument's runtime tag across the call
+ (LANGUAGE.md:2489-2493), so the tag the `treating` clause hands it has to
+ be the element's own, not the integer default a tagless expression gets.)
+
+To announce with a value called what.
+  print what.
+
+announce of each item from [1, "a"] treating "a" as "b".
+announce of each item from [1, "a"] treating 1 as 9.

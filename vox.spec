@@ -1,5 +1,5 @@
 Name:           vox
-Version:        0.3.7
+Version:        0.4.9
 Release:        1%{?dist}
 Summary:        A systems level compiler for Vox (sentence based code)
 
@@ -17,6 +17,11 @@ BuildRequires:  rust >= 1.71
 # not to build vox itself, so these are runtime Requires, not BuildRequires.
 Requires:       nasm
 Requires:       binutils
+
+# Libraries are not part of the compiler and it never needs them -- Vox has no
+# standard library by design. Suggests records that they exist without dnf
+# pulling them in; a plain `dnf install vox` stays exactly as it was.
+Suggests:       vox-libs
 
 # find-debuginfo's source-file attribution for this LTO release binary is
 # rpm/elfutils-version-dependent: it produces a real vox-debugsource package

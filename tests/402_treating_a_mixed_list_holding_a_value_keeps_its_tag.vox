@@ -1,0 +1,12 @@
+(Bug #59 over a list widened by a `value`. A `value` carries its runtime
+ tag alongside its payload (LANGUAGE.md:2489-2493), so the slot it lands
+ in is tagged text - and the `treating` clause must read that tag rather
+ than the loop variable's absent static type.)
+
+a value called label is "a".
+a list called items is [1, label].
+print each item from items treating "a" as "b".
+
+(The same list with a number match that matches nothing: every element
+ comes through unchanged.)
+print each item from items treating 98 as 31.

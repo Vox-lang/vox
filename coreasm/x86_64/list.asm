@@ -579,8 +579,13 @@ _list_to_argv:
 ; Args:      rdi = list pointer
 ; Clobbers:  rax, rcx, rdx, rsi, rdi, r8-r11. Preserves rbx, r12-r14.
 ; Per slot: dispatch on the tag byte; strings are quoted; unhandled tags
-; print as integers. Requires io.asm (PRINT_*); float branch requires
+; print as integers. Requires io.asm (RENDER_*); float branch requires
 ; float.asm - hence the %ifdef guards.
+;
+; The bytes leave through RENDER_* rather than PRINT_*, so this one routine
+; serves both `Print flat.` and `a text called note is "{flat}".` - see
+; io.asm's RENDER_* block and `_list_render_to_buffer` below
+; (docs/BUGS_FOUND.md #44).
 %ifdef __IO_ASM_INCLUDED__
 section .data
     _lp_lbrk:      db "["
@@ -624,7 +629,7 @@ _list_print:
     mov rbx, rdi                        ; rbx = list pointer
 
     ; Opening bracket
-    PRINT_STR _lp_lbrk, _lp_lbrk_len
+    RENDER_STR _lp_lbrk, _lp_lbrk_len
 
     mov r13, [rbx + LIST_LENGTH_OFFSET] ; r13 = length
     test r13, r13
@@ -636,7 +641,7 @@ _list_print:
     ; Separator before every element except the first
     test r12, r12
     jz .lp_first
-    PRINT_STR _lp_comma, _lp_comma_len
+    RENDER_STR _lp_comma, _lp_comma_len
 .lp_first:
     ; Element address = base + 24 + index * element_size
     mov r14, [rbx + LIST_ELEMSIZE_OFFSET]
@@ -662,20 +667,20 @@ _list_print:
     je .lp_nothing
     ; Integer, boolean (as 1/0), and any unhandled tag print as a number.
     mov rdi, [r14]
-    PRINT_INT rdi
+    RENDER_INT rdi
     jmp .lp_next
 
 .lp_str:
-    PRINT_STR _lp_quote, _lp_quote_len
+    RENDER_STR _lp_quote, _lp_quote_len
     mov rdi, [r14]                      ; C-string pointer
-    PRINT_CSTR rdi
-    PRINT_STR _lp_quote, _lp_quote_len
+    RENDER_CSTR rdi
+    RENDER_STR _lp_quote, _lp_quote_len
     jmp .lp_next
 
 %ifdef __FLOAT_ASM_INCLUDED__
 .lp_flt:
-    movq xmm0, [r14]                   ; PRINT_FLOAT takes the value in xmm0
-    PRINT_FLOAT
+    movq xmm0, [r14]                   ; RENDER_FLOAT takes the value in xmm0
+    RENDER_FLOAT
     jmp .lp_next
 %endif
 
@@ -698,7 +703,7 @@ _list_print:
 
 .lp_nothing:
     ; Tag 6: payload unused, print the literal word.
-    PRINT_STR _lp_nothing, _lp_nothing_len
+    RENDER_STR _lp_nothing, _lp_nothing_len
     jmp .lp_next
 
 .lp_next:
@@ -707,7 +712,7 @@ _list_print:
     jl .lp_loop
 
 .lp_close:
-    PRINT_STR _lp_rbrk, _lp_rbrk_len
+    RENDER_STR _lp_rbrk, _lp_rbrk_len
 
     dec qword [rel _print_depth]
     pop r14
@@ -720,12 +725,51 @@ _list_print:
     ; Depth limit exceeded (stage 1e1): signal the error and print a
     ; truncation marker in place of the over-deep subtree, then unwind.
     mov qword [rel _last_error], 1
-    PRINT_STR _lp_trunc, _lp_trunc_len
+    RENDER_STR _lp_trunc, _lp_trunc_len
     dec qword [rel _print_depth]
     pop r14
     pop r13
     pop r12
     pop rbx
     ret
+
+; ----------------------------------------------------------------------------
+; _list_render_to_buffer - render a list into a dynamic buffer.
+; ----------------------------------------------------------------------------
+; Args:      rdi = destination buffer, rax = list pointer
+; Returns:   rax = destination buffer (possibly reallocated)
+; Clobbers:  same as _list_print.
+;
+; The return contract deliberately matches `_buffer_append` /
+; `_buffer_append_float`, so the codegen arm that emits this call sits
+; beside theirs as an equal (src/codegen/buffers.rs).
+;
+; This is a redirection, not a second renderer: it points `_render_sink` at
+; the buffer and calls the very routine `Print` calls, so `{flat}` produces
+; the same bytes in a text initializer, a buffer, a `write`, a path, a
+; `treating` clause and a function argument as it does in Print position
+; (LANGUAGE.md "Format Strings Everywhere"; docs/BUGS_FOUND.md #44).
+;
+; Gated on __RESOURCE_ASM_INCLUDED__ because it appends to a buffer; a
+; program with no buffer runtime has no such sink to render into, and the
+; compiler sets `uses_buffers` wherever it emits this call.
+%ifdef __RESOURCE_ASM_INCLUDED__
+_list_render_to_buffer:
+    push rbx
+    push r12
+
+    mov rbx, [rel _render_sink]     ; previous sink, restored on the way out
+    mov r12, rdi                    ; destination buffer
+    mov [rel _render_sink], r12
+    mov rdi, rax                    ; list pointer
+    call _list_print
+    mov rax, [rel _render_sink]     ; the buffer, after any reallocation
+    mov [rel _render_sink], rbx
+
+    pop r12
+    pop rbx
+    ret
+%endif
+
 %endif
 

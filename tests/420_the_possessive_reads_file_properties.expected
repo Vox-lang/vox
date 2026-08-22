@@ -1,0 +1,9 @@
+size: 9
+descriptor: open
+readable: 1
+writable: 0
+modified: a timestamp
+accessed: a timestamp
+permissions: a mode
+writer readable: 0
+writer writable: 1

@@ -5,6 +5,7 @@
 ![Last commit](https://img.shields.io/github/last-commit/Vox-lang/vox?style=flat-square)
 ![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/)
+[![crates.io](https://img.shields.io/crates/v/vox-lang?style=flat-square)](https://crates.io/crates/vox-lang)
 
 **Vox** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly — without a **resident runtime system**, virtual machine, or standard library.
 
@@ -105,10 +106,21 @@ This makes Vox well-suited for static utilities, constrained environments, and s
   path with no tag checks emitted
 * An explicit dynamic `value` type for carrying "whatever this slot holds"
   across function boundaries, and a `nothing` value distinct from `0`
+* User-defined composite types - **things**. `A thing called point has a
+  number called x is 0, a number called y is 0.` declares a type with a
+  compile-time layout; things nest to any depth, copy by value, print
+  themselves, compare field by field, and carry their own function members,
+  with no runtime component emitted; see
+  [examples/delivery.vox](examples/delivery.vox) and the
+  [Things](LANGUAGE.md#things) chapter
 * Filesystem, mount, and process-control operations (directories, device
   nodes, symlinks, mount/unmount, `pivot_root`, `execve`, `fork`/`reap`,
-  `shutdown`/`reboot`/`halt`) - enough to write a working early-userspace
-  init entirely in Vox; see [examples/initramfs.vox](examples/initramfs.vox)
+  `Send signal` (`kill`), non-blocking `reap ... without waiting`,
+  `the reaped status`, `shutdown`/`reboot`/`halt`) - enough to write a
+  working early-userspace init entirely in Vox, see
+  [examples/initramfs.vox](examples/initramfs.vox), or a process supervisor
+  with no shell and no coreutils, see
+  [examples/supervisor.vox](examples/supervisor.vox)
 
 ---
 
@@ -217,6 +229,22 @@ sudo dnf copr enable vox-lang/Vox
 sudo dnf install vox
 ```
 
+Libraries live in their own project,
+[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs), and are optional —
+Vox has no standard library and the compiler never needs them. They ship from
+the same Copr repository, so no extra setup is required:
+
+```sh
+sudo dnf install vox-libs
+```
+
+Or with cargo, on any platform with a Rust toolchain — the compiler
+carries its own `coreasm` and needs nothing else installed:
+
+```bash
+cargo install vox-lang
+```
+
 On `zypper`/`urpmi`/`tdnf`-based distros (openSUSE, Mageia, Azure Linux),
 grab the matching repo file from the project page instead.
 
@@ -271,7 +299,12 @@ Vox is under active development. Planned work includes:
    Versioned shared libraries with explicit naming, symbol scoping, and backward compatibility guarantees.
 
 2. **User-Defined Types**
-   Structs and custom types with compile-time layout and predictable memory semantics.
+   Shipped in 0.4.0 as **things**: compile-time layout, possessive field
+   access, unlimited nesting, value copy semantics, function members, and
+   cross-file definitions (see the [Things](LANGUAGE.md#things) chapter).
+   Remaining: exact byte layout control - field widths, ordering, and
+   padding - which is gated on sized integers, since every field is an
+   8-byte slot today.
 
 3. **Networking Abstractions**
    High-level interfaces built on top of system calls, provided via libraries (e.g. HTTP/1.0 reference implementation).
@@ -280,7 +313,7 @@ Vox is under active development. Planned work includes:
    Planned targets include Win64, AArch64, ARM64, MIPS, and RISC-V.
 
 5. **Expanded System Interfaces**
-   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, basic process control (`fork`/`reap`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
+   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, process control (`fork`/`reap`, non-blocking `reap ... without waiting`, `the reaped status`, `Send signal` for `kill`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
 
 6. **Math and Numeric Optimization**
    Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.
@@ -296,6 +329,15 @@ Actively developed, free and open-source projects written in Vox:
 
 - **[voxos](https://github.com/TheJostler/voxos)** — a collection of utilities
   and an init for a minimal operating system, written in pure Vox.
+- **[vox-fuzz](https://github.com/Vox-lang/vox-fuzz)** — a fuzzer for this
+  compiler, written in Vox. It generates random valid programs, compiles
+  them, and supervises the binaries natively (fork, non-blocking reap,
+  deadline kill, raw wait status) to catch any that die by signal, hang,
+  or make the compiler itself fall over. Its first hunt found two
+  memory-safety bugs, both fixed in 0.4.3.
+- **[vox-libs](https://github.com/Vox-lang/vox-libs)** — shared libraries
+  for Vox, written in Vox. Not a standard library: the compiler builds and
+  runs with none of them installed.
 
 Building something in Vox? We'd like this list to point to real, actively
 maintained FOSS projects — email **vox-lang@tegosec.com** to have yours added.

@@ -1,0 +1,8 @@
+A number called version is 0.
+Set version to version add 1.
+Print version.
+While version is less than 3,
+  Set version to version add 1,
+  Print version.
+To 'shift' with a number called version. Return a number, version add 10.
+Print 'shift' of version.

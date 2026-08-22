@@ -1,0 +1,48 @@
+(Bug #43 — a `Return` that sits inside an `If` lives in the conditional's
+ body, not the function's, so its declared type never reached the
+ signature and every caller read the result as a plain integer. For a
+ `value` that was a segfault: codegen skipped the callee's tag load, so
+ the caller stored whatever r11 happened to hold — the parameter's text
+ tag — over an integer payload, and printing it dereferenced 99 as a
+ `char*`. For the plain-type family it was a silent wrong answer: a text
+ pointer printed as a number. Both directions of the value case, the text
+ family, the single-expression form that always worked, and a branch that
+ does not fire are pinned here.)
+
+To score with a value called v.
+  If v is a number, return a value, v.
+  Otherwise, return a value, 99.
+
+To verdict with a number called n.
+  If n is greater than 0, Return a text, "big".
+  Otherwise, Return a text, "small".
+
+To fallback with a value called v.
+  Return a value, 99.
+
+To perhaps with a number called n.
+  If n is greater than 0, Return a text, "found it".
+  print "no branch fired".
+
+(A text scores the default; a number scores itself. Before the fix the
+ first of these two lines segfaulted.)
+a value called defaulted is score of "hello".
+print defaulted.
+
+a value called scored is score of 7.
+print scored.
+
+(The same shape with a declared `text` return: before the fix these
+ printed the text's address as a number.)
+print verdict of 5.
+print verdict of 0.
+
+(The control: one expression, no branch. This always worked, and must
+ keep working.)
+a value called plain is fallback of "hello".
+print plain.
+
+(No branch fires on the second call, so the function falls off its end
+ and owes the caller an empty text rather than a stray address.)
+print perhaps of 1.
+print perhaps of 0.

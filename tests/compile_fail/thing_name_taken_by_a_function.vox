@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §10 - function names share the identifier space with
+ type names. A function called `point` would leave `a point's 'from polar'`
+ reading as either a call on the type or a possessive of the function.)
+
+A thing called point has
+  a number called x is 0.
+
+To point with a number called distance.
+  Print distance.
+
+point of 3.

@@ -1,0 +1,7 @@
+9223372036854775807
+-9223372036854775808
+decimal overflow raised
+long decimal overflow raised
+hex overflow raised
+255
+base5 abc raised (unaffected pre-existing behaviour)

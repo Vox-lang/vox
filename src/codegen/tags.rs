@@ -333,7 +333,16 @@ impl CodeGenerator {
             // as `TAG_INTEGER`. Tag it `TAG_BOOLEAN` explicitly so it matches
             // `prescan_expr_tag`, which recurses to the (boolean) operand.
             Expr::UnaryOp { op: UnaryOperator::Not, .. } => Some(TAG_BOOLEAN),
-            Expr::StringLit(name) | Expr::Identifier(name)
+            // A string literal is data, never a name (bug #29 / #19's
+            // family). It must be tagged TAG_STRING unconditionally, before
+            // any lookup of its text against variable names — a literal that
+            // happens to spell an in-scope variable name is still a literal,
+            // and resolving it would write the colliding variable's type tag
+            // onto the slot (an integer tag over a string pointer = silent
+            // wrong data; a list tag = a later wild dereference). Only an
+            // `Identifier` may be looked up.
+            Expr::StringLit(_) => Some(TAG_STRING),
+            Expr::Identifier(name)
                 if self.unprovable_scalars.contains(name)
                     && self.variable_types.get(name) != Some(&VarType::List) =>
             {
@@ -349,7 +358,7 @@ impl CodeGenerator {
                 // TAG_LIST here would silently un-nest a nested list.
                 None
             }
-            Expr::StringLit(name) | Expr::Identifier(name) => {
+            Expr::Identifier(name) => {
                 match self.variable_types.get(name) {
                     Some(VarType::Integer) => Some(TAG_INTEGER),
                     Some(VarType::Float) => Some(TAG_FLOAT),
@@ -403,10 +412,13 @@ impl CodeGenerator {
     ///    `Mixed` *identifier* — a value parameter, a for-each variable over a
     ///    mixed list, or a declared `value` local — keeps its tag in a shadow
     ///    stack slot → `movzx r11, byte [rbp-<off>]`.
-    /// 3. **Already in r11** (both return `None`): a freshly-read mixed-list
-    ///    element (ElementAccess/First/Last leaves the slot's tag in r11) and a
-    ///    value-returning function call (the callee leaves r11=tag; `call` and
-    ///    `FUNC_EPILOGUE`/`_dec_call_depth` do not clobber r11). No emit needed.
+    /// 3. **Already in r11** (both return `None`, and `expr_leaves_tag_in_r11`
+    ///    agrees): a freshly-read mixed-list element (ElementAccess/First/Last
+    ///    leaves the slot's tag in r11) and a value-returning function call (the
+    ///    callee leaves r11=tag; `call` and `FUNC_EPILOGUE`/`_dec_call_depth` do
+    ///    not clobber r11). No emit needed.
+    /// 4. **Nothing holds the tag**: r11 is unrelated garbage, so fall back to
+    ///    `TAG_INTEGER` rather than write that garbage into a tag slot.
     ///
     /// Register discipline: callers consume r11 immediately — between this
     /// load and the consumer there must be no `call`/syscall that clobbers r11.
@@ -422,8 +434,25 @@ impl CodeGenerator {
                     loc.operand()
                 )),
                 None => {
-                    // r11 already holds the tag: a fresh mixed element read or a
-                    // value-returning function call left it there. Nothing to do.
+                    // r11 already holds the tag — but ONLY for the expressions
+                    // `expr_leaves_tag_in_r11` names (a fresh mixed element or
+                    // map read, a value-returning call). For anything else that
+                    // reaches here, r11 holds whatever the last unrelated
+                    // instruction left in it, and writing that byte into a
+                    // value's tag slot mislabels the payload. BUGS_FOUND #43:
+                    // a function whose only `Return a value` sat inside an `If`
+                    // never got `Type::Value` as its return type, so the callee
+                    // never set r11 and the caller stored the callee's stale
+                    // PARAMETER tag (text) over an integer payload — the caller
+                    // then printed 99 as a `char*` and the program segfaulted.
+                    // The integer tag is the safe default: it makes the payload
+                    // print as the number it is instead of being dereferenced.
+                    if !self.expr_leaves_tag_in_r11(expr) {
+                        self.emit_indent(&format!(
+                            "mov r11, {}  ; value tag (integer default: no tag in r11)",
+                            TAG_INTEGER
+                        ));
+                    }
                 }
             },
         }
@@ -676,7 +705,10 @@ impl CodeGenerator {
     /// - a value-returning function call (the callee leaves r11=tag; `call`
     ///   and the epilogue do not clobber it), and
     /// - a freshly-read mixed-list element (`ElementAccess`, or `First`/`Last`
-    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11.
+    ///   of a mixed list) — `generate_expr` captures the slot's tag into r11, and
+    /// - a `treating` clause over a runtime-tagged subject, which carries the
+    ///   subject's own tag (or the replacement's, when the substitution fires)
+    ///   through to r11 — see `treating_dispatches_on_runtime_tag`.
     /// Homogeneous reads never reach this question: `emit_time_expr_tag`
     /// returns their static tag (`Some`), so the caller never falls through to
     /// the no-slot path that consults this predicate.
@@ -711,8 +743,41 @@ impl CodeGenerator {
                 self.mixed_lists.contains(object)
                     || self.list_element_types.get(object) == Some(&VarType::Mixed)
             }
+            Expr::TreatingAs { value, match_value, replacement } => {
+                self.treating_dispatches_on_runtime_tag(value, match_value, replacement)
+            }
             _ => false,
         }
+    }
+
+    /// Whether a `treating` clause must dispatch on its subject's runtime tag
+    /// rather than on a static type (bug #59).
+    ///
+    /// A `treating` subject is the loop variable, and over a mixed list, a
+    /// map's values, or a `value` it has no static type to dispatch on — only
+    /// the per-slot tag LANGUAGE.md:2226-2228 promises ("every element prints
+    /// and reads back as what it is"). Reporting the subject's static type
+    /// there made the comparison a raw pointer `cmp` (so a text element never
+    /// matched a text match) and left the result untagged (so Print rendered a
+    /// text element's address as an integer) — for every element, including
+    /// the ones the clause never matched.
+    ///
+    /// Both the match and the replacement must carry a statically known tag:
+    /// the match's tag is what the subject's tag is compared against, and the
+    /// replacement's is the tag the result carries when the substitution
+    /// fires. Without both there is no tag to dispatch on, and the static path
+    /// stands. This predicate is the single condition under which
+    /// `generate_expr` emits the tagged path, so it is also exactly when the
+    /// result leaves its tag in r11.
+    pub(crate) fn treating_dispatches_on_runtime_tag(
+        &self,
+        value: &Expr,
+        match_value: &Expr,
+        replacement: &Expr,
+    ) -> bool {
+        self.runtime_tag_source(value).is_some()
+            && self.emit_time_expr_tag(match_value).is_some()
+            && self.emit_time_expr_tag(replacement).is_some()
     }
 
 }

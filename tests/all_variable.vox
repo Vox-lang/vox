@@ -1,0 +1,9 @@
+A number called all is 0.
+Set all to all add 1.
+Print all.
+While all is less than 3,
+  Set all to all add 1,
+  Print all.
+To 'sum' with a number called all. Return a number, all add 100.
+Print 'sum' of all.
+Print each item from arguments's all.

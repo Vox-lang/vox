@@ -1,0 +1,28 @@
+(Compile-fail: plan 310 §5 - both sides of a copy are the same thing. A
+ point is sixteen bytes of coordinates and a stamp is sixteen bytes of
+ postage; copying one into the other would be a byte-for-byte move that
+ read back as nonsense, so the mismatch is named rather than performed.
+
+ The three lines below are the three copy destinations: a declaration's
+ storage, a variable that already has some, and a field that holds a whole
+ thing.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a number called 'cost in pence' is 12.
+
+A thing called letter has
+  a stamp called postage,
+  a number called 'weight in grams' is 2.
+
+a point called origin.
+a stamp called 'first class'.
+a letter called invitation.
+
+a point called mirror is 'first class'.
+origin is 'first class'.
+Set invitation's postage to origin.

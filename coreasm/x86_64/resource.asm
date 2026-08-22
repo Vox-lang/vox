@@ -13,6 +13,11 @@
 %define BUF_FLAGS    16     ; 8 bytes: flags (bit 0 = fixed size)
 %define BUF_DATA     24     ; data starts here
 
+; Tested by io.asm's RENDER_* macros and by list.asm/map.asm: the collection
+; renderers can only append to a buffer when the buffer runtime is present,
+; and this file is included after io.asm but before both of them.
+%define __RESOURCE_ASM_INCLUDED__
+
 ; Buffer flags
 %define BUF_FLAG_FIXED 1    ; Buffer has fixed size, no growing allowed
 
@@ -573,8 +578,16 @@ _seek_fd_line:
     cmp r13, 1
     je .seek_line_done_offset    ; already at line 1
 
-    ; Need to cross (target_line - 1) newlines
-    mov rcx, 1                   ; current line index
+    ; Need to cross (target_line - 1) newlines.
+    ; The counter must live somewhere the kernel will not touch: `syscall`
+    ; overwrites rcx (and r11) with the return address, so a counter kept in
+    ; rcx became a code address on the very first read - the compare below
+    ; then failed immediately and the scan stopped at the first newline,
+    ; landing every target of 2 or more on line 2 and never reaching EOF
+    ; (bug #47). rbx is callee-saved, already pushed above, and otherwise
+    ; free, so the counter lives there and the newline test reads the byte
+    ; straight out of memory rather than borrowing a register for it.
+    mov rbx, 1                   ; current line index
 
 .seek_line_scan:
     mov rax, 0                   ; SYS_READ
@@ -587,12 +600,11 @@ _seek_fd_line:
     je .seek_line_error          ; hit EOF before requested line
     js .seek_line_error
 
-    movzx ebx, byte [rel line_read_tmp]
-    cmp bl, 10                   ; newline?
+    cmp byte [rel line_read_tmp], 10   ; newline?
     jne .seek_line_scan
 
-    inc rcx
-    cmp rcx, r13
+    inc rbx
+    cmp rbx, r13
     jl .seek_line_scan
 
 .seek_line_done_offset:
@@ -2269,3 +2281,149 @@ _file_permissions:
     mov rax, -1
     pop rbx
     ret
+
+; ============================================================================
+; RENDER SINK WRITERS
+; ============================================================================
+; The bodies behind io.asm's RENDER_* macros. Each one looks at
+; `_render_sink` (core.asm) and either performs exactly what the PRINT_*
+; macro it replaced performed, or appends the same bytes to the dynamic
+; buffer the sink names, storing back the (possibly reallocated) pointer.
+; They live here, not in io.asm, because that is where `_buffer_append_*`
+; lives: io.asm is included even by programs with no buffer runtime at all.
+;
+; Every general-purpose register the callers could care about is preserved:
+; `_print_int_impl` clobbers rbx and the syscall path clobbers rcx/r11, and
+; the collection renderers call these from the middle of a walk.
+;
+; Gated on __IO_ASM_INCLUDED__ because the stdout branches use it. io.asm is
+; included before this file, so the define is visible.
+%ifdef __IO_ASM_INCLUDED__
+
+; _render_bytes - write/append rdx bytes at rsi.
+; Args: rsi = source pointer, rdx = length.
+_render_bytes:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov rax, [rel _render_sink]
+    test rax, rax
+    jnz .render_bytes_to_buffer
+
+    ; stdout: instruction for instruction what PRINT_STR emitted
+    mov rax, 1
+    mov rdi, 1
+    syscall
+    jmp .render_bytes_done
+
+.render_bytes_to_buffer:
+    mov rdi, rax                    ; destination buffer; rsi/rdx already set
+    call _buffer_append_bytes
+    mov [rel _render_sink], rax     ; the append may have reallocated it
+
+.render_bytes_done:
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+
+; _render_cstr - write/append a NUL-terminated string.
+; Args: rdi = C-string pointer.
+_render_cstr:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov rax, [rel _render_sink]
+    test rax, rax
+    jnz .render_cstr_to_buffer
+
+    call _print_cstr_impl           ; rdi = string, as PRINT_CSTR does
+    jmp .render_cstr_done
+
+.render_cstr_to_buffer:
+    mov rsi, rdi                    ; source string
+    mov rdi, rax                    ; destination buffer
+    call _buffer_append_cstr
+    mov [rel _render_sink], rax
+
+.render_cstr_done:
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+
+; _render_int - write/append a signed 64-bit integer in decimal.
+; Args: rdi = value.
+_render_int:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov rax, [rel _render_sink]
+    test rax, rax
+    jnz .render_int_to_buffer
+
+    call _print_int_impl            ; rdi = value, as PRINT_INT does
+    jmp .render_int_done
+
+.render_int_to_buffer:
+    mov rsi, rdi                    ; value
+    mov rdi, rax                    ; destination buffer
+    xor rdx, rdx                    ; width 0 - the renderers never pad
+    xor rcx, rcx                    ; no zero padding
+    xor r8, r8                      ; base 10, matching _print_int_impl
+    xor r9, r9                      ; uppercase flag (hex only)
+    call _buffer_append_formatted_int
+    mov [rel _render_sink], rax
+
+.render_int_done:
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+
+%endif

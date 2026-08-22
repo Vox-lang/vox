@@ -3,6 +3,17 @@ use super::*;
 impl CodeGenerator {
     pub(crate) fn generate_print(&mut self, value: &Expr, without_newline: bool) {
         self.uses_io = true;
+        // `Print origin.` / `Print span's start.` - a whole thing prints as
+        // its fields, map-style and recursive (plan 310 §7). This precedes
+        // the match because both spellings otherwise fall to arms that would
+        // print the first eight bytes of the thing's storage as a number.
+        if let Some((thing, place)) = self.thing_place(value) {
+            self.emit_thing_print(&thing, &place, 0);
+            if !without_newline {
+                self.emit_indent("PRINT_NEWLINE");
+            }
+            return;
+        }
         match value {
             Expr::FormatString { parts } => {
                 // Print each part of the format string
@@ -13,6 +24,15 @@ impl CodeGenerator {
                             self.emit_indent(&format!("PRINT_STR {}, {}_len", label, label));
                         }
                         FormatPart::Variable { name, format } => {
+                            // `"{origin}"` renders the thing exactly as
+                            // `Print origin.` does (plan 310 §7): the same
+                            // emission, straight into the same stream.
+                            if let Some((thing, place)) =
+                                self.thing_place(&Expr::Identifier(name.clone()))
+                            {
+                                self.emit_thing_print(&thing, &place, 0);
+                                continue;
+                            }
                             let var_type: Option<VarType> = match self.resolve_format_variable(name) {
                                 FormatPartValue::Loaded(t) => {
                                     self.emit_indent("mov rdi, rax");
@@ -84,6 +104,12 @@ impl CodeGenerator {
                             }
                         }
                         FormatPart::Expression { expr, format } => {
+                            // `"{span's start}"` - a chain ending on a nested
+                            // thing names the whole thing, and renders as one.
+                            if let Some((thing, place)) = self.thing_place(expr) {
+                                self.emit_thing_print(&thing, &place, 0);
+                                continue;
+                            }
                             let expr_type = self.infer_expr_type(expr);
                             let fmt_spec = self.parse_format_spec(format.as_deref());
 
@@ -111,6 +137,27 @@ impl CodeGenerator {
                                     self.emit_indent(&format!("add rdi, {}  ; buffer data area", BUF_DATA_OFFSET));
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
+                            } else if expr_type == Some(VarType::List) {
+                                // List expression interpolation: rdi holds the
+                                // list pointer; _list_print renders it, exactly
+                                // as the Variable arm above does.
+                                //
+                                // A `{name}` whose name is QUOTED - `{'the
+                                // spaced list'}` - parses as an expression, not
+                                // a variable part, so it arrives here and not
+                                // above; so does a bare list literal
+                                // `{[1, 2, 3]}`. Without this arm both fell to
+                                // the integer formatter and Print emitted the
+                                // list's heap address, the same wrong answer
+                                // docs/BUGS_FOUND.md #44 reports for the other
+                                // sinks - and once those were fixed, Print was
+                                // the only sink still getting it wrong. The Map
+                                // arm below has been here since stage 1e2; this
+                                // is its list twin.
+                                self.generate_expr(expr);
+                                self.emit_indent("mov rdi, rax");
+                                self.uses_lists = true;
+                                self.emit_indent("call _list_print");
                             } else if expr_type == Some(VarType::Map) {
                                 // Map expression interpolation: rdi holds the map
                                 // pointer; _map_print renders it. (stage 1e2)
@@ -257,6 +304,10 @@ impl CodeGenerator {
                             Expr::IntegerLit(_) => Some(VarType::Integer),
                             Expr::FloatLit(_) => Some(VarType::Float),
                             Expr::StringLit(_) => Some(VarType::String),
+                            // A format string always materializes text
+                            // (bug #17); `element N of <literal>` on a list
+                            // literal never carried that arm (bug #39).
+                            Expr::FormatString { .. } => Some(VarType::String),
                             Expr::BoolLit(_) => Some(VarType::Boolean),
                             Expr::ListLit { .. } => Some(VarType::List),
                             Expr::MapLit { .. } => Some(VarType::Map),

@@ -1,0 +1,26 @@
+(Regression: a buffer reports `Buffer (static)` from its `type` property
+however it was declared — bug #42. Every declaration spelling routes
+through `Statement::BufferDecl`, which set `variable_types` but never
+`declared_types`, so `emit_type_property` missed its lookup and fell
+through to the runtime-tag dispatch; the buffer pointer read as a
+string tag and printed `Text (dynamic)`. Only the initializer form
+`is "seed"` took the `VarDecl` path, which already inserted, so it was
+already correct and is kept here as a control. A `value` holding text
+must stay `Text (dynamic)` — the whole point of `value` is that its
+type is whatever its runtime tag currently holds.)
+
+a number called n is 3.
+a buffer called buf1 is 16 bytes in size.
+a buffer called buf2 is "seed".
+Create a buffer called buf3 with size 16.
+a buffer called buf4 is 16 bytes.
+a buffer called buf5.
+a value called v is "hello".
+
+print n's type.
+print buf1's type.
+print buf2's type.
+print buf3's type.
+print buf4's type.
+print buf5's type.
+print v's type.

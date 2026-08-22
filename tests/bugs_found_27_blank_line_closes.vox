@@ -1,0 +1,10 @@
+(Bug #27 regression guard: a blank line (paragraph break) must still
+ close a Repeat body, as LANGUAGE.md's termination rule 2 promises. This
+ is the one closure path that worked before the fix, so it is the
+ regression risk. Here the body has no trailing period; only the blank
+ line ends it, so "after" runs once after the loop. Expected: r, r,
+ after.)
+
+Repeat 2 times, Print "r"
+
+Print "after".

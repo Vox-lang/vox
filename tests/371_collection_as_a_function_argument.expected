@@ -1,0 +1,6 @@
+argument: [1, 2, 3]
+argument: [1, 2, 3]
+argument: {"name": "Ada", "born": 1815}
+argument: {"name": "Ada", "born": 1815}
+the list now: [1, 2, 3, 4]
+the snapshot still: [1, 2, 3]

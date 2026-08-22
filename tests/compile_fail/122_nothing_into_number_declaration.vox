@@ -1,0 +1,8 @@
+(Bug #57's quiet half: a number given the absent value did not crash, it
+ printed 0 - the wrong answer that looks completely plausible.
+ LANGUAGE.md:2685 is explicit that the absent value is not zero, and using
+ the literal as an arithmetic operand was already a compile error for exactly
+ that reason, so the bare initialiser is refused too.)
+
+a number called total is nothing.
+Print total.

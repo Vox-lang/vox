@@ -8,6 +8,9 @@ To 'add numbers' with a number called x and a number called y.
 To 'multiply three' with a number called p and a number called q and a number called r.
   Return a number, p multiply q multiply r.
 
+To 'show the sum' with a number called first and a number called second.
+  print 'add numbers' of first and second.
+
 print "--- 1. LOGICAL AND (boolean operator) ---"
 a boolean called sunny is true.
 a boolean called warm is true.
@@ -59,4 +62,8 @@ a boolean called left is true.
 a boolean called right is true.
 if left, and right are true then,
     print "Both left and right are true.".
+print "--- 7. JOINING LOOP CLAUSES (one call per combination) ---"
+print "show the sum of each first from [1, 2] and each second from [10, 20]:"
+'show the sum' of each first from [1, 2] and each second from [10, 20].
+
 print "Done! All 'and' keyword uses demonstrated."

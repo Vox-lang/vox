@@ -1,0 +1,35 @@
+(Bug #58, the positional siblings of the named read in test 363:
+ `environment's first` and `environment's last`. They lost the declared
+ buffer type the same way, because the arm that re-read the type off the
+ initializer listed every environment and argument spelling together.
+
+ Sizes are again compared against the two-step control rather than against
+ a literal, because the environment differs per machine. `first` and `last`
+ are also compared to each other only through their controls, so a
+ one-variable environment would still pass.)
+
+a buffer called firstdirect is environment's first.
+a text called firsttext is environment's first.
+a buffer called firstcontrol is firsttext.
+
+Print firstdirect's type.
+If firstdirect's size is equal to firstcontrol's size then,
+    print "first: sizes agree".
+Otherwise,
+    print "first: MISMATCH".
+
+a buffer called lastdirect is environment's last.
+a text called lasttext is environment's last.
+a buffer called lastcontrol is lasttext.
+
+Print lastdirect's type.
+If lastdirect's size is equal to lastcontrol's size then,
+    print "last: sizes agree".
+Otherwise,
+    print "last: MISMATCH".
+
+(A buffer built from a positional read is a real buffer: it clears, and a
+ cleared buffer is empty. Reading -1 as its size made `empty` false.)
+clear firstdirect.
+Print firstdirect's size.
+Print firstdirect's empty.

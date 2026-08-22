@@ -1,6 +1,7 @@
 use crate::parser::ast::*;
 use crate::errors::{CompileError, SourceFile, SourceLocation, find_similar_keyword, ENGLISH_KEYWORDS};
 use std::collections::{HashMap, HashSet};
+use crate::codegen::{read_format_spec, FormatSpecFault, FORMAT_MAX_COUNT};
 
 const FD_MAX: i64 = 2_147_483_647;
 
@@ -20,7 +21,10 @@ mod guard_env_tests;
 mod scope;
 mod expressions;
 mod statements;
+pub(crate) mod things;
 mod types;
+mod untyped_returns;
+mod void_results;
 
 pub struct Analyzer {
     pub deps: Dependencies,
@@ -44,7 +48,11 @@ pub struct Analyzer {
     in_function_scope: bool,
     block_depth: usize,
     global_variables: HashSet<String>,
-    flag_variables: HashSet<String>,
+    /// Declared flag name -> its declared value type. A set was not
+    /// enough: every flag then answered `boolean` to a type query,
+    /// which mis-typed text and number flags read inside a function
+    /// body (docs/BUGS_FOUND.md #32).
+    flag_variables: HashMap<String, Type>,
     buffer_variables: HashSet<String>,
     list_variables: HashSet<String>,
     map_variables: HashSet<String>,
@@ -63,6 +71,26 @@ pub struct Analyzer {
     /// numeric one, which the buffer/list/flag sets alone cannot do.
     scalar_types: HashMap<String, Type>,
     function_param_counts: HashMap<String, usize>,
+    /// Declared parameter types and return type of each local function,
+    /// keyed exactly like `function_param_counts`. A thing crosses a call
+    /// boundary by value (plan 310 §5), so the call site is the only place
+    /// an argument's shape and the result's shape can be checked against
+    /// what the definition declared.
+    function_signatures: HashMap<String, (Vec<(String, Type)>, Type)>,
+    /// Functions that hand a value back but never declared its type - keyed
+    /// exactly like `function_signatures` (bug #45). A caller reading one of
+    /// these into a slot that supplies no type of its own has nothing to read
+    /// the value AS, and the conservative "it is a number" fallback turns a
+    /// returned text into the address of its bytes. See
+    /// `untyped_returns.rs` for the whole rule and every rejection site.
+    untyped_result_functions: HashSet<String>,
+    /// Functions that return nothing - a `To` with no `Return` at all -
+    /// keyed exactly like `function_signatures` (BUGS_FOUND #63). There is
+    /// no result at a call to one of these, so a caller that reads one in
+    /// value position reads the return register's leftover instead. See
+    /// `void_results.rs` for the whole rule, its `.lib` half (#62), and
+    /// every rejection site.
+    procedures: HashSet<String>,
     /// Names declared as the dynamic `value` type (value parameters and `a
     /// value called x` locals). A bare `value` is not usable in arithmetic
     /// without an explicit type check (stage 1c predicate); the arithmetic
@@ -93,6 +121,30 @@ pub struct Analyzer {
     /// site is consulted, not aliasing or later `Set <map>'s "k" to
     /// <value>` writes that could widen it.
     map_value_type: HashMap<String, Type>,
+    /// A list's element type, proven from its own literal initializer when
+    /// every element shares one provable type (bug #54) - e.g. `[1, 2]` is
+    /// a list of number. Consulted by `arithmetic_operand_type` so a read
+    /// of an element (`element 1 of counts`, `counts's first`) carries that
+    /// type, which makes a read into a differently-typed variable a
+    /// statically-provable type-lock violation instead of a segfault at
+    /// runtime.
+    ///
+    /// Only offered for a name absent from `widened_lists`: the proof holds
+    /// exactly as long as nothing can change or share the elements after
+    /// the declaration. Absent (no entry) for an empty literal, a mixed
+    /// one, or a non-literal initializer - `arithmetic_operand_type` then
+    /// answers `None` for a read from it, the same "can't prove it, so
+    /// allow" policy as everywhere else in this file.
+    list_element_type: HashMap<String, Type>,
+    /// Every list name some statement in the program can widen or alias -
+    /// see `collect_widened_lists`. Filled once, before the walk, so the
+    /// answer does not depend on where in the file a read appears.
+    widened_lists: HashSet<String>,
+    /// Set when some function in the program appends to (or element-sets)
+    /// one of its own parameters - see `any_function_widens_a_parameter`.
+    /// That is the one widening move no name can be pinned on, so while it
+    /// is true no list gets an element-type proof at all.
+    functions_widen_lists: bool,
     loop_depth: usize,
     /// True when compiling `--shared`. A shared library has no `_start`, so a
     /// top-level executable statement would be generated into the discarded
@@ -116,6 +168,15 @@ pub struct Analyzer {
     /// starts analysis, bounding it to just the orphaned statements in between.
     pending_blank_line_truncation: Option<(String, Vec<String>, SourceLocation)>,
     // (function_name, its parameter names, the blank line's location)
+    /// Set right after analyzing a function whose body a body-level `Return`
+    /// (not the function's first statement) closed early - the "Gate B"
+    /// case in `src/parser/functions.rs`. Same lifecycle and purpose as
+    /// `pending_blank_line_truncation` above, but for the sibling cause: a
+    /// `Return` closes the function it's in, exactly like a blank line does,
+    /// so a second Return written after it (meant as another branch of the
+    /// same function) is silently promoted to top-level code instead.
+    pending_return_truncation: Option<(String, SourceLocation)>,
+    // (function_name, the closing Return's own location)
     /// Stage A4: functions imported by `see '<lib>' version "<ver>" from
     /// "...lib".`, resolved against the filesystem by the driver (parse +
     /// .dynsym verification) and handed here for name resolution and call
@@ -128,6 +189,26 @@ pub struct Analyzer {
     /// Printed by the driver with a `warning:` prefix; they never stop a
     /// build, but shadowing is never silent either.
     pub warnings: Vec<String>,
+    /// Every thing defined in the program (plan 310), keyed by name. Layout,
+    /// sizes, and field offsets are all read from here - see
+    /// `analyzer::things`.
+    things: things::ThingRegistry,
+    /// Which thing each thing variable holds, by variable name. Seeded from
+    /// the whole main line before the walk (so a function body may reach a
+    /// global declared later in the file, like any other global) and extended
+    /// as each declaration is analyzed.
+    thing_vars: HashMap<String, String>,
+    /// The declared return type of the function whose body is being walked,
+    /// `None` at the top level. `Return` needs it: returning a thing copies
+    /// the whole shape into the caller's storage (plan 310 §5), and only the
+    /// signature says whether that is what this `Return` means.
+    current_function_return_type: Option<Type>,
+    /// The name of the function currently being walked, paired with the
+    /// return type above and saved/restored beside it. A diagnostic about
+    /// the return needs somewhere to put its caret, and the signature line
+    /// - where the return type is declared - is the place the author has to
+    /// change (bug #57).
+    current_function_name: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -155,7 +236,7 @@ impl Analyzer {
             in_function_scope: false,
             block_depth: 0,
             global_variables: HashSet::new(),
-            flag_variables: HashSet::new(),
+            flag_variables: HashMap::new(),
             buffer_variables: HashSet::new(),
             list_variables: HashSet::new(),
             map_variables: HashSet::new(),
@@ -164,15 +245,26 @@ impl Analyzer {
             allocated_variables: HashSet::new(),
             scalar_types: HashMap::new(),
             function_param_counts: HashMap::new(),
+            function_signatures: HashMap::new(),
+            untyped_result_functions: HashSet::new(),
+            procedures: HashSet::new(),
             value_typed_names: HashSet::new(),
             list_mixed: HashSet::new(),
             map_value_type: HashMap::new(),
+            list_element_type: HashMap::new(),
+            widened_lists: HashSet::new(),
+            functions_widen_lists: false,
             loop_depth: 0,
             shared_mode: false,
             current_library: None,
             pending_blank_line_truncation: None,
+            pending_return_truncation: None,
             imports: Vec::new(),
             warnings: Vec::new(),
+            things: HashMap::new(),
+            thing_vars: HashMap::new(),
+            current_function_return_type: None,
+            current_function_name: None,
         }
     }
 

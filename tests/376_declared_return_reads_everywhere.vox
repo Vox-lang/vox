@@ -1,0 +1,22 @@
+(Bug #45 — the declared-return control. Declaring the return type is the fix
+ the diagnostic asks for, so every position the undeclared call is now refused
+ in has to read a declared one back as what it is.)
+
+To 'declared label'. Return a text, "hi".
+
+print 'declared label'.
+print "got {'declared label'}".
+
+a list called items is [].
+append 'declared label' to items.
+print element 1 of items.
+
+a list called literal is ['declared label', "second"].
+print element 1 of literal.
+
+a map called labels is {}.
+set labels's "first" to 'declared label'.
+print labels's "first".
+
+a value called carried is 'declared label'.
+print carried.

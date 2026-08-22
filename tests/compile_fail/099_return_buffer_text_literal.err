@@ -1,0 +1,2 @@
+Cannot return text "ABC" as a buffer
+Build the buffer first: 'a buffer called made is "ABC". Return a buffer, made.'

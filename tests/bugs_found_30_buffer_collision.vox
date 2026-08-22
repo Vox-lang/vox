@@ -1,0 +1,4 @@
+(Bug #30 - buffer initialiser. A string literal that spells an in-scope buffer variable's name must initialise the buffer from the literal bytes, not from the named buffer's contents. Unfixed output: SURPRISE - the buffer hello's contents are silently substituted for the literal "hello".)
+a buffer called hello is "SURPRISE".
+a buffer called b is "hello".
+Print b.

@@ -1,0 +1,10 @@
+(Bug #61 - a pad width past i32::MAX was read with `parse::<i32>()` and the
+ Err was dropped by an `if let` with no else arm, so the width vanished and
+ the value printed exactly as `{n}` would: no padding, no diagnostic, and a
+ cliff between two adjacent literals. LANGUAGE.md:3107 puts no ceiling on
+ the width and none is intended - `{n:2147483648}` now pads - so the only
+ width that can be refused is one too large to hold, and it is refused out
+ loud rather than dropped.)
+
+a number called n is 255.
+Print "{n:99999999999999999999}".

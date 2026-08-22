@@ -1,0 +1,10 @@
+a list called everything is arguments's all.
+Print everything.
+Print element 1 of everything.
+
+a list called raw_args is arguments's raw.
+Print raw_args.
+Print element 1 of raw_args.
+
+a list called nums is [1, 2, 3].
+Print nums.

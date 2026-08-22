@@ -1,0 +1,15 @@
+(Bug #50 was never print-specific - the chain-continuation guard is shared,
+ so a bare `otherwise` after any non-append base action was refused.
+ `increment` is the second base action the fix has to carry. Each branch
+ counts into its own tally so the test says WHICH branch ran, not merely
+ that something did: an `otherwise` supplies the chain's default, so the
+ base action itself never runs once one is present, and `tally` stays 1.)
+
+a number called tally is 1.
+a number called highs is 0.
+a number called lows is 0.
+increment tally, but if tally is greater than 50 increment highs, otherwise increment lows.
+increment tally, but if tally is greater than 0 increment highs, otherwise increment lows.
+print tally.
+print highs.
+print lows.

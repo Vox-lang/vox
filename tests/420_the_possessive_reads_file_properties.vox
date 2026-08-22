@@ -1,0 +1,37 @@
+(Bug #64: `the` is only an article before a variable name
+ (LANGUAGE.md:1857), so `the h's size` and `h's size` are the same
+ reading. The `the` spelling knew none of the file properties and
+ answered "Expected property name" for every one but `size`. Every row
+ of the File Properties table, read through the `the` spelling.)
+
+open a file for writing called setup at "/tmp/vox_test_the_file_props.txt".
+Write "hello vox" to setup.
+Close setup.
+
+open a file for reading called reader at "/tmp/vox_test_the_file_props.txt".
+
+Print "size: {the reader's size}".
+
+If the reader's descriptor is greater than -1 then,
+    Print "descriptor: open".
+
+Print "readable: {the reader's readable}".
+Print "writable: {the reader's writable}".
+
+If the reader's modified is greater than 0 then,
+    Print "modified: a timestamp".
+
+If the reader's accessed is greater than 0 then,
+    Print "accessed: a timestamp".
+
+If the reader's permissions is greater than 0 then,
+    Print "permissions: a mode".
+
+Close reader.
+
+open a file for writing called writer at "/tmp/vox_test_the_file_props.txt".
+Print "writer readable: {the writer's readable}".
+Print "writer writable: {the writer's writable}".
+Close writer.
+
+Delete the file "/tmp/vox_test_the_file_props.txt".

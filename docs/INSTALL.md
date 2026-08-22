@@ -58,6 +58,25 @@ At this point you should be able to run:
 vox /path/to/program.vox --run
 ```
 
+## Libraries (optional)
+
+Vox has no standard library, and the compiler never needs one — it builds and
+runs with `/usr/include/vox/` empty. Libraries are separate, and ship from the
+same Copr repository, so no extra setup is needed:
+
+```sh
+sudo dnf install vox-libs
+```
+
+That installs each library's `.lib` interface into `/usr/include/vox/` and its
+`.so` into `/usr/lib64/` — the same split a C library uses between its header
+and its shared object. See
+[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs).
+
+The compiler's RPM carries `Suggests: vox-libs`, which records that they exist
+without dnf installing them: a plain `dnf install vox` gets the compiler alone,
+exactly as before.
+
 ## How `vox` finds `coreasm`
 
 The compiler searches for `coreasm` using the following resolution order:
@@ -70,6 +89,23 @@ The compiler searches for `coreasm` using the following resolution order:
    - `/opt/vox/coreasm`
 4. Executable-relative search (portable installs)
 5. Current working directory fallback (`./coreasm`)
+6. The copy embedded in the binary itself, written to
+   `~/.cache/vox/<version>/coreasm` on first use
+
+Step 6 exists because `cargo install` copies only the binary, leaving the
+crate's `coreasm/` behind in the registry cache — without it, a
+cargo-installed `vox` cannot compile anything. The compiler therefore
+carries its own copy and writes it out the first time it needs it, keyed
+by version so two installed compilers never share one tree. It is
+consulted **last**, so every path above still wins: an RPM install, a
+development tree, and `VOX_CORE_PATH` all behave exactly as they did
+before it existed.
+
+Installing with cargo needs nothing else:
+
+```sh
+cargo install vox-lang     # the crate is vox-lang; the binary is vox
+```
 
 ### Working on the compiler with a system install present
 

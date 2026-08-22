@@ -1,0 +1,11 @@
+(Bug #31 - a text flag with no default segfaulted when the flag was not
+ supplied: the slot held a literal 0 and the first read dereferenced it.
+ LANGUAGE.md makes `with default` optional, so this is legal code. The
+ fix gives an undefaulted text flag the same shared empty string that
+ emit_type_default gives an ordinary `a text called x.` - bug #16's cure,
+ which this path never received.
+
+ Run with no arguments: outdir must read as "" and not crash.)
+a flag called outdir is "-o" or "--out", it is a text.
+Parse flags.
+Print "text-no-default:{outdir}".

@@ -1,0 +1,12 @@
+(Compile-fail: plan 310 §3, §9 - the same rule inside a loop body. The
+ parser dispatches a definition from one statement door, so every block
+ that holds statements reaches it; a loop body is checked here because a
+ loop can run its body no times at all, which is the clearest case of a
+ definition that cannot mean anything where it is written.)
+
+a number called countdown is 0.
+
+While countdown is less than 3,
+  A thing called measurement has
+    a number called degrees is 0,
+  countdown is countdown plus 1.

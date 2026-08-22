@@ -1,0 +1,7 @@
+(Bug #45: the function below returns a text, but its definition never says so.
+ A print has no type of its own to read the result as, and the conservative
+ "it is a number" fallback printed the address of "hi" instead of "hi".)
+
+To 'opaque label'. Return "hi".
+
+print 'opaque label'.

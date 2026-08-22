@@ -252,3 +252,104 @@
             analyzer.errors
         );
     }
+
+    /// Bug #55. The two checks above only ever compared the clause's own
+    /// operands to each other. The SUBJECT - the loop variable, holding an
+    /// element of the collection being walked - was invisible to them,
+    /// because `infer_simple_expr_type` answers None for a plain name. So a
+    /// match of the wrong type for that collection compiled clean and the
+    /// emitted `_str_eq` dereferenced it.
+    ///
+    /// Note both `arguments's all` cases above still pass: an argument
+    /// list has no provable element type, so nothing new fires there.
+    #[test]
+    fn treating_rejects_a_match_mistyped_for_a_list_literal() {
+        let input = r#"
+            print each item from ["a"] treating 98 as 31.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Treating value and match must be the same type (got text vs number)")),
+            "expected the subject/match mismatch to be rejected, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn treating_rejects_a_match_mistyped_for_a_named_list() {
+        let input = r#"
+            a list called words is ["a", "b"].
+            print each item from words treating 98 as 31.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Treating value and match must be the same type (got text vs number)")),
+            "expected the subject/match mismatch to be rejected, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn treating_rejects_a_text_match_over_a_range() {
+        let input = r#"
+            print each step from 1 to 3 treating "a" as "b".
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Treating value and match must be the same type (got number vs text)")),
+            "expected the range loop variable's type to be checked, got: {:?}",
+            analyzer.errors
+        );
+    }
+
+    #[test]
+    fn treating_accepts_a_match_of_the_collection_element_type() {
+        let input = r#"
+            a list called sources is ["-", "report.txt"].
+            print each source from sources treating "-" as "/dev/stdin".
+            print each count from [1, 2] treating 1 as 9.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Treating value and match must be the same type")),
+            "unexpected treating type mismatch error(s): {:?}",
+            analyzer.errors
+        );
+    }
+
+    /// Over a list proven MIXED the loop variable genuinely holds a
+    /// different type each iteration, so there is no static answer to give
+    /// and the clause is left alone - the same policy `value`-typed names
+    /// get everywhere else.
+    #[test]
+    fn treating_leaves_a_mixed_list_to_the_runtime() {
+        let input = r#"
+            print each item from [1, "a"] treating 98 as 31.
+        "#;
+
+        let analyzer = analyze_input(input);
+        assert!(
+            analyzer
+                .errors
+                .iter()
+                .all(|e| !e.message.contains("Treating value and match must be the same type")),
+            "a mixed list has no provable element type to check against: {:?}",
+            analyzer.errors
+        );
+    }

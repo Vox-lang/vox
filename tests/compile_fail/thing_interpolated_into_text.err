@@ -1,0 +1,2 @@
+'origin' holds a whole point, which only `Print` can interpolate
+Interpolate a field instead - point's fields are: x, y

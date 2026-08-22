@@ -1,4 +1,5 @@
 use super::*;
+use super::untyped_returns::UntypedPosition;
 
 /// A short, human-readable name for a statement kind, used in the shared-mode
 /// top-level diagnostic. Only called for statements that are NOT one of the
@@ -7,7 +8,7 @@ fn shared_top_level_label(stmt: &Statement) -> &'static str {
     match stmt {
         Statement::Print { .. } => "print statement",
         Statement::VarDecl { .. } => "variable declaration",
-        Statement::Assignment { .. } => "assignment",
+        Statement::Assignment { .. } | Statement::SetThingField { .. } => "assignment",
         Statement::If { .. } => "if statement",
         Statement::While { .. } => "while loop",
         Statement::ForRange { .. } | Statement::ForEach { .. } | Statement::Repeat { .. } => "loop",
@@ -28,9 +29,20 @@ impl Analyzer {
         // `Library`, and `see` may appear at the top level of a library.
         if self.shared_mode {
             for stmt in &program.statements {
+                // A thing definition belongs here with the other three: it
+                // declares a type, allocates nothing, and emits no code, so
+                // there is no executable statement to be dropped into the
+                // discarded main body. Plan 310 §3 requires definitions to
+                // cross files like functions do, which means a library's own
+                // exports can take and return its things. A thing *variable*
+                // is still rejected - that is a VarDecl, and its storage and
+                // defaults would need main-line code that never runs.
                 if !matches!(
                     stmt,
-                    Statement::FunctionDef { .. } | Statement::LibraryDecl { .. } | Statement::See { .. }
+                    Statement::FunctionDef { .. }
+                        | Statement::LibraryDecl { .. }
+                        | Statement::See { .. }
+                        | Statement::ThingDecl(_)
                 ) {
                     self.push_error(
                         format!(
@@ -112,6 +124,20 @@ impl Analyzer {
             }
         }
 
+        // Bug #54: which lists can still be widened or aliased after their
+        // declaration, so the element-type proof below is only offered for
+        // the ones that cannot - plus the blunter question of whether any
+        // function widens a list it was handed, which no name can be
+        // pinned on. Whole-program and order-independent, so a read early
+        // in the file gets the same answer as one after the append that
+        // widens the list.
+        self.widened_lists = collect_widened_lists(&program.statements);
+        self.functions_widen_lists = any_function_widens_a_parameter(&program.statements);
+
+        // Load and validate the thing registry before anything can consult it
+        // for a size, an offset, or a field path (plan 310 §6, §10).
+        self.load_things(program);
+
         // First pass: collect function definitions, global declarations, and flag schemas.
         let mut explicit_parse_seen = false;
 
@@ -144,17 +170,41 @@ impl Analyzer {
                 Statement::LibraryDecl { name, version } => {
                     current_lib = Some((name.clone(), version.clone()));
                 }
-                Statement::FunctionDef { name, params, .. } => {
+                Statement::FunctionDef { name, params, return_type, body, .. } => {
                     let key = crate::codegen::make_function_label(
                         self.shared_mode,
                         current_lib.as_ref(),
                         name,
                     );
                     self.functions.insert(key.clone());
-                    self.function_param_counts.insert(key, params.len());
+                    self.function_param_counts.insert(key.clone(), params.len());
+                    // Signatures are collected here, before the walk, so a
+                    // call to a function defined further down the file still
+                    // knows whether an argument is a thing to copy.
+                    self.function_signatures
+                        .insert(key.clone(), (params.clone(), return_type.clone()));
+                    // Bug #45: whether the result of a call has a type to
+                    // read is settled here too, for the same reason - a call
+                    // above the definition must be judged the same as one
+                    // below it.
+                    self.record_untyped_result_function(key.clone(), return_type, body);
+                    // Bug #63: whether a call has a result at all is settled
+                    // here too, for the same reason - a call above the
+                    // definition must be judged the same as one below it.
+                    // Two independent questions about the same definition:
+                    // #45 asks whether the result has a type to read, #63
+                    // whether there is a result at all.
+                    self.record_procedure(key, return_type, body);
                 }
-                Statement::FlagSchemaDecl { name, .. } => {
-                    self.flag_variables.insert(name.clone());
+                Statement::FlagSchemaDecl { name, value_type, .. } => {
+                    self.flag_variables.insert(
+                        name.clone(),
+                        match value_type {
+                            FlagValueType::Boolean => Type::Boolean,
+                            FlagValueType::Number => Type::Integer,
+                            FlagValueType::Text => Type::String,
+                        },
+                    );
                     self.global_variables.insert(name.clone());
                     if explicit_parse_seen {
                         self.push_error(
@@ -273,6 +323,7 @@ impl Analyzer {
             Statement::ByteSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
             Statement::ElementSet { index, value, .. } => self.expr_uses_flag(index).or_else(|| self.expr_uses_flag(value)),
             Statement::MapSet { key, value, .. } => self.expr_uses_flag(key).or_else(|| self.expr_uses_flag(value)),
+            Statement::SetThingField { value, .. } => self.expr_uses_flag(value),
             Statement::ListAppend { value, .. } => self.expr_uses_flag(value),
             Statement::FileOpen { path, .. } => self.expr_uses_flag(path),
             Statement::FileWrite { value, .. } => self.expr_uses_flag(value),
@@ -298,32 +349,6 @@ impl Analyzer {
                 }
             }
             _ => None,
-        }
-    }
-
-    fn validate_function_condition_variable_refs(&mut self, expr: &Expr) {
-        if !self.in_function_scope {
-            return;
-        }
-
-        match expr {
-            Expr::StringLit(name) => {
-                self.track_identifier(name);
-                if !self.is_variable_available(name) {
-                    self.push_unknown_variable(name);
-                }
-            }
-            Expr::UnaryOp {
-                op: UnaryOperator::Not,
-                operand,
-            } => {
-                self.validate_function_condition_variable_refs(operand);
-            }
-            Expr::BinaryOp { left, right, .. } => {
-                self.validate_function_condition_variable_refs(left);
-                self.validate_function_condition_variable_refs(right);
-            }
-            _ => {}
         }
     }
 
@@ -369,16 +394,86 @@ impl Analyzer {
 
     pub(crate) fn analyze_statement(&mut self, stmt: &Statement) {
         match stmt {
+            // A thing definition declares a type: it introduces no variable,
+            // touches no runtime dependency, and emits no code. Registry
+            // validation (sizes, offsets, cycles, the manifest checks) lands
+            // with the declarations that need it; there is nothing to check
+            // while a definition cannot yet be used.
+            Statement::ThingDecl(_) => {}
+
+            // A field write (plan 310 §3). The chain is validated exactly like
+            // a read. A chain ending on a nested thing writes the whole thing,
+            // which is a copy (§5); every other chain takes an ordinary value.
+            Statement::SetThingField { base, path, value } => {
+                match self.resolve_thing_field(base, path) {
+                    Some(Type::Thing(inner)) => {
+                        let target = things::render_chain(base, path);
+                        self.check_thing_copy(&target, base, &inner, value);
+                    }
+                    _ => self.analyze_expr(value),
+                }
+            }
+
             Statement::Print { value, .. } => {
                 self.deps.uses_io = true;
-                self.analyze_expr(value);
-                
+                // The one position that renders a whole thing (plan 310 §7).
+                // Print writes the fields straight out, so a thing is welcome
+                // here and in the interpolations of the string it prints;
+                // every other position still wants a single value.
+                match value {
+                    Expr::FormatString { parts } => {
+                        self.deps.uses_strings = true;
+                        self.analyze_format_parts(parts, true);
+                    }
+                    _ => {
+                        self.analyze_printed_expr(value);
+                        // Bug #45: `print 'opaque label'.` has no type to
+                        // print the result AS.
+                        self.reject_untyped_call_result(value, UntypedPosition::Print);
+                    }
+                }
+
                 if matches!(value, Expr::StringLit(_)) {
                     self.deps.uses_strings = true;
                 }
             }
             
             Statement::VarDecl { name, var_type, value } => {
+                // A thing variable is assigned by copying a whole thing into
+                // the storage it already has (plan 310 §5). `Set origin to
+                // <expr>.` names an existing thing variable; the typed
+                // declaration form is handled with the declaration below,
+                // which reserves the storage first.
+                if var_type.is_none() {
+                    if let Some(thing) = self.thing_of_variable(name) {
+                        if self.is_variable_available(name) {
+                            match value {
+                                Some(v) => self.check_thing_copy(name, name, &thing, v),
+                                // `Set origin.` with nothing to store: there
+                                // is no value to write, and writing one would
+                                // land a single quadword on the thing's first
+                                // field.
+                                None => self.push_whole_thing_not_a_value(name, name, &thing),
+                            }
+                            return;
+                        }
+                    }
+                }
+                // Bug #45: a `value` is the one declared type that supplies
+                // no static type - it carries the payload's type as a runtime
+                // tag, set from whatever was proven at the write. An
+                // undeclared return type proves nothing, so the tag would be
+                // the conservative "number" guess and the payload a text.
+                // Both the declaration and a later `Set v to <call>` write
+                // that tag, so both are checked.
+                let writes_a_dynamic_value = matches!(var_type, Some(Type::Value))
+                    || (var_type.is_none() && self.value_typed_names.contains(name));
+                if writes_a_dynamic_value {
+                    if let Some(v) = value {
+                        self.reject_untyped_call_result(v, UntypedPosition::DynamicValue);
+                    }
+                }
+
                 // `Set x to <value>.` / `Create x to <value>.` parse into
                 // this same statement with `var_type: None` regardless of
                 // whether `x` is brand-new or already exists (no explicit
@@ -445,6 +540,14 @@ impl Analyzer {
                         if self.list_literal_is_mixed(elements) {
                             self.list_mixed.insert(name.clone());
                         }
+                        // Bug #54: a homogeneous list literal's element type
+                        // is provable, which makes a read of an element into
+                        // a differently-typed variable a statically-detectable
+                        // type-lock violation instead of the segfault it used
+                        // to compile to.
+                        if let Some(t) = self.list_literal_element_type(elements) {
+                            self.list_element_type.insert(name.clone(), t);
+                        }
                     }
                 }
                 if let Some(Type::Map(_)) = var_type {
@@ -465,9 +568,63 @@ impl Analyzer {
                     // author checks its type with a predicate.
                     self.value_typed_names.insert(name.clone());
                 }
+                // An initialiser on a thing declaration copies a whole thing
+                // of the same type into the storage the declaration reserves
+                // (plan 310 §5). It is never an ordinary value, so it is
+                // checked as a copy here instead of analyzed as one below.
+                let declared_thing = match var_type {
+                    Some(Type::Thing(thing)) => {
+                        // A function's own thing local is not in the
+                        // main-line pre-pass, so record it as the walk
+                        // reaches it (plan 310 §3).
+                        let thing = thing.clone();
+                        self.declare_thing_variable(name, &thing);
+                        Some(thing)
+                    }
+                    Some(_) => {
+                        // Declared as something else: this name is not a
+                        // thing variable, so it must not keep a stale thing
+                        // label and report "holds a whole point" for an
+                        // ordinary number.
+                        self.thing_vars.remove(name);
+                        None
+                    }
+                    None => None,
+                };
                 self.maybe_activate_true_guard(name, var_type, value);
                 if let Some(v) = value {
-                    self.analyze_expr(v);
+                    match &declared_thing {
+                        Some(thing) => {
+                            let (name, thing) = (name.clone(), thing.clone());
+                            self.check_thing_copy(&name, &name, &thing, v);
+                        }
+                        None => self.analyze_expr(v),
+                    }
+                }
+                // Bug #54: a declaration initialised from a collection or
+                // buffer read of a provably different type. The read is
+                // checked here because the type lock below only guards
+                // writes to an ALREADY-declared name, and this is the
+                // declaration itself.
+                let mut initialiser_refused = false;
+                if let (Some(vt), Some(v)) = (var_type.as_ref(), value.as_ref()) {
+                    initialiser_refused = self.check_declared_read_type(name, vt, v);
+                    // Bug #57: `a text called t is nothing.` (and the
+                    // `Set`/`Create ... to nothing.` spellings, which parse
+                    // into this same statement). Checked here for the same
+                    // reason as the read above - the type lock guards writes
+                    // to an already-declared name, and this is the
+                    // declaration itself.
+                    initialiser_refused |= self.check_nothing_initialiser(name, vt, v);
+                    // Bug #65: every other provable mismatch - `a text
+                    // called n is 5.`, `a number called n is "get five".`,
+                    // `a list called items is 5.` - which the two checks
+                    // above left to the declaration's own (absent) type
+                    // check. Runs only when neither has already reported,
+                    // so one mistake never earns two diagnostics.
+                    if !initialiser_refused {
+                        initialiser_refused = self.check_initialiser_type(name, vt, v);
+                    }
                 }
                 // Track the scalar category (number/float/text/boolean) for
                 // the arithmetic type check. Numeric/boolean declarations are
@@ -477,9 +634,42 @@ impl Analyzer {
                 // function-call or property initializer of unknown type might
                 // return a number, and pinning it as text would wrongly reject
                 // later arithmetic on it.
-                if let Some(vt) = var_type {
+                if initialiser_refused {
+                    // Poison the tracked category after reporting, exactly
+                    // as `check_type_lock` does for a rejected assignment:
+                    // the declaration was refused, so recording either type
+                    // would make later uses of `name` in this same
+                    // (already-failing) compile cascade a second, confusing
+                    // error out of the mistake just reported - `a number
+                    // called n is "x". Set n to 5.` used to answer "cannot
+                    // assign number to 'n', which is a text", naming a type
+                    // nobody wrote.
+                    self.scalar_types.remove(name);
+                } else if let Some(vt) = var_type {
                     match vt {
-                        Type::Integer | Type::Float | Type::Boolean => {
+                        // A declared float stays a float. Codegen labels the
+                        // slot `VarType::Float` from the declaration and
+                        // converts an integer initialiser into it at the
+                        // store (bug #65, the designer's number/float
+                        // ruling), so relabelling the name a number off the
+                        // initialiser's shape is a disagreement with what is
+                        // actually in the slot: it is what made `a float
+                        // called f is 3.` followed by `Set f to 4.0.` answer
+                        // "cannot assign float to 'f', which is a number",
+                        // naming a type nobody wrote, while letting `Set f to
+                        // 4.` through. Every other initialiser type is still
+                        // read off the value, exactly as before.
+                        Type::Float => {
+                            let t = match value
+                                .as_ref()
+                                .and_then(|v| self.arithmetic_operand_type(v))
+                            {
+                                Some(Type::Integer) | None => Type::Float,
+                                Some(other) => other,
+                            };
+                            self.scalar_types.insert(name.clone(), t);
+                        }
+                        Type::Integer | Type::Boolean => {
                             let t = value
                                 .as_ref()
                                 .and_then(|v| self.arithmetic_operand_type(v))
@@ -570,6 +760,16 @@ impl Analyzer {
                 // type-checked at all, so capture it before the auto-declare
                 // below can change the answer.
                 let was_already_declared = self.is_variable_available(name);
+                // `elsewhere is origin.` on a name that holds a thing copies
+                // the whole thing into the storage it already has (plan 310
+                // §5); anything that is not a whole thing of that type is a
+                // write of one quadword over its first field.
+                if was_already_declared {
+                    if let Some(thing) = self.thing_of_variable(name) {
+                        self.check_thing_copy(name, name, &thing, value);
+                        return;
+                    }
+                }
                 if !was_already_declared {
                     if self.in_function_scope {
                         self.push_unknown_variable(name);
@@ -682,7 +882,6 @@ impl Analyzer {
             }
 
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
-                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
 
                 // Branches are analyzed with the same incoming scope.
@@ -705,7 +904,6 @@ impl Analyzer {
                 for (cond, block) in else_if_blocks {
                     let saved_env = self.current_env();
                     self.apply_env(&branch_env);
-                    self.validate_function_condition_variable_refs(cond);
                     self.analyze_expr(cond);
                     self.apply_env(&saved_env);
                     let (elif_env, elif_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
@@ -729,7 +927,6 @@ impl Analyzer {
             }
             
             Statement::While { condition, body } => {
-                self.validate_function_condition_variable_refs(condition);
                 self.analyze_expr(condition);
                 self.loop_depth += 1;
                 for s in body {
@@ -753,7 +950,15 @@ impl Analyzer {
                     &[format!("each {} ", variable)],
                     true,
                 );
-                self.analyze_expr(range);
+                // The loop's own bounds, walked directly: `analyze_expr`
+                // refuses a bare range everywhere a value is expected
+                // (bug #56), and this is the one position where one belongs.
+                if let Expr::Range { start, end, .. } = range {
+                    self.analyze_expr(start);
+                    self.analyze_expr(end);
+                } else {
+                    self.analyze_expr(range);
+                }
                 self.loop_depth += 1;
                 for s in body {
                     self.analyze_statement(s);
@@ -762,6 +967,12 @@ impl Analyzer {
             }
 
             Statement::ForEach { variable, collection, body } => {
+                // `each ... from <collection>` walks a list header. Refuse
+                // the operands that would make codegen read one where there
+                // is none (bug #49) before anything else in this arm, so the
+                // rest of the pass is not reasoning about a loop that cannot
+                // run.
+                self.check_loop_collection(variable, collection);
                 self.variables.insert(variable.clone());
                 // The element category is unknown (lists may be mixed), so a
                 // label left over from a previous use of this name - e.g. a
@@ -793,6 +1004,26 @@ impl Analyzer {
                     self.value_typed_names.insert(variable.clone());
                 } else {
                     self.value_typed_names.remove(variable.as_str());
+                    // Bug #54: over a list whose element type IS provable,
+                    // the loop variable holds that type on every iteration.
+                    // Recording it is what makes `label is part.` inside the
+                    // body - the loop spelling of an element read into a
+                    // mistyped variable - reach the type lock instead of
+                    // compiling to a number written into a text slot.
+                    // Bug #55: an inline collection - `each item from
+                    // ["a"]` - has no name to look up, so the same
+                    // element type has to be read off the literal. Without
+                    // it the loop variable stayed untyped and a
+                    // type-mismatched `treating` clause over a list
+                    // literal reached codegen.
+                    let element_type = match (list_name, collection) {
+                        (Some(n), _) => self.list_element_type_of(n),
+                        (None, Expr::ListLit { elements }) => self.list_literal_element_type(elements),
+                        (None, _) => None,
+                    };
+                    if let Some(t) = element_type {
+                        self.scalar_types.insert(variable.clone(), t);
+                    }
                 }
                 self.analyze_expr(collection);
                 self.loop_depth += 1;
@@ -817,23 +1048,64 @@ impl Analyzer {
                 // (leave/ret) which is undefined from _start, so reject
                 // it here rather than produce broken output.
                 if !self.in_function_scope {
-                    let hint = self.pending_blank_line_truncation.as_ref().map(|(func, _, loc)| {
-                        format!(
+                    let mut location = None;
+                    let hint = if let Some((func, _, loc)) = &self.pending_blank_line_truncation {
+                        location = Some(loc.clone());
+                        Some(format!(
                             "a blank line ended `{}`'s body early at line {} — a paragraph break closes all open clauses, so this Return is no longer inside it",
                             func, loc.line
-                        )
-                    });
-                    self.push_error_with_hint(
+                        ))
+                    } else if let Some((func, loc)) = &self.pending_return_truncation {
+                        location = Some(loc.clone());
+                        Some(format!(
+                            "a Return closed `{}`'s body early at line {} — a body-level Return ends the function it's in, so this Return is no longer inside it",
+                            func, loc.line
+                        ))
+                    } else {
+                        None
+                    };
+                    self.push_error_with_hint_at(
                         "Return is only valid inside a function".to_string(),
-                        None,
+                        location,
                         hint.as_deref(),
                     );
                 }
-                if let Some(v) = value {
-                    self.analyze_expr(v);
+                // A function declaring a thing return hands the caller a copy
+                // of a whole thing (plan 310 §5), so what is returned is
+                // checked against the declared shape exactly like any other
+                // copy - "the function's result" being the destination.
+                match (self.current_function_return_type.clone(), value) {
+                    (Some(Type::Thing(thing)), Some(v)) => {
+                        self.check_thing_copy("this function's result", "Return", &thing, v);
+                    }
+                    // A buffer return hands back a pointer the caller reads as
+                    // a buffer struct, so a text (or any other non-buffer)
+                    // source is refused rather than compiled into an
+                    // out-of-bounds read (bug #53).
+                    (Some(Type::Buffer), Some(v)) => {
+                        self.check_buffer_return_source(v);
+                        self.analyze_expr(v);
+                    }
+                    // Bug #57: `Return text, nothing.` The caller reads the
+                    // result as the declared type, so a text return handed
+                    // back a null pointer to dereference and a number return
+                    // quietly answered 0. Bug #65 is the same hole for every
+                    // other provable type - `Return a text, 5.` handed back
+                    // the literal's address - and is checked only when the
+                    // `nothing` check has not already reported, so one
+                    // Return never earns two diagnostics.
+                    (Some(ref declared), Some(v)) => {
+                        let declared = declared.clone();
+                        if !self.check_nothing_return(&declared, v) {
+                            self.check_return_type(&declared, v);
+                        }
+                        self.analyze_expr(v);
+                    }
+                    (None, Some(v)) => self.analyze_expr(v),
+                    (_, None) => {}
                 }
             }
-            
+
             Statement::Allocate { name, size } => {
                 self.deps.uses_heap = true;
                 self.variables.insert(name.clone());
@@ -871,13 +1143,15 @@ impl Analyzer {
             Statement::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
                 self.check_function_call(name, args);
-                for arg in args {
-                    self.analyze_expr(arg);
-                }
+                // A call as a whole statement discards its result, so a thing
+                // return needs no destination here; only the arguments are
+                // checked, and a thing argument is a copy (plan 310 §5).
+                self.analyze_call_arguments(name, args);
             }
             
-            Statement::FunctionDef { name, params, body, body_ended_early, .. } => {
+            Statement::FunctionDef { name, params, return_type, body, body_ended_early, body_ended_via_return } => {
                 self.pending_blank_line_truncation = None;
+                self.pending_return_truncation = None;
                 // A leading underscore is the runtime's namespace (see
                 // docs/SYMBOL_MANGLING.md). A function name emits a label
                 // verbatim, so `To _str_eq ...` redefines a coreasm symbol
@@ -921,7 +1195,44 @@ impl Analyzer {
                 self.functions.insert(self.func_key(name));
                 self.function_param_counts
                     .insert(self.func_key(name), params.len());
+                self.record_function_signature(name, params, return_type);
                 self.deps.uses_funcs = true; // Track that functions are used
+
+                // A thing crosses a library boundary as bytes with a layout
+                // the `.lib` interface file has no vocabulary for: its Table
+                // of Contents names types by noun, and no noun spells a
+                // user-defined shape. Rejecting an exported signature that
+                // uses one keeps a `--shared` build from writing a `.lib`
+                // that cannot be read back (plan 310 §6 defers user types out
+                // of the cross-boundary type system).
+                if self.shared_mode {
+                    for (param_name, param_type) in params {
+                        if let Type::Thing(thing) = param_type {
+                            self.push_error(
+                                format!(
+                                    "Exported function '{}' takes a {} ('{}'), which a \
+                                     library interface cannot describe yet\n  \
+                                     A thing is a layout private to one compilation; \
+                                     pass its fields across the boundary instead.",
+                                    name, thing, param_name
+                                ),
+                                Some(name),
+                            );
+                        }
+                    }
+                    if let Type::Thing(thing) = return_type {
+                        self.push_error(
+                            format!(
+                                "Exported function '{}' returns a {}, which a library \
+                                 interface cannot describe yet\n  \
+                                 A thing is a layout private to one compilation; \
+                                 return one of its fields instead.",
+                                name, thing
+                            ),
+                            Some(name),
+                        );
+                    }
+                }
 
                 // Functions can access top-level globals, but locals declared inside
                 // the function must not leak back into top-level scope.
@@ -942,6 +1253,11 @@ impl Analyzer {
                 let saved_timer_variables = self.timer_variables.clone();
                 let saved_allocated_variables = self.allocated_variables.clone();
                 let saved_value_typed_names = self.value_typed_names.clone();
+                let saved_thing_vars = self.thing_vars.clone();
+                let saved_return_type = self.current_function_return_type.take();
+                let saved_function_name = self.current_function_name.take();
+                self.current_function_return_type = Some(return_type.clone());
+                self.current_function_name = Some(name.clone());
                 self.variables = self.global_variables.clone();
                 self.guarded_scopes.clear();
                 self.active_guards.clear();
@@ -959,7 +1275,18 @@ impl Analyzer {
                 // type happened to already exist elsewhere in the program.
                 for (param_name, param_type) in params {
                     self.variables.insert(param_name.clone());
+                    // A parameter of any other type must not inherit a
+                    // same-named global thing variable's label, or `p's x`
+                    // would resolve against a shape this parameter does not
+                    // have. The thing arm below puts back the ones that do.
+                    self.thing_vars.remove(param_name);
                     match param_type {
+                        Type::Thing(thing) => {
+                            // A thing parameter holds a copy of the caller's
+                            // thing in this frame (plan 310 §5), so its
+                            // fields read exactly like a local declaration's.
+                            self.thing_vars.insert(param_name.clone(), thing.clone());
+                        }
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::Map(_) => { self.map_variables.insert(param_name.clone()); }
@@ -992,21 +1319,31 @@ impl Analyzer {
                 self.timer_variables = saved_timer_variables;
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
+                self.thing_vars = saved_thing_vars;
+                self.current_function_return_type = saved_return_type;
+                self.current_function_name = saved_function_name;
                 self.apply_env(&saved_env);
 
                 self.pending_blank_line_truncation = body_ended_early.as_ref().map(|loc| {
                     (name.clone(), params.iter().map(|(n, _)| n.clone()).collect(), loc.clone())
                 });
+                self.pending_return_truncation = body_ended_via_return
+                    .as_ref()
+                    .map(|loc| (name.clone(), loc.clone()));
             }
 
             Statement::Increment { name } | Statement::Decrement { name } => {
                 if !self.is_variable_available(name) {
                     self.push_unknown_variable(name);
+                } else if self.reject_whole_thing_as_a_value(name) {
+                    // A step on a whole thing would `inc qword` its first
+                    // field. `increment origin's x.` is what it means, and
+                    // that parses into a field write instead (plan 310 §3).
                 } else if self.is_buffer_variable(name)
                     || self.is_list_variable(name)
                     || self.is_map_variable(name)
                     || self.file_variables.contains(name.as_str())
-                    || self.flag_variables.contains(name.as_str())
+                    || self.flag_variables.contains_key(name.as_str())
                     || self.timer_variables.contains(name.as_str())
                     || matches!(self.named_value_type(name), Some(Type::String))
                 {
@@ -1097,6 +1434,7 @@ impl Analyzer {
                 self.track_identifier(list);
                 self.analyze_expr(index);
                 self.analyze_expr(value);
+                self.reject_untyped_call_result(value, UntypedPosition::ListElement);
 
                 if !self.is_variable_available(list) {
                     self.push_error(format!("Unknown list: {}", list), Some(list));
@@ -1115,6 +1453,7 @@ impl Analyzer {
                 self.track_identifier(map);
                 self.analyze_expr(key);
                 self.analyze_expr(value);
+                self.reject_untyped_call_result(value, UntypedPosition::MapValue);
 
                 if !self.is_variable_available(map) {
                     self.push_error(format!("Unknown map: {}", map), Some(map));
@@ -1163,7 +1502,10 @@ impl Analyzer {
                         }
                     }
                 } else if self.is_list_variable(list) {
-                    // Valid list append path.
+                    // Valid list append path - except for bug #45's slot: the
+                    // element's tag is written from the type proven here, and
+                    // an undeclared return type proves nothing.
+                    self.reject_untyped_call_result(value, UntypedPosition::ListAppend);
                 } else if !self.is_variable_available(list) {
                     self.push_error(format!("Unknown variable: {}", list), Some(list));
                 } else {
@@ -1308,6 +1650,7 @@ impl Analyzer {
                         Some(file),
                     );
                 }
+                self.check_file_write_operand(file, value);
                 self.analyze_expr(value);
                 self.deps.uses_io = true;
             }

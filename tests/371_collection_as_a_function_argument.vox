@@ -1,0 +1,29 @@
+(Regression test for bug #44: a format string used as a function argument
+ is the last sink LANGUAGE.md's "Format Strings Everywhere" names, and it
+ goes through the same expression materializer a text initializer uses, so
+ a `{list}` argument arrived inside the function as a heap address in
+ decimal.
+
+ The rendered text must also be a real, self-contained string: the caller's
+ list can be appended to afterwards without the text it produced changing,
+ because "each evaluation allocates a new string".
+
+ Acceptance: the function prints the same rendering Print does, and the
+ text taken before the append still reads [1, 2, 3] after it.)
+
+To 'announce the text' with a text called line.
+  Print line.
+
+a list called flat is [1, 2, 3].
+a map called person is {"name": "Ada", "born": 1815}.
+
+Print "argument: {flat}".
+'announce the text' of "argument: {flat}".
+
+Print "argument: {person}".
+'announce the text' of "argument: {person}".
+
+a text called snapshot is "{flat}".
+append 4 to flat.
+Print "the list now: {flat}".
+Print "the snapshot still: {snapshot}".

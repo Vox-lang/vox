@@ -1,0 +1,32 @@
+(Bug #64: no Number Properties row parsed behind the article, and the
+ two spellings disagreed in both directions - a quoted multi-word timer
+ property (`t's 'start time'`) parsed only WITH the article, while every
+ number property parsed only without it. One property-resolution path
+ now, so both spellings read both.)
+
+a number called depth is -7.
+Print "absolute: {the depth's absolute}".
+Print "sign: {the depth's sign}".
+Print "even: {the depth's even}".
+Print "odd: {the depth's odd}".
+Print "positive: {the depth's positive}".
+Print "negative: {the depth's negative}".
+Print "zero: {the depth's zero}".
+
+a number called nought is 0.
+Print "zero of 0: {the nought's zero}".
+
+Create a timer called 'job timer'.
+Start the 'job timer'.
+Stop the 'job timer'.
+
+Print "running: {the 'job timer''s running}".
+
+(`start time` as two words and `'start time'` as one quoted name are the
+ same property, and the article does not change which one is read.)
+If 'job timer''s start time is equal to the 'job timer''s start time then,
+    Print "start time: agree".
+If 'job timer''s 'start time' is equal to the 'job timer''s 'start time' then,
+    Print "quoted start time: agree".
+If 'job timer''s 'end time' is equal to the 'job timer''s end time then,
+    Print "end time: agree across spellings".

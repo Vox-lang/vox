@@ -1,0 +1,2 @@
+'opaque label' has no declared return type, so its result is read as a number here
+a `value` carries a runtime tag

@@ -1,0 +1,21 @@
+(Included by 340_thing_see.vox. Plan 310 §3: a structure defined in one file
+ is usable from another via `see` - the definition is parsed into the program
+ the way a function definition is, so `point` is a type noun on the far side
+ of the boundary, and the manifest it declares travels with it.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called x and a number called y.
+  a point called plotted.
+  Set plotted's x to x.
+  Set plotted's y to y.
+  Return a point, plotted.
+
+(An ordinary global function taking a point first, so the including file can
+ reach it through the instance possessive as well as by name.)
+To 'shifted east' with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.

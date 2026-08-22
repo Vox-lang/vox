@@ -1,0 +1,5 @@
+(Compile-fail: plan 310 §6 - a field's type is a builtin type noun or a
+ thing defined EARLIER in the program. 'widget' is neither.)
+
+A thing called point has
+  a widget called w.

@@ -1,0 +1,35 @@
+(Bug #34 - a float at or beyond 2^63 printed as a saturated i64:
+ 9223372036854775808.372036854775808 for every such magnitude, because
+ the formatter routed the integer part through cvttsd2si, which
+ saturates past i64::MAX. The stored value was always correct - dividing
+ the "broken" value by two proved it - only the print path was wrong.
+
+ `over`, `negover`, and `atboundary` are the bug rows: values at or past
+ 2^63 must print their own exact digits, not the saturated constant, and
+ must agree across Print, "{x}" interpolation, and `x as text`, since
+ all three funnel into the same formatter.
+
+ `belowboundary`, `one18`, `half`, and `roundctrl` are controls that
+ must keep passing on both sides of the fix: everything under 2^63 was
+ already correct (cvttsd2si never saturates there), including the case
+ where a double's own IEEE-754 rounding legitimately changes the last
+ few digits of a huge literal - that is correct behaviour, not this bug.)
+
+a float called over is 10000000000000000000.0.
+a float called negover is 0.0 subtract over.
+a float called atboundary is 9223372036854775808.0.
+a float called belowboundary is 9223372036854773760.0.
+a float called one18 is 1000000000000000000.0.
+a float called half is over divide 2.0.
+a float called roundctrl is 1243626351836374761.1224435542121323.
+
+Print over.
+Print negover.
+Print atboundary.
+Print belowboundary.
+Print one18.
+Print half.
+Print roundctrl.
+
+Print "interpolated {over}".
+Print over as text.

@@ -1,0 +1,3 @@
+cannot assign nothing to 'greeting', which is text
+note: nothing is the absent value: it sits in a list slot, a map value, or a value parameter or return - never in text
+help: declare 'greeting' as a value, the type that can be absent - or give it text's own empty value, ""

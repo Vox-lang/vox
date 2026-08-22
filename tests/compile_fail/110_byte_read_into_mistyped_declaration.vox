@@ -1,0 +1,8 @@
+(Bug #54's buffer sibling: a byte is always a number, so reading one into a
+ text was provably wrong without needing to know anything about the buffer -
+ and it segfaulted on the Print.)
+
+a buffer called raw is 16 bytes in size.
+raw is "hi".
+a text called label is byte 1 of raw.
+Print label.

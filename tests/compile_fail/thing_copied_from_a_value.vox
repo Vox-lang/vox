@@ -1,0 +1,13 @@
+(Compile-fail: plan 310 §5 - a thing variable holds a whole shape, so the
+ only thing that can be assigned to it is a whole shape of the same kind.
+ Each write below stores one quadword, which would land on the thing's
+ first field and silently corrupt it; naming the field is what these lines
+ mean.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin to 5.
+origin is 5.

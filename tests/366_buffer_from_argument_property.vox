@@ -1,0 +1,33 @@
+(Bug #58's argument half. Arguments are passed by the runner, so unlike the
+ environment cases these can be checked against exact bytes rather than
+ against a control. The declaration says buffer; the initializer is an
+ argument read; before the fix the name was re-labelled text, so `Print`
+ rendered the buffer header as a C string - an empty line - and `size`
+ answered -1 from the file fallback.
+
+ The last block is `Set` rather than a declaration, on a buffer that was
+ declared with a size, and it was hit too - `Set` on a name with no type of
+ its own routes through the same arm. Its old output is the one that reads
+ most innocently: `Print` was right and only `size` was wrong, because the
+ name had become a pointer to the argument text itself. Test 366 follows
+ that pointer to where it does real damage.)
+
+a buffer called firstarg is arguments's first.
+Print firstarg's type.
+Print firstarg.
+Print firstarg's size.
+Print firstarg's empty.
+
+a buffer called lastarg is arguments's last.
+Print lastarg.
+Print lastarg's size.
+
+a buffer called programname is arguments's name.
+Print programname's type.
+Print programname's empty.
+
+a buffer called assigned is 64 bytes in size.
+Set assigned to arguments's first.
+Print assigned's type.
+Print assigned.
+Print assigned's size.

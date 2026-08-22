@@ -1,0 +1,50 @@
+(Bug #57's control. Refusing the absent value in a concretely-typed slot must
+ not narrow the positions LANGUAGE.md:2659-2661 gives it - a list slot, a map
+ value, and a `value` parameter or return - nor the defaults table's `Create a
+ value called v.` (LANGUAGE.md:498), nor the three spellings of the literal.
+ Every line below is a documented position, and every one of them compiled and
+ ran correctly before the fix too: this test exists to prove the fix took
+ nothing away.)
+
+print nothing.
+print null.
+print nil.
+
+a list called slots is [1, nothing, "x"].
+print slots.
+if element 2 of slots is nothing, print "the middle slot is absent".
+if element 1 of slots is not nothing, print "the first slot is not".
+
+a map called readings is {"found": 4, "absent": nothing}.
+print readings.
+if readings's "absent" is nothing, print "the key is present and absent".
+
+a value called slot is nothing.
+print slot.
+if slot is nothing, print "a value holds it".
+
+Create a value called unset.
+print unset.
+
+set slot to "now it holds text".
+print slot.
+set slot to nothing.
+print slot.
+
+To echo with a value called given. Return a value, given.
+
+print echo of nothing.
+if echo of nothing is nothing, print "through a value parameter and back".
+
+Set element 1 of slots to nothing.
+print slots.
+
+Set readings's "found" to nothing.
+print readings.
+
+a text called greeting is "unharmed".
+a list called counts is [1, 2].
+a map called ages is {"bo": 42}.
+print greeting.
+print counts.
+print ages.

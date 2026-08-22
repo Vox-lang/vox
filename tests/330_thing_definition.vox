@@ -1,0 +1,44 @@
+(Plan 310 task 1 - `A thing called X has <entries>.` parses into the thing
+ registry. Both a bare name and a quoted multi-word name are exercised, and
+ the manifest entry `a function called <name>` sits alongside data fields.
+ A definition declares a type: it allocates nothing and emits no code, so
+ the only output here comes from the ordinary statements around it.
+
+ The tail proves `thing` stays an ordinary identifier outside the construct
+ - it is not a lexer keyword, only a contextual one.
+
+ Declaration position (`a 'bounding box' called viewport.` and
+ `Print viewport's width.`) needs the registry lookup and field access that
+ land with the declarations task; those two lines live in
+ tests/331_thing_declare_access.vox.
+
+ `circle` declares 'from radius', so the manifest check of plan 310 §4
+ requires the `To do the circle's 'from radius'` below: a declared member
+ nothing defines is an error at the type. The definition is here rather
+ than in tests/337_manifest_members.vox because the declaration is, and
+ the two halves of the manifest belong to the same file.
+
+ Acceptance: two lines - defined, 42.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called 'bounding box' has
+  a number called width is 1,
+  a number called height is 1.
+
+A thing called circle has
+  a function called 'from radius',
+  a point called centre,
+  a float called radius is 1.5.
+
+To do the circle's 'from radius', with a float called radius.
+  a circle called drawn.
+  Set drawn's radius to radius.
+  Return a circle, drawn.
+
+Print "defined".
+
+a number called thing is 42.
+Print thing.

@@ -1,0 +1,10 @@
+(Compile-fail: plan 310 §10 - declaring with an unknown type name says so,
+ and suggests the near miss. The suggestion reaches user-defined type names
+ as well as the builtin nouns, because a thing's name is a type noun
+ everywhere a builtin one is.)
+
+A thing called point has
+  a number called x is 0.
+
+a poimt called origin.
+Print origin's x.

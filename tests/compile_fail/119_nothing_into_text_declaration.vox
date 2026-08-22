@@ -1,0 +1,8 @@
+(Bug #57: the absent value is not a text. LANGUAGE.md:2659-2661 gives the
+ literal a list slot, a map value and a `value` parameter or return - no text
+ among them - and the bare-Create defaults table gives a text the empty
+ string instead. Storing it anyway left a null pointer that Print
+ dereferenced: segfault.)
+
+a text called greeting is nothing.
+Print greeting.

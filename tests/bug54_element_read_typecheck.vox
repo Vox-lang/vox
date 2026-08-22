@@ -1,0 +1,60 @@
+(Bug #54's controls: every element read whose type the compiler can prove
+ MATCHES its destination still compiles and still answers correctly, and
+ every read it cannot prove is still allowed through. The mismatches
+ themselves live in the compile_fail corpus, cases 099-104.)
+
+(A matching read - the shape the fix must not touch.)
+a list called counts is [1, 2].
+a number called 'first count' is element 1 of counts.
+Print 'first count'.
+
+a list called names is ["alpha", "beta"].
+a text called 'second name' is element 2 of names.
+Print 'second name'.
+
+(The same reads through 's first / 's last.)
+Print counts's first.
+Print names's last.
+
+(A mixed list yields a value, which takes an element of any type.)
+a list called oddments is [7, "seven"].
+a value called 'counted half' is element 1 of oddments.
+a value called 'worded half' is element 2 of oddments.
+Print 'counted half'.
+Print 'worded half'.
+
+(An append of another type widens the list, so no element type is provable
+ any more and a read of the appended element is allowed through - proving
+ the check is not a stale reading of the declaration alone.)
+a list called grown is [1, 2].
+Append "three" to grown.
+a text called third is element 3 of grown.
+Print third.
+
+(A byte is a number wherever it comes from.)
+a buffer called raw is 16 bytes in size.
+raw is "hi".
+a number called 'letter code' is byte 1 of raw.
+Print 'letter code'.
+
+(A map's proven value type matches its destination.)
+a map called ages is {"bo": 42}.
+a number called 'bo age' is ages's "bo".
+Print 'bo age'.
+
+(A loop variable over a proven list carries the element type: arithmetic on
+ it still works, and so does printing and copying a text element.)
+a number called 'counted up' is 0.
+For each part in counts,
+    'counted up' is 'counted up' add part.
+Print 'counted up'.
+
+a text called 'last name' is "".
+For each word in names,
+    'last name' is word.
+Print 'last name'.
+
+(An element of a proven number list is still a number in arithmetic.)
+a number called total is 0.
+total is total add element 2 of counts.
+Print total.

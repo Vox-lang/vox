@@ -1,0 +1,50 @@
+(Regression test for bug #44: a list or map interpolated into a format
+ string rendered as text only in `Print` position. Every other sink handed
+ the collection's heap POINTER to the integer formatter, so the program
+ printed an address - a different one on every run, which also made any
+ generated program that did this look nondeterministic.
+
+ LANGUAGE.md's "Format Strings as Values" says a format string used as a
+ value materializes into a fresh string, and "Format Strings Everywhere"
+ says every string-taking statement accepts one and all sinks render
+ identically. A text initializer is the plainest of those sinks.
+
+ Acceptance: each pair of lines below is identical - the Print control
+ first, then the same interpolation captured into a text.)
+
+a list called flat is [1, 2, 3].
+a list called nested is [[1, 2], [3]].
+a list called 'the empty list' is [].
+a list called assorted is [1, "two", 3.5].
+a map called person is {"name": "Ada", "born": 1815}.
+a map called 'the empty map' is {}.
+
+Print "{flat}".
+a text called 'the flat list' is "{flat}".
+Print 'the flat list'.
+
+Print "{nested}".
+a text called 'the nested list' is "{nested}".
+Print 'the nested list'.
+
+Print "{'the empty list'}".
+a text called 'the empty rendering' is "{'the empty list'}".
+Print 'the empty rendering'.
+
+Print "{assorted}".
+a text called 'the assorted list' is "{assorted}".
+Print 'the assorted list'.
+
+Print "{person}".
+a text called 'the person' is "{person}".
+Print 'the person'.
+
+Print "{'the empty map'}".
+a text called 'the empty map rendering' is "{'the empty map'}".
+Print 'the empty map rendering'.
+
+(A collection is not the whole string - the literal text around it must
+ still land in the right place.)
+Print "before {flat} after".
+a text called surrounded is "before {flat} after".
+Print surrounded.

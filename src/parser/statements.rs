@@ -28,20 +28,57 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<Program, Box<CompileError>> {
+        let statements = self.parse_statement_list()?;
+
+        // The manifest is checked both ways (plan 310 §4, §10). "Nothing
+        // defines it" is the half that can only be known here, once every
+        // definition in the program has been read - which now means after the
+        // `see`n files have been read too, so a member declared in one file
+        // may be defined in another.
+        self.reject_undefined_members()?;
+
+        // `Program::new` derives the thing registry from the statement list
+        // in definition (layout) order, so there is nothing to attach here -
+        // and no construction path that can forget to. What it does derive is
+        // checked against what the parse actually registered before the
+        // program leaves the parser: two registries that can disagree in
+        // silence are what let a thing be type-checked and then laid out as
+        // nothing.
+        let program = Program::new(statements);
+        self.check_thing_registry(&program)?;
+        Ok(program)
+    }
+
+    /// The top-level statement loop, without the whole-program checks that
+    /// close a parse. A `see`n file is read through here rather than through
+    /// `parse`, because those checks are about the program and a seen file is
+    /// only part of one: a member its manifest declares may well be defined
+    /// in the file that saw it.
+    pub(crate) fn parse_statement_list(
+        &mut self,
+    ) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut statements = Vec::new();
-        
+
         while *self.current() != Token::EOF {
             self.skip_all_whitespace();
             if *self.current() == Token::EOF {
                 break;
             }
-            
+
             match self.parse_statement() {
                 Ok(stmt) => {
                     // Function definitions handle their own period and paragraph break
                     let is_func_def = matches!(stmt, Statement::FunctionDef { .. });
-                    statements.push(stmt);
-                    
+                    // A `see "<path>.vox"` is not a statement in the program:
+                    // it stands for the file's statements, which take its
+                    // place here. `Some(empty)` still means "inlined" - a file
+                    // may legitimately have nothing in it, and an already-seen
+                    // file has nothing left to contribute.
+                    match self.included_statements.take() {
+                        Some(mut spliced) => statements.append(&mut spliced),
+                        None => statements.push(stmt),
+                    }
+
                     if !is_func_def {
                         self.skip_noise();
                         self.expect(&Token::Period);
@@ -49,14 +86,33 @@ impl Parser {
                 }
                 Err(e) => return Err(e),
             }
-            
+
             self.skip_all_whitespace();
         }
-        
-        Ok(Program::new(statements))
+
+        Ok(statements)
     }
 
+    /// Parse one statement, counting how deep it sits. Every block body - an
+    /// `If` branch, a `While`/`For` body, a function body - reads its
+    /// statements through here, so depth 1 is the top level and anything
+    /// deeper is inside a block. `parse_thing_definition` is the one parser
+    /// that asks (plan 310 §9); the count is kept here rather than at each
+    /// block parser so a construct added later cannot forget to maintain it.
     pub(crate) fn parse_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        self.statement_depth += 1;
+        let parsed = self.dispatch_statement();
+        self.statement_depth -= 1;
+        parsed
+    }
+
+    /// True when the statement being parsed is a top-level one, written
+    /// against the left margin rather than inside some block's body.
+    pub(crate) fn at_top_level(&self) -> bool {
+        self.statement_depth <= 1
+    }
+
+    fn dispatch_statement(&mut self) -> Result<Statement, Box<CompileError>> {
         self.skip_all_whitespace();
 
         let stmt = match self.current().clone() {
@@ -215,26 +271,38 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
-        // Check for loop expansion: "print each X from Y [treating X as Y]"
-        if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-            // Create the variable expression, with optional treating substitution
-            let var_expr = if let Some((match_val, replacement)) = treating {
-                Expr::TreatingAs {
-                    value: Box::new(Expr::Identifier(variable.clone())),
-                    match_value: Box::new(match_val),
-                    replacement: Box::new(replacement),
+        // `print` takes exactly one value. A loop expansion is that one
+        // value: `print each X from Y`. Two or more `each` clauses would be
+        // a grid, which is an arity error here, not a concatenation - the
+        // one-value rule is what stops `print each x from A and each y from
+        // B` being misread (plan 320 rule 4).
+        if *self.current() == Token::Each {
+            let clauses = self.parse_arg_clauses()?;
+            if clauses.len() != 1 {
+                return Err(self.one_slot_arity_error("print"));
+            }
+            // The first token was `each`, so the single clause is an
+            // expansion. Match exhaustively so a fixed clause (unreachable
+            // here, since `each` starts an expansion) still compiles cleanly.
+            match &clauses[0] {
+                ArgClause::Expansion((variable, collection, treating)) => {
+                    let var_expr = Self::each_arg_expr(variable, treating);
+                    let print_stmt = Statement::Print { value: var_expr, without_newline: false };
+                    return self.wrap_in_loop_expansion(variable.clone(), collection.clone(), print_stmt);
                 }
-            } else {
-                Expr::Identifier(variable.clone())
-            };
-            let print_stmt = Statement::Print { value: var_expr, without_newline: false };
-            return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+                ArgClause::Fixed(expr) => {
+                    let print_stmt = Statement::Print { value: expr.clone(), without_newline: false };
+                    return Ok(print_stmt);
+                }
+            }
         }
-        
-        // Check for function call with loop expansion: "print func of each X from Y"
-        // The callee is a bare or quoted identifier (plan 270). A string
-        // literal here is data, not a callee; it is left for parse_expression
-        // to handle as a value (and reject if followed by `of/with/to/on`).
+
+        // `print <func> of <args>`: the call's argument list may itself be a
+        // grid of `each` clauses (`print pair of each x from A and each y
+        // from B`), and `print` reports each result. Only entered when the
+        // first argument is `each`; fixed-argument calls fall through to
+        // `parse_expression`, which keeps the first-argument cast-level
+        // binding (`print f of x add 1` is `f(x) add 1`, not `f(x add 1)`).
         if let Token::Identifier(func_name) = self.current().clone() {
             let saved_pos = self.pos;
             self.advance();
@@ -244,24 +312,12 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
-                // Check if next is "each" for loop expansion
-                if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-                    // Create function call with loop variable as argument
-                    let arg_expr = if let Some((match_val, replacement)) = treating {
-                        Expr::TreatingAs {
-                            value: Box::new(Expr::Identifier(variable.clone())),
-                            match_value: Box::new(match_val),
-                            replacement: Box::new(replacement),
-                        }
-                    } else {
-                        Expr::Identifier(variable.clone())
-                    };
-                    let func_call = Expr::FunctionCall {
-                        name: func_name,
-                        args: vec![arg_expr]
-                    };
+                if *self.current() == Token::Each {
+                    let clauses = self.parse_arg_clauses()?;
+                    let (args, expansions) = Self::clauses_to_args_and_expansions(&clauses);
+                    let func_call = Expr::FunctionCall { name: func_name, args };
                     let print_stmt = Statement::Print { value: func_call, without_newline: false };
-                    return self.wrap_in_loop_expansion(variable, collection, print_stmt);
+                    return self.finish_grid(print_stmt, expansions);
                 } else {
                     // Not a loop expansion, restore position and parse normally
                     self.pos = saved_pos;
@@ -271,7 +327,7 @@ impl Parser {
                 self.pos = saved_pos;
             }
         }
-        
+
         let value = self.parse_expression()?;
         
         // Check for "without newline" modifier
@@ -295,6 +351,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_return(&mut self) -> Result<Statement, Box<CompileError>> {
+        // Where the `Return` itself sits, so a member definition handing back
+        // the wrong thing can underline this line (plan 310 §4).
+        let return_pos = self.pos;
         self.advance();
         self.skip_noise();
 
@@ -314,6 +373,8 @@ impl Parser {
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
+                        self.typed_returns
+                            .push((return_pos, declared_type.clone()));
                         // Now parse the actual return expression. Use
                         // `parse_condition` (not `parse_expression`) so a typed
                         // return whose body is a comparison or boolean
@@ -399,6 +460,16 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `increment origin's x.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Add,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Increment { name })
@@ -414,12 +485,47 @@ impl Parser {
             self.skip_noise();
         }
 
+        // `decrement cistern's 'litres drained'.` steps a field (plan 310 §3).
+        if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            return Ok(Self::thing_field_step(
+                base,
+                path,
+                &field_type,
+                BinaryOperator::Subtract,
+            ));
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Decrement { name })
     }
 
     pub(crate) fn parse_identifier_statement(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `origin's 'shift east' on 2.` - the instance possessive stands where
+        // an ordinary call statement stands (plan 310 §4). Tried first because
+        // the write-target path below would otherwise report a call as a field
+        // that does not exist; it rewinds and yields to that path for anything
+        // that is not a call.
+        if let Some(call) = self.try_parse_instance_call_statement()? {
+            return Ok(call);
+        }
+
+        // `origin's y is origin's y add 1.` - a field is an lvalue in a bare
+        // assignment too (plan 310 §3), so this is checked before the name is
+        // read as a variable or a callee.
+        if let Some((base, path, _)) = self.try_parse_thing_field_target()? {
+            self.skip_noise();
+            // `is`/`=` only, exactly like the bare assignment to a plain name
+            // below - `to` is the `Set ... to ...` spelling's separator.
+            if !matches!(self.current(), Token::Is | Token::Equals) {
+                return Err(self.err_expected("'is' after a field of a thing", self.current()));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = self.parse_expression()?;
+            return Ok(Statement::SetThingField { base, path, value });
+        }
+
         let name = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             _ => return Err(self.err("Expected identifier")),
@@ -439,48 +545,32 @@ impl Parser {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
             let value = self.parse_expression()?;
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
+                return Ok(declaration);
+            }
             return Ok(Statement::Assignment { name, value });
         }
 
         // Call with arguments: `name of/with/to/on args ...` (plan 270 G1).
         // A bare or quoted identifier callee is accepted; a string literal
-        // callee is rejected at the statement dispatch above.
+        // callee is rejected at the statement dispatch above. The argument
+        // list is a sequence of clauses joined by `and`, each either a loop
+        // expansion (`each X from Y`) or a fixed expression. The expansions
+        // become nested loops - a Cartesian-product grid (plan 320).
         if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On) {
             self.advance();
             self.skip_noise();
 
-            // Loop-expansion: `name of each X from Y [treating X as Y]`.
-            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
-                let arg_expr = if let Some((match_val, replacement)) = treating {
-                    Expr::TreatingAs {
-                        value: Box::new(Expr::Identifier(variable.clone())),
-                        match_value: Box::new(match_val),
-                        replacement: Box::new(replacement),
-                    }
-                } else {
-                    Expr::Identifier(variable.clone())
-                };
-                let call_stmt = Statement::FunctionCall {
-                    name: name.clone(),
-                    args: vec![arg_expr],
-                };
-                return self.wrap_in_loop_expansion(variable, collection, call_stmt);
+            let clauses = self.parse_arg_clauses()?;
+            let (args, expansions) = Self::clauses_to_args_and_expansions(&clauses);
+            // No expansion clauses: a plain fixed-argument call. It is not a
+            // self-terminating statement, so leave the trailing period for
+            // the caller - exactly as the old fixed-argument loop did.
+            if expansions.is_empty() {
+                return Ok(Statement::FunctionCall { name, args });
             }
-
-            let mut args = Vec::new();
-            loop {
-                let arg = self.parse_expression()?;
-                args.push(arg);
-
-                self.skip_noise();
-                if *self.current() == Token::And {
-                    self.advance();
-                    self.skip_noise();
-                } else {
-                    break;
-                }
-            }
-            return Ok(Statement::FunctionCall { name, args });
+            let call_stmt = Statement::FunctionCall { name, args };
+            return self.finish_grid(call_stmt, expansions);
         }
 
         // Zero-argument call: `name.`
@@ -502,9 +592,17 @@ impl Parser {
         let duration = self.parse_primary()?;
         self.skip_noise();
         
-        // Parse unit: second(s), millisecond(s)
+        // Parse unit: second(s), millisecond(s). `second` (singular) is a
+        // contextual word — an ordinary identifier claimed here by lexeme
+        // as the unit, so a variable named `second` coexists with the unit
+        // (`Wait second seconds.` waits one second; `Set second to 1.` is
+        // the variable). `seconds` (plural) stays a reserved token.
         let unit = match self.current() {
-            Token::Second | Token::Seconds => {
+            Token::Seconds => {
+                self.advance();
+                ast::TimeUnit::Seconds
+            }
+            Token::Identifier(ref id) if id.to_lowercase() == "second" => {
                 self.advance();
                 ast::TimeUnit::Seconds
             }

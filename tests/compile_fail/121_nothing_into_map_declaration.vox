@@ -1,0 +1,5 @@
+(Bug #57's map sibling: _map_print faulted the same way, after printing the
+ opening brace.)
+
+a map called ages is nothing.
+Print ages.

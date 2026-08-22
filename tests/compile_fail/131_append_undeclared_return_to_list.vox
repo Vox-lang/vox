@@ -1,0 +1,9 @@
+(Bug #45: a list slot is tagged with the type proven at the write. An
+ undeclared return type proves nothing, so the slot took a conservative
+ TAG_INTEGER and `print element 1 of items.` read the text back as 4210906.)
+
+To 'opaque label'. Return "hi".
+
+a list called items is [].
+append 'opaque label' to items.
+print element 1 of items.

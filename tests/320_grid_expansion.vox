@@ -1,0 +1,81 @@
+(Plan 320: N-ary loop expansion. A call's argument list may hold any
+number of `each <name> from <collection>` clauses joined by `and`, and the
+action runs once per element of the Cartesian product - left-to-right is
+outermost-to-innermost, exactly like nested `For each` loops. This file
+exercises the feature end to end.)
+
+(Helper: print two numbers separated by a comma.)
+To 'pair' with a number called left and a number called right.
+  print left without newline, print "," without newline, print right.
+
+(Helper: print three numbers run together.)
+To 'triple' with a number called first and a number called second and a number called third.
+  print first without newline, print second without newline, print third.
+
+(2-clause grid over two lists: all four pairs, row-major.)
+print "two-clause grid (expect 1,10 1,20 2,10 2,20):".
+'pair' of each left from [1, 2] and each right from [10, 20].
+
+(3-clause grid: a list and two ranges, 2 x 2 x 2 = 8 calls.)
+print "three-clause grid (expect 117 118 127 128 217 218 227 228):".
+'triple' of each first from [1, 2] and each second from 1 to 2 and each third from 7 to 8.
+
+(Mixed fixed + expansion: a fixed first argument, then an expansion.)
+print "fixed then expansion (expect 5,10 5,20):".
+'pair' of 5 and each right from [10, 20].
+
+(Mixed expansion + fixed: an expansion first, then a fixed argument.)
+print "expansion then fixed (expect 1,99 2,99):".
+'pair' of each left from [1, 2] and 99.
+
+(Inner range depends on the outer variable: triangle iteration.)
+print "triangle (expect 1,1 2,1 2,2 3,1 3,2 3,3):".
+'pair' of each row from [1, 2, 3] and each col from 1 to row.
+
+(Empty collection in the first position: zero calls.)
+print "empty first (expect nothing then DONE-1):".
+'pair' of each left from [] and each right from [10, 20].
+print "DONE-1".
+
+(Empty collection in the middle position: zero calls.)
+print "empty middle (expect nothing then DONE-2):".
+'triple' of each first from [1, 2] and each second from [] and each third from [5].
+print "DONE-2".
+
+(Empty collection in the last position: zero calls.)
+print "empty last (expect nothing then DONE-3):".
+'pair' of each left from [1, 2] and each right from [].
+print "DONE-3".
+
+(`but if` attached to the innermost iteration, referencing both variables:
+the diagonal cells print "diag" instead of the pair.)
+print "but if both (expect diag 1,2 1,3 2,1 diag 2,3 3,1 3,2 diag):".
+'pair' of each left from [1, 2, 3] and each right from [1, 2, 3], but if left is right print "diag".
+
+(After the loop, each variable keeps the value of its last iteration.)
+print "after-loop values (expect left=3 right=20):".
+'pair' of each left from [1, 2, 3] and each right from [10, 20].
+print "left=" without newline.
+print left without newline.
+print " right=" without newline.
+print right.
+
+(Function-body use: a grid call lives inside a function, not just at top level.)
+To 'run a grid'.
+  'pair' of each left from [1, 2] and each right from [10, 20].
+  print "after grid".
+
+print "function-body use (expect 1,10 1,20 2,10 2,20 after grid):".
+'run a grid'.
+(A `treating X as Y` clause stays attached to its own expansion inside a
+multi-clause grid - rule 9 in combination with rule 3.)
+print "treating in a grid (expect 1,10 1,20 9,10 9,20):".
+'pair' of each left from [1, 2] treating 2 as 9 and each right from [10, 20].
+
+(Five clauses: "unlimited" deserves a witness beyond the special-case
+sizes. 2 x 1 x 1 x 1 x 2 = 4 calls.)
+To 'read the tally' with a number called first and a number called second and a number called third and a number called fourth and a number called fifth.
+  print first without newline, print second without newline, print third without newline, print fourth without newline, print fifth.
+
+print "five-clause grid (expect 13578 13579 23578 23579):".
+'read the tally' of each first from [1, 2] and each second from [3] and each third from [5] and each fourth from [7] and each fifth from [8, 9].

@@ -1,0 +1,25 @@
+(Bug #56's third symptom: `all the numbers from A to B` stopped one short of
+ B while `between A and B` did not, so one phrase named at LANGUAGE.md:4716
+ meant two different things depending on which preposition was written.
+ LANGUAGE.md:277 admits no such split - "`1 to 5` includes 1, 2, 3, 4, and 5"
+ - and every other range in the parser is built inclusive. Both spellings now
+ reach their end bound.
+
+ The bounds are variables in the second pair, where the end is not a literal
+ the reader can eyeball: a range that stops short of a computed bound is the
+ shape that costs someone an afternoon.)
+
+For each step in all the numbers from 1 to 3,
+    print step.
+
+For each step in all the numbers between 1 and 3,
+    print step.
+
+Set low to 2.
+Set high to 5.
+
+For each step in all the numbers from low to high,
+    print step.
+
+For each step in all the numbers between low and high,
+    print step.

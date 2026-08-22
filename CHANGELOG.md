@@ -4,9 +4,1251 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.9] - 2026-08-21
+
+### Fixed
+
+- **`For each` over a scalar, a map or a buffer is now a compile error
+  instead of a crash or garbage** ([#49](docs/BUGS_FOUND.md)) — `print
+  each part from 4.`, a two-token program, segfaulted; so did `For each
+  part in n,` and `append each part from 4 to out.` over a number or a
+  text. A map or a buffer instead iterated silently over nonsense (a
+  3-entry map ran 3 iterations printing `0, 0, 3`; the buffer `"abc"`
+  printed `6513249`, its own bytes read as a qword). The analyzer checked
+  only that the collection name was defined, and codegen unconditionally
+  read `[ptr + 8]` as a list header's element count — so a number was
+  dereferenced as an address and a map's or buffer's own header was
+  misread as a list's. LANGUAGE.md's supported collections are a list, a
+  range and `arguments's all`; the analyzer now refuses what it can prove
+  is none of them, suggesting `'s keys` or `'s values` for a map. It is a
+  known-scalar rejection, not a whitelist: an untyped parameter, a
+  `value`, a function result and a property read all keep iterating.
+  Found by the vox-fuzz collections-b claim ledger (discrepancies D3 and
+  D4) and adjudicated by the language lawyer as one memory-safety bug.
+
+- **A bare `otherwise` is accepted after any base action, not just
+  `append`** ([#50](docs/BUGS_FOUND.md)) — `print gauge, but if gauge is
+  greater than 50 print "high", otherwise print "low".` was rejected with
+  `Expected a statement, got Otherwise`, and `increment n, otherwise
+  increment n` failed identically, though LANGUAGE.md documents the bare
+  clause at :393, :399, :2960 and :2966 and says `but if` works over any
+  base action. The chain-continuation guard in `parse_conditional_suffix`
+  omitted `Else` and `Otherwise`; only the terse `append` branch left a
+  comma behind for the guard to consume, which is why that one spelling
+  worked. The guard now accepts both keywords and no longer consumes them
+  as separators. Found by the vox-fuzz collections-b claim ledger
+  (discrepancy D2) and adjudicated by the language lawyer.
+
+- **A text-valued special name built into a buffer no longer segfaults**
+  ([#52](docs/BUGS_FOUND.md)) — `copy "{arguments's first}" to built`
+  crashed the generated program (exit 139), as did `{arguments's
+  second/last/name/all/raw}` and `{environment's first}`, through all
+  three buffer verbs (`set`, `copy`, `append`). LANGUAGE.md promises
+  every sink shares one name resolver, so these render identically
+  whether printed, written to a file, or built into a buffer — and
+  printing and writing them were always correct. The buffer sink loaded
+  its destination pointer into `rdi` before resolving the part's value,
+  but resolving an argument property passes its index in `rdi` to call
+  `_get_arg`, so the append that followed dereferenced an index instead
+  of a buffer. The destination is now loaded once the value is settled,
+  which is the order the stack-slot sink beside it already used and why
+  that one never crashed. The numeric specials (`{arguments's count}`,
+  `{current time's hour}`) had been surviving the same path by luck.
+  Regression test `tests/bug52_argv_property_into_buffer.vox`, proven to
+  segfault on 0.4.8 and to pass after, plus a codegen test that locks
+  the instruction order. Found by the vox-fuzz Input/Output claim ledger
+  (discrepancy D1).
+
+- **`Return a buffer, "<text>"` is a compile error instead of an empty
+  buffer or a segfault** ([#53](docs/BUGS_FOUND.md)) — `To 'give
+  literal'. Return a buffer, "ABC".` handed the caller the address of the
+  literal's characters with no buffer header in front of them, and the
+  caller's `_buffer_append` then read eight bytes past the first
+  character as a length and copied that many bytes. With one
+  string-initialised buffer in the program the call answered a silently
+  **empty** buffer (`size` printed `0`); with two it **segfaulted** (139)
+  — one defect reading different bytes, and which one a program got
+  depended on what the assembler happened to lay down after the literal.
+  LANGUAGE.md:722-727 makes `buffer` a legal `Return a <type>,` return
+  type and nothing more; the single place the manual gives text a buffer
+  meaning is the declaration initializer `a buffer called buf is
+  "Hello".`. A text literal or a text variable returned as a buffer is
+  now refused with a fix-it — build the buffer first, return the variable
+  — while returning a buffer variable, a buffer parameter, or another
+  buffer-returning call is untouched. Regression tests
+  `tests/compile_fail/099_return_buffer_text_literal.vox` and
+  `100_return_buffer_text_variable.vox`, both proven to segfault on
+  unfixed `main`, plus the passing control
+  `tests/bug53_return_buffer_variable.vox`. Found by the vox-fuzz
+  Functions claim ledger (discrepancies D7 and D8).
+
+- **A collection element read into a variable of another type is a
+  compile error, not a segfault** ([#54](docs/BUGS_FOUND.md)) — `a list
+  called counts is [1, 2].` then `label is element 1 of counts.` into a
+  `text` crashed the generated program (139) with no output at all, and
+  the reverse direction — a text element into a `number` — silently
+  printed `4198536`, an address. Printing the read directly was always
+  correct, so the read, its bounds check and its tag dispatch all worked;
+  it was the copy into a differently-typed slot that broke. The analyzer
+  answered "can't prove it, allow it" for every element, `'s first`/`'s
+  last`, byte and map read, and codegen then emitted a plain quadword
+  move, so `Print` picked its printer from the destination's declared
+  type and walked a number as a `char *`. LANGUAGE.md:530-541 fixes a
+  variable's type at its declaration and says every form that writes to a
+  declared name is checked the same way: a homogeneous list literal's
+  proven element type now reaches both the assignment type lock and the
+  declaration site, which had no type check at all, and a `For each` loop
+  variable over a proven list carries it too. The proof is only offered
+  where it holds — a list that any `Append`, element write, whole-list
+  assignment, call argument or copy could widen gets no element type, and
+  a mixed list still reads through `value` unchanged. Regression tests
+  `tests/compile_fail/106_element_number_list_into_text.vox` through
+  `112_foreach_element_into_mistyped_variable.vox`, plus the passing
+  controls `tests/bug54_element_read_typecheck.vox` and
+  `tests/bug54_helper_widens_a_list.vox`. Found by the vox-fuzz Variables
+  claim ledger (discrepancy D1).
+
+- **A `treating` clause whose types do not match the collection is a
+  compile error instead of a segfault** ([#55](docs/BUGS_FOUND.md)) —
+  `print each item from ["a"] treating 98 as 31.`, one line, compiled
+  clean and died with 139; over a named text list it crashed identically,
+  and over a range (`each step from 1 to 3 treating "a" as "b"`) the
+  clause silently never fired. The analyzer already compared a
+  `treating` clause's match against its replacement, but never against
+  the thing being substituted: `infer_simple_expr_type` answers `None`
+  for a plain name, so the loop variable — which holds an element of the
+  collection — was invisible to the check. Codegen was meanwhile
+  confident enough to pick the text comparison from the subject's type
+  alone and hand `_str_eq` the number 98 as a `char *`. The subject's
+  type is now resolved through `named_value_type`, which reads the
+  element type an `each` loop records for its variable, and a list
+  literal in the loop header supplies one the same way a named list
+  already did. Where the element type cannot be proven — a list widened
+  by a later `Append` — codegen no longer dereferences a match value
+  that cannot be text, so the substitution simply never fires instead of
+  faulting. A mixed list is left to the runtime, as `value` always is.
+  Found by the vox-fuzz basics-expansion claim ledger (discrepancies D3
+  and D4), master-reproduced.
+
+- **`all the numbers from/between …` no longer segfaults outside a loop
+  header, and both spellings now include their end bound**
+  ([#56](docs/BUGS_FOUND.md)) — `For each step in all the numbers between
+  1 and 3,` crashed the generated program (exit 139), and so did `a list
+  called steps is all the numbers from 1 to 3.` followed by `Print
+  steps.`, which printed `[` and died. The same phrase printed straight
+  out gave `0`, and as an arithmetic operand gave the other operand back.
+  LANGUAGE.md:4716 names the phrase a **range**, and :262 says a range is
+  "**not** allocated as lists - they compile directly to efficient loop
+  constructs", so it has no value to emit: codegen's arm for it emitted
+  nothing at all and left the accumulator's previous contents to be
+  stored in a list slot or dereferenced as a list header. Every `For
+  each` header handed a range now routes to the range loop through the
+  same helper loop expansion has always used — which is why `Print each
+  step from all the numbers between 1 and 3.` was the one spelling that
+  worked — and a range anywhere a value is expected is a compile error
+  naming the documented spelling, `For each n from 1 to 3,`. Separately,
+  that one working position was answering wrongly: the parse site read
+  inclusiveness off which preposition was written, so `all the numbers
+  from 1 to 3` yielded `1 2` while `between 1 and 3` yielded `1 2 3`,
+  against :277's "Ranges are **inclusive**". Both spellings are one
+  range, and both now reach their end. Regression tests
+  `tests/361_foreach_over_all_the_numbers.vox` and
+  `tests/362_all_the_numbers_is_inclusive.vox` plus three compile-fail
+  fixtures, proven to crash or answer wrongly on 0.4.8 and to pass after.
+  Found by the vox-fuzz keywords claim ledger (discrepancies D5, D6 and
+  D7).
+
+- **`nothing` in a concretely-typed slot is now a compile error instead of
+  a segfault or a silent `0`** ([#57](docs/BUGS_FOUND.md)) — `a text
+  called t is nothing.` followed by `Print t.` crashed the generated
+  program (exit 139); a list did the same after printing `[`, and a map
+  after `{`. The declaration alone was harmless — the read was the fault,
+  which put the crash a line away from its cause. LANGUAGE.md:2660-2661
+  says where the literal may sit, "a list slot, a map value, or a `value`
+  parameter or return", and the bare-`Create` defaults table (:489-501)
+  gives `nothing` to `value` alone, so a `text`/`list`/`map` variable has
+  no representation for it: codegen stored the literal's payload, 0, with
+  no tag beside it, and the read dispatched on the declared type and
+  dereferenced a null pointer. The quiet half was the same defect wearing
+  a plausible answer — a `number` initialised to `nothing` printed `0`,
+  against :2685's "**`nothing` is not zero**" and against the compile
+  error `nothing add 1` already raised for exactly that reason. The
+  literal is now refused wherever it is written into a slot of any
+  concrete type: a declaration, an assignment, a call argument, and a
+  return, each diagnostic naming the type and offering both ways out — a
+  `value`, or that type's own empty value. Every position the manual does
+  give the literal is untouched, pinned by
+  `tests/363_nothing_in_its_documented_places.vox`, whose output is
+  byte-identical before and after; seven compile-fail fixtures
+  (`tests/compile_fail/119`-`125`) cover the rejections, each proven to
+  crash or answer wrongly on 0.4.8+#49-#56. The same crash reached at run
+  time — through a `value`, or a collection whose element type cannot be
+  proven — is recorded in BUGS_FOUND and not fixed here. Found by the
+  vox-fuzz random-literals worker's probes (§4 D1),
+  master-reproduced.
+
+- **A buffer declared from a text-valued property keeps its type — and,
+  on `Set`, its bounds** ([#58](docs/BUGS_FOUND.md)) — `a buffer called
+  home is environment's "HOME".` copied the bytes in correctly and then
+  lost the name's type, so `Print home.` printed an empty line and
+  `home's size` answered `-1`; the same for `environment's
+  first`/`last` and every `arguments's` positional, while the two-step
+  spelling through a `text` variable was always right. LANGUAGE.md:531
+  says "**A variable's type is fixed at its declaration and never
+  changes**", and :3285 explains a buffer reports `(static)` precisely
+  because "the compiler knows the type from the declaration" — but
+  codegen re-read the type off the initializer's shape, saw an
+  environment or argument read, and re-labelled the buffer as text, so
+  every later read dispatched as text and `size` fell through to the
+  file fallback `_file_size`. The `Set b to <property>` spelling was
+  worse than a wrong answer: the decision to treat the destination as a
+  buffer is read back out of the same table, so a re-labelled buffer
+  stopped copying bytes into its struct and stored the raw `argv`
+  pointer over the buffer pointer — `capacity` then read the argument's
+  own bytes as the capacity, no position could exceed it, and `Set byte
+  N of b` wrote into the process's argument block, segfaulting at a
+  large `N`. The declare-with-initializer arm now carries the guard the
+  bare-assignment arm beside it already had. Regression tests
+  `tests/364_buffer_from_named_environment_variable.vox`,
+  `365_buffer_from_positional_environment_property.vox`,
+  `366_buffer_from_argument_property.vox` and
+  `367_set_buffer_to_argument_keeps_its_bounds.vox`, proven to answer
+  wrongly or segfault on 0.4.8 and to pass after. Found by the vox-fuzz
+  environment claim ledger (discrepancy D1) and re-found by the
+  fuzzer's environment leaves (ASSERT ENV-03/ENV-06).
+
+- **The documented file property `exists` is now a clear compile error
+  instead of a bare parser complaint** ([#38](docs/BUGS_FOUND.md)) —
+  `Print h's exists.` on an open handle failed with `Expected property
+  name, got Exists`, which named the token but not the problem.
+  `exists` described an open handle, but a handle that opened
+  successfully already proves the file exists, so the property answered
+  nothing; LANGUAGE.md's File Properties table has been corrected to
+  drop the row and document the idiom that answers the real question —
+  open the path inside an `On error` handler — with a worked example
+  covering both an existing and a missing path. The parser now names
+  that idiom directly when `exists` appears in property position. A
+  path-level `exists` predicate remains a planned future addition, noted
+  in the manual rather than promised as syntax. Regression tests
+  `tests/compile_fail/141_file_handle_exists_property.vox` (the
+  diagnostic) and `tests/390_file_exists_idiom.vox` (the documented
+  idiom, both branches).
+
+- **A list or map interpolated into a format string renders everywhere,
+  not just in `Print`** ([#44](docs/BUGS_FOUND.md)) — `Print "{flat}"`
+  gave `[1, 2, 3]`, but `a text called captured is "{flat}".` and `copy
+  "{flat}" to sink.` gave `140237428518912`: the collection's heap
+  address, formatted as a decimal integer, and a different address on
+  every run. Maps behaved identically. LANGUAGE.md:3133-3136 says a
+  format string used as a value materializes into a fresh string, and
+  :3157-3163 says every string-taking statement accepts one and all sinks
+  render identically — neither with a type restriction. `Print` special-
+  cased `List` and `Map` inside its own emitter, while every other sink
+  went through `emit_append_runtime_value_to_buffer_ptr`, which had arms
+  for `Buffer`, `String` and `Float` and no arm for a collection, so both
+  fell to the integer formatter. Rather than write a second, buffer-
+  shaped renderer, the existing one was redirected: `_list_print` and
+  `_map_print` now emit through `RENDER_*` macros that consult a
+  `_render_sink`, which is zero for stdout and a buffer pointer
+  otherwise, so the text initializer, buffer `set`/`copy`/`append`,
+  `write`, filesystem paths, `treating` clauses and function arguments
+  all render through the very routine `Print` calls. Nested lists, empty
+  collections, a mixed list's quoted strings and floats, and a cyclic
+  list's `...` truncation therefore come out identical in every sink. A
+  whole `thing` in a text initializer is still the compile error
+  LANGUAGE.md:1224-1227 documents — a thing's fields are written out at
+  compile time and it has no runtime renderer to redirect. Found while
+  fixing this: `{'the running total'}` (a quoted name) and `{[1, 2]}` (a
+  bare literal) parse as expressions, not variable parts, and `Print`'s
+  expression arm had a `Map` case but never a `List` one, so those two
+  spellings printed an address in `Print` position too; that arm's list
+  twin is here. Six regression tests, `tests/368_…` through
+  `tests/373_…`, one per sink, all proven to print heap addresses on
+  unfixed `main` and to pass after. Found by the vox-fuzz collections-a
+  claim ledger (discrepancy D7) and adjudicated by the language lawyer.
+
+- **A call with no declared return type is a compile error where nothing
+  supplies one, instead of being read as a number**
+  ([#45](docs/BUGS_FOUND.md)) — `To 'opaque label'. Return "hi".` followed
+  by `print 'opaque label'.` printed `4198488`, the rodata address of
+  `"hi"`; routed through a declared `text` first it printed `hi`. The
+  returned value was always intact — the read was wrong, and wrong
+  precisely where nothing supplied a type. The same confusion reached a
+  list slot (`append 'opaque label' to items.` then `print element 1`,
+  giving `4210906`, stable across runs so the wrong answer looked like
+  data), a map value, a list literal, `set element`, a `{...}`
+  interpolation and a `value` declaration. LANGUAGE.md:649-660 names this
+  exact shape — "a function pointer, printed as a number, silently. No
+  error, no warning; the program runs and gives a wrong answer that looks
+  like data" — as the thing the 0.3.0 identifier/literal split was written
+  to kill, so guessing `number` and staying silent was the one option the
+  language's own philosophy ruled out. The analyzer now refuses the read
+  and names both ways out: declare the return type, or assign the result
+  to a declared variable first. The rejection is scoped to positions that
+  supply no type of their own — a declared variable, a reassignment to
+  one, an argument landing on a declared parameter, and a comparison
+  against a typed operand were never broken and are untouched. Seven
+  compile-fail fixtures and three passing controls, proven wrong on
+  0.4.8 and right after; the mixed-list section of LANGUAGE.md, which
+  documented the old guess and gave a worked example of it, is rewritten,
+  and a "Reading a result" subsection states the rule under Functions.
+  Full runtime tag propagation (stage 1d) is what would let such a call
+  carry its own tag. Found by the vox-fuzz collections-a claim ledger
+  (discrepancy D5) and adjudicated by the language lawyer, who found the
+  defect broader than the mixed-list case the ledger reported.
+
+- **A diagnostic's caret no longer lands in a comment, in a text literal,
+  or in the middle of a longer word** ([#46](docs/BUGS_FOUND.md)) — a
+  three-line program whose first line is the comment `(mentions hello
+  here)` reported its `Unknown variable: hello` at `1:11`, pointing inside
+  the comment instead of at the `hello` on line 3. `Print "hello".` above
+  the same use captured the caret the same way, and a one-letter name
+  anchored inside a longer word: with `print "counting".` above it,
+  `append 1 to n.` put its caret on the `n` of `print`. The analyzer
+  locates these errors by searching the raw source for the name — the
+  AST carries no span for an identifier — and the search had no idea what
+  it was reading: first textual hit anywhere, substring match, comments
+  and literals included. It is a trap laid for whoever documents their
+  repro, since a header comment naming the construct under test is
+  exactly what an unlucky first hit looks like. The scan is now
+  region-aware and whole-word: every byte of the source is classified the
+  way the lexer itself reads it — nested and multi-line `( … )` comments,
+  text literals with their escapes, character literals and quoted
+  identifiers — a name mentioned in a comment is never a caret, and a hit
+  in real code always outranks one inside a literal. Interpolation is
+  untouched: a name that only ever appears as `{name}` inside a text
+  still anchors there. The classifier is pinned against the lexer by a
+  test asserting no token the lexer emits can start inside what the
+  classifier calls a comment. Regression tests
+  `tests/compile_fail/137_caret_skips_a_comment_mention.vox` through
+  `140_caret_skips_a_multi_line_comment_mention.vox`. Found by the
+  language lawyer while adjudicating the vox-fuzz collections-a claim
+  ledger, whose every probe file mis-pointed this way.
+
+- **A buffer put into a text no longer needs the cast, and never yields
+  the buffer's header** ([#51](docs/BUGS_FOUND.md)) — `a text called t is
+  b.` stored the buffer's struct pointer in the text slot, so `Print t.`
+  read the 24-byte header as a C string and printed the capacity field's
+  low byte: `@` for a 64-byte buffer, `A` for a 65-byte one. It was
+  stable across mutation — clearing and refilling `b` changed nothing,
+  because the text never touched the data — so the only symptom was one
+  wrong character that had looked the same since it was written. Four
+  more spellings put a cast-free buffer into a text slot; `'show it'
+  with b.` into a `text` parameter and `Return a text, b.` were wrong
+  the same way, while `Set t to b.` and `the t is b.` were refused by
+  the type lock, which named a cast that would not have changed what the
+  sentence meant. LANGUAGE.md's Basic Conversions table gives `buffer →
+  text` one meaning — "a copy of the buffer's bytes" — and the language
+  designer ruled that the cast-free spellings say the same thing, so all
+  five now make that copy and `b as text` and `"{b}"` still agree with
+  them word for word. The copy the cast emitted inline became
+  `emit_buffer_to_text_copy`, called from one place by all of them
+  rather than written out per site, which is how #58's two spellings
+  drifted apart. Type immutability is untouched: `t` is text before the
+  write and text after it, and every other mismatched write is still a
+  compile error. Regression tests
+  `tests/385_text_from_buffer_copies.vox`,
+  `386_text_from_buffer_at_every_write_site.vox` and
+  `387_text_from_buffer_is_an_independent_copy.vox` — the last pinning
+  #41's promise through #51's spelling, that clearing, refilling and
+  resizing the buffer leave the text exactly as it was. Found by the
+  vox-41 fix worker probing sibling forms of bug #41.
+
+
+- **A `treating` clause over a mixed list keeps each element's runtime
+  tag** ([#59](docs/BUGS_FOUND.md)) — `print each item from [1, "a"]
+  treating "a" as "b".` printed `1` then `4198536`, the text's own
+  address; so did `treating 98 as 31`, and so did `treating 1 as 9`,
+  which substituted the number correctly and then printed the `"a"` it
+  had not touched as a pointer. The same list with no clause printed
+  `1` then `a`. LANGUAGE.md promises a mixed list's elements "carry a
+  small per-slot type tag at runtime, so every element prints and reads
+  back as what it is" (:2226-2228) and names iteration among the reads
+  that respect it (:2236), while the clause itself replaces an element
+  only "if the loop variable equals `<match>`" (:424) — so an element the
+  clause never matches must print unchanged. Wrapping the loop variable
+  in `treating` reported the subject's static type, which a mixed list
+  does not have: the comparison became a raw pointer `cmp` (so a text
+  element never matched a text match) and the result reached Print
+  untagged (so it was rendered as an integer). Where the subject carries
+  a runtime tag, the clause now dispatches on it — a differing tag means
+  the substitution cannot fire and nothing is read through the match, an
+  agreeing tag compares text by bytes and everything else in registers,
+  and a replacement that fires carries its own tag. The value and its tag
+  come out under the same contract a bare element read has, so Print,
+  `value` parameter passing and an `is a` guard downstream all see what
+  the element really is. This is the runtime half of #55, which rejected
+  the provable mismatch and left the mixed list to the runtime; a subject
+  with a static type keeps the static path untouched. Regression tests
+  `tests/400_treating_a_mixed_list_keeps_each_tag.vox` through
+  `406_treating_survives_an_is_a_guard_downstream.vox`, proven to print
+  pointers on 0.4.8+#49-#58 and to pass after, with #55's
+  `359`/`360` unchanged as controls. Found by the #55 fix worker
+  (REPORT-55 §6), master-reproduced.
+
+- **`{f:.N}` prints N correctly-rounded decimal places for any N**
+  ([#60](docs/BUGS_FOUND.md)) — `{pi:.17}` was right, `{pi:.18}` printed
+  `3.141589999999999872` where the double's exact expansion says
+  `…883`, `{pi:.19}` printed `4.-8584100000000001280` — a wrong integer
+  part with a `-` inside the fraction — and from `{pi:.20}` the digits
+  were `3.0-9223372036854775808`, `i64::MIN` spliced in whole. The same
+  sentinel was the integer part of every value at or beyond 2^63, so
+  `{big:.2}` on 1e22 printed
+  `-9223372036854775808.-9223372036854775808`. LANGUAGE.md:3106
+  documents "N decimal places" with no bound on N, and a double — being
+  a binary fraction — always has an exact finite decimal expansion to
+  print them from. The old routine scaled the whole fraction by 10^N and
+  converted it in one step, three ways and wrong three ways: a
+  `mulsd`-by-10 loop that accumulated rounding error, a 10^N carry
+  threshold built with `imul` that wrapped negative past `i64::MAX`, and
+  a `cvttsd2si` that returns the SSE "integer indefinite" value once its
+  source overflows. Nothing is scaled now: the value is taken apart as
+  `m * 2^e`, an integer part at or above 2^52 comes from the same
+  big-integer digit routine the default float printer uses (so `{f}` and
+  `{f:.N}` agree on every value), and the fraction's digits are produced
+  one at a time by repeated exact halving in decimal. Rounding happens
+  once, on those digits, with an exact tie going to the even digit, as
+  `printf` does — so `{9.9999:.0}` is now `10` where it used to truncate
+  to `9`. Checked digit-for-digit against glibc `printf("%.*f")` over
+  979 value/precision pairs, including the smallest subnormal (1074
+  places), the largest double, the 2^52/2^53/2^63 boundaries and N up to
+  1500. Regression test `tests/410_float_precision_any_places.vox`,
+  proven to print the corrupt bands on 0.4.8 and to pass after. Found by
+  the vox-fuzz literals worker's format-specifier probes (§4 D2),
+  master-reproduced.
+
+- **A pad width is honoured at any size it can be written, and is written
+  a page at a time** ([#61](docs/BUGS_FOUND.md)) — `{n:2147483648}`
+  printed with no padding at all and no diagnostic, because the width
+  was read with `parse::<i32>()` inside an `if let` with no else arm: one
+  past `i32::MAX` the parse failed, the `Err` was dropped, and the spec
+  came out identical to a bare `{n}`. A width that did parse was then
+  padded one `write(2)` per character — about 265 KB/s, which is why
+  `{n:1000000}` took two and a half seconds and `{n:100000000}` took
+  nearly five minutes. LANGUAGE.md:3107-3108 puts no ceiling on a width,
+  and none is intended: a width is a character count, rendered in full.
+  So the count is now read as an `i64` and reaches the printer whatever
+  it is — `{n:2147483648}` pads, in 1.3 s — and a count too large to
+  hold is a compile error naming the limit instead of a silent no-op.
+  The padding is written a 4096-byte page at a time (100 000 000
+  characters: 283 s before, 0.065 s after), through a writer that
+  resumes after a short write. The same parse fed the zero-pad and the
+  hex, binary and octal width forms, and the same per-character loop was
+  in all four padded printers; `{f:.N}` had the identical dropped `Err`
+  on its precision. All of them are fixed together. Regression tests
+  `tests/411_pad_width_any_size.vox`,
+  `tests/compile_fail/169_pad_width_past_what_vox_can_count.vox`,
+  `170_decimal_precision_past_what_vox_can_count.vox` and four codegen
+  tests that pin the emitted width without writing two billion spaces.
+  Found by the vox-fuzz literals worker's format-specifier probes (§4
+  D3), master-reproduced and root-caused against source.
+
+- **A `.lib` entry with no `, returning` clause can no longer be read as a
+  value** ([#62](docs/BUGS_FOUND.md)) — `a number called n is greet.`
+  against a library whose Table of Contents says `To greet.` compiled
+  clean and answered `1`, the leftover in the return register from a
+  function that never set it. LANGUAGE.md:4963-4965 says a missing
+  `returning` clause "means the function returns nothing", and step 5 of
+  consuming a library (LANGUAGE.md:4990) promises calls "type-check like
+  any other function" — a promise the parameter side already kept (arity
+  and argument types are both checked at the call site) and the result
+  side did not, on the identical `see`. Reading such a call's result is
+  now a compile error naming the entry, pointing at the use, and offering
+  both ways out: declare the return in the `.lib`, or call the function as
+  a statement. Statement calls of a void export — the reason to export one
+  — are untouched. Regression test `see/void-result` in `test.sh` (A4.5).
+  Found by the vox-fuzz libraries claim ledger (Discrepancy 4) and filed
+  on the language designer's ruling.
+
+- **A procedure's non-existent result can no longer be used as a value**
+  ([#63](docs/BUGS_FOUND.md)) — `To ping. Print "pong".` followed by
+  `print ping.` printed `pong` and then `1`, and `a number called n is
+  ping.` put that same `1` into `n`: not an answer, just whatever the call
+  left behind. The Functions section defines the parameterless procedure
+  (LANGUAGE.md:684-686) and gives it a home as a statement
+  (LANGUAGE.md:779-785), but never hands a value back from a function that
+  returns none — and LANGUAGE.md:656-660 names this exact shape, "a wrong
+  answer that looks like data", as what the language exists to refuse. The
+  analyzer's signature pre-pass now records every `To` with no
+  value-returning `Return` at any depth, and reading one's result — in a
+  declaration, a `print`, a list slot, a map value, a format hole, a
+  `value`, a comparison, an argument to another call, a `Set`, an `Append`
+  or a `Return` — is a compile error naming the function and offering both
+  ways out. A bare `Return.` counts as returning nothing; a function that
+  does return a value without declaring its type is a different bug (#45)
+  and is untouched here. Calling a procedure as a statement stays legal.
+  Regression tests `tests/compile_fail/158_procedure_result_in_a_declaration.vox`
+  through `168_bare_return_result_used.vox`, plus the passing controls
+  `tests/407_procedure_called_as_a_statement.vox` and
+  `tests/408_declared_return_used_as_a_value.vox`. Found by the #45 fix
+  worker while closing #45.
+
+- **`the h's descriptor` reads the property, like `h's descriptor`
+  always did** ([#64](docs/BUGS_FOUND.md)) — `the` is only an article
+  before a variable name (LANGUAGE.md:1857, :523, :887), so the two
+  possessive spellings are one reading. They were two lists: the parser
+  resolved `name's property` in one arm of `parse_primary` and `the
+  name's property` in another, each with its own hand-written property
+  arms, and the second knew only the time and timer properties plus
+  `size`/`length`/`capacity`/`empty`/`full`. Every file property but
+  `size`, both list-element properties, a map's `keys`/`values` and its
+  key read, all seven number properties and a buffer's `type` answered
+  `Expected property name` behind the article — while the *quoted*
+  timer names (`t's 'start time'`) and the misspelled-`arguments`
+  suggestion had drifted the other way and worked only *with* it. Both
+  spellings now call one `parse_possessive_tail`, which holds the
+  specials, the typo diagnostic, the map-key read, every property arm,
+  #38's `exists` explanation, the `start time` two-word follower and
+  the duration unit — so a property is added or diagnosed in exactly one
+  place, the lesson #51 and #58 already taught about a second copy of a
+  list. `the` before a reserved word is untouched and still rejected:
+  `arguments`, `environment` and `current time` are not variable names,
+  and the manual gives them their own `the`-led phrases. Regression
+  tests `tests/420_the_possessive_reads_file_properties.vox` through
+  `424_the_possessive_on_numbers_and_timers.vox` and
+  `tests/compile_fail/171_the_possessive_file_handle_exists.vox`, all
+  six proven to fail against the previous tree. Found by the #38 fix
+  worker probing the file-property surface, master-confirmed.
+
+- **A declaration whose initializer is the wrong type is a compile error
+  instead of a segfault or a wrong value** ([#65](docs/BUGS_FOUND.md)) —
+  `a text called n is 5.` followed by `Print n.` dereferenced the literal
+  5 as a text pointer and crashed (139); `a number called n is "get
+  five".` printed `4198488`, the string's own address, which is
+  LANGUAGE.md:647-667's worked example still printing the number the
+  manual says it no longer prints. A boolean took the same pointer, a
+  text into a float silently answered `0.0`, a number into a list
+  segfaulted, and a text into a map printed `{}`. The type lock has
+  enforced LANGUAGE.md:531-532 — "**A variable's type is fixed at its
+  declaration and never changes**" — on every write to an
+  already-declared name since 0.3.0, so `Set n to "x".` was refused,
+  but nothing checked the declaration itself, which is where the type is
+  chosen. `check_initialiser_type` now applies the lock's own
+  compatibility rule at the declaration, and `check_argument_type` /
+  `check_return_type` close the identical hole at a call's argument and
+  at a return (`greet with 5.` on a text parameter, `Return a text, 5.`)
+  — the three sites bug #57 already covered for `nothing`. The
+  diagnostic names both types and the two ways out: redeclare, or the
+  cast LANGUAGE.md's Basic Conversions table documents. Deliberately
+  untouched: a `value` destination or source, a buffer's content write,
+  the `file`/`time`/`timer` handles whose documented initializers are of
+  another type (LANGUAGE.md:503-519 — `a file called source is
+  "input.txt".`), a `thing` copy, and a buffer read into a text without
+  the cast, which is bug #51's still-open question. Regression tests
+  `tests/compile_fail/145`–`157`, all thirteen proven to
+  compile-and-misbehave on 9734e5d, plus the passing controls
+  `tests/395_declaration_initialiser_types_that_agree.vox` and
+  `tests/396_mistyped_initialisers_written_correctly.vox`. Found by the
+  #51 fix worker and by the vox-fuzz names-and-strings claim ledger
+  (discrepancy D1).
+
+- **`a float called ratio is 3.` holds 3.0 instead of 0.0**
+  ([#65](docs/BUGS_FOUND.md)) — a whole number into a float stored the
+  integer's raw bits, which the float slot then read as 1.5e-323 and
+  printed as `0.0`; `ratio add 1.0` answered `1.0` and `ratio multiply
+  2.0` answered `0.0`. Per the language designer's ruling — "in human
+  language we call 1 a number and pi a number; it should be the same in
+  Vox" — a number and a float are one family, so the declaration converts
+  rather than refusing, emitting the same two instructions `3 as a float`
+  already emitted. The analyzer also stops relabelling a declared float
+  from its initializer's shape, which is why `a float called f is 3.`
+  followed by `Set f to 4.0.` used to answer "cannot assign float to 'f',
+  which is a number" and now works. `a number called n is 3.5.` keeps its
+  3.5, unchanged. The type lock still refuses `Set f to 3.` and `Set n to
+  3.5.` one line later; that is the designer's own static-int64 gap, left
+  with them, along with the float parameter and float return that still
+  misread a whole number (both recorded under #65).
+
+## [0.4.8] - 2026-08-20
+
+### Fixed
+
+- **`Write` of a number, float, boolean, or `value` is a compile error,
+  not a segfault** ([#40](docs/BUGS_FOUND.md)) — `Write n to out`
+  compiled and then crashed the generated program (exit 139) for all
+  three scalars, while text, buffers, and format strings wrote
+  correctly: `Write` hands its operand to `FILE_WRITE_STR`, which reads
+  it as a pointer to text, so a scalar's *value* was used as an address
+  (n = 72 read address 72). LANGUAGE.md documents `Write` for text,
+  buffers, and format strings, so the analyzer now refuses a bare scalar
+  operand the way `append` refuses a number source, naming the operand,
+  its type, and the spelling that works: `Write "{n}" to out.` A `value`
+  operand is refused with it — it crashed the same way when it held a
+  number or `nothing`, and the compiler cannot tell that from the
+  text-holding case that worked — and its message names the fix verified
+  for every case a value can hold: copy it into a typed variable and
+  write that. Rendering a scalar directly remains an open design option;
+  this pass fixes the diagnostic, not the language. Found by a human
+  writing ordinary Vox while building vox-fuzz's stdin input
+  generation.
+
+- **`buffer as text` now copies the buffer instead of aliasing it**
+  ([#41](docs/BUGS_FOUND.md)) — the cast returned a pointer into the
+  buffer's data area, so a text made from a buffer was a window onto it,
+  not a value. Clearing and refilling the buffer silently rewrote every
+  text taken from it, with no diagnostic; and because resizing a buffer
+  frees its old allocation, as the manual's Buffer Resizing section says
+  it does, reading such a text after a resize was a use-after-free —
+  both directions segfaulted from eight lines of ordinary code, in a
+  language whose headline promise is memory safety. `as text` now copies
+  the buffer's bytes into a fresh dynamic buffer, the same allocation
+  format strings and the other text-producing casts use, so exit cleanup
+  tracks it identically. Regression test
+  `tests/buffer_as_text_copies.vox`; LANGUAGE.md's conversion table and
+  Buffer Resizing notes now state that the text is an independent copy.
+  Found while writing an ordinary Vox program that read lines from a
+  file into a list.
+
+- **A buffer's `type` property reports `Buffer (static)` however it was
+  declared** ([#42](docs/BUGS_FOUND.md)) — `a buffer called b is 16
+  bytes in size`, `is 16 bytes`, `Create a buffer called b with size 16`,
+  and the bare dynamic `a buffer called b.` all printed `Text (dynamic)`
+  from `b's type`, against LANGUAGE.md's explicit listing of `buffer`
+  among the statically-typed kinds; only the string-initialised `is
+  "seed"` form was right. Every sized and dynamic spelling routes through
+  `BufferDecl`, which registered the variable's runtime kind but never
+  its declared type, so the property's lookup missed and fell through to
+  the runtime-tag dispatch, where a buffer pointer reads as a string tag.
+  The declaration now registers the declared type; the same omission on
+  `Get the current time into` is closed alongside it so a `time` reports
+  `Time (static)`. Found by the vox-fuzz buffer claim ledger (discrepancy
+  D2) and adjudicated by the language lawyer.
+
+- **A conditional `value` return no longer segfaults the caller**
+  ([#43](docs/BUGS_FOUND.md)) — a function whose only `Return` sat
+  inside an `If`/`Otherwise` (`To label with a value called v. If v is a
+  number, return a value, v. Otherwise, return a value, 99.`) crashed
+  its caller with SIGSEGV, deterministically: the integer `99` was
+  dereferenced as a `char*` inside `_print_cstr_impl`. The parser's Gate
+  B fed a `Return`'s declared type into the function's signature only
+  for **top-level** body statements, so a branch-nested `Return` left
+  `return_type` at `Void`; codegen then skipped the `value` return's r11
+  tag load, and the caller stored r11 into the variable's tag slot
+  anyway — r11 still holding the callee's **parameter** tag (text) from
+  the `is a number` predicate, which labelled an integer payload as
+  text. Three changes: `emit_load_value_tag`'s no-tag arm now defaults
+  to the integer tag unless `expr_leaves_tag_in_r11` confirms a tag was
+  left there, which makes this class of mislabelling impossible
+  whatever else is wrong; the parser now adopts a branch-nested
+  `Return`'s declared type as the signature when the body declared no
+  top-level one and every declaration agrees, which is the actual cause;
+  and a function that falls off its end now returns its declared type's
+  empty value (empty text, zero, or a `value` tagged as the number `0`)
+  rather than whatever rax held, since a typed function could not
+  previously reach that path at all. The same missing signature made the
+  plain-type family silently wrong rather than unsafe — `Return a text`
+  inside a branch printed the text's address as a number — and that is
+  fixed by the same change. A function whose branches declare
+  *different* types still has no signature to adopt and is unchanged
+  (memory-safe, silently wrong); making that a compile error is a
+  language decision, noted in the register. Regression test proven to
+  segfault on the unfixed compiler and to pass after, with the
+  single-expression `Return a value, <expr>.` form kept as the control.
+  LANGUAGE.md's "One limitation to know" paragraph is rewritten: the
+  factorial pattern now works for `value` returns. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #43.
+
+- **`Seek ... to line N` reaches line N** ([#47](docs/BUGS_FOUND.md)) — every
+  target of 2 or more landed at the start of line 2, whatever N was, and a
+  line past the end of the file never set the error flag. `_seek_fd_line`
+  kept its line counter in `rcx` across the read syscall, and `syscall`
+  clobbers rcx with the return address, so the counter became a code address
+  on the very first byte read: the compare against the target failed
+  immediately, the scan fell out at the first newline, and the past-EOF branch
+  was unreachable. The counter now lives in `rbx`, which is callee-saved and
+  already pushed. `Seek ... to byte N` was a bare `lseek` and was never
+  affected; `_seek_fd_line` exists only in the x86_64 runtime. Found by the
+  vox-fuzz files claim ledger (discrepancy D3) and adjudicated by the language
+  lawyer.
+
+- **A failed `Write` sets the error flag, and both read forms agree about a
+  dead handle** ([#48](docs/BUGS_FOUND.md)) — a `Write` to a full device, to a
+  handle opened for reading, to a closed handle or to a handle whose `open`
+  failed all succeeded silently as far as Vox could tell, so a write that did
+  not happen was indistinguishable from one that did; and `Read from` a
+  failed-open handle reported a zero-byte read where `Read line from` the
+  identical handle set the flag. The three write macros issued their `write(2)`
+  and popped straight past rax without inspecting it, and `FileWrite` never
+  touched `_last_error` at all. Writes now record their syscall's outcome —
+  the errno for a failure, `EIO` for a short write, zero on success — and
+  `Write`, `Write a newline` and `Read from` set the flag on a dead handle
+  exactly as `Read line from` already did. Found by the vox-fuzz files claim
+  ledger (discrepancies D4 and D5) and adjudicated by the language lawyer.
+
+### Changed
+
+- **LANGUAGE.md defines buffer bounds** — writes accept positions 1..capacity
+  and extend `size` (zero-filling any gap); reads accept 1..size; position
+  0 is out of bounds for both. The compiler has always behaved this way and
+  the manual's own worked example relied on it, but the Bounds Checking
+  paragraph never said so (buffer ledger discrepancy D3). The fixed-buffer
+  feature list no longer says truncation is "silent": it sets the error
+  flag, as the Reading section already stated.
+
+- **LANGUAGE.md no longer says `Read` appends** — the Reading section's
+  high-level bullet claimed `Read` "appends incoming data to the buffer", as
+  the explicit contrast against `Read line`'s "replaces". The compiler
+  deliberately replaces (`codegen/statements.rs`: "read replaces, not
+  appends"), `tests/runtime/b340_pipe_exact_fit.asm` asserts it, and no other
+  sentence in the manual depends on append. The bullet now says `Read`
+  replaces the buffer's contents and continues from the file's current
+  position — which is the real contrast with `Read line` (files ledger
+  discrepancy D2). The Seeking, Writing and Error Handling sections now also
+  state that a failed `Write`, and a read on a handle whose open failed, set
+  the error flag and are catchable.
+
+- **LANGUAGE.md collections section: five examples corrected, one
+  annotated** — from the vox-fuzz collections-a claim ledger
+  (discrepancies D1-D6), each adjudicated by the language lawyer and each
+  recompiled against this tree. The mixed-list widening example's `append
+  hello to items` is now `append "hello" to items`: a bare word is an
+  identifier (LANGUAGE.md:645-668), so the example as printed did not
+  compile (D1). The list-of-maps paragraph no longer claims a `For each`
+  "types the loop variable as a map" — the loop variable is deliberately
+  untyped and map access is a static check, so reading a key off it is a
+  compile error; the section now shows the index-loop idiom that works
+  (D2). The mixed-list guard idiom is replaced for the same reason: a
+  predicate reads the runtime tag but does not narrow the static type, so
+  the guarded element has to be extracted into a declared variable (D3),
+  and the `item as a number` cast the same paragraph offered as the
+  alternative is dropped, since casting a dynamically-tagged value is a
+  known gap and is rejected (D4). The promise that an unprovable value in
+  a list "is always read back as what it is rather than silently
+  reinterpreted" is hedged to match the limitation paragraph twenty lines
+  below it, which always conceded the conservative `number` tag guess
+  (D5). And the cyclic-list example's `(prints: [[...]] then cyclic)` is
+  marked as the abbreviation it is — 64 brackets each side of the `...`
+  (D6). Filed unfixed alongside these: [#44](docs/BUGS_FOUND.md)
+  (collections render as a raw address outside `Print`),
+  [#45](docs/BUGS_FOUND.md) (D5's compiler half) and
+  [#46](docs/BUGS_FOUND.md) (a diagnostic caret landing in a comment).
+
+## [0.4.7] - 2026-08-20
+
+### Fixed
+
+- **A float at or beyond 2^63 no longer saturates when printed**
+  ([#34](docs/BUGS_FOUND.md)) — `Print`, `"{x}"` interpolation, and
+  `x as text` all printed `9223372036854775808.372036854775808` for
+  *every* value at or past 2^63 (10000000000000000000.0 included),
+  because the formatter's integer part went through `cvttsd2si`, which
+  saturates to `i64::MIN`'s bit pattern past `i64::MAX` — the trailing
+  digits were the fractional part of that same wrong, constant value,
+  which is why they never changed. The stored double was always
+  correct; only the print path was wrong. 2^63 is already far past
+  2^52, the point beyond which a double's 52-bit mantissa has no room
+  left for a fractional bit, so every affected value is an exact
+  integer — `_print_float` and `_buffer_append_float` now detect the
+  magnitude and, for that range only, extract the raw mantissa and
+  exponent and produce the exact decimal digits by schoolbook
+  binary-to-decimal (double the mantissa's decimal digit string once
+  per bit of exponent past 52), which is exact because no floating
+  point is involved past reading the bits. Values below 2^63 are
+  untouched and still use the original, already-correct path.
+  Deliberately **not** fixed in this pass: a nonzero float below the
+  formatter's fixed 15-digit fractional precision still prints `0.0` —
+  a lost-precision problem in a different part of the same routine, not
+  a saturation, tracked as still-open in the register entry. Regression
+  test proven to fail on the unfixed compiler on exactly the
+  large-magnitude rows, with the sub-2^63, division-derived, and
+  IEEE-754-rounding rows kept as controls that pass on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #34.
+- **`as a number` no longer wraps silently past i64's range**
+  ([#35](docs/BUGS_FOUND.md)) — `"9223372036854775808" as a number` (one
+  past `i64::MAX`) returned `-9223372036854775808` with the error flag
+  never set, so `On error` could not catch it and the wrapped value was
+  indistinguishable from a real one; applied to every base
+  (`"ffffffffffffffffff" as a hex number` gave `-1`). Every digit in
+  these inputs is valid for its base, so the documented "stops at the
+  first invalid character" rule never engaged — the whole string parsed
+  and the accumulator wrapped. `_parse_i64`, `_parse_int_radix`, and
+  their length-bounded buffer variants in `coreasm/x86_64/int.asm` now
+  accumulate the magnitude with an unsigned `mul` (which reports a
+  truncated product instead of silently wrapping) and range-check the
+  result against the sign at the end: a positive numeral must fit under
+  `i64::MAX`, a negative one may reach `i64::MIN`'s magnitude (`2^63`) —
+  the two are different bounds, so a naive "digits > i64::MAX" check
+  would have wrongly flagged legitimate `i64::MIN` input, which is kept
+  as a control. Either check failing sets the same error flag `On error`
+  already reads for a wholly-invalid string. The returned value on
+  overflow is not defined (0 or a wrapped magnitude); the flag is the
+  fix. Regression test proven to fail on the unfixed compiler on exactly
+  the three overflow cases, with `i64::MAX`, `i64::MIN`, a valid hex
+  value, and the pre-existing `"abc" as a base5 number` raise kept as
+  controls that pass unchanged on both sides. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #35.
+
+- **A width specifier no longer changes what a value is**
+  ([#36](docs/BUGS_FOUND.md)) — `"{f:06}"` on a float printed its raw
+  IEEE-754 bit pattern (`4615063718147915776` for 3.5), and on a `text`
+  printed the string's **address** — silent wrong data and an
+  information leak, proven by two same-content texts printing different
+  numbers. The type-aware dispatch in `emit_formatted_value` was gated
+  on there being *no* width, so writing one skipped the type check
+  precisely when the compiler knew the type best. Non-integer types are
+  now rendered by type whether or not a width is present. The width is
+  not yet *applied* to floats/texts — coreasm has padding primitives
+  only for integers and hex — so a width there is ignored rather than
+  honoured, matching the runtime-tagged `value` path; that cosmetic
+  residue is recorded in the register. Regression test proven to fail
+  on the unfixed compiler on exactly the float/text/buffer rows, with
+  integer and boolean width rows kept as controls that pass on both
+  sides. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #36.
+
+- **A file's `readable` property now reflects its actual open mode**
+  ([#37](docs/BUGS_FOUND.md)) — `readable` tested `fd >= 0`, which is
+  true for any successfully opened handle, so a file opened `for
+  writing` or `for appending` still reported `readable` as `1`. The
+  obvious defensive idiom, `If f's readable then,` before a read, passed
+  on a write-only handle and the read that followed failed at the OS
+  level. `writable` already derived its answer correctly from the
+  handle's recorded open mode; `readable` now shares that same source of
+  truth instead of being a constant. Regression test opens one file for
+  writing, appending, and reading in turn and checks `readable`,
+  `writable`, and `permissions` in each mode; proven to fail on the
+  unfixed compiler on exactly the writing/appending `readable` rows,
+  with the `writable` rows and the constant `permissions` value kept as
+  controls. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #37.
+
+- **A format string in a collection prints as text at every position, not
+  just the second** ([#39](docs/BUGS_FOUND.md)) — `["{base}", "plain"]`
+  printed two raw pointers (a heap address that moved under ASLR between
+  runs, plus a stable rodata address) instead of `core`/`plain`; moving the
+  format string to the second slot made both elements print correctly,
+  which was the tell that this was a static element-type inference bug,
+  not a runtime-tag bug — a named list under a plain `print each` already
+  worked, but attaching a `treating` clause to that *same* list broke it
+  again. `Expr::FormatString` had no arm in the three places that classify
+  a list's element type from its literal shape — the `for each`/`print
+  each` inline-literal inference, the named-list-declaration inference
+  that feeds `treating`, and `element N of <literal>` — so each fell
+  through to its generic default (`Unknown`, which for a literal is not
+  the same safe fallback `Unknown` is for a named list, since a named
+  list's `Unknown` widens to `Mixed` and dispatches on the still-correct
+  runtime tag, while a literal's `Unknown` fed nothing and defaulted to
+  `PRINT_INT`). Bug #17 fixed this same missing arm in the two functions
+  that back append and general expression typing; these three siblings
+  were never given it. Fixed by adding `Expr::FormatString => VarType::
+  String`/`Some(VarType::String)` to all three. Regression test covers all
+  nine control rows (first vs. second position in an inline literal, a
+  named list with and without `treating`, `element N of`, a plain `For
+  each`, escaped-braces-only, and a no-format-string `treating` list);
+  proven to fail on the unfixed compiler on exactly the format-first
+  inline-literal, `For each`-over-literal, and named-list-with-`treating`
+  rows, with the rest passing on both sides as controls. See
+  [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #39.
+
+## [0.4.6] - 2026-08-20
+
+### Fixed
+
+- **A period now closes a `Repeat` body** ([#27](docs/BUGS_FOUND.md)) — the
+  construct that `Repeat N times, <actions>.` is a sentence-ending loop, the
+  shape LANGUAGE.md documents for `While` and `For each`, never closed on a
+  period. The continuation was silently absorbed into the loop and re-run
+  once per iteration, with no error: `Repeat 2 times, print "r". Print
+  "after".` printed `r after r after` (the absorbed statement run inside
+  the loop) instead of `r r after`. A second symptom shared the same root:
+  a comma did not separate actions in a `Repeat` body, so `Repeat 2 times,
+  print "a", print "b".` was a parse error at the comma — `Repeat`'s body
+  loop was missing the entire separator handling that `While`'s had. Both
+  are the same gap: the spec already promised that a period closes the
+  innermost open clause and that `Repeat` is one such clause, so this is a
+  fix, not a feature. `parse_repeat` now shares one body loop with
+  `parse_while` (factored into `parse_loop_body` so the two cannot drift
+  apart again): comma continues, period closes, blank line closes, EOF
+  closes. `Repeat` was also added to `parse_block`'s self-terminating
+  construct list alongside `If`/`While`/`For`, so a `Repeat` that is not the
+  last action in a branch no longer swallows the action that follows it.
+  Regression tests cover the period-closes case, the comma-continues case,
+  the blank-line-closes case (the one path that already worked, kept as a
+  guard), stacked periods closing a `Repeat` nested in each of `For each`,
+  `While`, and `If`, a `Repeat` inside a function followed by a statement,
+  a nested `If` as the last action, and the self-termination parity case.
+  Parser-only; analyzer and codegen already handled a closed `Repeat`
+  correctly. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #27.
+
+- **A buffer declaration always allocates** ([#28](docs/BUGS_FOUND.md)) — a
+  `buffer` declared inside an `If` body that never ran, then redeclared at
+  top level, segfaulted. The second declaration emitted no allocation at
+  all — only `_buffer_clear` and `_buffer_append_bytes` — because the name
+  was already bound, so the only `_alloc_buffer` sat inside the branch that
+  did not run and the slot still held null when the clear dereferenced it.
+  It needed both halves: neither a conditional declaration alone nor a
+  redeclaration alone reproduced it, and only `buffer` was affected —
+  `number` and `text` in the same shape were fine, as was the sized buffer
+  path, which already allocated on every declaration. Diagnosed from the
+  emitted assembly rather than from the symptom: the register's original
+  guess (stack garbage dereferenced by `Print`) was wrong, since the crash
+  happens even when the buffer is never read. The string-initialised
+  declaration now allocates unconditionally, as the sized path always did,
+  while preserving sizedness — an earlier attempt that allocated a dynamic
+  auto-growing buffer everywhere silently disabled fixed-size overflow
+  detection language-wide, which the full suite caught and the bug's own
+  matrix did not. Twelve regression tests; eight segfault on the unfixed
+  compiler and the rest are controls that must pass on both sides.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #28.
+
+- **A string literal is data, never a name** ([#29](docs/BUGS_FOUND.md),
+  [#30](docs/BUGS_FOUND.md)) — two live defects from one design
+  inconsistency, both cases of a string literal being resolved as a
+  variable name when a variable happened to share its text. In a list
+  literal (#29) the literal took its slot type tag from the colliding
+  variable: colliding with a list gave a tag that led to a wild
+  dereference and a segfault, and colliding with a number tagged a string
+  pointer as an integer, so it printed as `4198536` — silent wrong data,
+  the worse half. Colliding with a `text` was correct only by coincidence,
+  the wrong tag and the right tag being the same number. In a buffer
+  initialiser (#30), `a buffer called hello is "SURPRISE".` followed by
+  `a buffer called b is "hello".` printed `SURPRISE`: no crash, no
+  diagnostic, just the wrong contents. Both belong to #19's family, marked
+  fixed in v0.4.4 — that fix removed the pattern from five codegen sites
+  and missed these two. LANGUAGE.md's grammar is unambiguous that a string
+  literal is data, so this is a fix, not a change of meaning. The cure is
+  narrow at each site: `tags.rs` gains an `Expr::StringLit` arm returning
+  `TAG_STRING` ahead of any lookup, leaving `Expr::Identifier` alone, and
+  `buffers.rs` loses its `variable_types` lookup entirely, the code
+  beneath it already appending the literal's bytes correctly. Eight
+  regression tests covering every row of the matrix, controls included.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #29 and #30.
+
+- **A `text` flag with no default reads as empty, not null**
+  ([#31](docs/BUGS_FOUND.md)) — `a flag called name is "-n" or "--name",
+  it is a text.` segfaulted the moment the flag was read and the user had
+  not supplied it. A flag's slot was initialised to `0` whatever its
+  declared type, which is right for a `number` or a `boolean` and is a
+  null pointer for a `text`. A `text` flag with no explicit default now
+  initialises to the empty string, so an unsupplied flag reads as `""` and
+  can be tested with `is empty` the way the documented shape implies.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #31.
+
+- **A flag keeps its declared type inside a function body**
+  ([#32](docs/BUGS_FOUND.md)) — a flag read inside a function was typed
+  `boolean` whatever it had been declared as, so a `text` or `number` flag
+  compared or interpolated inside a function produced wrong code. The
+  analyzer held declared flags in a bare `HashSet<String>` — names, no
+  types — and both type-query sites answered `Some(Type::Boolean)` for any
+  name in the set. It misbehaved only inside a function body, because at
+  top level the declaration's own type is still in scope and answers
+  first, which is why the obvious one-line test passes and the defect
+  could sit indefinitely. `flag_variables` is now a `HashMap<String,
+  Type>`, populated from the declaration's `value_type`, and both query
+  sites return the declared type. The regression test carries a top-level
+  control alongside the function-body case to pin the diagnosis.
+  See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #32.
+
+- **`is empty` on a `text` tests the contents, not the pointer**
+  ([#33](docs/BUGS_FOUND.md)) — `"" is empty` was always false, for
+  every `text` in the language. The predicate special-cased buffers and
+  lists (read the length field) and fell back to `test rax, rax` for
+  everything else; a text's value is a pointer to its NUL-terminated
+  bytes, which is never null, so the predicate compiled to "is this
+  pointer null". Found while verifying the documentation line #31's fix
+  earned — the claim that an unsupplied text flag can be tested with
+  `is empty` was written, then proven false before it shipped. The spec
+  already promised the predicate on a text (its own worked example uses
+  `if 'output file' is empty then,`), so this is a fix, not a feature.
+  A text now tests its first byte, null-safely, at both twin codegen
+  sites (expression and branch forms); both sites also stop resolving a
+  string literal through `variable_types` — the #19/#29 family pattern,
+  removed. Not one test in the suite used `is empty` before this bug's
+  regression pair. See [docs/BUGS_FOUND.md](docs/BUGS_FOUND.md) #33.
+
+## [0.4.5] - 2026-08-19
+
+### Fixed
+
+- **Loop expansion now honours its documented universality.** LANGUAGE.md
+  promises that `each...from` is a *universal* loop expansion that "works
+  with any action," yet an argument list holding more than one `each <name>
+  from <collection>` clause — or an expansion mixed with a fixed argument —
+  was a parse error at the `and`. That rejection was a gap in a promise the
+  spec had already made, so this is a fix, not a new feature. A call's
+  argument list may now hold any number of `each <name> from <collection>`
+  clauses joined by `and`, and the action runs once per element of the
+  Cartesian product, row-major — the leftmost clause is the outermost loop,
+  exactly as if the clauses were nested `For each` loops. `'pair' of each x
+  from [1, 2] and each y from [10, 20]` calls `'pair'` four times:
+  `(1,10), (1,20), (2,10), (2,20)`. There is no clause cap; a fixed
+  (non-`each`) argument may sit in any position; an inner collection may use
+  an outer clause's variable (triangle iteration). Arity is still checked —
+  a one-value action with two `each` clauses is a compile error, not a
+  concatenation (`` `print` takes one value but this sentence supplies 2
+  `each` clauses. ``), which is what keeps `print each x from A and each y
+  from B` from being misread. Duplicate loop variables in one sentence are a
+  compile error naming the variable; an empty collection in any position
+  yields zero calls; `but if` attaches to the innermost iteration and may
+  reference every loop variable; each loop variable retains its
+  last-iteration value after the loop. The semantics is the Cartesian
+  product (matching comprehension syntax in Haskell, Python, and Rust), not
+  zip — `respectively` is left as a possible future zip marker. A pure
+  extension: today's spellings of the form were all parse errors.
+  Parser-only; the analyzer and codegen already handled nested `For each`
+  loops. See
+  [docs/plans/320_grid_expansion.md](docs/plans/320_grid_expansion.md).
+
+## [0.4.4] - 2026-08-18
+
+### Fixed
+
+- **The fuzzer's remaining findings, closed — the bug register is empty.**
+  With 0.4.3's two segfaults, every bug vox-fuzz has reported is now
+  fixed, and so is the sibling that fixing #24 uncovered.
+  - **An integer literal too large for 64 bits compiled silently and
+    evaluated to `0`** ([#22](docs/BUGS_FOUND.md)) — a wrong answer with
+    no crash, which is the failure mode this manual says the language
+    exists to prevent. It is now a compile-time error naming both the
+    literal and the valid range. `9223372036854775807` still compiles.
+  - **Printing a list of `arguments's all` leaked raw pointers**
+    ([#23](docs/BUGS_FOUND.md)) while `element N of` read the same
+    values back correctly — the payloads were sound, their type tags
+    were not. Same family as #17/#18, fixed the same way.
+  - **Out-of-range positional properties segfaulted**
+    ([#26](docs/BUGS_FOUND.md)) — `arguments's first` with no arguments,
+    `arguments's second` with fewer than two, `environment's first` and
+    `last` on an empty environment, and a negative index. Each handed a
+    reader a null pointer to dereference. They now set the error flag
+    and yield empty text, catchable by `On error`, matching `last`,
+    `name`, `all`, `raw`, and `count`, which were already correct — the
+    right behaviour had been implemented next door the whole time.
+  - **A string literal in a function-body `If`/`While` condition
+    resolved as a variable name** ([#21](docs/BUGS_FOUND.md)) —
+    `If w is not "banana"` failed with `Unknown variable: banana`. This
+    one was a **regression**: an analyzer helper reintroduced the
+    pre-0.3.0 quoted-token-as-identifier ambiguity that #19 removed from
+    codegen, and it sat unreachable until an April cleanup widened a
+    recursion guard and exposed it. The helper is deleted; a
+    compile-fail test pins that genuine undeclared-identifier detection
+    still works without it.
+
+## [0.4.3] - 2026-08-18
+
+### Fixed
+
+- **Two segfaults, found by Vox's own fuzzer.** vox-fuzz — a fuzzer
+  written in Vox — generated the programs that surfaced both, and both
+  are now closed.
+  - **A declaration on a conditional path read uninitialised storage**
+    ([#25](docs/BUGS_FOUND.md)). A name declared inside an `On error`,
+    `While`, `for each`, or `Repeat` body registered in the enclosing
+    scope, but its initialising store sat behind the branch — so when
+    the branch never ran, the name read a raw stack slot: a `number`
+    leaked a neighbouring frame's values (one program printed `12345`
+    from an unrelated function, exit 0, no warning), and a `text` was a
+    wild pointer that segfaulted. The compiler now emits the type's
+    default at frame setup for any such name, so a declared name always
+    holds its initializer or its type's default, exactly as this manual
+    has always promised. Programs where the branch *does* run are
+    unaffected.
+  - **Reading an unset environment variable segfaulted**
+    ([#24](docs/BUGS_FOUND.md)), and `On error` could not catch it,
+    because the fault preceded any error-flag write. A missing variable
+    now sets the error flag and yields empty text, like every other
+    fallible read.
+- **Two diagnostics that pointed at the wrong thing.** The orphaned
+  `Return` error now carries a source location and explains that a
+  body-level `Return` closed the function early; the cross-condition
+  `Unknown variable` caret now lands on the failing read rather than on
+  the declaration it was complaining about, with a hint naming the
+  branch rule.
+
+### Fixed
+
+- **Nine more reserved words are now legal identifiers** — `capacity`,
+  `raw`, `all`, `first`, `last`, `second`, `size`, `length`, and
+  `version`. Each was reserved as a keyword but is only special in one
+  fixed grammatical position, the same contextual-keyword treatment that
+  freed `count` in 0.4.2. The compiler now lexes all nine as identifiers
+  and claims each by lexeme at the position where it means something,
+  leaving it an ordinary variable name everywhere else:
+
+  - `capacity` — after a possessive marker (`data's capacity`) and in the
+    `with capacity N` / `of capacity N` buffer-declaration phrase.
+  - `raw` — after a possessive marker (`the program's raw`).
+  - `all` — after a possessive marker (`the numbers's all`) and in the
+    `all the numbers from/between … to and …` range literal.
+  - `first`, `last`, `second` — after a possessive marker
+    (`arguments's first`, `the letters's last`, `arguments's second`);
+    `second` also names the `Wait 1 second.` time unit, so
+    `Set second to 1. Wait second seconds.` waits one second while `a
+    number called second is 0.` compiles.
+  - `size` and its synonym `length` — after a possessive marker
+    (`the letters's size`, `the letters's length`); `size` also in the
+    `with size N` / `N bytes in size` declaration phrases.
+  - `version` — the `Library <name> version "…"` and `see <lib>
+    version "…"` header sentences only.
+
+  Each is a bare variable name everywhere except its one fixed
+  grammatical position; `arguments's first` and `a number called first is
+  0.` both work in the same program. The quoted forms (`'first'`,
+  `'size'`, etc.), which always lexed identically to the bare forms, are
+  unaffected. The reserved alias `length` (previously an alternate
+  spelling of `size` in the alias table) is now a contextual keyword — a
+  synonym of `size` in the possessive dispatch only — so
+  `a number called length is 1.` compiles and `x's length` still means the
+  same as `x's size`. See [plan 315](docs/plans/315_contextual_keyword_family.md).
+
+## [0.4.2] - 2026-08-18
+
+### Fixed
+
+- **Bare `count` is now a legal identifier.** It was reserved as a keyword
+  alongside `capacity`, `length`, `first`, and `last`, but the word is only
+  special after a possessive marker (`arguments's count`,
+  `environment's count`) or in the `the argument count` / `the environment
+  variable count` phrases. A word that is special in one syntactic position
+  is no longer banned from every other, so `count` is now an ordinary
+  variable name — declarations, `Set`, loop variables, function parameters,
+  arithmetic, conditions — while every possessive `'s count` use is
+  unchanged. The compiler now lexes `count` as an identifier and claims it
+  for the possessive property in the parser, the same contextual-keyword
+  treatment `start`/`begin`/`stop` already get for timers. The quoted form
+  `'count'` (which always lexed identically to the bare form) is unaffected.
+- **`cargo install vox-lang` produced a compiler that could not compile
+  anything.** Cargo copies only the binary into `~/.cargo/bin`, leaving the
+  crate's `coreasm/` behind in the registry cache, so every step of the
+  resolution order missed and the first compile died with `unable to open
+  include file 'coreasm/x86_64/core.asm'`. The crate already ships all 21
+  `.asm` files — they are inside the crates.io tarball and covered by its
+  checksum — so the compiler now carries them in the binary (a `build.rs`
+  walks `coreasm/` at build time, so a newly added file ships without any
+  list to update) and writes them to `~/.cache/vox/<version>/coreasm` the
+  first time it needs them. The tree is written to a temporary directory
+  and renamed into place, so it is never observably half-written and two
+  vox processes racing on first use is harmless. Nothing is downloaded, at
+  build time or run time. The embedded copy is consulted **last**, after
+  `VOX_CORE_PATH`, the XDG config, the system paths, the executable-relative
+  search, and `./coreasm` — so an RPM install, a development tree, and
+  `VOX_CORE_PATH` all behave exactly as before. See
+  [plan 312](docs/plans/312_cargo_install_coreasm.md).
 
 ### Added
+
+- **Installing vox on dnf suggests vox-libs.** The RPM carries
+  `Suggests: vox-libs` — a weak dependency, so nothing is pulled in
+  automatically and the compiler stays standalone, but the relationship is
+  recorded where packaging tools can see it. README and INSTALL.md now
+  document the libraries and where they install.
+
+## [0.4.1] - 2026-08-18
+
+### Changed
+
+- **Examples for everything 0.4.0 shipped.** `examples/delivery.vox` (user-
+  defined things end to end) and `examples/supervisor.vox` (fork, non-
+  blocking reap, deadline, Send signal, inline status decode) are new;
+  `examples/pi.vox` adopts `times`; README's feature list catches up.
+- **The compiler ships no libraries.** `lib/process.vox` moved out to
+  [Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs). The reaped-
+  status tests decode inline, proving the feature is complete with
+  nothing installed. The shared-library machinery tests are unchanged.
+
+## [0.4.0] - 2026-08-18
+
+**Vox has a type system.** This is the biggest release in the language's
+history: as of today, a Vox program can define its own types — in plain
+English, like everything else here.
+
+```vox
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0,
+  a number called y is 0.
+
+To do the point's 'placed at', with a number called across and a number called climb.
+  a point called spot.
+  Set spot's x to across.
+  Set spot's y to climb.
+  Return a point, spot.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner.
+```
+
+That prints `{x: 3, y: 4}` — and yes, this example compiles; every
+example in this release does, checked against the compiler before
+shipping.
+
+Things nest to any depth, copy by value, print themselves, compare
+field-by-field, carry their own function members, and work across files —
+all resolved at compile time, with not one byte of runtime added. The
+generated binaries are still just your code and syscalls.
+
+And because a memory-safe language should have to prove it: this release
+was **adversarially tested before it shipped**. A red team attacked the
+type system with 38 runnable probes; it found two real holes, both were
+fixed, and the exact programs that broke the compiler are now regression
+tests that must fail to break it. The copy semantics survived everything
+thrown at them.
+
+Also in this release: Vox grows real process control — `Send signal`
+performs `kill(2)`, `reap ... without waiting` polls without blocking,
+and `the reaped status` finally tells you *how* a child died. Decoding it
+lives in `lib/process.vox`, **a library written in Vox, naturally** —
+not a standard library, and not something the compiler needs: `the
+reaped status` hands you the raw word and any program may decode it
+itself. Vox has no standard library on purpose, and the compiler runs
+perfectly with none installed. A pure-Vox process supervisor
+(fork, poll, timeout, kill, classify) now needs no shell and no
+coreutils. Timers were caught reporting a 100 ms wait as a full second
+and now measure honestly, which matters rather a lot for the benchmarking
+tool this unblocks. And `Print 6 times 7.` finally does what the manual
+always claimed.
+
+The full ledger:
+
+### Added
+
+- **User-defined things — composite value types declared in the program.**
+  A new `thing` construct lets a program declare its own composite types at
+  the top level, alongside the builtins. `A thing called point has a number
+  called x is 0, a number called y is 0.` declares a type `point` with two
+  number fields, each defaulted by a literal of its own type; the definition
+  fixes a layout for the whole program and emits no code. A thing may also
+  carry function members — `a function called 'placed at'` in the body
+  declares the type's callable surface (its manifest), defined separately
+  with `To do the point's 'placed at', with ...`. Declarations bring a thing
+  into being with `a point called origin.` or `Create a point called p.`;
+  `the` reads a known one. Fields are reached by possessive chains
+  (`commute's leg's start's x`), and things nest (a segment holds two
+  points) under an acyclicity check: a thing may name only previously-
+  defined types, so a cycle is unconstructible within a file and is proved
+  out across `see`d files by the analyzer's registry DFS. Things are
+  values — assignment, argument passing, and return copy the whole thing
+  field by field, so mutating a copy never touches the original. A member
+  is called three ways: the free call `'magnitude squared' of origin`, the
+  instance possessive `origin's 'magnitude squared'` (sugar that fills the
+  first parameter with the receiver), and the type possessive `a point's
+  'placed at' with 3 and 4` (a maker — the article `a` because a new thing
+  comes into being). A manifest member must return its own thing; its first
+  parameter may be the thing (reachable by instance sugar) or not (a maker,
+  reached by naming the type). Things print as `{x: 5, y: 0}` and compare
+  for equality field by field. Type, variable, and function names share one
+  global identifier space (first-come-first-served); each type owns a
+  separate member space. Cross-file, `see "./geometry.vox".` makes another
+  file's things usable — a `see` of an unreadable file is now an error (it
+  was silently skipped without `-v`), and a duplicate type name across a
+  `see` now errors at the second definition, naming the other file. In v1
+  a field's type is `number`, `float`, `boolean`, `time`, or any previously-
+  defined thing (`text`/`list`/`map`/`buffer` deferred); user things are not
+  part of the runtime tag system, so there is no `is a point` predicate, and
+  a `.lib` cannot yet take or return a thing across its boundary (the
+  diagnostic names the fields to pass across instead). Every reserved
+  wrong-shape use has a targeted message — a thing copied from or written
+  as a bare value, returned as a value, interpolated into text, or put in
+  order; a member returning another thing, or declared but never defined;
+  a maker reached by a receiver; a members-only or field-less definition;
+  a definition written with `is` instead of `has`, created as a variable,
+  defined inside a block, or defined after a variable of the same name; a
+  field default of the wrong type; an unknown field type. `thing`, `has`,
+  and `do` are contextual keywords — claimed only inside the construct,
+  ordinary identifiers elsewhere, so `a number called thing is 5.` compiles.
+  See the new [Things](LANGUAGE.md#things) chapter in LANGUAGE.md. Strictly
+  additive: no existing program changes meaning; the construct, its
+  diagnostics, the cross-file and `.lib` refusals, and the `see` behaviour
+  tightenings are all new surface. Tests: `tests/330_thing_definition.vox`
+  through `tests/340_thing_see.vox` plus `tests/include/geometry.vox`, and
+  the `tests/compile_fail/thing_*.err` corpus.
 
 - **`Send signal <N> to process <pid>.` performs `kill(2)`.** A new statement
   that sends signal `<N-expr>` to the process with PID `<pid-expr>` (syscall
@@ -27,7 +1269,78 @@ adheres to [Semantic Versioning](https://semver.org/).
   reaches the multiplicative layer, so the loop construct is unaffected.
   Strictly widening: no previously-valid program changes meaning.
 
+- **`reap ... without waiting` performs a non-blocking `wait4(2)` (WNOHANG),
+  and `the reaped status` yields the raw wait-status word.** Any reap form
+  (`reap any child process`, `reap process <pid>`, `reap child <pid>`) takes
+  a `without waiting` suffix, which calls `wait4` with `WNOHANG` instead of
+  blocking. The return value is the whole value of the form: the reaped
+  child's PID if one finished; `0` if children exist but none has finished
+  yet (this is **not** an error — it is how "still running" is told from
+  "gone"); or a negative value with the error flag set on a genuine error
+  such as `ECHILD` (no such child), catchable with `On error`. A reap that
+  returns `0` reaps nothing and does not disturb `the reaped status`.
+  `the reaped status` is a new expression yielding the raw `int status` the
+  kernel wrote, undecoded, from the most recent *successful* reap; before
+  any reap it is `-1` (a sentinel kept in `.data`, not `.bss`, so a
+  `--shared` library does not read `0` and misreport "exited cleanly"). The
+  compiler contains no knowledge of the wait-status encoding. `without` is
+  already a reserved keyword (the `print ... without newline` token), so
+  the suffix cannot be confused with a call argument, and `reaped` /
+  `waiting` remain ordinary identifiers everywhere they are not these
+  forms. Strictly additive: no existing program changes meaning.
+
+- **`lib/process.vox`, a library for decoding a wait status.** Ships in
+  the repo as ordinary Vox and decodes the raw wait-status word with four
+  functions matching the `<sys/wait.h>` macros: `'exit code of'` (bits
+  8–15), `'signal of'` (the low 7 bits), `crashed` (true if a signal
+  killed it), and `'exited normally'` (true if no signal was involved).
+  Pulled in with `see "./lib/process.vox".`. Decoding lives here rather
+  than in the compiler so that user-defined things (plan 310) can later
+  wrap a status in a `process` thing with no compiler change.
+
+  **This is a convenience library, not a standard library, and the
+  compiler does not depend on it.** `the reaped status` is complete on
+  its own — it returns the raw word, and any program may decode it with
+  `divide`, `modulo`, and `bit-and` without `see`ing anything. Vox
+  deliberately has no standard library: the compiler must build and run
+  with an empty `/usr/share/vox/lib/`, and a language that assumed a
+  package were installed would have a circular dependency it could never
+  pay off. That directory is a *convention for users* — a place to drop
+  your own libraries and reach them by bare name — not a compiler
+  requirement. (An earlier draft of these notes called this file "the
+  first standard-library file". That was wrong on both counts and is
+  corrected here.)
+
 ### Fixed
+
+- **Timer `duration`/`elapsed` reported the wrong time in every unit.**
+  `... in milliseconds` read whole seconds × 1000, so a 30 ms wait read 0
+  and a 1.5-second wait read 1000. The bare `the timer's duration` /
+  `... elapsed` forms and `... in seconds` subtracted the monotonic
+  clock's *calendar second fields* (`end_sec − start_sec`) instead of the
+  real elapsed time, so a 100 ms wait that straddled a second boundary
+  read 1 — a tenfold error — and a 1500 ms wait read 1 or 2 depending on
+  where it began. `Start` and `Stop` already captured the nanosecond
+  halves into `TIMER_START_MONO_NSEC` / `TIMER_END_MONO_NSEC`; nothing
+  ever read them. A new internal `TIMER_ELAPSED_NANOSECONDS` helper now
+  subtracts the full timespec with borrow handling (the shape
+  `TIME_ELAPSED_PRECISE` already used), handles both the stored-end path
+  (timer stopped) and the still-running path (sampling `clock_gettime`
+  into a stack timespec and reading `[rsp + 8]` for nanoseconds), and
+  leaves a 128-bit nanosecond total in `rdx:rax`. `TIMER_DURATION_SECONDS`
+  and `TIMER_DURATION_MILLISECONDS` share that helper and differ only in
+  the divisor (`NANOSECONDS_PER_SECOND` vs `NANOSECONDS_PER_MILLISECOND`),
+  so seconds is now true truncation of the real elapsed time and
+  milliseconds is true milliseconds. The meaning of the seconds/bare
+  forms is unchanged — still whole truncated seconds, never milliseconds
+  — but their values are now correct and no longer depend on where the
+  interval fell within a second. This unblocks the planned Vox
+  benchmarking tool, which is useless when a sub-second run reads zero.
+  Regression tests: `tests/350_timer_subsecond_milliseconds.vox`,
+  `tests/351_timer_millisecond_boundary.vox`,
+  `tests/352_timer_seconds_still_whole.vox`,
+  `tests/353_timer_elapsed_while_running.vox`,
+  `tests/354_timer_bare_duration_whole_seconds.vox`.
 
 - **A reserved word used as a loop variable reported "Missing loop
   variable" instead of naming the reserved word.** `print each arg from

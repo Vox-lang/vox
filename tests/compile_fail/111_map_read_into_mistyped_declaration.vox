@@ -1,0 +1,6 @@
+(Bug #54's map sibling: the assignment form of this read was already
+ refused (case 081), the declaration form was not, and it segfaulted.)
+
+a map called ages is {"bo": 42}.
+a text called label is ages's "bo".
+Print label.

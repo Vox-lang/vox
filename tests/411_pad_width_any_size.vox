@@ -1,0 +1,38 @@
+(Bug #61 - a pad width was read with a 32-bit parse whose Err was dropped,
+ so a width past i32::MAX built the same spec as no width at all: no
+ padding, no diagnostic. The width that survived the parse was then written
+ one write(2) per character, at about 265 KB/s. Widths are counts with no
+ ceiling (LANGUAGE.md:3107-3108), so both halves are fixed here: any width
+ the compiler can hold reaches the printer, and the printer emits it a page
+ at a time.
+
+ The last line is 4100 characters wide - past the 4096-character page the
+ padding is written in - so it fails on a chunk loop that drops or repeats
+ its final partial page. The width past i32::MAX itself is pinned in
+ src/codegen/tests.rs, where it can be asserted on the emitted instruction
+ rather than by writing two billion spaces.)
+
+a number called n is 255.
+a number called owed is 0 subtract 42.
+
+(Every padded form, at a width small enough to read.)
+Print "[{n:8}]".
+Print "[{n:08}]".
+Print "[{owed:8}]".
+Print "[{owed:08}]".
+Print "[{n:8x}]".
+Print "[{n:08x}]".
+Print "[{n:8X}]".
+Print "[{n:12b}]".
+Print "[{n:012b}]".
+Print "[{n:8o}]".
+Print "[{n:08o}]".
+
+(A zero-padded hex field keeps its base however many leading zeros the
+ width is written with.)
+Print "[{n:04x}]".
+Print "[{n:004x}]".
+
+(Wider than one page of padding.)
+Print "{n:4100}" without newline.
+Print "|".

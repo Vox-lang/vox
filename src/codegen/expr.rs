@@ -28,6 +28,11 @@ impl CodeGenerator {
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
             }
+            // A float field reads as its bit pattern, exactly like a float
+            // variable's slot, so it must take the same float paths.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
+            }
             Expr::Cast { target_type, .. } => {
                 // Cast to float produces a float
                 matches!(target_type, Type::Float)
@@ -166,6 +171,11 @@ impl CodeGenerator {
             Expr::StringLit(_) => false,
             Expr::Identifier(name) => {
                 self.variable_types.get(name) == Some(&VarType::Float)
+            }
+            // Same reason as in `is_float_expr`: a float field is a float
+            // operand, so arithmetic on it takes the float instructions.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Float))
             }
             Expr::Cast { target_type, .. } => {
                 // A cast to float yields a float operand - must route through
@@ -346,6 +356,98 @@ impl CodeGenerator {
         self.emit(&format!("{}:", done_label));
     }
 
+    /// `treating <match> as <replacement>` over a subject that carries a
+    /// runtime type tag (bug #59). The subject is the loop variable, and over
+    /// a mixed list, a map's values, or a `value` it has no static type: the
+    /// only truth about what it holds is the per-slot tag. So the tag decides
+    /// the comparison, and the result carries a tag of its own.
+    ///
+    /// Three answers, in the order the hardware finds them:
+    ///
+    /// 1. The subject's tag differs from the match's — a text element under a
+    ///    number match, say. Different types can never be equal, so the
+    ///    substitution does not fire and the element comes through untouched,
+    ///    still wearing its own tag. Nothing is read through the match, which
+    ///    is what kept #55's mismatched clause from dereferencing 98 as a
+    ///    `char*`; here the tags say so outright rather than the static types.
+    /// 2. The tags agree but the values differ — the element is text and the
+    ///    match is text, but not the same text. Text compares by bytes
+    ///    (`_str_eq`), everything else in registers. Again: untouched element,
+    ///    own tag. This is the half the old pointer `cmp` got wrong, so
+    ///    `treating "a" as "b"` never fired on a mixed list's `"a"`.
+    /// 3. The tags agree and the values are equal — the substitution fires and
+    ///    the result is the replacement, tagged as the replacement.
+    ///
+    /// Leaves the value in rax and its tag in r11, the same contract a mixed
+    /// element read has (`expr_leaves_tag_in_r11`), so Print and the append
+    /// and value-passing paths dispatch on it exactly as they do for a bare
+    /// read of the loop variable.
+    fn generate_treating_on_tagged_subject(
+        &mut self,
+        value: &Expr,
+        match_value: &Expr,
+        replacement: &Expr,
+    ) {
+        let skip_label = self.new_label("treating_tagged_skip");
+        let done_label = self.new_label("treating_tagged_done");
+        let tag_source = self
+            .runtime_tag_source(value)
+            .expect("the tagged path is only taken for a subject that has a tag");
+        let match_tag = self
+            .emit_time_expr_tag(match_value)
+            .expect("the tagged path is only taken for a statically tagged match");
+        let replacement_tag = self
+            .emit_time_expr_tag(replacement)
+            .expect("the tagged path is only taken for a statically tagged replacement");
+
+        self.generate_expr(value);
+        if let Some(operand) = tag_source.shadow_operand() {
+            self.emit_indent(&format!(
+                "movzx r11, byte {}  ; subject tag (shadow slot)", operand
+            ));
+        }
+        // Both halves go on the stack: r11 survives only until the next call,
+        // and the comparison below can be one (`_str_eq`).
+        self.emit_indent("push rax  ; subject value");
+        self.emit_indent("push r11  ; subject tag");
+
+        self.emit_indent(&format!("cmp r11, {}  ; subject tag == match tag?", match_tag));
+        self.emit_indent(&format!(
+            "jne {}  ; different types can never be equal", skip_label
+        ));
+
+        if match_tag == TAG_STRING {
+            // Same tag means the subject really is a pointer to bytes, so
+            // comparing by content is safe here in a way it never was on the
+            // static path.
+            self.generate_expr(match_value);
+            self.emit_indent("mov rsi, rax  ; match text");
+            self.emit_indent("mov rdi, [rsp+8]  ; subject text");
+            self.emit_indent("call _str_eq");
+            self.emit_indent("test rax, rax");
+            self.emit_indent(&format!("jz {}", skip_label));
+            self.uses_strings = true;
+        } else {
+            self.generate_expr(match_value);
+            self.emit_indent("mov rbx, rax  ; match value");
+            self.emit_indent("mov rax, [rsp+8]  ; subject value");
+            self.emit_indent("cmp rax, rbx");
+            self.emit_indent(&format!("jne {}", skip_label));
+        }
+
+        // Fired: the replacement brings its own tag.
+        self.emit_indent("add rsp, 16  ; discard the saved subject");
+        self.generate_expr(replacement);
+        self.emit_indent(&format!("mov r11, {}  ; replacement tag", replacement_tag));
+        self.emit_indent(&format!("jmp {}", done_label));
+
+        // Did not fire: the element as it was, tag and all.
+        self.emit(&format!("{}:", skip_label));
+        self.emit_indent("pop r11  ; subject tag");
+        self.emit_indent("pop rax  ; subject value");
+        self.emit(&format!("{}:", done_label));
+    }
+
     pub(crate) fn generate_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::IntegerLit(n) => {
@@ -381,6 +483,11 @@ impl CodeGenerator {
                 self.emit_indent(&format!("lea rax, [rel {}]", label));
             }
             
+            // A field of a thing: one load from `base + constant` (plan 310 §3).
+            Expr::ThingField { base, path } => {
+                self.generate_thing_field(base, path);
+            }
+
             Expr::Identifier(name) => {
                 if self.emit_load_named_var_into_rax(name) {
                     // loaded as a variable
@@ -400,12 +507,21 @@ impl CodeGenerator {
                 // Use has_float_operands for instruction selection (includes comparisons)
                 let has_floats = self.has_float_operands(left) || self.has_float_operands(right);
 
+                // `origin is marker` between two of the same thing: one
+                // comparison per field, recursing through nesting (plan 310
+                // §8). Expression-position twin of the guard in
+                // `generate_condition`, and first for the same reason.
+                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && self.thing_compared(left, right).is_some()
+                {
+                    self.emit_thing_equality(left, right, matches!(op, BinaryOperator::NotEqual));
+                }
                 // `x is nothing` / `x is not nothing` in expression position
                 // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
                 // the float/stringy/integer paths or `0 is nothing` would
                 // compare payloads and be true. Mirrors the condition-position
                 // guard in `generate_condition`.
-                if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
                     && (self.is_nothing_expr(left) || self.is_nothing_expr(right))
                 {
                     let equal = matches!(op, BinaryOperator::Equal);
@@ -720,15 +836,38 @@ impl CodeGenerator {
                         self.emit_indent("movzx rax, al");
                     }
                     Property::Empty => {
-                        // For buffer/list variables, check the size field at offset 8
+                        // Buffers and lists carry an explicit length at
+                        // [rax+8]. A text is a pointer to NUL-terminated
+                        // bytes and the pointer itself is never null, so
+                        // testing it answered "not empty" even for ""
+                        // (docs/BUGS_FOUND.md #33). Empty for a text means
+                        // the first byte is NUL; a null pointer is
+                        // defensively redirected at "" rather than
+                        // dereferenced. A string literal is data, never a
+                        // name (the #19/#29 family), so a literal always
+                        // takes the text path and no longer consults
+                        // variable_types.
                         let is_buffer_or_list = match value.as_ref() {
-                            Expr::StringLit(s) | Expr::Identifier(s) => {
+                            Expr::Identifier(s) => {
                                 matches!(self.variable_types.get(s), Some(VarType::Buffer) | Some(VarType::List))
+                            }
+                            _ => false,
+                        };
+                        let is_text = match value.as_ref() {
+                            Expr::StringLit(_) => true,
+                            Expr::Identifier(s) => {
+                                matches!(self.variable_types.get(s), Some(VarType::String))
                             }
                             _ => false,
                         };
                         if is_buffer_or_list {
                             self.emit_indent("mov rax, [rax + 8]  ; get size/length");
+                        } else if is_text {
+                            let label = self.get_empty_string_label();
+                            self.emit_indent(&format!("lea rcx, [rel {}]  ; \"\" stands in for a null text", label));
+                            self.emit_indent("test rax, rax");
+                            self.emit_indent("cmovz rax, rcx");
+                            self.emit_indent("movzx rax, byte [rax]  ; first byte: NUL means empty");
                         }
                         self.emit_indent("test rax, rax");
                         self.emit_indent("setz al");
@@ -1102,14 +1241,23 @@ impl CodeGenerator {
                             self.emit_indent("call _file_permissions");
                         }
                         ObjectProperty::Readable => {
-                            // Check if fd >= 0 (valid for reading)
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setns al");
-                            self.emit_indent("movzx rax, al  ; 1 if readable, 0 otherwise");
+                            // Report the handle's recorded open mode, the same
+                            // source of truth Writable uses below - not fd >= 0,
+                            // which is true for every open handle regardless of
+                            // mode (bug #37).
+                            let is_readable = matches!(self.file_mode.get(object), Some(FileMode::Reading));
+                            if is_readable {
+                                self.emit_indent("mov rax, 1  ; file opened for reading");
+                            } else {
+                                self.emit_indent("xor rax, rax  ; file opened for writing/appending only");
+                            }
                         }
                         ObjectProperty::Writable => {
                             // Check if file was opened for writing/appending
-                            let is_writable = self.file_writable.get(object).copied().unwrap_or(false);
+                            let is_writable = matches!(
+                                self.file_mode.get(object),
+                                Some(FileMode::Writing) | Some(FileMode::Appending)
+                            );
                             if is_writable {
                                 self.emit_indent("mov rax, 1  ; file opened for writing");
                             } else {
@@ -1322,6 +1470,14 @@ impl CodeGenerator {
                 }
             }
             
+            // BUGS_FOUND #26: `_get_arg`/`_get_parsed_arg` already return
+            // NULL for an out-of-range index (unlike index 0, the program
+            // name, which execve guarantees always exists - see
+            // `ArgumentName` below). The old codegen handed that NULL
+            // straight back as "the text", so the next read dereferenced
+            // 0; `emit_text_or_empty_on_null` substitutes the shared empty
+            // string and sets `_last_error`, matching `ArgumentLast` and
+            // `EnvironmentVariable` (#24), which already got this right.
             Expr::ArgumentAt { index } => {
                 self.generate_expr(index);
                 if self.argument_view_uses_parsed() {
@@ -1341,13 +1497,14 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, rax");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_at");
             }
-            
+
             Expr::ArgumentName => {
                 self.emit_indent("xor rdi, rdi  ; index 0 - program name");
                 self.emit_indent("call _get_arg");
             }
-            
+
             Expr::ArgumentFirst => {
                 if self.argument_view_uses_parsed() {
                     self.emit_indent("xor rdi, rdi  ; parsed index 0 - first user arg");
@@ -1356,8 +1513,9 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, 1  ; index 1 - first user arg");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_first");
             }
-            
+
             Expr::ArgumentSecond => {
                 if self.argument_view_uses_parsed() {
                     self.emit_indent("mov rdi, 1  ; parsed index 1 - second user arg");
@@ -1366,6 +1524,7 @@ impl CodeGenerator {
                     self.emit_indent("mov rdi, 2  ; index 2 - second user arg");
                     self.emit_indent("call _get_arg");
                 }
+                self.emit_text_or_empty_on_null("arg_second");
             }
             
             Expr::ArgumentLast => {
@@ -1450,6 +1609,18 @@ impl CodeGenerator {
                 self.emit_indent("mov [r14 + 8], r12  ; length");
                 self.emit_indent("mov qword [r14 + 16], 8  ; element size");
 
+                // BUGS_FOUND #23: every element here is a string pointer
+                // (argv), so every filled slot's type tag must be
+                // TAG_STRING. mmap zero-fills, and TAG_INTEGER is 0 (see
+                // ListLit's identical comment above), so leaving the tag
+                // region untouched - as this loop did before - silently
+                // tags every element TAG_INTEGER; whole-list printing
+                // dispatches on that byte and misreads the pointer as a
+                // number, while `element N of` (which doesn't consult it)
+                // stayed correct. rbx holds the tag region's base address
+                // for the loop's life - r13/r14 are fixed once computed.
+                self.emit_indent(&format!("lea rbx, [r14 + r13*8 + {}]  ; tag region base", LIST_DATA_OFFSET));
+
                 // Fill data from parsed args
                 self.emit_indent("xor r15, r15  ; r15 = index");
                 self.emit(&format!("{}:", loop_label));
@@ -1458,6 +1629,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_parsed_arg");
                 self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -1512,6 +1684,12 @@ impl CodeGenerator {
                 self.emit_indent("mov [r14 + 8], r12  ; length");
                 self.emit_indent("mov qword [r14 + 16], 8  ; element size");
 
+                // BUGS_FOUND #23 sibling: same fix as `arguments's all`
+                // above - every element is a string pointer, so every
+                // filled slot needs its tag byte set to TAG_STRING rather
+                // than left at the mmap-zeroed TAG_INTEGER default.
+                self.emit_indent(&format!("lea rbx, [r14 + r13*8 + {}]  ; tag region base", LIST_DATA_OFFSET));
+
                 self.emit_indent("xor r15, r15  ; r15 = index");
                 self.emit(&format!("{}:", loop_label));
                 self.emit_indent("cmp r15, r12");
@@ -1519,6 +1697,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_raw_arg");
                 self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -1581,6 +1760,14 @@ impl CodeGenerator {
             }
             
             Expr::TreatingAs { value, match_value, replacement } => {
+                // A subject with no static type to dispatch on - a mixed-list
+                // loop variable, a map value, a `value` - keeps its runtime
+                // tag through the clause instead (bug #59).
+                if self.treating_dispatches_on_runtime_tag(value, match_value, replacement) {
+                    self.generate_treating_on_tagged_subject(value, match_value, replacement);
+                    return;
+                }
+
                 // Inline substitution: if value == match_value, use replacement
                 let skip_label = self.new_label("treating_skip");
                 let done_label = self.new_label("treating_done");
@@ -1593,7 +1780,20 @@ impl CodeGenerator {
                     false
                 };
 
-                if is_buffer || matches!(treating_type, Some(VarType::String)) {
+                // A match value that is provably NOT text can never equal a
+                // text subject - and `_str_eq`/`_mem_eq` would dereference it
+                // as a char* to discover that. That is the fault in bug #55
+                // wherever the analyzer cannot prove the collection's element
+                // type and so cannot reject the clause outright (a list
+                // widened by a later `Append`, for one). Compare in registers
+                // instead: a pointer never equals 98, so the substitution
+                // correctly never fires and nothing is read through the match.
+                let match_cannot_be_text = matches!(
+                    self.infer_expr_type(match_value),
+                    Some(VarType::Integer) | Some(VarType::Float) | Some(VarType::Boolean)
+                );
+
+                if (is_buffer || matches!(treating_type, Some(VarType::String))) && !match_cannot_be_text {
                     // Evaluate the value
                     self.generate_expr(value);
                     self.emit_indent("push rax  ; save original value (struct ptr if buffer)");
@@ -1659,21 +1859,50 @@ impl CodeGenerator {
             
             // Environment variables
             Expr::EnvironmentVariable { name } => {
+                // `_get_env` returns a NULL pointer for a name that isn't
+                // set (BUGS_FOUND.md #24) - the caller used to hand that
+                // straight back as "the text", so the next read (Print,
+                // interpolation, ...) dereferenced 0. A fallible read's
+                // contract is the error flag, not a fault: on a miss, set
+                // `_last_error` and hand back the shared empty string
+                // (the same substitute #16 uses for an uninitialised
+                // text), so `On error` catches it exactly like a missing
+                // map key does.
                 self.generate_expr(name);
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env");
+                let missing_label = self.new_label("env_missing");
+                let done_label = self.new_label("env_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}  ; env var not set", missing_label));
+                self.emit_indent("mov qword [rel _last_error], 0  ; env var found");
+                self.emit_indent(&format!("jmp {}", done_label));
+                self.emit(&format!("{}:", missing_label));
+                let empty_label = self.get_empty_string_label();
+                self.emit_indent(&format!(
+                    "lea rax, [rel {}]  ; empty text for missing env var", empty_label));
+                self.emit_indent("mov qword [rel _last_error], 1  ; env var not set");
+                self.emit(&format!("{}:", done_label));
+                self.uses_strings = true;
             }
             
             Expr::EnvironmentVariableCount => {
                 self.emit_indent("call _get_env_count");
             }
             
+            // BUGS_FOUND #26 (flagged as a sibling during #24's fix):
+            // `_get_env_at` returns NULL for an out-of-range index exactly
+            // like `_get_env` does for a missing name - these three sites
+            // handed that NULL back unchecked. `emit_text_or_empty_on_null`
+            // applies the same empty-text-and-flag substitution
+            // `Expr::EnvironmentVariable` already uses for #24.
             Expr::EnvironmentVariableAt { index } => {
                 self.generate_expr(index);
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_at");
             }
-            
+
             Expr::EnvironmentVariableExists { name } => {
                 self.generate_expr(name);
                 self.emit_indent("mov rdi, rax");
@@ -1682,17 +1911,19 @@ impl CodeGenerator {
                 self.emit_indent("setnz al");
                 self.emit_indent("movzx rax, al  ; 1 if exists, 0 otherwise");
             }
-            
+
             Expr::EnvironmentVariableFirst => {
                 self.emit_indent("xor rdi, rdi  ; index 0");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_first");
             }
-            
+
             Expr::EnvironmentVariableLast => {
                 self.emit_indent("call _get_env_count");
                 self.emit_indent("dec rax  ; last index = count - 1");
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _get_env_at");
+                self.emit_text_or_empty_on_null("env_last");
             }
             
             Expr::EnvironmentVariableEmpty => {
@@ -1715,7 +1946,7 @@ impl CodeGenerator {
                 self.emit_indent("FORK");
             }
 
-            Expr::ReapChild { pid } => {
+            Expr::ReapChild { pid, no_hang } => {
                 self.uses_files = true;
                 match pid {
                     None => {
@@ -1726,8 +1957,25 @@ impl CodeGenerator {
                         self.emit_indent("mov rdi, rax  ; wait for this specific pid");
                     }
                 }
-                self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
-                self.emit_indent("REAP_CHILD");
+                // plan 311: WNOHANG (1) for non-blocking reap, 0 for blocking.
+                // REAP_CHILD stores the raw status word to _reaped_status only
+                // when a child is actually reaped (rax > 0); a WNOHANG reap that
+                // returns 0 leaves it untouched.
+                if *no_hang {
+                    self.emit_indent("; wait4() with WNOHANG - non-blocking reap");
+                    self.emit_indent("REAP_CHILD 1");
+                } else {
+                    self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
+                    self.emit_indent("REAP_CHILD 0");
+                }
+            }
+
+            // plan 311: the raw wait4 status word from the most recent
+            // successful reap. -1 sentinel before any reap. _reaped_status is
+            // in core.asm (always linked), so this needs no feature gate.
+            Expr::ReapedStatus => {
+                self.emit_indent("; the reaped status - raw wait4 status word (plan 311)");
+                self.emit_indent("mov rax, [rel _reaped_status]");
             }
             
             // Type casting
@@ -1867,21 +2115,17 @@ impl CodeGenerator {
                         // decimal representation. Text values are already valid
                         // text pointers, so they are left unchanged. A buffer is
                         // NOT: it is a struct with a 24-byte header (BUF_DATA_OFFSET)
-                        // whose NUL-terminated character data lives at
-                        // struct + BUF_DATA_OFFSET, so the cast must return the
-                        // data-area pointer, not the struct pointer it was given.
+                        // whose character data lives at struct + BUF_DATA_OFFSET,
+                        // and that data belongs to the buffer, so the cast has to
+                        // hand back a copy of it rather than a pointer into it.
                         let src_type = self.infer_expr_type(value);
                         if matches!(src_type, Some(VarType::Buffer)) {
-                            // Buffer data is always NUL-terminated at its logical
-                            // end (_buffer_append_bytes writes a trailing NUL at
-                            // data+length; _buffer_clear zeroes the first byte), so
-                            // the data-area pointer is a valid C string. Same
-                            // adjustment the boolean cast makes for a buffer source.
-                            self.uses_buffers = true;
-                            self.emit_indent(&format!(
-                                "add rax, {}  ; buffer data area -> NUL-terminated text",
-                                BUF_DATA_OFFSET
-                            ));
+                            // `b as text` yields an INDEPENDENT copy of the
+                            // buffer's bytes (BUGS_FOUND #41). The sequence
+                            // lives in `emit_buffer_to_text_copy`, which the
+                            // cast-free spellings share (#51), so the two ways
+                            // of saying it cannot drift apart.
+                            self.emit_buffer_to_text_copy();
                         } else if !matches!(src_type, Some(VarType::String)) {
                             self.uses_buffers = true;
                             self.stack_offset += 8;
@@ -1939,16 +2183,46 @@ impl CodeGenerator {
             // Duration cast (timer's duration in seconds/milliseconds)
             Expr::DurationCast { value, unit } => {
                 self.uses_time = true;
-                self.generate_expr(value);
                 match unit {
                     TimeUnit::Seconds => {
-                        // Value is already in seconds
+                        // Whole seconds, unchanged: bare `the timer's
+                        // duration` and `... in seconds` must keep reading
+                        // whole seconds exactly as before.
+                        self.generate_expr(value);
                         self.emit_indent("; Duration in seconds");
                     }
                     TimeUnit::Milliseconds => {
-                        // Multiply by 1000
+                        // True milliseconds. The old code re-used the
+                        // whole-seconds macro and multiplied by 1000, so a
+                        // 30 ms wait read 0 and a 1500 ms wait read 1000.
+                        // Instead, resolve the same timer pointer the
+                        // seconds path loads and call the millisecond macro,
+                        // which subtracts the full timespec and divides
+                        // down from nanoseconds.
                         self.emit_indent("; Duration in milliseconds");
-                        self.emit_indent("imul rax, 1000");
+                        if let Expr::PropertyAccess { object, property } = value.as_ref() {
+                            let offset = self.get_var(object);
+                            self.emit_indent(&format!(
+                                "lea rax, [rbp - {}]",
+                                offset.unwrap_or(0) + 48
+                            ));
+                            match property {
+                                ObjectProperty::Duration => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                                ObjectProperty::Elapsed => {
+                                    self.emit_indent("TIMER_ELAPSED_MILLISECONDS rax");
+                                }
+                                _ => {
+                                    self.emit_indent("TIMER_DURATION_MILLISECONDS rax");
+                                }
+                            }
+                        } else {
+                            // Defensive: a duration cast's inner expression
+                            // is always a timer property access.
+                            self.generate_expr(value);
+                            self.emit_indent("imul rax, 1000");
+                        }
                     }
                 }
             }
@@ -2136,6 +2410,14 @@ impl CodeGenerator {
                 .get(name)
                 .cloned()
                 .or_else(|| self.zero_arg_func_return_type(name)),
+            // A field yields its declared type (plan 310 §6): a float prints
+            // as a float, a boolean and a time as the numbers they are.
+            Expr::ThingField { base, path } => match self.thing_field_type(base, path) {
+                Some(Type::Float) => Some(VarType::Float),
+                Some(Type::Boolean) => Some(VarType::Boolean),
+                Some(_) => Some(VarType::Integer),
+                None => None,
+            },
             Expr::FunctionCall { name, .. } => {
                 self.function_return_types.get(&self.resolved_call_label(name)).cloned()
             }

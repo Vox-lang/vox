@@ -14,8 +14,52 @@ pub enum Type {
     Time,
     Timer,
     Value,
+    // A user-defined thing (plan 310): the payload is the thing's name as
+    // written in `A thing called <name> has ...`. Layout, size, and field
+    // offsets are resolved from the `ThingDef` registry at compile time;
+    // the type itself carries only the name.
+    Thing(String),
     Void,
     Unknown,
+}
+
+/// One user-defined composite type, as written in a definition construct
+/// (plan 310 §1). Built by the parser and carried on the `Program` so the
+/// analyzer and codegen can compute layout without re-parsing.
+///
+/// Function members take no storage - they are the type's declared
+/// callable API (the manifest, plan 310 §4), so `fields` and `members` are
+/// deliberately separate lists: everything sensitive to layout (size,
+/// offsets, copying, printing, equality) reads `fields` alone.
+///
+/// `allow(dead_code)`: definition parsing lands ahead of the declaration,
+/// field-access, and codegen work that reads the registry, so these fields
+/// are written but not yet read. Same treatment as `Type` and the other
+/// ahead-of-consumer shapes in this file.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ThingDef {
+    pub name: String,
+    /// Data fields only, in definition order (which is layout order).
+    pub fields: Vec<FieldDef>,
+    /// Manifest function-member names, in definition order.
+    pub members: Vec<String>,
+    /// 1-based source line of the `A thing called <name> has` opener, so a
+    /// later duplicate definition can point back at this one.
+    pub line: usize,
+}
+
+/// One data field of a `ThingDef`. `allow(dead_code)` for the same reason
+/// as `ThingDef`: written by the parser, read once layout work lands.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: String,
+    /// A builtin type noun, or `Type::Thing(name)` for a nested thing.
+    pub field_type: Type,
+    /// The literal written after `is`, when the field declares a default.
+    /// `None` means the field takes its type's zero/empty value.
+    pub default: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +145,17 @@ pub enum Expr {
         property: ObjectProperty,
     },
 
+    // A field of a user-defined thing (plan 310 §3): `origin's x`, and
+    // through nesting to any depth, `route's leg's start's x`. `base` is the
+    // thing variable's name; `path` is the field names in order, outermost
+    // first. Every step is a compile-time offset, so the whole chain folds
+    // into one `base_address + constant` - there is no pointer chase and no
+    // runtime failure path (unlike list element access).
+    ThingField {
+        base: String,
+        path: Vec<String>,
+    },
+
     // Map key access: person's "name". `map` is the variable name (like
     // PropertyAccess.object); `key` is an expression that evaluates to a
     // text value (usually a StringLit). Tag of the found value travels in
@@ -157,7 +212,11 @@ pub enum Expr {
     Fork,                       // fork() - 0 in child, child pid in parent, negative on error
     ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
         pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+        no_hang: bool,          // plan 311: true = WNOHANG (non-blocking); false = blocking
     },
+    // plan 311: the raw wait4 status word from the most recent successful reap.
+    // -1 sentinel before any reap. Decoding lives in lib/process.vox, not here.
+    ReapedStatus,
     
     // Type casting
     Cast {
@@ -299,6 +358,23 @@ pub enum Statement {
         value: Option<Expr>,
     },
 
+    // A user-defined thing definition (plan 310 §1). Declares a type, not a
+    // variable: it allocates nothing and emits no code. It stays in the
+    // statement stream so a definition keeps its source position relative to
+    // the uses that must follow it.
+    ThingDecl(ThingDef),
+
+    // Write to a field of a user-defined thing (plan 310 §3): `Set origin's x
+    // to 3.`, the bare `origin's x is 3.`, and `increment origin's x.` (which
+    // the parser desugars into this statement with a `+ 1` value, since the
+    // target is an offset, not a name). The read counterpart is
+    // `Expr::ThingField`, and `base`/`path` mean exactly the same there.
+    SetThingField {
+        base: String,
+        path: Vec<String>,
+        value: Expr,
+    },
+
     FlagSchemaDecl {
         name: String,
         short: String,
@@ -380,6 +456,13 @@ pub enum Statement {
         // clauses" rule. Consulted by the analyzer to explain otherwise
         // confusing errors in the top-level statements that follow.
         body_ended_early: Option<SourceLocation>,
+        // Set to the location of a body-level `Return` (one that isn't the
+        // function's first statement - "Gate B") when IT closed the body,
+        // rather than a blank line. Statements written after it in source
+        // are silently promoted to top-level entry code (plan 318 §2) - if
+        // one of them is itself a `Return`, the analyzer's "Return is only
+        // valid inside a function" error consults this to explain why.
+        body_ended_via_return: Option<SourceLocation>,
     },
     
     FunctionCall {
@@ -621,16 +704,35 @@ pub struct Program {
     pub uses_strings: bool,
     pub uses_io: bool,
     pub uses_args: bool,
+    /// Every thing defined in this program, in definition order. The parser
+    /// fills this from its own registry after a successful parse; consumers
+    /// look layout up here rather than walking the statement list.
+    pub things: Vec<ThingDef>,
 }
 
 impl Program {
     pub fn new(statements: Vec<Statement>) -> Self {
+        // `things` is DERIVED here, not filled in by the caller, so every
+        // construction path populates it. The `--shared` driver builds a
+        // Program directly from the combined statements of several inputs
+        // (src/main.rs), bypassing the parser's own post-parse derivation -
+        // which left `things` empty for a multi-input build, so every
+        // consumer of the registry (layout, offsets, cycle checks) silently
+        // saw no things at all.
+        let things = statements
+            .iter()
+            .filter_map(|s| match s {
+                Statement::ThingDecl(def) => Some(def.clone()),
+                _ => None,
+            })
+            .collect();
         Program {
             statements,
             uses_heap: false,
             uses_strings: false,
             uses_io: false,
             uses_args: false,
+            things,
         }
     }
 }
@@ -733,4 +835,282 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
         }
     }
     out
+}
+
+/// Every typed declaration reachable in this statement sequence, at ANY
+/// nesting depth, regardless of whether the path that reaches it is
+/// guaranteed to run - the complement of `collect_definite_decls`.
+///
+/// `On error`, `While`, `for each` (both `ForRange` and `ForEach`), and
+/// `Repeat` bodies are not scoped (LANGUAGE.md:526: no block scoping) -
+/// a name declared in one of them is accepted everywhere after, exactly
+/// like a top-level declaration, but the analyzer never proves the body
+/// ran. `collect_definite_decls` correctly refuses to call such a
+/// declaration definite; this function is the other half - it finds
+/// EVERY declaration so codegen can tell "definitely declared" apart
+/// from "declared on some path, might be skipped" and emit the type's
+/// default for the latter at frame setup (docs/BUGS_FOUND.md #25,
+/// plan 318 §1). `If` bodies are included too, for the same reason
+/// `collect_definite_decls` recurses into them: a some-branches name
+/// still needs its type known here even though its own use-after is
+/// separately rejected by the analyzer's branch tracking.
+///
+/// Function bodies are their own scope and are never entered - same
+/// rule as `collect_definite_decls`.
+pub fn collect_all_typed_decls(stmts: &[Statement]) -> std::collections::HashMap<String, Type> {
+    let mut out = std::collections::HashMap::new();
+    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    fn record(
+        out: &mut std::collections::HashMap<String, Type>,
+        poisoned: &mut std::collections::HashSet<String>,
+        name: &str,
+        ty: Type,
+    ) {
+        if poisoned.contains(name) {
+            return;
+        }
+        match out.get(name) {
+            Some(existing) if *existing != ty => {
+                out.remove(name);
+                poisoned.insert(name.to_string());
+            }
+            _ => {
+                out.insert(name.to_string(), ty);
+            }
+        }
+    }
+
+    fn walk(
+        stmts: &[Statement],
+        out: &mut std::collections::HashMap<String, Type>,
+        poisoned: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, var_type: Some(t), .. } => {
+                    record(out, poisoned, name, t.clone());
+                }
+                Statement::BufferDecl { name, .. } => {
+                    record(out, poisoned, name, Type::Buffer);
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    walk(then_block, out, poisoned);
+                    for (_, block) in else_if_blocks {
+                        walk(block, out, poisoned);
+                    }
+                    if let Some(block) = else_block {
+                        walk(block, out, poisoned);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. } => {
+                    walk(body, out, poisoned);
+                }
+                Statement::OnError { actions } => {
+                    walk(actions, out, poisoned);
+                }
+                Statement::FunctionDef { .. } => {}
+                _ => {}
+            }
+        }
+    }
+
+    walk(stmts, &mut out, &mut poisoned);
+    out
+}
+
+/// Every list name whose element types this file cannot pin down from its
+/// declaration alone — because something in the program can still change,
+/// replace, or share the elements after that declaration (bug #54).
+///
+/// The analyzer proves a list's element type from a homogeneous literal
+/// initializer (`a list called counts is [1, 2].`) and refuses a read of
+/// an element into a variable of a different type. That proof is only
+/// sound while nothing widens the list afterwards, so every name reachable
+/// by a widening or aliasing move is collected here and the proof is
+/// simply not offered for it:
+///
+/// - `Append <value> to <list>` and `Set element N of <list> to <value>`
+///   write an element directly, of any type.
+/// - `<list> is <value>.` replaces the whole list.
+/// - a name used as a call argument escapes into a body that can append
+///   to it (lists are heap objects passed by reference).
+/// - a name copied into or out of another variable (`a list called other
+///   is counts.`) makes two names for one heap object, so an append
+///   through either widens both — both ends of the copy are collected.
+///
+/// Deliberately name-keyed and whole-program, with no scoping and no
+/// type-awareness: a widening move anywhere disables the proof
+/// everywhere, including for an unrelated local of the same name. That is
+/// the safe direction — the cost is a missed diagnostic, never a false
+/// one — and it makes the answer independent of statement order, which a
+/// proof consulted mid-walk would otherwise depend on.
+///
+/// Unlike `collect_definite_decls`/`collect_all_typed_decls`, this DOES
+/// descend into function bodies: a list appended to inside a function is
+/// widened by that append no matter whose name reached it.
+pub fn collect_widened_lists(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    walk_widened_lists(stmts, &mut out);
+    out
+}
+
+/// True if any function in the program widens a list it was HANDED - it
+/// appends to, or element-sets, one of its own parameters.
+///
+/// This is the one widening move `collect_widened_lists` cannot attribute
+/// to a name: the append is written against the parameter, and the call
+/// that passes the caller's list may sit in an expression position the
+/// scan does not reach. A function that appends to a list by its own
+/// global name is a different case and IS attributed, since that append
+/// names the list directly.
+///
+/// The analyzer's answer to this is blunt on purpose: while it is true, no
+/// list anywhere gets an element-type proof. Losing a diagnostic in a
+/// program that has such a helper costs nothing; offering a proof that a
+/// call could have invalidated would cost a false rejection.
+pub fn any_function_widens_a_parameter(stmts: &[Statement]) -> bool {
+    fn body_widens(body: &[Statement], params: &std::collections::HashSet<&str>) -> bool {
+        body.iter().any(|stmt| match stmt {
+            Statement::ListAppend { list, .. } | Statement::ElementSet { list, .. } => {
+                params.contains(list.as_str())
+            }
+            Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                body_widens(then_block, params)
+                    || else_if_blocks.iter().any(|(_, b)| body_widens(b, params))
+                    || else_block.as_ref().is_some_and(|b| body_widens(b, params))
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. } => body_widens(body, params),
+            Statement::OnError { actions } => body_widens(actions, params),
+            _ => false,
+        })
+    }
+
+    stmts.iter().any(|stmt| match stmt {
+        Statement::FunctionDef { params, body, .. } => {
+            let names: std::collections::HashSet<&str> =
+                params.iter().map(|(n, _)| n.as_str()).collect();
+            body_widens(body, &names)
+        }
+        _ => false,
+    })
+}
+
+fn walk_widened_lists(stmts: &[Statement], out: &mut std::collections::HashSet<String>) {
+    fn note_alias(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        if let Expr::Identifier(n) = expr {
+            out.insert(n.clone());
+        }
+    }
+
+    fn note_call_args(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        // Only a call's own arguments matter here: an identifier anywhere
+        // else in an expression is a read, and a read cannot widen. The
+        // walk still has to reach nested calls, so it recurses through the
+        // expression shapes that can contain one.
+        match expr {
+            Expr::FunctionCall { args, .. } => {
+                for arg in args {
+                    note_alias(arg, out);
+                    note_call_args(arg, out);
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                note_call_args(left, out);
+                note_call_args(right, out);
+            }
+            Expr::UnaryOp { operand, .. } => note_call_args(operand, out),
+            Expr::Cast { value, .. } | Expr::TreatingAs { value, .. } => note_call_args(value, out),
+            Expr::ListLit { elements } => {
+                for e in elements {
+                    note_call_args(e, out);
+                }
+            }
+            Expr::MapLit { pairs } => {
+                for (k, v) in pairs {
+                    note_call_args(k, out);
+                    note_call_args(v, out);
+                }
+            }
+            Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => {
+                note_call_args(list, out);
+                note_call_args(index, out);
+            }
+            Expr::FormatString { parts } => {
+                for part in parts {
+                    if let FormatPart::Expression { expr, .. } = part {
+                        note_call_args(expr, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for stmt in stmts {
+        match stmt {
+            Statement::ListAppend { list, value } => {
+                out.insert(list.clone());
+                note_call_args(value, out);
+            }
+            Statement::ElementSet { list, index, value } => {
+                out.insert(list.clone());
+                note_call_args(index, out);
+                note_call_args(value, out);
+            }
+            Statement::Assignment { name, value } => {
+                out.insert(name.clone());
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::VarDecl { value: Some(value), .. } => {
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::Return { value: Some(value), .. } => {
+                // A returned list leaves with the callee's name and comes
+                // back under the caller's; the copy is an alias like any
+                // other.
+                note_alias(value, out);
+                note_call_args(value, out);
+            }
+            Statement::FunctionCall { args, .. } => {
+                for arg in args {
+                    note_alias(arg, out);
+                    note_call_args(arg, out);
+                }
+            }
+            Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                note_call_args(condition, out);
+                walk_widened_lists(then_block, out);
+                for (cond, block) in else_if_blocks {
+                    note_call_args(cond, out);
+                    walk_widened_lists(block, out);
+                }
+                if let Some(block) = else_block {
+                    walk_widened_lists(block, out);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForRange { body, .. }
+            | Statement::ForEach { body, .. }
+            | Statement::Repeat { body, .. }
+            | Statement::FunctionDef { body, .. } => {
+                walk_widened_lists(body, out);
+            }
+            Statement::OnError { actions } => {
+                walk_widened_lists(actions, out);
+            }
+            Statement::Print { value, .. } => {
+                note_call_args(value, out);
+            }
+            _ => {}
+        }
+    }
 }

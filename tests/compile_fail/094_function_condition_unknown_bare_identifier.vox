@@ -1,0 +1,6 @@
+To g with a text called w.
+  If w is not banana then,
+      Return a number, 1.
+  Return a number, 0.
+
+Print g of "hang".

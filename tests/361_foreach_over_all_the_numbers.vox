@@ -1,0 +1,28 @@
+(Bug #56: `all the numbers from/between ...` names a range, and a range is a
+ loop's counter bounds - LANGUAGE.md:262 says ranges are never allocated as
+ lists. Every `for each` header that is handed one now runs the range loop,
+ where before it kept the range as a list collection and codegen walked the
+ accumulator as a list header and segfaulted.
+
+ All three headers that take a collection are covered, in both spellings of
+ the phrase: `in`, `from`, and the loop-expansion clause. The plain range
+ that none of this changed is the last case, and it is the control: every
+ block above it must read the same.)
+
+For each step in all the numbers between 1 and 3,
+    print step.
+
+For each step in all the numbers from 1 to 3,
+    print step.
+
+For each step from all the numbers between 1 and 3,
+    print step.
+
+For each step from all the numbers from 1 to 3,
+    print step.
+
+print each step from all the numbers between 1 and 3.
+
+print each step from all the numbers from 1 to 3.
+
+print each step from 1 to 3.

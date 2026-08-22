@@ -1,0 +1,75 @@
+(Bug #65's other half. Every sentence the fix now refuses has a documented
+ way to say what it meant, and both ways answer correctly. The refused
+ spellings are tests/compile_fail/145-157; this is what those programs
+ become, and what they print is the answer their authors were after. The
+ number/float family at the foot is the opposite case: not refused at all,
+ by the language designer's ruling, and now answering correctly.)
+
+(`a text called n is 5.` segfaulted. Either declare the type the value has...)
+a number called n is 5.
+print n.
+(...or convert, LANGUAGE.md:1908.)
+a text called spelled is 5 as text.
+print spelled.
+
+(`a number called x is "get five".` printed 4198488 - the literal's address,
+ which is LANGUAGE.md:651-660's worked example almost to the digit.)
+a text called phrase is "get five".
+print phrase.
+a number called five is "5" as a number.
+print five.
+
+(The explicit casts between the two numeric types, LANGUAGE.md:1906-1907,
+ which say the conversion out loud and always did.)
+a float called widened is 3 as a float.
+print widened.
+a number called truncated is 3.5 as a number.
+print truncated.
+
+(`a boolean called ready is "x".` printed a pointer. LANGUAGE.md:1917 parses
+ the text instead.)
+a boolean called ready is "true" as a boolean.
+print ready.
+
+(`a text called label is true.` segfaulted on address 1. LANGUAGE.md:1916
+ spells the boolean out.)
+a text called label is true as text.
+print label.
+
+(`a list called items is 5.` walked a list header at address 5; a list is
+ written as a list.)
+a list called items is [5].
+print items.
+
+(`a map called ages is "bo".` printed an empty map that was never a map.)
+a map called ages is {"bo": 42}.
+print ages.
+
+(The three sites 157-159 refuse - a call's result, an argument, a return -
+ each written so the types agree.)
+To 'five' . Return a number, 5.
+To greet with a text called who. Print who.
+To 'give a label' . Return a text, "five".
+
+a text called got is five as text.
+print got.
+greet with 5 as text.
+a text called given is 'give a label'.
+print given.
+
+(The language designer's ruling (Josj, 2026-08-21): "in human language we
+ call 1 a number and pi a number; it should be the same in Vox - dynamic
+ casting as and when needed". So neither direction is refused. A whole
+ number initialising a float is converted to one at the declaration - this
+ printed 0.0 before, the integer's bits read as a double - and a float
+ initialising a number keeps its decimals, exactly as it always did.)
+a float called ratio is 3.
+print ratio.
+a float called summed is 3 add 4.
+print summed.
+a number called count is 3.5.
+print count.
+
+(And the float really is a float afterwards, so arithmetic on it is right.
+ `ratio multiply 2.0` printed 0.0 before.)
+print ratio multiply 2.0.

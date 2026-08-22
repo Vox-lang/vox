@@ -73,11 +73,45 @@ const TYPES: &[&str] = &[
     "number", "float", "text", "boolean", "list", "map", "buffer", "file", "time", "timer", "value",
 ];
 
+/// What a `Return a <type>,` case stands on: whatever must be declared
+/// above the function, and the operand itself. The vocabulary under test is
+/// the parser's, and the parser never looks at the operand - which is why a
+/// bare `1` used to serve all eleven types. A buffer return is judged by
+/// the analyzer as well (bug #53: a non-buffer source leaves an address the
+/// caller reads as a buffer struct, and reading a text literal's characters
+/// as a buffer header segfaults), so the buffer case stands on a real
+/// buffer.
+///
+/// Bug #65 widened that from the buffer alone to every type the analyzer
+/// can prove: a `Return a <type>,` whose operand is provably some other
+/// type is now refused, because the caller reads the result as the declared
+/// type and `Return a text, 1.` handed it the literal `1` to dereference.
+/// So each of those types now stands on an operand of its own kind, exactly
+/// as the buffer already did. `number`, `float`, `file`, `time`, `timer`
+/// and `value` keep the bare `1` - a number and a float are one family
+/// under the designer's ruling, and the rest are handles and the dynamic
+/// type, all of which #65 deliberately leaves alone - so a narrowing on any
+/// of them still fails here.
+fn return_operand(ty: &str) -> (&'static str, &'static str) {
+    match ty {
+        "text" => ("", "\"ok\""),
+        "boolean" => ("", "true"),
+        "list" => ("a list called source is [1].\n\n", "source"),
+        "map" => ("a map called source is {\"only\": 1}.\n\n", "source"),
+        "buffer" => ("a buffer called source is \"ok\".\n\n", "source"),
+        _ => ("", "1"),
+    }
+}
+
 #[test]
 fn return_inline_path_accepts_every_type() {
     // Return as the function's literal first (and only) statement.
     for ty in TYPES {
-        let src = format!("To 'give it'. Return a {}, 1.\n\nPrint \"ok\".\n", ty);
+        let (prelude, operand) = return_operand(ty);
+        let src = format!(
+            "{}To 'give it'. Return a {}, {}.\n\nPrint \"ok\".\n",
+            prelude, ty, operand
+        );
         compile_ok(&format!("inline-{}", ty), &src);
     }
 }
@@ -87,9 +121,13 @@ fn return_gate_b_path_accepts_every_type() {
     // A preceding statement forces Gate B (`parse_return`) instead of the
     // inline first-statement path.
     for ty in TYPES {
+        let (prelude, operand) = return_operand(ty);
+        // The local `x` is what forces Gate B; what is returned is the
+        // correctly-typed operand from `return_operand`, since bug #65
+        // refuses a Return whose operand is provably the wrong type.
         let src = format!(
-            "To 'give it'.\n  a number called x is 1.\n  Return a {}, x.\n\nPrint \"ok\".\n",
-            ty
+            "{}To 'give it'.\n  a number called x is 1.\n  Return a {}, {}.\n\nPrint \"ok\".\n",
+            prelude, ty, operand
         );
         compile_ok(&format!("gateb-{}", ty), &src);
     }

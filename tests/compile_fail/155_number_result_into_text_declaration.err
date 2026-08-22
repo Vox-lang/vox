@@ -1,0 +1,4 @@
+cannot initialise 'got', which is text, with a number
+155_number_result_into_text_declaration.vox:9:15
+note: a variable's type is fixed at its declaration, so 'got' can only be initialised with text
+help: declare it as a number - `a number called got is five.` - or convert it explicitly:  a text called got is five as text.

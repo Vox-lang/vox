@@ -1,0 +1,2 @@
+'opaque label' has no declared return type, so its result is read as a number here
+Declare it (`Return a text, "hi".`), or assign it to a declared variable first

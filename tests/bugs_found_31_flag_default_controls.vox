@@ -1,0 +1,11 @@
+(Bug #31 controls. These pass before and after the fix and are what pin
+ the defect to pointer-backed types: a number and a boolean flag with no
+ default are correct holding zero, and an explicit text default was never
+ affected. Keeping them stops a future change "fixing" the wrong thing.)
+a flag called retries is "-r" or "--retries", it is a number.
+a flag called verbose is "-v" or "--verbose", it is a boolean.
+a flag called label is "-l" or "--label", it is a text with default "xyz".
+Parse flags.
+Print "number:{retries}".
+Print "boolean:{verbose}".
+Print "text-with-default:{label}".

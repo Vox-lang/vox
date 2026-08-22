@@ -1,0 +1,15 @@
+fresh handle, line 1 -> AA
+
+fresh handle, line 2 -> BBBB
+
+fresh handle, line 3 -> CCCCCC
+
+fresh handle, line 5 -> EEEEEEEE
+
+fresh handle, line 99 past the end set the error flag
+fresh handle, line 99 read 0 bytes
+one handle, line 5 -> EEEEEEEE
+
+one handle, back to line 3 -> CCCCCC
+
+one handle, line 99 past the end set the error flag

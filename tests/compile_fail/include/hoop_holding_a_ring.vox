@@ -1,0 +1,10 @@
+(Seen by thing_cycle_across_a_see.vox. Read on its own this file is legal:
+ `hoop` is defined before the `ring` that holds one. Spliced into a file that
+ already defines `ring`, the two halves close a cycle - which is why the
+ rules have to be read against the whole program rather than one file.)
+
+A thing called hoop has
+  a number called thickness is 0.
+
+A thing called ring has
+  a hoop called rim.

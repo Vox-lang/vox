@@ -1,0 +1,7 @@
+(Bug #45: a list literal's slot is written exactly as `append` writes one,
+ so it needs the same proven type.)
+
+To 'opaque label'. Return "hi".
+
+a list called items is ['opaque label', "second"].
+print element 1 of items.

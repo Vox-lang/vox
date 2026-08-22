@@ -1,0 +1,2 @@
+(Bug #29 - CONTROL row, the negative control. No variable named hello or world is in scope, so the literals cannot be mis-tagged and the row prints correctly both before and after the fix. Pins the diagnosis: any wrong output must come from the colliding variable, not from the list literal itself.)
+Print ["hello", "world"].

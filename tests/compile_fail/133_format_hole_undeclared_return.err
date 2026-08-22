@@ -1,0 +1,3 @@
+'opaque label' has no declared return type, so its result is read as a number here
+an interpolation renders whatever type it is told the value has
+133_format_hole_undeclared_return.vox:7:14

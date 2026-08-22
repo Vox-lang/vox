@@ -4,6 +4,8 @@ use std::str::Chars;
 mod tokens;
 pub use tokens::Token;
 mod scan;
+mod regions;
+pub use regions::{classify_lines, SourceRegion};
 
 
 #[derive(Debug, Clone)]

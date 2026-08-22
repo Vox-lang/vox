@@ -211,6 +211,12 @@ impl Parser {
                     
                     // Check for loop expansion: "at each X from Y"
                     if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
+                        // `open` takes one path, so a grid of two or more
+                        // `each` clauses is an arity error (plan 320 rule 12).
+                        self.skip_noise();
+                        if *self.current() == Token::And {
+                            return Err(self.one_slot_arity_error("open"));
+                        }
                         path_info = Some(Err((variable, collection, treating)));
                     } else {
                         path_info = Some(Ok(self.parse_primary()?));

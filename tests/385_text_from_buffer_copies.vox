@@ -1,0 +1,35 @@
+(Bug #51: `a text called caption is label.` - a buffer initializer with no
+ cast - stored the buffer's STRUCT pointer in the text slot, so the first
+ read of the text was a read of the buffer's 24-byte header. Printing it
+ gave the capacity field's low byte as a one-character C string: `@` for a
+ 64-byte buffer, `A` for a 65-byte one. Silent, stable, and wrong.
+
+ The language owner's ruling is that the cast-free spelling means what
+ `as text` means, so all three spellings below print the buffer's bytes.
+ The two sizes are the register's own proof that the old answer tracked
+ the capacity field rather than memory noise.)
+
+a buffer called label is 64 bytes in size.
+append "first" to label.
+a text called caption is label.
+Print caption.
+
+a buffer called banner is 65 bytes in size.
+append "first" to banner.
+a text called heading is banner.
+Print heading.
+
+(The controls: the cast has been right since #41 and `"{label}"` since
+ v0.1.17. All three spellings must now agree, word for word.)
+a text called converted is label as text.
+Print converted.
+a text called interpolated is "{label}".
+Print interpolated.
+
+(An empty buffer converts to empty text, not to a header read. On
+ origin/main this line printed `[ ]` - a 32-byte capacity is 0x20, which
+ is a space, so even the case with no bytes in it was reading the header.)
+a buffer called untouched is 32 bytes in size.
+a text called blank is untouched.
+Print "[{blank}]".
+If blank is "", print "an empty buffer makes empty text".

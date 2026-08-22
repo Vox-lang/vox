@@ -1,0 +1,1 @@
+Cannot write number temperature to a file; Write takes text, a buffer, or a format string. Render it as text: Write "{temperature}" to report.

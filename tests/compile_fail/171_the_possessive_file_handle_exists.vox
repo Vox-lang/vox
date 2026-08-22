@@ -1,0 +1,8 @@
+(Bug #64: unifying the two possessive spellings must not lose #38's
+ diagnostic. `h's exists` explains why a handle has no `exists` property;
+ before the two spellings shared one path, `the h's exists` answered the
+ generic "Expected property name, got Exists" instead. Both spellings now
+ reach the same explanation.)
+
+open a file for reading called h at "/tmp/f.txt".
+Print the h's exists.

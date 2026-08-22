@@ -1,0 +1,3 @@
+cannot initialise 'ages', which is a map, with nothing
+121_nothing_into_map_declaration.vox:4:14
+help: declare 'ages' as a value, the type that can be absent - or give it map's own empty value, {}

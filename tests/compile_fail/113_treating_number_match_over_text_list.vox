@@ -1,0 +1,5 @@
+(Bug #55: the `treating` clause matches against a number, but every
+ element of the list the loop walks is text. The generated comparison
+ read 98 as the address of a string and the program segfaulted.)
+
+print each item from ["a"] treating 98 as 31.

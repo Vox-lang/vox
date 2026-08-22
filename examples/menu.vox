@@ -1,0 +1,44 @@
+(Example: menu.vox — every combination, in one sentence.
+
+An argument list may chain any number of `each <name> from <collection>`
+clauses joined by `and`. The action then runs once for every combination
+of the clauses: the leftmost clause is the outer loop, exactly as if the
+clauses had been written out as nested `For each` loops. A fixed argument
+may sit among the clauses and is evaluated afresh on every call, and a
+`but if` clause attaches to the innermost turn, so its condition can read
+every loop variable at once.
+
+Here a kitchen works out what to pour with what, lists every meal a
+diner could choose from three courses, and writes one table's ticket.)
+
+To 'suggest a pairing' with a text called dish and a text called wine.
+  Print "{dish} with {wine}".
+
+a list called dishes is ["trout", "lamb"].
+a list called wines is ["riesling", "claret"].
+
+Print "What to pour with what:".
+'suggest a pairing' of each dish from dishes and each wine from wines,
+  but if dish is "trout" and wine is "claret" print "trout with claret, a brave choice".
+Print "".
+
+(Three clauses nest the same way as two, and so would five.)
+
+To 'read out the meal' with a text called starter and a text called main and a text called pudding.
+  Print "{starter}, then {main}, then {pudding}".
+
+a list called starters is ["soup", "salad"].
+a list called mains is ["trout", "lamb"].
+a list called puddings is ["pear tart"].
+
+Print "Every meal a diner could choose:".
+'read out the meal' of each starter from starters and each main from mains and each pudding from puddings.
+Print "".
+
+(A fixed argument rides along among the clauses.)
+
+To 'write the ticket' with a text called table and a text called course.
+  Print "{table}: {course}".
+
+Print "The ticket for one table:".
+'write the ticket' of "table four" and each course from ["soup", "lamb", "pear tart"].

@@ -2,7 +2,7 @@
   "name": "vox",
   "displayName": "VoxLang",
   "description": "Syntax highlighting for Vox (sentence based code) (.vox files)",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "publisher": "vox-lang",
   "engines": {
     "vscode": "^1.75.0"
@@ -24,8 +24,15 @@
     "languages": [
       {
         "id": "vox",
-        "aliases": ["Vox", "vox", "VoxLang", "voxlang"],
-        "extensions": [".vox"],
+        "aliases": [
+          "Vox",
+          "vox",
+          "VoxLang",
+          "voxlang"
+        ],
+        "extensions": [
+          ".vox"
+        ],
         "icon": {
           "light": "./images/icon.png",
           "dark": "./images/icon.png"

@@ -1,0 +1,19 @@
+(Bug #38: `exists` is not a file property - LANGUAGE.md documents the
+idiom that answers "can this path be opened?" instead: open it inside an
+`On error` handler. This exercises both branches of the idiom exactly as
+written in the File Properties section.)
+
+open a file for writing called setup at "/tmp/vox_test_exists_idiom.txt".
+Write "hi" to setup.
+Close setup.
+
+open a file for reading called present at "/tmp/vox_test_exists_idiom.txt".
+On error print "present: cannot be opened".
+If present's descriptor is greater than -1 then,
+    print "present: exists".
+Close present.
+
+open a file for reading called missing at "/tmp/vox_test_exists_idiom_missing.txt".
+On error print "missing: cannot be opened".
+
+Delete the file "/tmp/vox_test_exists_idiom.txt".

@@ -1,0 +1,32 @@
+(Bug #51's siblings. The register found the declaration form, but the same
+ cast-free write lands in a text slot four other ways, and every one of
+ them stored the buffer's struct pointer and printed the capacity byte.
+ `Set` and `the ... is` were refused outright by the type lock, which
+ named a cast that would not have changed what the sentence meant; under
+ the owner's ruling they convert instead, exactly as the declaration does.
+
+ The one code path is `emit_buffer_to_text_copy`, so this file is really
+ asking whether every site reaches it.)
+
+To 'echo the text' with a text called what. Print what.
+To 'hand back a text' with a buffer called source. Return a text, source.
+
+a buffer called label is 64 bytes in size.
+append "first" to label.
+
+(`Set t to <buffer>`)
+a text called assigned is "seed".
+Set assigned to label.
+Print assigned.
+
+(`the t is <buffer>`)
+a text called restated is "seed".
+the restated is label.
+Print restated.
+
+(a text parameter receiving a buffer argument)
+'echo the text' with label.
+
+(`Return a text, <buffer>`)
+a text called returned is 'hand back a text' with label.
+Print returned.

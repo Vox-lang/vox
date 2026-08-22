@@ -1,0 +1,10 @@
+(Bug #63's other spelling: a `Return.` with no value ends the call without
+ answering it, so the function still returns nothing and reading its result
+ is the same mistake as reading a procedure's.)
+
+To 'bail out' with a number called n.
+  If n is 1, Return.
+  Print "kept going".
+
+a number called answer is 'bail out' of 1.
+Print answer.

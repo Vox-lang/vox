@@ -24,7 +24,7 @@ Print bools's last.
 print bools's size. 
 
 print "You should see an error below"
-a number called bad is element 100 of bools.
+a boolean called bad is element 100 of bools.
 On error print "Cannot access element 100 - out of bounds!".
 
 Print "Word list [\"hello\", \"world\"]:".

@@ -109,10 +109,15 @@ stress tests run at 10⁶+ iterations and 10⁸+ bytes without faults.
 *The building blocks that crypto, networking, and drivers all require.
 Design doc: [docs/STRUCTS_AND_OBJECTS.md](docs/STRUCTS_AND_OBJECTS.md).*
 
-- [ ] **Structs / user-defined types** with compile-time layout and the
-      possessive `'s` accessor syntax. Exact byte layout control (field
-      widths, ordering, padding) — needed for packet headers, device
-      registers, and on-disk formats.
+- [x] **Structs / user-defined types** — SHIPPED in 0.4.0 as **things**
+      (see LANGUAGE.md §6 and `docs/plans/310_user_defined_structures.md`):
+      compile-time layout, the possessive `'s` accessor, unlimited
+      nesting, value copy semantics, manifest function members, and
+      cross-file definitions. Adversarially tested. Still open from the
+      original item: *exact byte layout control* (field widths, ordering,
+      padding) for packet headers, device registers, and on-disk formats
+      — today every field is an 8-byte slot, so the IPv4-header exit
+      criterion below remains gated on sized integers.
 - [ ] **Sized integers**: 8/16/32/64-bit reads and writes, signed and
       unsigned, with explicit width in the syntax (today everything is a
       64-bit `number`). Wrapping/overflow semantics defined, not accidental.
@@ -304,9 +309,29 @@ others have 3.*
 - [ ] Win64 port (PE output, Windows syscall/API strategy) — tracked but
       lowest priority of the three.
 - [ ] CI runs the full test suite per architecture (qemu-user is sufficient).
-
-**Exit criteria:** the same `.vox` sources — including the M5 crypto test
-vectors — pass on x86_64, AArch64, and RISC-V without modification.
+- [ ] **The grid as a math kernel** *(design: [docs/plans/321_grid_math_kernel.md](docs/plans/321_grid_math_kernel.md))*.
+      A chained loop expansion (`'f' of each i from ... and each j from ...`,
+      shipped 0.4.5, plan 320) desugars to a **perfect affine loop nest** —
+      explicit iteration space, affine bounds, order fixed by clause order,
+      body a single pure call. That is exactly the shape vectorizers and
+      polyhedral optimizers want, and it is stated as grammar rather than
+      reverse-engineered from pointer loops. But today's codegen wraps each
+      element in ~30 instructions of ceremony (a real `call`, prologue,
+      `_check_call_depth`/`_dec_call_depth`, stack-spilled params,
+      push/pop expression evaluation, a duplicated `_last_error` clear)
+      around as little as two of real work — scalar, and roughly 50–200×
+      off an FMA kernel for matmul-shaped work. On the IR, in payoff order:
+      (a) **inline small callees at grid sites** — the desugar already owns
+      the call, so this deletes the call/prologue/depth-checks/spills in one
+      stroke, the single biggest win; (b) **registerize induction variables**
+      (row/col in registers, not `inc qword [rbp-24]`); (c) **vectorize the
+      innermost clause** — the rightmost clause is known-innermost by the
+      language rule, so its lanes map to SIMD over `float` buffers as the
+      contiguous tensor substrate — the entry point to real vector calculus;
+      (d) **cache tiling for free** — a blocked kernel is just more clauses
+      (`each iblock ... and each jblock ... and each i ... and each j`),
+      expressible today with no new syntax. IR-gated: do it once, portably,
+      not per-arch. Prereq for any serious numerical Vox (M5 crypto included).
 
 ---
 

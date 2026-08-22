@@ -1,0 +1,17 @@
+(Compile-fail: plan 310 §4 - the type possessive calls a member the
+ manifest declares, so it resolves against the type rather than against the
+ definitions read so far. A name the type does not declare is refused at the
+ call with the same message the definition gets: the fix is a line in the
+ type either way.)
+
+A thing called point has
+  a function called 'placed at',
+  a number called x is 0.
+
+To do the point's 'placed at', with a number called x.
+  a point called plotted.
+  Set plotted's x to x.
+  Return a point, plotted.
+
+The corner is a point's sparkle with 1.
+Print corner's x.

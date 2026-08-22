@@ -1,0 +1,36 @@
+(Bug #37 - `readable` was always 1 regardless of open mode: it tested
+ fd >= 0 (true for any successfully opened handle) instead of the
+ recorded open mode. `writable` already got this right, keyed off the
+ handle's mode, so it is the control that pins the diagnosis - before
+ the fix, writing and appending both wrongly reported readable AND
+ (correctly) reported writable, which no fd-validity explanation
+ survives.
+
+ All three modes open the SAME file, so `permissions` reporting the
+ same value in every row is the third control: it proves permissions
+ and readable/writable are different concepts that must not be
+ conflated, per LANGUAGE.md's separate entries for them.)
+
+open a file for writing called write_handle at "./bug37_scratch.txt".
+Write "hello" to write_handle.
+Print "writing:".
+Print write_handle's readable.
+Print write_handle's writable.
+Print write_handle's permissions.
+Close write_handle.
+
+open a file for appending called append_handle at "./bug37_scratch.txt".
+Print "appending:".
+Print append_handle's readable.
+Print append_handle's writable.
+Print append_handle's permissions.
+Close append_handle.
+
+open a file for reading called read_handle at "./bug37_scratch.txt".
+Print "reading:".
+Print read_handle's readable.
+Print read_handle's writable.
+Print read_handle's permissions.
+Close read_handle.
+
+Delete the file "./bug37_scratch.txt".

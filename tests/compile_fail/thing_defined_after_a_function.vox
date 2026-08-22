@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §10 - the other direction for a function name. The
+ definition is the second one into `point`, so it errors at its own line and
+ names the function that got there first.)
+
+To point with a number called distance.
+  Print distance.
+
+A thing called point has
+  a number called x is 0.
+
+point of 3.

@@ -15,9 +15,27 @@ section .bss
     ; mixed map/list tree is cycle-safe under ONE 64-deep budget regardless of
     ; which runtime is included. (stage 1e2)
     _print_depth: resq 1
+    ; Where the collection renderers (_list_print / _map_print) send their
+    ; bytes: 0 = stdout, non-zero = a dynamic buffer pointer to append to.
+    ; A format string renders identically in every sink (LANGUAGE.md
+    ; "Format Strings Everywhere"), so a list or map interpolated into a
+    ; text initializer, a buffer, a `write`, a path, a `treating` clause or
+    ; a function argument must produce the same bytes `Print` produces -
+    ; from the same renderer. Redirecting that one renderer is how; a
+    ; second, buffer-shaped copy of it is how `{list}` shipped as a raw
+    ; heap address everywhere except Print (docs/BUGS_FOUND.md #44).
+    ; Lives here beside _print_depth because both are state of the shared
+    ; renderers, and core.asm is always included.
+    _render_sink: resq 1
 
 section .data
     _max_call_depth: dq 10000          ; maximum recursion depth
+    ; plan 311: raw wait4 status word from the most recent successful reap.
+    ; -1 sentinel before any reap (so "never reaped" is distinct from "exited 0").
+    ; Lives in .data, not .bss, because _start (which would zero .bss-bound
+    ; globals) is only emitted for executables - a --shared library would
+    ; otherwise read 0 and silently report "exited cleanly" with no child reaped.
+    _reaped_status: dq -1
     _stack_overflow_msg: db "Error: stack overflow (recursion depth exceeded)", 10, 0
     _stack_overflow_msg_len: equ $ - _stack_overflow_msg - 1
 

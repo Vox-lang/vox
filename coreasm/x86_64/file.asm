@@ -238,6 +238,35 @@
     pop rbx
 %endmacro
 
+; Record the outcome of a write(2) in _last_error, so `On error` can see a
+; write that did not happen. Before this the three write macros issued the
+; syscall and never looked at rax, which made a failed write indistinguishable
+; from a successful one from inside Vox (bug #48).
+; Expects: rax = the syscall's return value
+;          rdx = the byte count that was asked for (syscall preserves rdx;
+;                only rax, rcx and r11 are clobbered)
+; Leaves rax untouched, the way FORK does, so a caller that wants the count
+; still has it.
+; A short write is a failure too: Vox does not retry, so the missing bytes are
+; simply lost. The kernel gives no errno for one, so it is recorded as EIO (5).
+%macro RECORD_WRITE_RESULT 0
+    test rax, rax
+    js %%write_failed
+    cmp rax, rdx
+    jl %%write_short
+    mov qword [rel _last_error], 0
+    jmp %%write_done
+%%write_failed:
+    push rax
+    neg rax                         ; -errno -> errno
+    mov [rel _last_error], rax
+    pop rax
+    jmp %%write_done
+%%write_short:
+    mov qword [rel _last_error], 5  ; EIO - fewer bytes written than asked for
+%%write_done:
+%endmacro
+
 ; Write null-terminated string to file descriptor
 ; Args: fd, string_ptr
 %macro FILE_WRITE_STR 2
@@ -269,7 +298,8 @@
     mov rsi, r13                    ; buffer (saved earlier)
     mov rdx, rcx                    ; count = strlen
     syscall
-    
+    RECORD_WRITE_RESULT
+
     pop r13
     pop r12
     pop rdi
@@ -295,7 +325,8 @@
     mov rdx, [rsi + 8]              ; length from struct offset 8
     add rsi, BUF_DATA               ; data starts at BUF_DATA
     syscall
-    
+    RECORD_WRITE_RESULT
+
     pop rdi
     pop rsi
     pop rdx
@@ -320,7 +351,8 @@
     mov rsi, rsp                    ; buffer = stack (newline char)
     mov rdx, 1                      ; count = 1
     syscall
-    
+    RECORD_WRITE_RESULT
+
     add rsp, 8                      ; clean up stack
     
     pop rdi
@@ -635,19 +667,39 @@
 %%fork_done:
 %endmacro
 
-; Reap a child process (wait4(2)), discarding the exit-status details.
+; Reap a child process (wait4(2)), capturing the raw exit-status word.
 ; Input: rdi = pid to wait for (-1 = any child), pre-loaded by codegen.
-; Returns: rax = the reaped child's pid, or negative on error - this IS
-; the expression's result, preserved the same way as FORK above.
-%macro REAP_CHILD 0
-    xor rsi, rsi      ; status pointer = NULL (status details not decoded)
-    xor rdx, rdx      ; options = 0
-    xor r10, r10      ; rusage = NULL
+;         %1 = options (0 = blocking, 1 = WNOHANG/non-blocking)
+; Returns: rax = the reaped child's pid, 0 if WNOHANG and no child finished
+;          yet (NOT an error), or negative on error - this IS the
+;          expression's result, preserved the same way as FORK above.
+; The kernel writes the raw status word to _reaped_status only when a child
+; is actually reaped (rax > 0). With WNOHANG returning 0 (nothing finished
+; yet) or on error (rax < 0), the status pointer is left untouched, so the
+; previous value is preserved - "nothing reaped" never disturbs the status.
+%macro REAP_CHILD 1
+    lea rsi, [rel _reaped_status]  ; status pointer -> raw wait4 status word (plan 311)
+    mov rdx, %1                    ; options (0 = blocking, 1 = WNOHANG)
+    xor r10, r10                   ; rusage = NULL
     mov rax, SYS_WAIT4
     syscall
 
     cmp rax, 0
     jl %%reap_error
+    ; rax > 0: a child was reaped, and the kernel wrote the low 32 bits of
+    ; _reaped_status (its `int status` is 4 bytes). The high dword is stale
+    ; (e.g. the -1 sentinel's 0xFFFFFFFF), so a 64-bit read would be wrong -
+    ; zero-extend the 32-bit word into the full 64-bit global now. rax (the
+    ; pid, the expression result) is preserved; rcx is already clobbered by
+    ; the syscall itself.
+    ; rax == 0 (WNOHANG, nothing finished yet): the kernel did not write
+    ; status, so leave _reaped_status untouched - "nothing reaped" never
+    ; disturbs the previous value.
+    test rax, rax
+    jz %%reap_nothing
+    mov ecx, [rel _reaped_status]
+    mov [rel _reaped_status], rcx
+%%reap_nothing:
     mov qword [rel _last_error], 0
     jmp %%reap_done
 %%reap_error:

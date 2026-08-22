@@ -1,0 +1,9 @@
+(Bug #55's other half: when the collection's element type cannot be
+ proven - here a list widened by a later append - the analyzer has
+ nothing to reject, so codegen must not read the match value as text to
+ compare it. A number can never equal text, so the substitution simply
+ never fires and every element comes through unchanged.)
+
+a list called words is ["a"].
+append "b" to words.
+print each item from words treating 98 as 31.

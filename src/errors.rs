@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::lexer::{classify_lines, SourceRegion};
+
 #[derive(Debug, Clone)]
 pub struct SourceLocation {
     pub file: String,
@@ -347,6 +349,11 @@ pub struct SourceFile {
     #[allow(dead_code)]
     pub content: String,
     lines: Vec<String>,
+    /// What the lexer makes of every byte of every line: real code, the
+    /// inside of a comment, or the inside of a text literal. A diagnostic
+    /// that finds its caret by searching the source text consults this so
+    /// it never anchors on a mention in a comment (docs/BUGS_FOUND.md #46).
+    regions: Vec<Vec<SourceRegion>>,
 }
 
 impl SourceFile {
@@ -356,7 +363,31 @@ impl SourceFile {
             filename: filename.to_string(),
             content: content.to_string(),
             lines,
+            regions: classify_lines(content),
         }
+    }
+
+    /// What bytes `[start, end)` of `line_num` (1-based) are, taking the
+    /// strongest claim over the span: a span touching a comment is a
+    /// comment mention, and a span touching a text literal is inside one.
+    /// Anything the classifier has no row or column for answers `Code`, so
+    /// an out-of-range lookup leaves the search's own judgement alone.
+    pub fn region_of(&self, line_num: usize, start: usize, end: usize) -> SourceRegion {
+        if line_num == 0 {
+            return SourceRegion::Code;
+        }
+        let Some(row) = self.regions.get(line_num - 1) else {
+            return SourceRegion::Code;
+        };
+        let mut region = SourceRegion::Code;
+        for column in start..end {
+            match row.get(column) {
+                Some(SourceRegion::Comment) => return SourceRegion::Comment,
+                Some(SourceRegion::Text) => region = SourceRegion::Text,
+                _ => {}
+            }
+        }
+        region
     }
 
     pub fn get_line(&self, line_num: usize) -> Option<&str> {

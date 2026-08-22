@@ -1,0 +1,11 @@
+A number called second is 0.
+Set second to second add 1.
+Print second.
+While second is less than 3,
+  Set second to second add 1,
+  Print second.
+To 'shift' with a number called second. Return a number, second add 10.
+Print 'shift' of second.
+Set second to 1.
+Wait second seconds.
+Print arguments's second.

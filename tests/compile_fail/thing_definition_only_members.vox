@@ -1,0 +1,6 @@
+(Compile-fail: plan 310 §4/§10 - function members take no storage, so a
+ definition listing only a manifest entry describes a zero-byte thing.
+ v1 requires at least one data field.)
+
+A thing called point has
+  a function called 'from polar'.

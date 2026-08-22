@@ -1,0 +1,37 @@
+(the reaped status after a child exits with a known code. A child exits
+ 42; the parent reaps (blocking) and decodes the raw wait4 status word
+ inline. The exit code must be 42, the signal 0, crashed
+ false, and exited normally true. This exercises every the inline decode functions
+ function against a real child, not just literals - which also proves
+ the compiler delivers the status word correctly.)
+
+(Decode the status inline with the kernel's own encoding - the low
+ seven bits are the terminating signal, the next eight the exit code.
+ Deliberately no `see`: `the reaped status` is a complete compiler
+ feature, and this test must pass with nothing installed at all.)
+
+To 'exit code of' with a number called status.
+  Return a number, status divide 256 modulo 256.
+
+To 'signal of' with a number called status.
+  Return a number, status bit-and 127.
+
+To crashed with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is not 0.
+
+To 'exited normally' with a number called status.
+  a number called 'terminating signal' is status bit-and 127.
+  Return a boolean, 'terminating signal' is 0.
+
+Set pid to fork the process.
+If pid is 0 then,
+    Exit 42.
+If pid is greater than 0 then,
+    Set 'reaped pid' to reap child pid,
+    Set status to the reaped status,
+    Print "reaped pid matches: {'reaped pid' is pid}",
+    Print "exit code: {'exit code of' of status}",
+    Print "signal: {'signal of' of status}",
+    Print "crashed: {crashed of status}",
+    Print "exited normally: {'exited normally' of status}".

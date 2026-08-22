@@ -21,13 +21,13 @@ pub enum Token {
     Is, Are, Equals, Equal, Greater, Less, Than, Not, And, Or,
     
     // Range/Collection
-    From, To, Between, In, Of, On, The, A, An, All, Treating,
+    From, To, Between, In, Of, On, The, A, An, Treating,
     
     // Types
     Number, Float, Int, Text, Boolean, List, Map, True, False,
     
     // File I/O Types and Keywords
-    Buffer, File, Bytes, Size, Into, Reading, Writing, Appending, Standard, Input,
+    Buffer, File, Bytes, Into, Reading, Writing, Appending, Standard, Input,
     
     // Properties
     Even, Odd, Positive, Negative, Zero, Empty,
@@ -37,8 +37,8 @@ pub enum Token {
     Nothing,
     
     // Property Access
-    Apostrophe, Capacity, Descriptor, Modified, Accessed, Permissions,
-    Readable, Writable, Full, First, Last, Keys, Values, Absolute, Sign,
+    Apostrophe, Descriptor, Modified, Accessed, Permissions,
+    Readable, Writable, Full, Keys, Values, Absolute, Sign,
     
     // Error Handling
     Error, Auto, Enable, Disable,
@@ -47,11 +47,11 @@ pub enum Token {
     See, Library, Version,
     
     // Arguments and Environment
-    Argument, Arguments, Environment, Variable, Count, Raw,
+    Argument, Arguments, Environment, Variable,
     
     // Time and Timers
     Wait, Sleep, Timer,
-    Get, Current, Time, Second, Seconds, Millisecond, Milliseconds,
+    Get, Current, Time, Seconds, Millisecond, Milliseconds,
     Duration, Elapsed, Hour, Minute, Day, Month, Year, Unix,
     Running, As,
     
@@ -63,6 +63,11 @@ pub enum Token {
     
     // Literals
     IntegerLiteral(i64),
+    /// An integer literal whose text does not fit in a 64-bit signed
+    /// integer (BUGS_FOUND #22). Carries the raw source text (with a
+    /// `0x`/`0b` prefix for hex/binary literals) so the parser can name the
+    /// offending literal in its diagnostic. Never silently coerced to 0.
+    IntegerLiteralOverflow(String),
     FloatLiteral(f64),
     StringLiteral(String),
     
@@ -143,7 +148,6 @@ impl Token {
             "the" => Some("the"),
             "a" => Some("a"),
             "an" => Some("an"),
-            "all" => Some("all"),
             "treating" | "treat" => Some("treating"),
             // Types
             "number" | "numbers" => Some("number"),
@@ -159,7 +163,6 @@ impl Token {
             "file" => Some("file"),
             "bytes" => Some("bytes"),
             "byte" => Some("byte"),
-            "size" | "length" => Some("size"),
             "into" => Some("into"),
             "reading" => Some("reading"),
             "writing" => Some("writing"),
@@ -182,7 +185,6 @@ impl Token {
             "zero" => Some("zero"),
             "empty" => Some("empty"),
             "nothing" | "null" | "nil" => Some("nothing"),
-            "capacity" => Some("capacity"),
             "descriptor" | "fd" => Some("descriptor"),
             "modified" => Some("modified"),
             "accessed" => Some("accessed"),
@@ -190,8 +192,6 @@ impl Token {
             "readable" => Some("readable"),
             "writable" => Some("writable"),
             "full" => Some("full"),
-            "first" => Some("first"),
-            "last" => Some("last"),
             "absolute" | "abs" => Some("absolute"),
             "sign" => Some("sign"),
             // Error handling
@@ -202,14 +202,17 @@ impl Token {
             // Library
             "see" | "import" | "include" | "require" => Some("see"),
             "library" | "lib" => Some("library"),
-            "version" | "ver" => Some("version"),
+            // `version` is contextual (a header-sentence word), not reserved.
+            // The `ver` alias stays reserved (Class C, deferred).
+            "ver" => Some("version"),
             // Arguments/Environment
             "argument" | "arg" | "param" | "parameter" => Some("argument"),
             "arguments" | "args" | "params" | "parameters" => Some("arguments"),
             "environment" | "env" => Some("environment"),
             "variable" | "var" => Some("variable"),
-            "count" => Some("count"),
-            "raw" => Some("raw"),
+            // `count` is not reserved here: it is a contextual possessive
+            // property (`arguments's count`), not a banned variable name.
+            // `raw` is likewise contextual (`arguments's raw`).
             // Time and timers
             "wait" | "pause" => Some("wait"),
             "sleep" | "delay" => Some("sleep"),
@@ -217,7 +220,6 @@ impl Token {
             "get" | "fetch" | "retrieve" => Some("get"),
             "current" => Some("current"),
             "time" => Some("time"),
-            "second" => Some("second"),
             "seconds" => Some("seconds"),
             "millisecond" => Some("millisecond"),
             "milliseconds" | "ms" => Some("milliseconds"),
@@ -308,7 +310,6 @@ impl Token {
             Token::The => Some("the"),
             Token::A => Some("a"),
             Token::An => Some("an"),
-            Token::All => Some("all"),
             Token::Treating => Some("treating"),
             // Types
             Token::Number => Some("number"),
@@ -324,7 +325,6 @@ impl Token {
             Token::Buffer => Some("buffer"),
             Token::File => Some("file"),
             Token::Bytes => Some("bytes"),
-            Token::Size => Some("size"),
             Token::Into => Some("into"),
             Token::Reading => Some("reading"),
             Token::Writing => Some("writing"),
@@ -341,7 +341,6 @@ impl Token {
             Token::Nothing => Some("nothing"),
             // Property Access
             Token::Apostrophe => None, // punctuation
-            Token::Capacity => Some("capacity"),
             Token::Descriptor => Some("descriptor"),
             Token::Modified => Some("modified"),
             Token::Accessed => Some("accessed"),
@@ -349,8 +348,6 @@ impl Token {
             Token::Readable => Some("readable"),
             Token::Writable => Some("writable"),
             Token::Full => Some("full"),
-            Token::First => Some("first"),
-            Token::Last => Some("last"),
             Token::Keys => Some("keys"),
             Token::Values => Some("values"),
             Token::Absolute => Some("absolute"),
@@ -369,8 +366,6 @@ impl Token {
             Token::Arguments => Some("arguments"),
             Token::Environment => Some("environment"),
             Token::Variable => Some("variable"),
-            Token::Count => Some("count"),
-            Token::Raw => Some("raw"),
             // Time and Timers
             Token::Wait => Some("wait"),
             Token::Sleep => Some("sleep"),
@@ -378,7 +373,6 @@ impl Token {
             Token::Get => Some("get"),
             Token::Current => Some("current"),
             Token::Time => Some("time"),
-            Token::Second => Some("second"),
             Token::Seconds => Some("seconds"),
             Token::Millisecond => Some("millisecond"),
             Token::Milliseconds => Some("milliseconds"),
@@ -405,6 +399,7 @@ impl Token {
             Token::Without => Some("without"),
             // Not keywords - these are identifiers, literals, punctuation, or special
             Token::IntegerLiteral(_) => None,
+            Token::IntegerLiteralOverflow(_) => None,
             Token::FloatLiteral(_) => None,
             Token::StringLiteral(_) => None,
             Token::Identifier(_) => None,

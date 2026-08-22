@@ -78,14 +78,28 @@ impl Parser {
                     self.pos = saved;
                     break;
                 }
-            } else if !matches!(self.current(), Token::But | Token::Comma | Token::And) {
+            } else if !matches!(
+                self.current(),
+                Token::But | Token::Comma | Token::And | Token::Else | Token::Otherwise
+            ) {
                 break;
             }
 
+            // A bare `otherwise`/`else` is the clause keyword itself, not a
+            // separator standing in front of one. `parse_block`'s
+            // trailing-comma arm already ate the comma and stopped ON the
+            // keyword, so only the terse `append` branch ever hands this loop
+            // a comma to consume. Advancing here in the bare case would skip
+            // the keyword and leave the branch's own action current, which is
+            // what made `print x, otherwise print y` a parse error (bug #50).
+            let at_bare_alternative = matches!(self.current(), Token::Else | Token::Otherwise);
+
             // Remember if we started with comma (for ", but if" syntax)
             let started_with_comma = *self.current() == Token::Comma;
-            self.advance();
-            self.skip_noise();
+            if !at_bare_alternative {
+                self.advance();
+                self.skip_noise();
+            }
 
             // After comma, we might have "but if" or just "if"
             if started_with_comma && *self.current() == Token::But {
@@ -314,17 +328,22 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_while(&mut self) -> Result<Statement, Box<CompileError>> {
-        self.advance();
-        self.skip_noise();
-        
-        let condition = self.parse_condition()?;
-        self.skip_noise();
-        self.expect(&Token::Comma);
-        self.skip_noise();
-        
-        // Parse body: comma continues actions, period ends this while statement.
-        // Paragraph breaks are visual spacing and may appear after commas.
+    /// Parse the comma-separated body of a single-sentence loop — `While` or
+    /// `Repeat` — after the leading preamble (the condition, or
+    /// `count times,`) and its comma have been consumed. Comma continues to
+    /// the next action; a period ends the body unconditionally (LANGUAGE.md
+    /// termination rule 1); a paragraph break or EOF ends it; and — inside a
+    /// function body — a following `Return` ends it.
+    ///
+    /// `While` and `Repeat` are specified to terminate identically: rule 1
+    /// (LANGUAGE.md:135) names `repeat` in the clause list, and :150 says the
+    /// blank-line rule applies uniformly across `while`, `for each`, `repeat`,
+    /// and `on error`. Before this was shared, `parse_repeat` had its own body
+    /// loop that only broke on a period when a block terminator or paragraph
+    /// break followed — so a period never closed a `Repeat` body and the next
+    /// statement was silently absorbed (BUGS_FOUND #27). One body loop for
+    /// both keeps them from drifting apart again.
+    pub(crate) fn parse_loop_body(&mut self) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut body = Vec::new();
         loop {
             if *self.current() == Token::EOF {
@@ -333,22 +352,24 @@ impl Parser {
             if !body.is_empty() && self.is_block_terminator() {
                 break;
             }
-            
+
             let stmt = self.parse_statement()?;
             body.push(stmt);
             self.skip_noise();
-            
-            // Consume separator and decide whether to continue
+
+            // Consume the separator and decide whether to continue.
             if *self.current() == Token::Comma {
-                // Comma continues to next action in same sentence
+                // A comma continues to the next action in the same sentence.
                 self.advance();
                 self.skip_noise();
-                // Skip paragraph breaks after comma (visual spacing within sentence)
+                // Paragraph breaks after a comma are visual spacing within
+                // the still-open sentence (rule 2's one exception).
                 while *self.current() == Token::ParagraphBreak {
                     self.advance();
                     self.skip_noise();
                 }
             } else if *self.current() == Token::Period {
+                // A period ends this loop's body, full stop (rule 1).
                 self.advance();
                 self.skip_noise();
                 break;
@@ -358,7 +379,22 @@ impl Parser {
                 break;
             }
         }
-        
+        Ok(body)
+    }
+
+    pub(crate) fn parse_while(&mut self) -> Result<Statement, Box<CompileError>> {
+        self.advance();
+        self.skip_noise();
+
+        let condition = self.parse_condition()?;
+        self.skip_noise();
+        self.expect(&Token::Comma);
+        self.skip_noise();
+
+        // Comma continues actions, a period ends this while statement, a
+        // paragraph break or EOF ends it. See `parse_loop_body`.
+        let body = self.parse_loop_body()?;
+
         Ok(Statement::While { condition, body })
     }
 
@@ -382,6 +418,7 @@ impl Parser {
         self.advance();
         self.skip_noise();
         
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
@@ -412,7 +449,10 @@ impl Parser {
                 ));
             }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         if *self.current() == Token::From || *self.current() == Token::Between {
@@ -518,11 +558,12 @@ impl Parser {
                     body
                 };
                 
-                Ok(Statement::ForEach {
-                    variable,
-                    collection,
-                    body,
-                })
+                // `all the numbers from/between ...` parses as a range,
+                // and a range is a loop's counter bounds, never a list
+                // header (LANGUAGE.md:262). Route it to the range loop the
+                // same way the loop-expansion clause does, or codegen walks
+                // it as a list and segfaults (bug #56).
+                Ok(Self::for_each_loop(variable, collection, body))
             }
         } else if *self.current() == Token::In {
             self.advance();
@@ -565,11 +606,9 @@ impl Parser {
                 }
             }
             
-            Ok(Statement::ForEach {
-                variable,
-                collection,
-                body,
-            })
+            // Same range-collection routing as the `from` spelling above
+            // (bug #56).
+            Ok(Self::for_each_loop(variable, collection, body))
         } else {
             Err(self.err("Expected 'from', 'between', or 'in' after for each"))
         }
@@ -578,37 +617,20 @@ impl Parser {
     pub(crate) fn parse_repeat(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
         let count = self.parse_primary()?;
         self.skip_noise();
         self.expect(&Token::Times);
         self.skip_noise();
         self.expect(&Token::Comma);
         self.skip_noise();
-        
-        // Parse body - terminated by period followed by major keyword or paragraph break
-        let mut body = Vec::new();
-        loop {
-            if matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
-                break;
-            }
-            if !body.is_empty() && self.is_block_terminator() {
-                break;
-            }
-            
-            let stmt = self.parse_statement()?;
-            body.push(stmt);
-            self.skip_noise();
-            
-            if matches!(self.current(), Token::Period) {
-                self.advance();
-                self.skip_noise();
-                if self.is_block_terminator() || matches!(self.current(), Token::ParagraphBreak | Token::EOF) {
-                    break;
-                }
-            }
-        }
-        
+
+        // `Repeat` terminates its body exactly as `While` does — a period
+        // closes the innermost open clause (rule 1 names `repeat`), a comma
+        // continues, a blank line closes (rule 2, applied uniformly at :150).
+        // Share `parse_loop_body` so the two cannot drift apart again.
+        let body = self.parse_loop_body()?;
+
         Ok(Statement::Repeat { count, body })
     }
 
@@ -626,6 +648,7 @@ impl Parser {
             Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::IntegerLiteralOverflow(raw) => return Err(self.integer_literal_overflow_error(&raw)),
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
             Token::True => { self.advance(); Expr::BoolLit(true) }
             Token::False => { self.advance(); Expr::BoolLit(false) }
@@ -668,6 +691,7 @@ impl Parser {
             Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::IntegerLiteral(n) => { self.advance(); Expr::IntegerLit(n) }
+            Token::IntegerLiteralOverflow(raw) => return Err(self.integer_literal_overflow_error(&raw)),
             Token::FloatLiteral(n) => { self.advance(); Expr::FloatLit(n) }
             Token::True => { self.advance(); Expr::BoolLit(true) }
             Token::False => { self.advance(); Expr::BoolLit(false) }
@@ -792,6 +816,7 @@ impl Parser {
         self.skip_noise();
         
         // Get loop variable name
+        let variable_pos = self.pos;
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
@@ -820,7 +845,10 @@ impl Parser {
                 ));
             }
         };
-        
+        // A loop variable is a variable, so it claims the one identifier
+        // space like any other declaration (plan 310 §4, §10).
+        self.claim_name(&variable, NameKind::Variable, variable_pos)?;
+
         self.skip_noise();
         
         // Expect "from"
@@ -898,6 +926,19 @@ impl Parser {
     /// Parses any additional comma-separated statements as part of the loop body.
     /// Supports "but if" conditional branching for any action in the loop.
     pub(crate) fn wrap_in_loop_expansion(&mut self, variable: String, collection: Expr, base_stmt: Statement) -> Result<Statement, Box<CompileError>> {
+        let body = self.parse_loop_body_tail(base_stmt)?;
+        Ok(Self::for_each_loop(variable, collection, body))
+    }
+
+    /// After the base action of a loop expansion, parse the optional
+    /// `, but if ...` conditional or `, <more statements>` body and the
+    /// terminating period. Returns the loop body - the base statement,
+    /// wrapped in a conditional chain when `but if` is present, plus any
+    /// extra comma-separated statements. A loop expansion is a
+    /// self-terminating statement, so it owns its trailing period the way
+    /// `If`/`While`/`For` do; the top-level loop's `expect(Period)` is
+    /// tolerant of that.
+    fn parse_loop_body_tail(&mut self, base_stmt: Statement) -> Result<Vec<Statement>, Box<CompileError>> {
         let mut body = vec![base_stmt];
 
         // Check for comma to parse additional body statements or "but if" conditionals
@@ -932,11 +973,11 @@ impl Parser {
                     if *self.current() == Token::Period {
                         break;
                     }
-                    
+
                     let stmt = self.parse_statement()?;
                     body.push(stmt);
                     self.skip_noise();
-                    
+
                     if *self.current() == Token::Comma {
                         self.advance();
                         self.skip_noise();
@@ -952,26 +993,151 @@ impl Parser {
                 }
             }
         }
-        
+
         // Consume period if present
         if *self.current() == Token::Period {
             self.advance();
             self.skip_noise();
         }
-        
-        // Use ForRange for range collections, ForEach otherwise
+
+        Ok(body)
+    }
+
+    /// Build the single loop statement for one expansion clause: `ForRange`
+    /// for a range collection, `ForEach` for anything else. An associated
+    /// function (no `self`): it only assembles a statement.
+    fn for_each_loop(variable: String, collection: Expr, body: Vec<Statement>) -> Statement {
         match collection {
-            Expr::Range { .. } => Ok(Statement::ForRange {
+            Expr::Range { .. } => Statement::ForRange {
                 variable,
                 range: collection,
                 body,
-            }),
-            _ => Ok(Statement::ForEach {
+            },
+            _ => Statement::ForEach {
                 variable,
                 collection,
                 body,
-            }),
+            },
         }
+    }
+
+    /// The argument expression a loop expansion contributes to its call:
+    /// the loop variable, optionally wrapped in a `treating X as Y`
+    /// substitution when the clause had one.
+    pub(crate) fn each_arg_expr(variable: &str, treating: &Option<TreatingClause>) -> Expr {
+        if let Some((match_val, replacement)) = treating {
+            Expr::TreatingAs {
+                value: Box::new(Expr::Identifier(variable.to_string())),
+                match_value: Box::new(match_val.clone()),
+                replacement: Box::new(replacement.clone()),
+            }
+        } else {
+            Expr::Identifier(variable.to_string())
+        }
+    }
+
+    /// Parse a call's argument clauses after a connector (`of`/`to`/`with`/
+    /// `on`): a non-empty sequence of clauses joined by `and`, where each
+    /// clause is either a loop expansion (`each <name> from <collection>
+    /// [treating X as Y]`) or a plain expression. The expansions become
+    /// nested loops (left-to-right = outermost-to-innermost); the fixed
+    /// expressions ride along as per-call arguments (plan 320).
+    ///
+    /// Two `each` clauses that bind the same variable are a compile error
+    /// named for the variable - the nested loops would shadow, and the
+    /// sentence does not say which collection a bare use of the name means.
+    pub(crate) fn parse_arg_clauses(&mut self) -> Result<Vec<ArgClause>, Box<CompileError>> {
+        let mut clauses = Vec::new();
+        let mut expansion_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            // The position of `each`, so a duplicate-variable diagnostic can
+            // land its caret on the offending clause.
+            let each_pos = self.pos;
+            if let Some((variable, collection, treating)) = self.try_parse_each_from(false)? {
+                if !expansion_vars.insert(variable.clone()) {
+                    self.pos = each_pos;
+                    return Err(self.err(&format!(
+                        "Loop variable '{}' is bound twice in one sentence.\n  \
+                         Each `each` clause must use a different name; for paired \
+                         iteration use separate statements.",
+                        variable
+                    )));
+                }
+                clauses.push(ArgClause::Expansion((variable, collection, treating)));
+            } else {
+                let expr = self.parse_expression()?;
+                clauses.push(ArgClause::Fixed(expr));
+            }
+
+            self.skip_noise();
+            if *self.current() == Token::And {
+                self.advance();
+                self.skip_noise();
+            } else {
+                break;
+            }
+        }
+        Ok(clauses)
+    }
+
+    /// Split parsed clauses into the call's argument list and the loop
+    /// expansions to wrap around it, in source order (outermost first).
+    pub(crate) fn clauses_to_args_and_expansions(
+        clauses: &[ArgClause],
+    ) -> (Vec<Expr>, Vec<LoopExpansion>) {
+        let mut args = Vec::new();
+        let mut expansions = Vec::new();
+        for clause in clauses {
+            match clause {
+                ArgClause::Expansion((variable, collection, treating)) => {
+                    args.push(Self::each_arg_expr(variable, treating));
+                    expansions.push((variable.clone(), collection.clone(), treating.clone()));
+                }
+                ArgClause::Fixed(expr) => {
+                    args.push(expr.clone());
+                }
+            }
+        }
+        (args, expansions)
+    }
+
+    /// Wrap an inner statement in the nested loops of a grid: one loop per
+    /// expansion clause, the first clause outermost. The inner statement is
+    /// the call (or a `print` of a call); the `, but if ...` / body / period
+    /// tail attaches to that innermost iteration, and its conditions can
+    /// reference every loop variable because every loop is outside it.
+    pub(crate) fn finish_grid(
+        &mut self,
+        inner_stmt: Statement,
+        expansions: Vec<LoopExpansion>,
+    ) -> Result<Statement, Box<CompileError>> {
+        let mut body = self.parse_loop_body_tail(inner_stmt)?;
+        // Wrap innermost-first so the first clause ends up outermost.
+        for (variable, collection, _treating) in expansions.iter().rev() {
+            let wrapped = Self::for_each_loop(
+                variable.clone(),
+                collection.clone(),
+                std::mem::take(&mut body),
+            );
+            body = vec![wrapped];
+        }
+        // `parse_loop_body_tail` always returns at least the base statement,
+        // and every caller passes a non-empty `expansions`, so there is a
+        // wrapped loop to hand back.
+        Ok(body.into_iter().next().unwrap())
+    }
+
+    /// The diagnostic for a one-value-slot action (`print`, `append`, `open`)
+    /// given more than one argument clause: those forms take a single value,
+    /// so a grid of two or more `each` clauses is an arity error, not a
+    /// concatenation. Worded without a count so it stays honest whether the
+    /// extra clauses are `each` clauses, fixed arguments, or a mix — `print`
+    /// of one value plus anything else is the same mistake (plan 320 rule 4).
+    pub(crate) fn one_slot_arity_error(&self, action: &str) -> Box<CompileError> {
+        self.err(&format!(
+            "`{}` takes one value but this sentence supplies more than one argument clause.",
+            action
+        ))
     }
 
     pub(crate) fn parse_on_error(&mut self) -> Result<Statement, Box<CompileError>> {
@@ -1049,12 +1215,17 @@ impl Parser {
 
             let stmt = self.parse_statement()?;
             let is_on_error = matches!(stmt, Statement::OnError { .. });
-            // A self-terminating nested construct (If/While/For) consumes its
-            // own trailing period; see the note below for why we track this.
+            // A self-terminating nested construct (If/While/For/Repeat)
+            // consumes its own trailing period; see the note below for why we
+            // track this. `Repeat` now consumes its period the same way
+            // `While`/`For` do (BUGS_FOUND #27), so it belongs here too —
+            // without it, a `Repeat` that is not the last action in a branch
+            // would orphan the action following it.
             let is_self_terminated = matches!(
                 stmt,
                 Statement::If { .. } | Statement::While { .. }
                     | Statement::ForRange { .. } | Statement::ForEach { .. }
+                    | Statement::Repeat { .. }
             );
             statements.push(stmt);
 
@@ -1078,9 +1249,10 @@ impl Parser {
             }
 
             // A self-terminating nested construct — `If`, `While`, `For each`,
-            // `For ... to` — owns and consumes its own trailing period (see
-            // `parse_if`'s final period consume, and the body loops in
-            // `parse_while`/`parse_for`). When such a construct is an action in
+            // `For ... to`, `Repeat` — owns and consumes its own trailing period
+            // (see `parse_if`'s final period consume, and `parse_loop_body`,
+            // shared by `parse_while`/`parse_repeat`, plus the body loops in
+            // `parse_for`). When such a construct is an action in
             // a comma-separated branch, the next action therefore follows with
             // NO comma separator: the nested construct's period already served
             // as the separator. Without this, a complete nested `If ... then,

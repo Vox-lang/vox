@@ -1,0 +1,11 @@
+(Compile-fail: plan 310 §3 - a write target is a field and nothing else, so
+ a name that is not one of them cannot stand here. The instance possessive
+ (§4) is no second reading for a write: a call is not storage. The message
+ names the thing and lists what it does have.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+a point called origin.
+Set origin's z to 1.

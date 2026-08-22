@@ -1,0 +1,22 @@
+(Compile-fail: plan 310 §5 - a thing parameter receives a copy, so the
+ argument has to be the same thing the parameter declares. Handing a stamp
+ to a function expecting a point would copy sixteen bytes of postage into
+ sixteen bytes of coordinates, which the caller cannot see going wrong.
+
+ The second call passes a number, which has no whole shape to copy at all.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called stamp has
+  a number called 'day sent' is 25,
+  a number called 'cost in pence' is 12.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a stamp called 'first class'.
+a point called moved is nudged of 'first class'.
+a point called elsewhere is nudged of 3.

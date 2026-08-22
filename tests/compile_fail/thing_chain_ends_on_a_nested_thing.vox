@@ -1,0 +1,14 @@
+(Compile-fail: plan 310 - a chain ending on a nested thing names the whole
+ thing. Printing one now recurses through its fields (§7) and comparing two
+ of them goes field by field (§8), but neither makes the shape a number:
+ there is nothing to add one to, so this is named rather than done to the
+ first eight bytes of the nested point.)
+
+A thing called point has
+  a number called x is 0.
+
+A thing called segment has
+  a point called start.
+
+a segment called edge.
+Print edge's start add 1.

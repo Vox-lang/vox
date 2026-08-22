@@ -1,0 +1,12 @@
+{x: 5, y: 0}
+{start: {x: 0, y: 0}, end: {x: 0, y: 2}}
+{x: 0, y: 0}
+the span runs {start: {x: 0, y: 0}, end: {x: 0, y: 2}}
+it starts at {x: 0, y: 0}
+{'day sent': 25, 'cost in pounds': 1.5, 'first class': 1}
+{x: 3, y: 4}
+the marker is where the origin is
+the marker has moved off the origin
+the detour runs the same way
+two fresh stamps match
+done

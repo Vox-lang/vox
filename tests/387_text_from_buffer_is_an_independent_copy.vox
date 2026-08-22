@@ -1,0 +1,34 @@
+(#41's class, reached by #51's spelling. A text made from a buffer is a
+ COPY of the bytes, not a window onto them - LANGUAGE.md's Basic
+ Conversions note: "clearing, refilling, or resizing `data` afterwards
+ leaves `line` exactly as it was". A pointer into the buffer would fail
+ this twice: the refill would rewrite the text, and the resize would free
+ the allocation the text pointed at.
+
+ It also pins the destination's TYPE. The write is a conversion, not a
+ retype: the initializer's shape must not relabel a text as a buffer, the
+ way it did to a buffer in bug #58.)
+
+a buffer called label is 64 bytes in size.
+append "first" to label.
+
+a text called kept is label.
+clear label.
+append "second" to label.
+Print kept.
+
+resize label to 4096 bytes.
+Print kept.
+Print label.
+Print kept's type.
+
+(Inside a function the text is a stack local rather than a global mirror -
+ a different store in codegen, the same copy.)
+To 'copy in a frame' with a buffer called source.
+    a text called snapshot is source.
+    clear source.
+    append "changed" to source.
+    Print snapshot.
+
+'copy in a frame' with label.
+Print label.

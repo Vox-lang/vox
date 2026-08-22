@@ -1,0 +1,29 @@
+(Bug #33 - `is empty` on a text was always false: the predicate tested
+ the pointer, not the contents. A text's pointer is never null, so even
+ `"" is empty` answered false. Lists and buffers were always correct -
+ their rows here are the controls that pin the defect to text. The
+ undefaulted flag row guards LANGUAGE.md's promise that an unsupplied
+ text flag holds "" and can be tested with `is empty`.)
+a flag called label is "-l" or "--label", it is a text.
+a flag called title is "-t" or "--title", it is a text with default "hi".
+Parse flags.
+
+a text called blank is "".
+a text called filled is "x".
+a list called nolist is [].
+a list called somelist is [1].
+Create a buffer called nobuf.
+a buffer called somebuf is "y".
+
+If blank is empty then, Print "blank:empty". Otherwise, Print "blank:not".
+If filled is empty then, Print "filled:empty". Otherwise, Print "filled:not".
+If label is empty then, Print "flag-no-default:empty". Otherwise, Print "flag-no-default:not".
+If title is empty then, Print "flag-default:empty". Otherwise, Print "flag-default:not".
+If nolist is empty then, Print "empty-list:empty". Otherwise, Print "empty-list:not".
+If somelist is empty then, Print "full-list:empty". Otherwise, Print "full-list:not".
+If nobuf is empty then, Print "empty-buffer:empty". Otherwise, Print "empty-buffer:not".
+If somebuf is empty then, Print "full-buffer:empty". Otherwise, Print "full-buffer:not".
+
+While blank is empty,
+  Print "while:sees-empty",
+  Break.

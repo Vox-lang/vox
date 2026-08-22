@@ -1,0 +1,38 @@
+(Plan 310 task 3 - a function receives a copy of a thing and hands one back
+ by returning it (§5). Nudging the parameter therefore cannot reach the
+ caller's point: the only way out is the Return, which copies into the
+ caller's own storage.
+
+ `The after is nudged of before.` declares 'after' from what the call
+ returns, so a maker never has to have its type written twice. The two
+ later declarations show the other two argument shapes a copy has to
+ accept: a thing that was itself declared by inference, and a whole nested
+ thing read out of a segment.
+
+ Acceptance: 0, 1, 2, then 41 and 40.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called segment has
+  a point called start,
+  a point called end.
+
+To nudged with a point called start.
+  Set start's x to start's x add 1.
+  Return a point, start.
+
+a point called before.
+The after is nudged of before.
+Print before's x.
+Print after's x.
+
+a point called 'nudged twice' is nudged of after.
+Print 'nudged twice''s x.
+
+a segment called span.
+Set span's start's x to 40.
+a point called 'the far end' is nudged of span's start.
+Print 'the far end''s x.
+Print span's start's x.

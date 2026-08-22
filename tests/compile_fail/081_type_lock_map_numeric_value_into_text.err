@@ -1,4 +1,4 @@
 cannot assign number to 's', which is a text
 081_type_lock_map_numeric_value_into_text.vox:3:1
 note: 's' was declared as a text at 081_type_lock_map_numeric_value_into_text.vox:2:15
-help: convert it explicitly:  s is <value> as text.
+help: convert it explicitly:  s is m's "k" as text.

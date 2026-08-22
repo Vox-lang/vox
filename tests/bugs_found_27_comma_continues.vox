@@ -1,0 +1,7 @@
+(Bug #27 regression, second symptom: a comma must continue a Repeat body
+ with another action, the same as While. Before the fix parse_repeat's
+ body loop had no comma branch, so `Repeat 2 times, Print "a", Print "b".`
+ failed with `Expected a statement, got Comma` and a multi-action Repeat
+ was impossible. Now it prints a, b, a, b.)
+
+Repeat 2 times, Print "a", Print "b".

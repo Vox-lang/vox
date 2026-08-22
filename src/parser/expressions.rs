@@ -341,6 +341,9 @@ impl Parser {
                             self.advance();
                             self.skip_noise();
                         }
+                        Token::IntegerLiteralOverflow(ref raw) => {
+                            return Err(self.integer_literal_overflow_error(raw));
+                        }
                         Token::Identifier(ref fused) => {
                             // e.g. "base16", "base8", "base2" as one token
                             if let Ok(n) = fused.parse::<u32>() {
@@ -597,10 +600,13 @@ impl Parser {
             return None;
         }
         
-        // Try to parse as an English expression (including comparisons)
+        // Try to parse as an English expression (including comparisons).
+        // The sub-parser inherits the thing definitions and thing variables
+        // seen so far, so `"{origin's x}"` parses as the field chain it is
+        // rather than falling back to a literal placeholder (plan 310 §3).
         let mut lexer = Lexer::new(content);
         let tokens = lexer.tokenize();
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::new(tokens).with_things_of(self);
         // Use parse_and_expr to handle comparisons like "0 is equal to 0"
         match parser.parse_and_expr() {
             Ok(expr) => {
@@ -631,6 +637,19 @@ impl Parser {
             Token::Minus => {
                 self.advance();
                 self.skip_noise();
+                // BUGS_FOUND #22: `i64::MIN`'s magnitude (9223372036854775808)
+                // has no positive i64 representation, so the lexer always
+                // reports it via `IntegerLiteralOverflow` - the *only* place
+                // that magnitude is a valid literal is right here, negated.
+                // Recognised by raw decimal text, not by re-parsing into a
+                // wider int, so this stays scoped to the exact boundary
+                // rather than accepting any oversized literal after a minus.
+                if let Token::IntegerLiteralOverflow(raw) = self.current().clone() {
+                    if raw == "9223372036854775808" {
+                        self.advance();
+                        return Ok(Expr::IntegerLit(i64::MIN));
+                    }
+                }
                 let operand = self.parse_primary()?;
                 Ok(Expr::UnaryOp {
                     op: UnaryOperator::Negate,
@@ -766,6 +785,9 @@ impl Parser {
                 self.advance();
                 Ok(Expr::IntegerLit(n))
             }
+            Token::IntegerLiteralOverflow(raw) => {
+                Err(self.integer_literal_overflow_error(&raw))
+            }
             Token::FloatLiteral(n) => {
                 self.advance();
                 Ok(Expr::FloatLit(n))
@@ -830,7 +852,7 @@ impl Parser {
                                 let property = match self.current() {
                                     Token::Hour => ObjectProperty::Hour,
                                     Token::Minute => ObjectProperty::Minute,
-                                    Token::Second => ObjectProperty::Second,
+                                    Token::Identifier(ref id) if id.to_lowercase() == "second" => ObjectProperty::Second,
                                     Token::Day => ObjectProperty::Day,
                                     Token::Month => ObjectProperty::Month,
                                     Token::Year => ObjectProperty::Year,
@@ -878,20 +900,19 @@ impl Parser {
                             self.skip_noise();
                             
                             return match self.current() {
-                                Token::Count => { self.advance(); Ok(Expr::ArgumentCount) }
-                                Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
-                                    self.advance(); Ok(Expr::ArgumentName) 
+                                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "name" => {
+                                    self.advance(); Ok(Expr::ArgumentName)
                                 }
-                                Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
-                                Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
-                                Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
-                                    self.advance(); Ok(Expr::ArgumentSecond) 
+                                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::ArgumentFirst) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "second" => {
+                                    self.advance(); Ok(Expr::ArgumentSecond)
                                 }
-                                Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::ArgumentLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
-                                Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
-                                _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
+                                Token::Identifier(ref id) if id.to_lowercase() == "all" => { self.advance(); Ok(Expr::ArgumentAll) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "raw" => { self.advance(); Ok(Expr::ArgumentRaw) }
+                                _ => Err(self.err_expected("arguments property (count, name, first, second, last, empty, all, raw)", self.current())),
                             };
                         }
                     }
@@ -911,9 +932,9 @@ impl Parser {
                             self.skip_noise();
                             
                             return match self.current() {
-                                Token::Count => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
-                                Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
-                                Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
+                                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
                                 Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
                                 Token::StringLiteral(env_name) => {
                                     let env_name = env_name.clone();
@@ -948,6 +969,29 @@ impl Parser {
                 self.advance();
                 self.skip_noise();
 
+                // plan 311: optional "without waiting" suffix on any reap form
+                // selects WNOHANG (non-blocking) reap. `without` is a distinct
+                // token (Token::Without), so it cannot be mistaken for a call
+                // argument after the pid expression, and `print ... without
+                // newline` is unaffected. `waiting` remains an ordinary
+                // identifier everywhere else.
+                let parse_no_hang = |p: &mut Self| -> Result<bool, Box<CompileError>> {
+                    if *p.current() == Token::Without {
+                        p.advance();
+                        p.skip_noise();
+                        match p.current() {
+                            Token::Identifier(ref w) if w.eq_ignore_ascii_case("waiting") => {
+                                p.advance();
+                                p.skip_noise();
+                                Ok(true)
+                            }
+                            _ => Err(p.err_expected("'waiting' after 'without' in a reap", p.current())),
+                        }
+                    } else {
+                        Ok(false)
+                    }
+                };
+
                 // "reap any child process" -> pid = None (wait for any child)
                 if let Token::Identifier(ref w) = self.current() {
                     if w.eq_ignore_ascii_case("any") {
@@ -962,7 +1006,8 @@ impl Parser {
                                 break;
                             }
                         }
-                        return Ok(Expr::ReapChild { pid: None });
+                        let no_hang = parse_no_hang(self)?;
+                        return Ok(Expr::ReapChild { pid: None, no_hang });
                     }
                 }
 
@@ -974,18 +1019,67 @@ impl Parser {
                     }
                 }
                 let pid = self.parse_primary()?;
-                Ok(Expr::ReapChild { pid: Some(Box::new(pid)) })
+                let no_hang = parse_no_hang(self)?;
+                Ok(Expr::ReapChild { pid: Some(Box::new(pid)), no_hang })
             }
 
             Token::Identifier(name) => {
                 self.advance();
                 self.skip_noise();
 
+                // `all the numbers from/between ... to and ...` — the
+                // contextual range literal. `all` is an ordinary variable
+                // name everywhere else; only this exact phrase claims it.
+                if name.eq_ignore_ascii_case("all") && *self.current() == Token::The {
+                    self.advance(); // consume 'the'
+                    self.skip_noise();
+                    self.expect(&Token::Number);
+                    self.skip_noise();
+                    if *self.current() == Token::From || *self.current() == Token::Between {
+                        // Both prepositions spell one range, and every range
+                        // in the language includes its end bound
+                        // (LANGUAGE.md:277 - "`1 to 5` includes 1, 2, 3, 4,
+                        // and 5"). This site used to read inclusiveness off
+                        // which word was written, so `all the numbers from 1
+                        // to 3` stopped at 2 while `between 1 and 3` did not
+                        // (bug #56). Every other range site in the parser
+                        // hardcodes `true`; so does this one now.
+                        let inclusive = true;
+                        self.advance();
+                        self.skip_noise();
+                        let start = self.parse_primary_reserving(true, false)?;
+                        self.skip_noise();
+                        self.expect(&Token::To);
+                        self.expect(&Token::And);
+                        self.skip_noise();
+                        let end = self.parse_primary()?;
+                        return Ok(Expr::Range {
+                            start: Box::new(start),
+                            end: Box::new(end),
+                            inclusive,
+                        });
+                    } else {
+                        return Err(self.err("Expected 'from' or 'between' after 'all the numbers'"));
+                    }
+                }
+
                 // Call with arguments: `name of/with/to/on args` (plan 270 G1).
                 // A bare or quoted identifier is the callee; this is the
                 // expression-level counterpart of the statement-level call.
                 if let Some(call) = self.parse_call_tail(name.clone(), true)? {
                     return Ok(call);
+                }
+
+                // A thing variable's possessive reads one of its own members,
+                // never an object property (plan 310 §3, §4): a thing has no
+                // builtin properties, and its member space is its fields plus
+                // the functions taking it first. Checked before the property
+                // table below so a member can be named anything the
+                // definition allows.
+                if let Some(thing) = self.thing_of_variable(&name) {
+                    if self.possessive_follows() {
+                        return self.parse_thing_possessive_expr(name, &thing);
+                    }
                 }
 
                 // Check for property access: identifier's property
@@ -996,179 +1090,8 @@ impl Parser {
                         if s.to_lowercase() == "s" {
                             self.advance();
                             self.skip_noise();
-                            
-                            // Special handling for arguments's and environment's
-                            let name_lower = name.to_lowercase();
-                            if name_lower == "arguments" || name_lower == "args" {
-                                return match self.current() {
-                                    Token::Count => { self.advance(); Ok(Expr::ArgumentCount) }
-                                    Token::Identifier(ref id) if id.to_lowercase() == "name" => { 
-                                        self.advance(); Ok(Expr::ArgumentName) 
-                                    }
-                                    Token::First => { self.advance(); Ok(Expr::ArgumentFirst) }
-                                    Token::Second => { self.advance(); Ok(Expr::ArgumentSecond) }
-                                    Token::Identifier(ref id) if id.to_lowercase() == "second" => { 
-                                        self.advance(); Ok(Expr::ArgumentSecond) 
-                                    }
-                                    Token::Last => { self.advance(); Ok(Expr::ArgumentLast) }
-                                    Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
-                                    Token::All => { self.advance(); Ok(Expr::ArgumentAll) }
-                                    Token::Raw => { self.advance(); Ok(Expr::ArgumentRaw) }
-                                    _ => Err(self.err_expected("arguments property (count, first, last, empty, all, raw)", self.current())),
-                                };
-                            }
-                            
-                            if name_lower == "environment" || name_lower == "env" {
-                                return match self.current() {
-                                    Token::Count => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
-                                    Token::First => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
-                                    Token::Last => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
-                                    Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
-                                    Token::StringLiteral(env_name) => {
-                                        let env_name = env_name.clone();
-                                        self.advance();
-                                        Ok(Expr::EnvironmentVariable { name: Box::new(Expr::StringLit(env_name)) })
-                                    }
-                                    _ => Err(self.err_expected("environment property", self.current())),
-                                };
-                            }
-                            
-                            // Check if user meant 'arguments' or 'environment' but made a typo
-                            // If so, the property they're accessing might be valid for that object
-                            let is_arguments_property = matches!(self.current(), 
-                                Token::Count | Token::First | Token::Last | Token::Empty | Token::All);
-                            let is_env_property = matches!(self.current(),
-                                Token::Count | Token::First | Token::Last | Token::Empty);
-                            
-                            if is_arguments_property {
-                                if let Some(suggestion) = find_similar_keyword(&name, &["arguments", "args"]) {
-                                    return Err(self.err(&format!(
-                                        "Unknown identifier '{}' - did you mean '{}'?",
-                                        name, suggestion
-                                    )));
-                                }
-                            }
-                            if is_env_property {
-                                if let Some(suggestion) = find_similar_keyword(&name, &["environment", "env"]) {
-                                    return Err(self.err(&format!(
-                                        "Unknown identifier '{}' - did you mean '{}'?",
-                                        name, suggestion
-                                    )));
-                                }
-                            }
-                            
-                            // Map key access: person's "name" (text-literal key).
-                            // Keys are text in stage 1e2; a quoted key with
-                            // `{...}` interpolation materializes a fresh text
-                            // (so `m's "key{i}"` builds a dynamic key). An
-                            // unquoted identifier here is a property name.
-                            if let Token::StringLiteral(k) = self.current().clone() {
-                                self.advance();
-                                self.skip_noise();
-                                return Ok(Expr::MapAccess {
-                                    map: name,
-                                    key: Box::new(self.string_value_expr(k)),
-                                });
-                            }
 
-                            // Parse property name for other objects
-                            let property = match self.current() {
-                                // Buffer properties
-                                Token::Size => ObjectProperty::Size,
-                                Token::Capacity => ObjectProperty::Capacity,
-                                Token::Empty => ObjectProperty::Empty,
-                                Token::Full => ObjectProperty::Full,
-
-                                // File properties
-                                Token::Descriptor => ObjectProperty::Descriptor,
-                                Token::Modified => ObjectProperty::Modified,
-                                Token::Accessed => ObjectProperty::Accessed,
-                                Token::Permissions => ObjectProperty::Permissions,
-                                Token::Readable => ObjectProperty::Readable,
-                                Token::Writable => ObjectProperty::Writable,
-
-                                // List properties
-                                Token::First => ObjectProperty::First,
-                                Token::Last => ObjectProperty::Last,
-
-                                // Map properties
-                                Token::Keys => ObjectProperty::Keys,
-                                Token::Values => ObjectProperty::Values,
-
-                                // Number properties
-                                Token::Absolute => ObjectProperty::Absolute,
-                                Token::Sign => ObjectProperty::Sign,
-                                Token::Even => ObjectProperty::Even,
-                                Token::Odd => ObjectProperty::Odd,
-                                Token::Positive => ObjectProperty::Positive,
-                                Token::Negative => ObjectProperty::Negative,
-                                Token::Zero => ObjectProperty::Zero,
-
-                                // Time properties
-                                Token::Hour => ObjectProperty::Hour,
-                                Token::Minute => ObjectProperty::Minute,
-                                Token::Second => ObjectProperty::Second,
-                                Token::Day => ObjectProperty::Day,
-                                Token::Month => ObjectProperty::Month,
-                                Token::Year => ObjectProperty::Year,
-                                Token::Unix => ObjectProperty::Unix,
-
-                                // Timer properties
-                                Token::Duration => ObjectProperty::Duration,
-                                Token::Elapsed => ObjectProperty::Elapsed,
-                                Token::Identifier(ref id) if id.to_lowercase() == "start" => ObjectProperty::StartTime,
-                                Token::Identifier(ref id) if id.to_lowercase() == "end" => ObjectProperty::EndTime,
-                                Token::Running => ObjectProperty::Running,
-                                Token::Identifier(ref id) if id.to_lowercase() == "type" => ObjectProperty::Type,
-
-                                _ => return Err(self.err_expected("property name", self.current())),
-                            };
-                            self.advance();
-
-                            // `start time` / `end time`: `time` is a reserved
-                            // word and lexes as Token::Time, so it can never
-                            // match a property name above - consume it when it
-                            // directly follows `start`/`end`.
-                            if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
-                                self.skip_noise();
-                                if *self.current() == Token::Time {
-                                    self.advance();
-                                }
-                            }
-
-                            // Timer duration/elapsed may be followed by a unit,
-                            // e.g. "t's duration in seconds". This matches the
-                            // handling already present for quoted variable and
-                            // "the ..." property-access forms.
-                            if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
-                                self.skip_noise();
-                                if *self.current() == Token::In {
-                                    self.advance();
-                                    self.skip_noise();
-                                }
-                                if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
-                                    let unit = match self.current() {
-                                        Token::Seconds | Token::Second => {
-                                            self.advance();
-                                            ast::TimeUnit::Seconds
-                                        }
-                                        Token::Milliseconds | Token::Millisecond => {
-                                            self.advance();
-                                            ast::TimeUnit::Milliseconds
-                                        }
-                                        _ => unreachable!(),
-                                    };
-                                    return Ok(Expr::DurationCast {
-                                        value: Box::new(Expr::PropertyAccess { object: name, property }),
-                                        unit,
-                                    });
-                                }
-                            }
-
-                            return Ok(Expr::PropertyAccess {
-                                object: name,
-                                property,
-                            });
+                            return self.parse_possessive_tail(name);
                         }
                     }
                 }
@@ -1202,36 +1125,6 @@ impl Parser {
                 self.expect(&Token::CloseBracket);
                 Ok(Expr::ListLit { elements })
             }
-            Token::All => {
-                self.advance();
-                self.skip_noise();
-                self.expect(&Token::The);
-                self.skip_noise();
-                self.expect(&Token::Number);
-                self.skip_noise();
-                
-                if *self.current() == Token::From || *self.current() == Token::Between {
-                    let inclusive = *self.current() == Token::Between;
-                    self.advance();
-                    self.skip_noise();
-                    
-                    let start = self.parse_primary_reserving(true, false)?;
-                    self.skip_noise();
-                    self.expect(&Token::To);
-                    self.expect(&Token::And);
-                    self.skip_noise();
-
-                    let end = self.parse_primary()?;
-                    
-                    Ok(Expr::Range {
-                        start: Box::new(start),
-                        end: Box::new(end),
-                        inclusive,
-                    })
-                } else {
-                    Err(self.err("Expected 'from' or 'between' after 'all the numbers'"))
-                }
-            }
             Token::Number => {
                 self.advance();
                 Ok(Expr::Identifier("_iter".to_string()))
@@ -1246,7 +1139,7 @@ impl Parser {
                         self.advance();
                         self.skip_noise();
                         
-                        if *self.current() == Token::Count {
+                        if matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "count") {
                             self.advance();
                             Ok(Expr::ArgumentCount)
                         } else if *self.current() == Token::On { // "at" maps to Token::On
@@ -1270,7 +1163,7 @@ impl Parser {
                         }
                         
                         // "the environment variable count"
-                        if *self.current() == Token::Count {
+                        if matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "count") {
                             self.advance();
                             Ok(Expr::EnvironmentVariableCount)
                         }
@@ -1296,9 +1189,37 @@ impl Parser {
                         }
                     }
                     Token::Identifier(name) => {
+                        // plan 311: "the reaped status" -> raw wait4 status word.
+                        // Only this exact phrase; "the reaped <anything else>" is
+                        // an ordinary variable reference to `reaped`, so we only
+                        // commit when "status" directly follows. `reaped` stays
+                        // usable as an ordinary identifier (tests/102_fork_reap.vox
+                        // does `Set reaped to reap any child process.`).
+                        let reaped_status = name.eq_ignore_ascii_case("reaped");
                         self.advance();
                         self.skip_noise();
+                        if reaped_status {
+                            if let Token::Identifier(ref w) = self.current() {
+                                if w.eq_ignore_ascii_case("status") {
+                                    self.advance();
+                                    self.skip_noise();
+                                    return Ok(Expr::ReapedStatus);
+                                }
+                            }
+                            // "the reaped" not followed by "status": fall through
+                            // to the ordinary variable reference below.
+                        }
                         
+
+                        // `Print the origin's x.` - the same possessive as the
+                        // bare `origin's x`, since `the` is only an article
+                        // here (plan 310 §3).
+                        if let Some(thing) = self.thing_of_variable(&name) {
+                            if self.possessive_follows() {
+                                return self.parse_thing_possessive_expr(name, &thing);
+                            }
+                        }
+
                         // Check for property access: "the now's hour"
                         if *self.current() == Token::Apostrophe {
                             self.advance();
@@ -1307,95 +1228,7 @@ impl Parser {
                                     self.advance();
                                     self.skip_noise();
                                     
-                                    let property = match self.current() {
-                                        // Time properties
-                                        Token::Hour => ObjectProperty::Hour,
-                                        Token::Minute => ObjectProperty::Minute,
-                                        Token::Second => ObjectProperty::Second,
-                                        Token::Day => ObjectProperty::Day,
-                                        Token::Month => ObjectProperty::Month,
-                                        Token::Year => ObjectProperty::Year,
-                                        Token::Unix => ObjectProperty::Unix,
-                                        // Timer properties
-                                        Token::Duration => ObjectProperty::Duration,
-                                        Token::Elapsed => ObjectProperty::Elapsed,
-                                        Token::Running => ObjectProperty::Running,
-                                        // Other properties
-                                        Token::Size => ObjectProperty::Size,
-                                        Token::Capacity => ObjectProperty::Capacity,
-                                        Token::Empty => ObjectProperty::Empty,
-                                        Token::Full => ObjectProperty::Full,
-                                        // Handle single-quoted multi-word property names and 'start'
-                                        Token::Identifier(ref prop_name) => {
-                                            match prop_name.to_lowercase().as_str() {
-                                                "start" => ObjectProperty::StartTime,
-                                                // bare `end` - site 2 (unquoted
-                                                // name) has always had this arm;
-                                                // the quoted and `the ...` paths
-                                                // dropped it
-                                                "end" => ObjectProperty::EndTime,
-                                                "start time" => ObjectProperty::StartTime,
-                                                "end time" => ObjectProperty::EndTime,
-                                                "duration" => ObjectProperty::Duration,
-                                                "elapsed" => ObjectProperty::Elapsed,
-                                                "running" => ObjectProperty::Running,
-                                                _ => return Err(self.err_expected("property name", self.current())),
-                                            }
-                                        }
-                                        _ => return Err(self.err_expected("property name", self.current())),
-                                    };
-                                    self.advance();
-
-                                    // `start time` / `end time`: `time` is a
-                                    // reserved word and lexes as Token::Time,
-                                    // so it can never match a property name
-                                    // above - consume it when it directly
-                                    // follows `start`/`end`.
-                                    if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
-                                        self.skip_noise();
-                                        if *self.current() == Token::Time {
-                                            self.advance();
-                                        }
-                                    }
-
-                                    // Timer duration/elapsed may be followed by
-                                    // a unit, e.g. "the t's elapsed seconds" or
-                                    // "the t's duration in seconds". This
-                                    // matches the handling already present for
-                                    // the quoted-variable possessive form
-                                    // (`t's duration in seconds` without a
-                                    // leading `the`) - without it, a two-word
-                                    // `<property> <unit>` phrase here left
-                                    // `seconds` unconsumed, so the statement
-                                    // ended early and the top-level loop then
-                                    // choked trying to parse `seconds` as its
-                                    // own statement.
-                                    if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
-                                        self.skip_noise();
-                                        if *self.current() == Token::In {
-                                            self.advance();
-                                            self.skip_noise();
-                                        }
-                                        if matches!(self.current(), Token::Seconds | Token::Second | Token::Milliseconds | Token::Millisecond) {
-                                            let unit = match self.current() {
-                                                Token::Seconds | Token::Second => {
-                                                    self.advance();
-                                                    ast::TimeUnit::Seconds
-                                                }
-                                                Token::Milliseconds | Token::Millisecond => {
-                                                    self.advance();
-                                                    ast::TimeUnit::Milliseconds
-                                                }
-                                                _ => unreachable!(),
-                                            };
-                                            return Ok(Expr::DurationCast {
-                                                value: Box::new(Expr::PropertyAccess { object: name, property }),
-                                                unit,
-                                            });
-                                        }
-                                    }
-
-                                    return Ok(Expr::PropertyAccess { object: name, property });
+                                    return self.parse_possessive_tail(name);
                                 }
                             }
                             return Err(self.err("Expected 's after apostrophe for property access"));
@@ -1434,6 +1267,13 @@ impl Parser {
                 }
             }
             Token::A | Token::An => {
+                // `a point's 'placed at' with 3 and 4` - the type possessive
+                // calls a member the thing declares (plan 310 §4). Asked
+                // before the article is consumed, because the whole shape is
+                // the expression.
+                if self.type_possessive_follows() {
+                    return self.parse_type_possessive_call();
+                }
                 // Check if this is an article before a type, or just the letter "a"/"an" as identifier
                 let is_article = self.current().clone();
                 self.advance();
@@ -1450,6 +1290,233 @@ impl Parser {
             }
             _ => Err(self.err_expected("a statement", self.current())),
         }
+    }
+
+    /// Everything a possessive reads after its `'s`, for one named object.
+    ///
+    /// BUGS_FOUND #64: this used to be written out twice - once for the
+    /// bare `h's size` and once for the `the h's size` sugar, where `the`
+    /// is only an article (LANGUAGE.md:1857 - "`the` is optional before
+    /// variable names in expressions"). The second copy knew a handful of
+    /// time and buffer properties and none of the file, list, map or
+    /// number ones, so the same reading answered under one spelling and
+    /// was a parse error under the other. One path now, so a property is
+    /// added or diagnosed in exactly one place (the lesson of #51/#58).
+    ///
+    /// Called with the parser positioned on the property word itself:
+    /// `name` is the object, the apostrophe and the `s` are consumed.
+    pub(crate) fn parse_possessive_tail(&mut self, name: String) -> Result<Expr, Box<CompileError>> {
+        // Special handling for arguments's and environment's
+        let name_lower = name.to_lowercase();
+        if name_lower == "arguments" || name_lower == "args" {
+            return match self.current() {
+                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::ArgumentCount) }
+                Token::Identifier(ref id) if id.to_lowercase() == "name" => {
+                    self.advance(); Ok(Expr::ArgumentName)
+                }
+                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::ArgumentFirst) }
+                Token::Identifier(ref id) if id.to_lowercase() == "second" => {
+                    self.advance(); Ok(Expr::ArgumentSecond)
+                }
+                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::ArgumentLast) }
+                Token::Empty => { self.advance(); Ok(Expr::ArgumentEmpty) }
+                Token::Identifier(ref id) if id.to_lowercase() == "all" => { self.advance(); Ok(Expr::ArgumentAll) }
+                Token::Identifier(ref id) if id.to_lowercase() == "raw" => { self.advance(); Ok(Expr::ArgumentRaw) }
+                _ => Err(self.err_expected("arguments property (count, name, first, second, last, empty, all, raw)", self.current())),
+            };
+        }
+        
+        if name_lower == "environment" || name_lower == "env" {
+            return match self.current() {
+                Token::Identifier(ref id) if id.to_lowercase() == "count" => { self.advance(); Ok(Expr::EnvironmentVariableCount) }
+                Token::Identifier(ref id) if id.to_lowercase() == "first" => { self.advance(); Ok(Expr::EnvironmentVariableFirst) }
+                Token::Identifier(ref id) if id.to_lowercase() == "last" => { self.advance(); Ok(Expr::EnvironmentVariableLast) }
+                Token::Empty => { self.advance(); Ok(Expr::EnvironmentVariableEmpty) }
+                Token::StringLiteral(env_name) => {
+                    let env_name = env_name.clone();
+                    self.advance();
+                    Ok(Expr::EnvironmentVariable { name: Box::new(Expr::StringLit(env_name)) })
+                }
+                _ => Err(self.err_expected("environment property", self.current())),
+            };
+        }
+        
+        // Check if user meant 'arguments' or 'environment' but made a typo
+        // If so, the property they're accessing might be valid for that object.
+        // `count` is now an ordinary identifier (a contextual possessive
+        // property), so it is recognised here by its lexeme, not a token kind.
+        let is_count = matches!(self.current(),
+            Token::Identifier(ref id) if id.to_lowercase() == "count");
+        let is_all = matches!(self.current(),
+            Token::Identifier(ref id) if id.to_lowercase() == "all");
+        let is_first = matches!(self.current(),
+            Token::Identifier(ref id) if id.to_lowercase() == "first");
+        let is_last = matches!(self.current(),
+            Token::Identifier(ref id) if id.to_lowercase() == "last");
+        let is_arguments_property = is_count || is_all || is_first || is_last
+            || matches!(self.current(), Token::Empty);
+        let is_env_property = is_count || is_first || is_last
+            || matches!(self.current(), Token::Empty);
+        
+        if is_arguments_property {
+            if let Some(suggestion) = find_similar_keyword(&name, &["arguments", "args"]) {
+                return Err(self.err(&format!(
+                    "Unknown identifier '{}' - did you mean '{}'?",
+                    name, suggestion
+                )));
+            }
+        }
+        if is_env_property {
+            if let Some(suggestion) = find_similar_keyword(&name, &["environment", "env"]) {
+                return Err(self.err(&format!(
+                    "Unknown identifier '{}' - did you mean '{}'?",
+                    name, suggestion
+                )));
+            }
+        }
+        
+        // Map key access: person's "name" (text-literal key).
+        // Keys are text in stage 1e2; a quoted key with
+        // `{...}` interpolation materializes a fresh text
+        // (so `m's "key{i}"` builds a dynamic key). An
+        // unquoted identifier here is a property name.
+        if let Token::StringLiteral(k) = self.current().clone() {
+            self.advance();
+            self.skip_noise();
+            return Ok(Expr::MapAccess {
+                map: name,
+                key: Box::new(self.string_value_expr(k)),
+            });
+        }
+
+        // Parse property name for other objects
+        let property = match self.current() {
+            // Buffer properties. `size` and `length`
+            // are synonyms here (both contextual words,
+            // claimed by lexeme in possessive position).
+            Token::Identifier(ref id) if id.to_lowercase() == "size" || id.to_lowercase() == "length" => ObjectProperty::Size,
+            Token::Identifier(ref id) if id.to_lowercase() == "capacity" => ObjectProperty::Capacity,
+            Token::Empty => ObjectProperty::Empty,
+            Token::Full => ObjectProperty::Full,
+
+            // File properties
+            Token::Descriptor => ObjectProperty::Descriptor,
+            Token::Modified => ObjectProperty::Modified,
+            Token::Accessed => ObjectProperty::Accessed,
+            Token::Permissions => ObjectProperty::Permissions,
+            Token::Readable => ObjectProperty::Readable,
+            Token::Writable => ObjectProperty::Writable,
+            // BUGS_FOUND #38: `exists` is not a file
+            // property - reachable only through this
+            // possessive site as `<handle>'s exists`,
+            // and `exists` is a property on nothing else
+            // in the language, so this reading is
+            // unconditional rather than gated on the
+            // base's type (the parser tracks no type for
+            // an ordinary variable at this point).
+            Token::Exists => return Err(self.err(
+                "a file handle has no `exists` property - a handle you hold is already open; to test whether a path can be opened, open it inside an `On error` handler (see the File Properties section)"
+            )),
+
+            // List properties
+            Token::Identifier(ref id) if id.to_lowercase() == "first" => ObjectProperty::First,
+            Token::Identifier(ref id) if id.to_lowercase() == "last" => ObjectProperty::Last,
+
+            // Map properties
+            Token::Keys => ObjectProperty::Keys,
+            Token::Values => ObjectProperty::Values,
+
+            // Number properties
+            Token::Absolute => ObjectProperty::Absolute,
+            Token::Sign => ObjectProperty::Sign,
+            Token::Even => ObjectProperty::Even,
+            Token::Odd => ObjectProperty::Odd,
+            Token::Positive => ObjectProperty::Positive,
+            Token::Negative => ObjectProperty::Negative,
+            Token::Zero => ObjectProperty::Zero,
+
+            // Time properties
+            Token::Hour => ObjectProperty::Hour,
+            Token::Minute => ObjectProperty::Minute,
+            Token::Identifier(ref id) if id.to_lowercase() == "second" => ObjectProperty::Second,
+            Token::Day => ObjectProperty::Day,
+            Token::Month => ObjectProperty::Month,
+            Token::Year => ObjectProperty::Year,
+            Token::Unix => ObjectProperty::Unix,
+
+            // Timer properties
+            Token::Duration => ObjectProperty::Duration,
+            Token::Elapsed => ObjectProperty::Elapsed,
+            Token::Identifier(ref id) if id.to_lowercase() == "start" => ObjectProperty::StartTime,
+            Token::Identifier(ref id) if id.to_lowercase() == "end" => ObjectProperty::EndTime,
+            Token::Running => ObjectProperty::Running,
+            Token::Identifier(ref id) if id.to_lowercase() == "type" => ObjectProperty::Type,
+
+            // A quoted multi-word property name is one identifier, so
+            // `t's 'start time'` can never match the `start` arm above
+            // and its `Token::Time` follower. Claimed by lexeme, like
+            // every other contextual property word here.
+            Token::Identifier(ref prop_name) => {
+                match prop_name.to_lowercase().as_str() {
+                    "start time" => ObjectProperty::StartTime,
+                    "end time" => ObjectProperty::EndTime,
+                    _ => return Err(self.err_expected("property name", self.current())),
+                }
+            }
+            _ => return Err(self.err_expected("property name", self.current())),
+        };
+        self.advance();
+
+        // `start time` / `end time`: `time` is a reserved
+        // word and lexes as Token::Time, so it can never
+        // match a property name above - consume it when it
+        // directly follows `start`/`end`.
+        if matches!(property, ObjectProperty::StartTime | ObjectProperty::EndTime) {
+            self.skip_noise();
+            if *self.current() == Token::Time {
+                self.advance();
+            }
+        }
+
+        // Timer duration/elapsed may be followed by a unit,
+        // e.g. "t's duration in seconds" or "the t's elapsed
+        // seconds". Without consuming the unit the statement
+        // ended early and the top-level loop then choked
+        // trying to parse `seconds` as its own statement.
+        if matches!(property, ObjectProperty::Duration | ObjectProperty::Elapsed) {
+            self.skip_noise();
+            if *self.current() == Token::In {
+                self.advance();
+                self.skip_noise();
+            }
+            if matches!(self.current(), Token::Seconds | Token::Milliseconds | Token::Millisecond)
+                || matches!(self.current(), Token::Identifier(ref id) if id.to_lowercase() == "second") {
+                let unit = match self.current() {
+                    Token::Seconds => {
+                        self.advance();
+                        ast::TimeUnit::Seconds
+                    }
+                    Token::Identifier(ref id) if id.to_lowercase() == "second" => {
+                        self.advance();
+                        ast::TimeUnit::Seconds
+                    }
+                    Token::Milliseconds | Token::Millisecond => {
+                        self.advance();
+                        ast::TimeUnit::Milliseconds
+                    }
+                    _ => unreachable!(),
+                };
+                return Ok(Expr::DurationCast {
+                    value: Box::new(Expr::PropertyAccess { object: name, property }),
+                    unit,
+                });
+            }
+        }
+
+        Ok(Expr::PropertyAccess {
+            object: name,
+            property,
+        })
     }
 
 }

@@ -1,4 +1,5 @@
 use super::*;
+use super::untyped_returns::UntypedPosition;
 
 impl Analyzer {
     /// The key under which a function DEFINED in the current library is filed
@@ -15,7 +16,7 @@ impl Analyzer {
     pub(crate) fn expr_uses_flag(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Identifier(name) => {
-                if self.flag_variables.contains(name) {
+                if self.flag_variables.contains_key(name) {
                     Some(name.clone())
                 } else {
                     None
@@ -25,7 +26,7 @@ impl Analyzer {
                 for part in parts {
                     match part {
                         FormatPart::Variable { name, .. } => {
-                            if self.flag_variables.contains(name) {
+                            if self.flag_variables.contains_key(name) {
                                 return Some(name.clone());
                             }
                         }
@@ -96,7 +97,7 @@ impl Analyzer {
     /// Two imports exporting the same name are ambiguous by identity — a
     /// re-see of the SAME <lib,version> is one import, but two different
     /// libraries, or two versions of one library, are two.
-    fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
+    pub(crate) fn imported_providers(&self, name: &str) -> Vec<&crate::lib_file::ImportedFunction> {
         let mut providers: Vec<&crate::lib_file::ImportedFunction> = Vec::new();
         for imp in &self.imports {
             if imp.name != name {
@@ -116,6 +117,88 @@ impl Analyzer {
         self.functions.contains(&self.func_key(name))
     }
 
+    /// Record a function's declared parameter and return types, so a call
+    /// site can check the shapes a thing argument or a thing result has to
+    /// have (plan 310 §5).
+    pub(crate) fn record_function_signature(
+        &mut self,
+        name: &str,
+        params: &[(String, Type)],
+        return_type: &Type,
+    ) {
+        let key = self.func_key(name);
+        self.function_signatures
+            .insert(key, (params.to_vec(), return_type.clone()));
+    }
+
+    /// The declared type of a call's result: a local definition first (which
+    /// shadows a same-named import, as call resolution does), then a single
+    /// unambiguous import.
+    pub(crate) fn function_return_type(&self, name: &str) -> Option<Type> {
+        if let Some((_, return_type)) = self.function_signatures.get(&self.func_key(name)) {
+            return Some(return_type.clone());
+        }
+        let providers = self.imported_providers(name);
+        match providers.as_slice() {
+            [only] => Some(only.return_type.clone()),
+            _ => None,
+        }
+    }
+
+    /// A call's declared parameters, resolved the same way.
+    fn function_params(&self, name: &str) -> Option<Vec<(String, Type)>> {
+        if let Some((params, _)) = self.function_signatures.get(&self.func_key(name)) {
+            return Some(params.clone());
+        }
+        let providers = self.imported_providers(name);
+        match providers.as_slice() {
+            [only] => Some(only.params.clone()),
+            _ => None,
+        }
+    }
+
+    /// Analyze a call's arguments. An argument landing on a `thing`
+    /// parameter is a copy source rather than a value (plan 310 §5), so it
+    /// is checked against the parameter's own thing; every other argument is
+    /// an ordinary expression.
+    pub(crate) fn analyze_call_arguments(&mut self, name: &str, args: &[Expr]) {
+        let params = self.function_params(name).unwrap_or_default();
+        for (index, arg) in args.iter().enumerate() {
+            match params.get(index) {
+                Some((param_name, Type::Thing(thing))) => {
+                    let (param_name, thing) = (param_name.clone(), thing.clone());
+                    let target = format!("{}'s {}", name, param_name);
+                    self.check_thing_copy(&target, name, &thing, arg);
+                }
+                // Bug #57: `nothing` handed to a concretely-typed parameter.
+                // The callee stores it in that parameter's slot and reads it
+                // as the declared type, so a `text` parameter took a null
+                // pointer and faulted on the callee's first read. Bug #65 is
+                // the same hole for every other provable type - `greet with
+                // 5.` on `a text called who` faulted identically - and is
+                // checked only when the `nothing` check has not already
+                // reported, so one argument never earns two diagnostics.
+                //
+                // A `value` parameter is the documented home for both, so
+                // both checks leave it alone. An IMPORTED function's
+                // arguments are deliberately skipped here: `check_function_call`
+                // has already routed those through `validate_import_call_args`,
+                // whose own type check would otherwise report the same
+                // mismatch a second time.
+                Some((param_name, param_type)) => {
+                    let (param_name, param_type) = (param_name.clone(), param_type.clone());
+                    if !self.check_nothing_argument(name, &param_name, &param_type, arg)
+                        && self.is_local_function(name)
+                    {
+                        self.check_argument_type(name, &param_name, &param_type, arg);
+                    }
+                    self.analyze_expr(arg);
+                }
+                None => self.analyze_expr(arg),
+            }
+        }
+    }
+
     /// Plan 270 G4: a bare or quoted identifier in *expression* position
     /// that names a zero-argument function is a call, not a variable lookup.
     /// True iff `name` resolves to a callable declaring zero parameters — a
@@ -123,7 +206,7 @@ impl Analyzer {
     /// matches the definition) or a single unambiguous import. A name that is
     /// a variable in scope is decided by the caller *before* consulting this;
     /// a variable shadows a same-named zero-arg function.
-    fn is_zero_arg_function(&self, name: &str) -> bool {
+    pub(crate) fn is_zero_arg_function(&self, name: &str) -> bool {
         if self.is_local_function(name) {
             return self.function_param_counts.get(&self.func_key(name)) == Some(&0);
         }
@@ -266,6 +349,10 @@ impl Analyzer {
             Buffer => matches!(actual, Buffer),
             List(_) => matches!(actual, List(_)),
             Map(_) => matches!(actual, Map(_)),
+            // A thing parameter takes only that same thing: user-defined
+            // types are value types with a fixed layout, so no other
+            // category can fill the slot (plan 310 §5, §6).
+            Thing(name) => matches!(actual, Thing(other) if other == name),
             // A `value` parameter takes any category (its tag rides alongside).
             Value | Void | Unknown | Time | Timer => true,
         }
@@ -285,9 +372,123 @@ impl Analyzer {
         }
     }
 
+    /// The `SPEC` in `{value:SPEC}` names a count - `{x:N}` characters of
+    /// padding, `{f:.N}` decimal places. LANGUAGE.md:3101-3119 puts no
+    /// ceiling on either, and none is intended: a width renders literally,
+    /// so a huge one is simply a huge amount of output. The one count that
+    /// cannot be honoured is one too large for the compiler to hold, and
+    /// that has to be *said*. Reading the width with a 32-bit parse and
+    /// discarding the `Err` is what made `{n:2147483648}` compile to the
+    /// same code as a bare `{n}` - no padding, no diagnostic, and a cliff
+    /// between two adjacent literals (docs/BUGS_FOUND.md #61).
+    pub(crate) fn check_format_spec(&mut self, format: Option<&str>) {
+        let Some(fault) = read_format_spec(format).1 else {
+            return;
+        };
+        let (subject, unit, digits) = match &fault {
+            FormatSpecFault::WidthTooLarge(digits) => ("pad width", "characters", digits),
+            FormatSpecFault::PrecisionTooLarge(digits) => {
+                ("decimal precision", "decimal places", digits)
+            }
+        };
+        let mut err = CompileError::new(&format!(
+            "a {} of {} is more than Vox can count to - the largest is {} {}",
+            subject, digits, FORMAT_MAX_COUNT, unit
+        ));
+        // Two spec faults writing the same digits are two errors, each
+        // pointing at its own `{...}` - the same occurrence bookkeeping
+        // `push_error_with_hint` does for a repeated symbol.
+        let occurrence = *self.symbol_error_counts.get(digits).unwrap_or(&0);
+        if let Some(loc) = self.find_symbol_location(digits, occurrence) {
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(digits.to_string(), occurrence + 1);
+        err = err.with_help_line(&format!(
+            "every one of those {} is written out, so a large {} is a large amount of output - but it still has to be a count Vox can hold. Write {} or less.",
+            unit, subject, FORMAT_MAX_COUNT
+        ));
+        self.errors.push(err);
+    }
+
+    /// Every interpolation of one format string. `whole_things_render` says
+    /// whether this string's sink can render a whole thing: `Print` writes
+    /// the fields straight out (plan 310 §7), while every other sink builds
+    /// text and has nothing to build a thing's rendering into.
+    pub(crate) fn analyze_format_parts(&mut self, parts: &[FormatPart], whole_things_render: bool) {
+        self.deps.uses_strings = true;
+        for part in parts {
+            match part {
+                FormatPart::Expression { expr, format } => {
+                    self.check_format_spec(format.as_deref());
+                    // `"{span's start}"` - a chain ending on a nested thing
+                    // parses as an expression part, and renders exactly as
+                    // the thing it names does.
+                    if whole_things_render {
+                        self.analyze_printed_expr(expr);
+                    } else {
+                        self.analyze_expr(expr);
+                    }
+                    // Bug #45: `"got {'opaque label'}"` renders the result as
+                    // whatever type it is told the value has, and an
+                    // undeclared return type tells it nothing.
+                    self.reject_untyped_call_result(expr, UntypedPosition::Interpolation);
+                }
+                FormatPart::Variable { name, format } => {
+                    self.check_format_spec(format.as_deref());
+                    if name.is_empty() {
+                        // BUGS_FOUND #10: a bare or unmatched `{` in a
+                        // string literal. The format parser found a `{`
+                        // with no variable/expression before the closing
+                        // `}` (or no closing `}` at all), producing an
+                        // empty-named placeholder. Report the real cause
+                        // and the `{{` escape instead of the old
+                        // empty-named "Unknown variable: ". The caret
+                        // still lands on the offending `{`:
+                        // find_symbol_location("") matches the first
+                        // `{` in the source.
+                        self.push_error_with_hint(
+                            "Unmatched `{` in a string literal. A single \
+                             `{` begins a format interpolation, but no \
+                             variable or expression followed it. To write \
+                             a literal brace, double it: `{{` for `{` and \
+                             `}}` for `}`."
+                                .to_string(),
+                            Some(""),
+                            None,
+                        );
+                        continue;
+                    }
+                    self.track_identifier(name);
+                    if !self.is_variable_available(name) && name != "_iter" {
+                        if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                            self.push_unknown_variable(name);
+                        } else {
+                            self.track_typo_candidate(name);
+                        }
+                    } else if let Some(thing) = self.thing_of_variable(name) {
+                        // `"{origin}"` interpolates a whole thing, which
+                        // renders as its fields (plan 310 §7). A field of it
+                        // (`"{origin's x}"`) parses as an Expression part
+                        // instead and is an ordinary value either way.
+                        if !whole_things_render {
+                            self.push_whole_thing_not_interpolable(name, &thing);
+                        }
+                    }
+                }
+                FormatPart::Literal(_) => {}
+            }
+        }
+    }
+
     pub(crate) fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::BinaryOp { left, op, right } => {
+                // A comparison with a whole thing on either side follows the
+                // equality rule (plan 310 §8) rather than the ordinary value
+                // rules, and analyzes its own operands.
+                if self.check_thing_comparison(left, op, right) {
+                    return;
+                }
                 self.analyze_expr(left);
                 self.analyze_expr(right);
                 // Arithmetic operators require numeric operands. Text,
@@ -309,9 +510,29 @@ impl Analyzer {
                 }
             }
             
+            // A range is a loop's counter bounds, not a value: LANGUAGE.md:262
+            // says ranges are "**not** allocated as lists - they compile
+            // directly to efficient loop constructs". Only a loop header may
+            // hold one, and `Statement::ForRange` walks its bounds itself
+            // rather than coming through here. Anything else reaching this arm
+            // wrote `all the numbers from/between ...` where a value belongs,
+            // which codegen has no value to emit for - it left whatever was in
+            // the accumulator, and a list initialiser or a print then read that
+            // as a list header and segfaulted (bug #56).
             Expr::Range { start, end, .. } => {
                 self.analyze_expr(start);
                 self.analyze_expr(end);
+                // The caret is placed by searching the source for the phrase
+                // itself: `all` alone matches inside `called`, and nothing
+                // else in the language builds a range in expression position,
+                // so the whole phrase is both safe and exact.
+                self.push_error_with_hint(
+                    "A range is not a value: `all the numbers from/between ...`".to_string(),
+                    Some("all the numbers"),
+                    Some(
+                        "a range counts, it does not hold - iterate it with `For each n from 1 to 3,`, or write the items out as a list, `[1, 2, 3]`",
+                    ),
+                );
             }
             
             Expr::PropertyCheck { value, .. } => {
@@ -483,8 +704,27 @@ impl Analyzer {
             Expr::FunctionCall { name, args } => {
                 self.deps.uses_funcs = true; // Track that functions are used
                 self.check_function_call(name, args);
-                for arg in args {
-                    self.analyze_expr(arg);
+                self.analyze_call_arguments(name, args);
+                // Bugs #62/#63: reaching this arm at all means the call's
+                // result is being read - a call run for its effect alone is
+                // `Statement::FunctionCall` and never comes through here. A
+                // function that returns nothing has no result to read.
+                self.reject_void_call_result(name);
+                // A call returning a whole thing is a copy source, not a
+                // value: this is a position that wants one value, and a thing
+                // has none (plan 310 §5). `analyze_thing_source` is the path
+                // that accepts it.
+                if let Some(thing) = self.thing_returned_by(name) {
+                    self.push_error(
+                        format!(
+                            "A call to '{}' returns a whole {}, which is not a value\n  \
+                             What a call returns is copied into a {}: write `a {} \
+                             called <name> is {} of ...` or `The <name> is {} of ...` \
+                             (plan 310 §5).",
+                            name, thing, thing, thing, name, name
+                        ),
+                        Some(name),
+                    );
                 }
             }
             
@@ -543,6 +783,9 @@ impl Analyzer {
                 self.deps.uses_heap = true;
                 for elem in elements {
                     self.analyze_expr(elem);
+                    // Bug #45: a literal's slot is tagged from the type
+                    // proven here, exactly as `append` is.
+                    self.reject_untyped_call_result(elem, UntypedPosition::ListElement);
                 }
             }
 
@@ -553,6 +796,7 @@ impl Analyzer {
                 for (key, value) in pairs {
                     self.analyze_expr(key);
                     self.analyze_expr(value);
+                    self.reject_untyped_call_result(value, UntypedPosition::MapValue);
                     if self.infer_simple_expr_type(key) != Some(Type::String) {
                         self.push_error(
                             "Map keys must be text".to_string(),
@@ -586,54 +830,31 @@ impl Analyzer {
             Expr::StringLit(_) => {
                 self.deps.uses_strings = true;
             }
-            
-            Expr::FormatString { parts } => {
-                self.deps.uses_strings = true;
-                for part in parts {
-                    match part {
-                        FormatPart::Expression { expr, .. } => {
-                            self.analyze_expr(expr);
-                        }
-                        FormatPart::Variable { name, .. } => {
-                            if name.is_empty() {
-                                // BUGS_FOUND #10: a bare or unmatched `{` in a
-                                // string literal. The format parser found a `{`
-                                // with no variable/expression before the closing
-                                // `}` (or no closing `}` at all), producing an
-                                // empty-named placeholder. Report the real cause
-                                // and the `{{` escape instead of the old
-                                // empty-named "Unknown variable: ". The caret
-                                // still lands on the offending `{`:
-                                // find_symbol_location("") matches the first
-                                // `{` in the source.
-                                self.push_error_with_hint(
-                                    "Unmatched `{` in a string literal. A single \
-                                     `{` begins a format interpolation, but no \
-                                     variable or expression followed it. To write \
-                                     a literal brace, double it: `{{` for `{` and \
-                                     `}}` for `}`."
-                                        .to_string(),
-                                    Some(""),
-                                    None,
-                                );
-                                continue;
-                            }
-                            self.track_identifier(name);
-                            if !self.is_variable_available(name) && name != "_iter" {
-                                if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
-                                    self.push_unknown_variable(name);
-                                } else {
-                                    self.track_typo_candidate(name);
-                                }
-                            }
-                        }
-                        FormatPart::Literal(_) => {}
-                    }
-                }
+
+            // A field read (plan 310 §3). Never fails at runtime - the offset
+            // is a compile-time constant - so unlike element access there is
+            // no error-flag path to declare here.
+            Expr::ThingField { base, path } => {
+                self.analyze_thing_field(base, path);
             }
-            
+
+            Expr::FormatString { parts } => {
+                // A format string reached as an ordinary expression builds
+                // text, which is the sink a whole thing cannot render into
+                // yet - the print statement's own arm is the one that allows
+                // it (plan 310 §7).
+                self.analyze_format_parts(parts, false);
+            }
+
             Expr::Identifier(name) => {
                 self.track_identifier(name);
+                // A thing variable's bare name is not a value (plan 310 §5/§7).
+                if let Some(thing) = self.thing_of_variable(name) {
+                    if self.is_variable_available(name) {
+                        self.push_whole_thing_not_a_value(name, name, &thing);
+                        return;
+                    }
+                }
                 if !self.is_variable_available(name) && name != "_iter" {
                     // Plan 270 G4: a bare/quoted identifier naming a
                     // zero-argument function is a call in expression position,
@@ -642,6 +863,9 @@ impl Analyzer {
                     if self.is_zero_arg_function(name) {
                         self.deps.uses_funcs = true;
                         self.check_function_call(name, &[]);
+                        // Bugs #62/#63: the bare-name call form, in the same
+                        // value position as the `of`-form arm above.
+                        self.reject_void_call_result(name);
                     } else if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
                         // Don't report as unknown variable if it might be a
                         // keyword typo (that will be caught by check_for_typos)
@@ -772,7 +996,7 @@ impl Analyzer {
                 self.analyze_expr(path);
             }
 
-            Expr::ReapChild { pid } => {
+            Expr::ReapChild { pid, .. } => {
                 if let Some(p) = pid {
                     self.analyze_expr(p);
                 }

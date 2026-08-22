@@ -1,0 +1,4 @@
+cannot initialise 'ready', which is a boolean, with text
+147_text_into_boolean_declaration.vox:6:18
+note: a variable's type is fixed at its declaration, so 'ready' can only be initialised with a boolean
+help: declare it as text - `a text called ready is "x".` - or convert it explicitly:  a boolean called ready is "x" as a boolean.

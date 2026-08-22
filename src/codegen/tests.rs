@@ -290,22 +290,25 @@
     }
 
     #[test]
-    fn undeclared_return_function_append_widens() {
-        // Acceptance criterion 3: a function with an undeclared return type
-        // (`Return x add 1.` — no `a number,` prefix) is genuinely opaque to
-        // the compiler, so appending its result widens the list to Mixed and
-        // reads dispatch on tags (the flip from 1a's optimistic default).
+    fn unknowable_value_append_widens() {
+        // Acceptance criterion 3: a `value` is genuinely opaque to the
+        // compiler — its type travels with its payload as a runtime tag, not
+        // as anything this pass can prove — so appending one widens the list
+        // to Mixed and reads dispatch on tags (the flip from 1a's optimistic
+        // default). Written on an undeclared-return function until bug #45
+        // made that append a compile error; a `value` is the same opacity
+        // with the tag actually carried.
         let asm = compile_to_asm(
-            "To five with a number called x.\n  Return x add 1.\n\
+            "a value called tally is 5.\n\
              a list called items is [].\n\
              append \"hello\" to items.\n\
-             append five of 4 to items.\n\
+             append tally to items.\n\
              print element 1 of items.\n\
              print element 2 of items.\n",
         );
         assert!(
             asm.contains("mixp_"),
-            "an unknowable (undeclared-return) append must widen the list to Mixed"
+            "an unknowable (value) append must widen the list to Mixed"
         );
     }
 
@@ -436,7 +439,7 @@ To makebuf.\n  Create a buffer called b.\n  Append \"hello\" to b.\n  Return b's
         // version script does not export.
         let src = "\
 Library mathkit version \"1.0\".\n\
-To double with a number called n.\n  Return n add n.\n\
+To double with a number called n.\n  Return a number, n add n.\n\
 To run.\n  Print double of 21.\n";
         let asm = compile_to_asm_shared(src);
         assert!(
@@ -844,7 +847,7 @@ To c. Return a number, 3.\n";
         // name, no library prefix, no `:function` export.
         let src = "\
 To greet.\n  Print \"hi\".\n\
-To double with a number called n.\n  Return n add n.\n\
+To double with a number called n.\n  Return a number, n add n.\n\
 To run.\n  Print double of 21.\n";
         let asm = compile_to_asm(src);
         assert!(
@@ -1977,6 +1980,7 @@ Otherwise, a number called s is 1, append s to out.\n";
         let float_asm = include_str!("../../coreasm/x86_64/float.asm");
         let list_asm = include_str!("../../coreasm/x86_64/list.asm");
         let map_asm = include_str!("../../coreasm/x86_64/map.asm");
+        let file_asm = include_str!("../../coreasm/x86_64/file.asm");
 
         fn function_body_has_clear(asm: &str, name: &str) -> bool {
             let label = format!("{}:", name);
@@ -2053,4 +2057,374 @@ Otherwise, a number called s is 1, append s to out.\n";
             function_body_has_clear(map_asm, "_map_print"),
             "_map_print must clear _last_error on its normal return path"
         );
+
+        assert!(
+            macro_body_has_clear(file_asm, "RECORD_WRITE_RESULT"),
+            "RECORD_WRITE_RESULT must clear _last_error on a complete write"
+        );
+    }
+
+    /// Bug #48: the three write macros issued their write(2) and never looked
+    /// at rax, so a write that did not happen was indistinguishable from one
+    /// that did. Every one of them must record its syscall's outcome. Checked
+    /// at the asm source level so a regression needs no assembler.
+    #[test]
+    fn write_macros_record_their_syscall_result() {
+        let file_asm = include_str!("../../coreasm/x86_64/file.asm");
+
+        for name in ["FILE_WRITE_STR", "FILE_WRITE_BUF", "FILE_WRITE_NEWLINE"] {
+            let open = format!("%macro {} ", name);
+            let start = file_asm
+                .find(&open)
+                .unwrap_or_else(|| panic!("%macro {} not found", name));
+            let rest = &file_asm[start..];
+            let end = rest
+                .find("%endmacro")
+                .unwrap_or_else(|| panic!("%endmacro for {} not found", name));
+            let body = &rest[..end];
+            assert!(
+                body.contains("syscall"),
+                "{} must issue a write syscall",
+                name
+            );
+            assert!(
+                body.contains("RECORD_WRITE_RESULT"),
+                "{} must record its write syscall's result in _last_error",
+                name
+            );
+        }
+    }
+
+    /// Plan 310 §7: printing a whole thing is written out by the compiler.
+    /// Every field name is a string constant and every field's address is a
+    /// compile-time operand, so the emitted program has no descriptor to read
+    /// and no loop to run - which is the whole reason this costs nothing at
+    /// runtime. A loop here would mean a tag table had crept in.
+    #[test]
+    fn printing_a_thing_bakes_its_fields_into_the_program() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a number called x is 0,\n  \
+               a number called y is 0.\n\
+             a point called origin.\n\
+             Print origin.\n",
+        );
+        assert!(
+            asm.contains("db '{', 0") && asm.contains("db '}', 0"),
+            "the braces around a printed thing are string constants: {}",
+            asm
+        );
+        assert!(
+            asm.contains("db 'x: ', 0") && asm.contains("db 'y: ', 0"),
+            "each field's name is a string constant, in definition order: {}",
+            asm
+        );
+        assert_eq!(
+            asm.matches("PRINT_INT rdi").count(),
+            2,
+            "one print per field, written out - not a loop over a descriptor"
+        );
+        assert!(
+            !asm.contains("call _map_print") && !asm.contains("call _list_print"),
+            "a thing prints map-STYLE, but through none of the map runtime"
+        );
+    }
+
+    /// Plan 310 §4/§7: a function member is the type's declared API, not its
+    /// state. It takes no storage, so it takes no part in the rendering -
+    /// printing one would have nothing to print.
+    #[test]
+    fn a_function_member_takes_no_part_in_printing() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a function called 'placed at',\n  \
+               a number called x is 0.\n\
+             To do the point's 'placed at', with a number called x.\n  \
+               a point called plotted.\n  \
+               Set plotted's x to x.\n  \
+               Return a point, plotted.\n\
+             a point called origin.\n\
+             Print origin.\n",
+        );
+        assert!(
+            !asm.contains("db 'placed at: ', 0"),
+            "a manifest member is not one of the printed fields: {}",
+            asm
+        );
+        assert!(
+            asm.contains("db 'x: ', 0"),
+            "the data field is still printed: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §7: a field name that is not one plain word prints in the
+    /// single quotes it is written with, so the printed name is the name a
+    /// reader would type to read that field back.
+    #[test]
+    fn a_multi_word_field_name_prints_in_its_quotes() {
+        let asm = compile_to_asm(
+            "A thing called stamp has\n  \
+               a number called 'day sent' is 25.\n\
+             a stamp called posted.\n\
+             Print posted.\n",
+        );
+        // `add_string` spells a quote as its character code, so the constant
+        // `'day sent': ` is emitted as this run of pieces.
+        assert!(
+            asm.contains("db '', 39, 'day sent', 39, ': ', 0"),
+            "a multi-word field name keeps its quotes: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §8: `is` between two things is one comparison per field,
+    /// flattened through nesting - four slots for two segments, not two
+    /// pointer comparisons and not a call.
+    #[test]
+    fn comparing_two_things_expands_to_one_compare_per_slot() {
+        let asm = compile_to_asm(
+            "A thing called point has\n  \
+               a number called x is 0,\n  \
+               a number called y is 0.\n\
+             A thing called segment has\n  \
+               a point called start,\n  \
+               a point called end.\n\
+             a segment called span.\n\
+             a segment called 'the detour'.\n\
+             If span is 'the detour' then,\n    \
+                 Print \"same\".\n",
+        );
+        assert_eq!(
+            asm.matches("jne .things_differ").count(),
+            4,
+            "two segments are four scalar slots, compared one at a time: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _mem_eq") && !asm.contains("call _str_eq"),
+            "a thing comparison calls nothing at runtime: {}",
+            asm
+        );
+    }
+
+    /// Plan 310 §8: a float field is compared as a float, not as its bits, so
+    /// `is` between two things says exactly what `is` between the two fields
+    /// says - -0.0 equals 0.0, and a NaN equals nothing.
+    #[test]
+    fn a_float_field_is_compared_as_a_float() {
+        let asm = compile_to_asm(
+            "A thing called measurement has\n  \
+               a float called celsius is 0.0.\n\
+             a measurement called 'the first sample'.\n\
+             a measurement called 'the second sample'.\n\
+             If 'the first sample' is 'the second sample' then,\n    \
+                 Print \"same\".\n",
+        );
+        assert!(
+            asm.contains("FLOAT_EQ"),
+            "a float field compares through FLOAT_EQ, not a bitwise cmp: {}",
+            asm
+        );
+    }
+
+    /// Bug #52: the buffer sink must load its destination pointer AFTER the
+    /// format part's value is resolved. `arguments's first` resolves by
+    /// putting the argument index in rdi and calling `_get_arg`, so a
+    /// destination loaded first is gone by the time the append runs, and
+    /// `_buffer_append_cstr` dereferences the index - a segfault. Asserted
+    /// here on the emitted asm so the ordering is locked at the compiler
+    /// level, without assembling or running anything.
+    #[test]
+    fn a_buffer_reloads_its_destination_after_an_argv_property() {
+        let asm = compile_to_asm(
+            "a buffer called built is 64 bytes in size.\n\
+             copy \"{arguments's first}\" to built.\n",
+        );
+        let resolved_at = asm
+            .find("call _get_arg")
+            .expect("the argv property resolves through _get_arg");
+        let appended_at = asm
+            .find("call _buffer_append_cstr")
+            .expect("a text value appends through _buffer_append_cstr");
+        assert!(
+            resolved_at < appended_at,
+            "the value is resolved before it is appended: {}",
+            asm
+        );
+        assert!(
+            asm[resolved_at..appended_at].contains("mov rdi, [rbp-"),
+            "the destination buffer is reloaded into rdi between resolving \
+             the argument and appending it: {}",
+            &asm[resolved_at..appended_at]
+        );
+    }
+
+    // ---- Bug #44: a collection renders through one renderer in every sink ----
+
+    #[test]
+    fn list_in_a_text_initializer_routes_to_the_shared_renderer() {
+        // The buffer sinks must reach `_list_print` through the redirection,
+        // never the integer formatter - that fallthrough is what put the
+        // list's heap address into the text (docs/BUGS_FOUND.md #44).
+        let asm = compile_to_asm(
+            "a list called flat is [1, 2, 3].\n\
+             a text called captured is \"{flat}\".\n\
+             print captured.\n",
+        );
+        assert!(
+            asm.contains("call _list_render_to_buffer"),
+            "a list in a text initializer must render through \
+             _list_render_to_buffer: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_formatted_int"),
+            "a list part must never reach the integer formatter: {}",
+            asm
+        );
+        assert!(
+            asm.contains("%include \"coreasm/x86_64/list.asm\""),
+            "rendering a list into a buffer must include list.asm"
+        );
+    }
+
+    #[test]
+    fn map_in_a_buffer_copy_routes_to_the_shared_renderer() {
+        let asm = compile_to_asm(
+            "a map called person is {\"name\": \"Ada\"}.\n\
+             a buffer called sink is 64 bytes in size.\n\
+             copy \"{person}\" to sink.\n\
+             print sink.\n",
+        );
+        assert!(
+            asm.contains("call _map_render_to_buffer"),
+            "a map copied into a buffer must render through \
+             _map_render_to_buffer: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("call _buffer_append_formatted_int"),
+            "a map part must never reach the integer formatter: {}",
+            asm
+        );
+    }
+
+    #[test]
+    fn quoted_list_name_in_print_routes_to_list_print() {
+        // `{'the running total'}` parses as an expression, not a variable
+        // part, so it lands in Print's expression arm - which had a Map case
+        // and no List one, and emitted PRINT_INT on the list pointer
+        // (docs/BUGS_FOUND.md #44).
+        let asm = compile_to_asm(
+            "a list called 'the running total' is [1, 2].\n\
+             print \"{'the running total'}\".\n",
+        );
+        assert!(
+            asm.contains("call _list_print"),
+            "a quoted list name in a format string must render through \
+             _list_print: {}",
+            asm
+        );
+        assert!(
+            !asm.contains("PRINT_INT rdi"),
+            "a quoted list name must not print the list pointer as an \
+             integer: {}",
+            asm
+        );
+    }
+
+    // ---- format specs: the count the author wrote is the count that is
+    // emitted (docs/BUGS_FOUND.md #61) ----
+
+    /// `{n:2147483648}` used to compile to exactly the same code as a bare
+    /// `{n}`: the width was read with `parse::<i32>()`, the `Err` was
+    /// dropped by an `if let` with no else arm, and the spec came out with
+    /// no width at all. The cliff sat between two adjacent literals - one
+    /// past `i32::MAX` - and nothing was said about it at compile time or
+    /// run time. This asserts on the emitted instruction, so it fails
+    /// without assembling or writing two billion spaces.
+    #[test]
+    fn a_pad_width_past_i32_max_still_reaches_the_padded_printer() {
+        let asm = compile_to_asm("a number called n is 255.\nPrint \"{n:2147483648}\".\n");
+        assert!(
+            asm.contains("PRINT_INT_PADDED rdi, 2147483648"),
+            "the width the author wrote is the width emitted: {}",
+            asm
+        );
+    }
+
+    /// The other side of the same boundary, so the two are pinned as one
+    /// behaviour rather than two: `i32::MAX` always padded, and it must go
+    /// on padding.
+    #[test]
+    fn a_pad_width_at_i32_max_still_reaches_the_padded_printer() {
+        let asm = compile_to_asm("a number called n is 255.\nPrint \"{n:2147483647}\".\n");
+        assert!(
+            asm.contains("PRINT_INT_PADDED rdi, 2147483647"),
+            "the width the author wrote is the width emitted: {}",
+            asm
+        );
+    }
+
+    /// A precision past `i32::MAX` was dropped the same way, which silently
+    /// turned `{f:.3000000000}` into `{f}` - a different number of places
+    /// than the one asked for, with no diagnostic.
+    #[test]
+    fn a_precision_past_i32_max_still_reaches_the_precision_printer() {
+        let asm = compile_to_asm("a float called f is 3.5.\nPrint \"{f:.3000000000}\".\n");
+        assert!(
+            asm.contains("mov rdi, 3000000000")
+                && asm.contains("call _print_float_precision"),
+            "the precision the author wrote is the precision emitted: {}",
+            asm
+        );
+    }
+
+    /// A count too large to hold comes back saturated and *reported*, never
+    /// as "no count was written" - the two are indistinguishable downstream,
+    /// which is the whole shape of the bug.
+    #[test]
+    fn a_count_too_large_to_hold_is_reported_not_dropped() {
+        let (spec, fault) = super::read_format_spec(Some("99999999999999999999"));
+        assert_eq!(spec.width, Some(super::FORMAT_MAX_COUNT));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::WidthTooLarge(
+                "99999999999999999999".to_string()
+            ))
+        );
+
+        let (spec, fault) = super::read_format_spec(Some(".99999999999999999999"));
+        assert_eq!(spec.precision, Some(super::FORMAT_MAX_COUNT));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::PrecisionTooLarge(
+                "99999999999999999999".to_string()
+            ))
+        );
+    }
+
+    /// A spec that is not a count at all is not a fault - `.2z` is not a
+    /// precision, and never was; it must stay a quiet no-op rather than
+    /// become an error.
+    #[test]
+    fn a_spec_that_is_not_a_count_is_not_a_fault() {
+        let (spec, fault) = super::read_format_spec(Some(".2z"));
+        assert_eq!(spec.precision, None);
+        assert_eq!(fault, None);
+    }
+
+    /// More than one leading zero used to leave the base specifier
+    /// unconsumed - `{n:004x}` read as a zero-padded *decimal* because
+    /// `remaining` was cut at a fixed offset of one zero instead of at the
+    /// digits actually consumed. LANGUAGE.md:3110 documents `{n:04x}`; the
+    /// wider width is the same spec with a wider field.
+    #[test]
+    fn extra_leading_zeros_still_leave_the_base_specifier() {
+        let (spec, fault) = super::read_format_spec(Some("004x"));
+        assert_eq!(spec.width, Some(4));
+        assert!(spec.zero_pad);
+        assert_eq!(spec.base, super::IntegerBase::HexLower);
+        assert_eq!(fault, None);
     }

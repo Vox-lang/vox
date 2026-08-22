@@ -1,0 +1,22 @@
+(Bugs #62/#63's control. Reading a function's result when it has none is now
+ a compile error, and this is the line that must stay legal: a function that
+ returns nothing is CALLED, on a statement of its own - LANGUAGE.md:779-785,
+ "Calling as Statement". Both spellings are here, the bare zero-argument name
+ and the `of` form, plus a call whose only `Return` is a bare one: it ends
+ the call early without answering it, which is still a procedure, and still
+ something you may run.)
+
+To ping. Print "pong".
+
+To shout with a number called volume.
+  Print "shouting at {volume}".
+
+To 'bail out' with a number called n.
+  If n is 1, Return.
+  Print "kept going".
+
+ping.
+shout of 3.
+'bail out' of 1.
+'bail out' of 2.
+Print "done".

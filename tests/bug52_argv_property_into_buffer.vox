@@ -1,0 +1,33 @@
+(Regression: building a text-valued argument property into a buffer
+ segfaulted — bug #52. LANGUAGE.md promises every sink shares one name
+ resolver, so `{arguments's first}` renders the same whether printed,
+ written, or built into a buffer; the buffer sink loaded its destination
+ pointer into rdi before resolving the value, and resolving `arguments's
+ first` puts the argument index in rdi to call `_get_arg`, so the append
+ dereferenced an index instead of a buffer. All three buffer verbs —
+ `set`, `copy` and `append` — went through that one sink, so all three
+ crashed. The numeric properties survived by luck, and are kept here
+ because they travelled the same broken path.)
+
+a buffer called built is 128 bytes in size.
+
+copy "first is {arguments's first}" to built.
+Print built.
+
+set built to "last is {arguments's last}".
+Print built.
+
+copy "arguments:" to built.
+append " {arguments's first}" to built.
+append " and {arguments's last}" to built.
+Print built.
+
+copy "count is {arguments's count}, first is {arguments's first}" to built.
+Print built.
+
+(A list built into a buffer renders as its pointer, which is unstable
+ from run to run — and Print renders it exactly the same way, so the
+ shared-resolver promise holds and the rendering question belongs to
+ bug #44's family. All this case has to prove is that it does not crash.)
+copy "{arguments's all}" to built.
+Print "all arguments survived the copy".

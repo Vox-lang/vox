@@ -27,6 +27,18 @@ impl Parser {
         self.make_error_with_suggestion(&msg, &got_str)
     }
 
+    /// BUGS_FOUND #22: a literal whose text cannot be represented in a
+    /// 64-bit signed integer is a compile error, matching the diagnostic
+    /// shape of the existing out-of-range file-descriptor check
+    /// (`analyzer/statements.rs`'s `validate_file_open_path`) rather than
+    /// silently wrapping to 0 or promoting to float.
+    pub(crate) fn integer_literal_overflow_error(&self, raw: &str) -> Box<CompileError> {
+        self.err(&format!(
+            "Integer literal out of range: {} does not fit in a 64-bit number. Valid range is {}..{}.",
+            raw, i64::MIN, i64::MAX
+        ))
+    }
+
     /// Creates an error for invalid buffer size specifications
     pub fn error_invalid_buffer_size(
         &self,
@@ -68,9 +80,9 @@ impl Parser {
     ///
     /// The diagnostic names the identifier the user *actually typed*, not
     /// the compiler's internal canonical keyword: the lexer folds aliases
-    /// like `length` onto `Token::Size` before this runs, so without
-    /// recovering the source spelling the message would blame `size` for a
-    /// `length` the user wrote (BUGS_FOUND #6). When the typed spelling is
+    /// like `message` onto `Token::Text` before this runs, so without
+    /// recovering the source spelling the message would blame `text` for a
+    /// `message` the user wrote (BUGS_FOUND #6). When the typed spelling is
     /// an alias of the canonical keyword, the message says so.
     pub(crate) fn check_not_keyword(&self, token: &Token) -> Result<(), Box<CompileError>> {
         if let Some(keyword) = token.as_keyword() {
@@ -158,6 +170,50 @@ impl Parser {
         }
     }
 
+    /// `a poimt called origin.` - a declaration whose type noun is neither a
+    /// builtin nor a thing (plan 310 §10). Only the shape `<word> called` is
+    /// claimed, which is the one shape that can only have been meant as a
+    /// declaration, so nothing else the article can open is disturbed.
+    ///
+    /// The near miss is offered over the user's own type names as well as the
+    /// builtin nouns, because a thing's name is a type noun everywhere a
+    /// builtin one is - a suggestion that could only ever say `number` would
+    /// be silent for exactly the types this feature adds.
+    pub(crate) fn reject_unknown_declared_type(
+        &mut self,
+        type_was_read: bool,
+    ) -> Result<(), Box<CompileError>> {
+        if type_was_read {
+            return Ok(());
+        }
+        let Token::Identifier(word) = self.current().clone() else {
+            return Ok(());
+        };
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        if !matches!(self.peek(off), Token::Called) {
+            return Ok(());
+        }
+
+        let mut known: Vec<&str> = Self::DECLARATION_TYPE_NOUNS.to_vec();
+        known.extend(self.things.keys().map(|name| name.as_str()));
+        known.sort();
+        let mut err = *self.err(&format!(
+            "Unknown type '{}'\n  \
+             A declaration names a builtin type noun or a thing defined \
+             earlier in the program.\n  \
+             Known here: {}",
+            word,
+            known.join(", ")
+        ));
+        if let Some(near) = find_similar_keyword(&word, &known) {
+            err = err.with_suggestion(&near);
+        }
+        Err(Box::new(err))
+    }
+
     pub(crate) fn parse_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance(); // consume Set/Create
         self.skip_noise();
@@ -207,6 +263,21 @@ impl Parser {
             return Ok(Statement::ElementSet { list, index, value });
         }
 
+        // `Set origin's x to 3.` writes a field of a thing (plan 310 §3). This
+        // sits before the map-access attempt below because that one swallows a
+        // failed parse to fall through to the generic path: a mistyped field
+        // name must reach its own diagnostic, not be re-read as something else.
+        if let Some((base, path, _)) = self.try_parse_thing_field_target()? {
+            self.skip_noise();
+            if !matches!(self.current(), Token::To | Token::Is | Token::Equals) {
+                return Err(self.err_expected("'to' after a field of a thing", self.current()));
+            }
+            self.advance();
+            self.skip_noise();
+            let value = self.parse_expression()?;
+            return Ok(Statement::SetThingField { base, path, value });
+        }
+
         // Handle "Set <map>'s \"<key>\" to <value>" (map insert/replace).
         // The target `<map>'s \"<key>\"` parses as an Expr::MapAccess, so we
         // tentatively parse a primary and commit only if it is a MapAccess
@@ -233,9 +304,24 @@ impl Parser {
             self.advance();
             self.skip_noise();
         }
-        
-        // Check for typed declaration: "<type> called <name>"
-        let var_type = self.try_parse_type_noun();
+
+        // `Create a thing called point.` is never valid Vox, in any version
+        // (plan 310 §10): a thing is defined, not created as a variable.
+        // This reaches `Set`/`store`/`assign` too, since `define a thing
+        // called point has ...` lexes as `Create` and both verbs express
+        // the same wrong intent.
+        if self.thing_definition_follows() {
+            return Err(self.err_thing_created_as_variable());
+        }
+
+        // Check for typed declaration: "<type> called <name>". A defined
+        // thing's name is a type noun here exactly like a builtin one, which
+        // is what makes `Create a point called p.` valid and equivalent to
+        // `a point called p.` (plan 310 §10).
+        let var_type = self
+            .try_parse_type_noun()
+            .or_else(|| self.try_parse_thing_type_noun());
+        self.reject_unknown_declared_type(var_type.is_some())?;
 
         if let Some(var_type) = var_type {
             // Types that must be followed by `called` in declaration position
@@ -263,9 +349,18 @@ impl Parser {
             // Check for keyword used as variable name
             self.check_not_keyword(self.current())?;
 
+            let name_pos = self.pos;
             let name = self.parse_name()?;
+            // Every declaration takes a name out of the one identifier space,
+            // whatever its type (plan 310 §4, §10).
+            self.claim_name(&name, NameKind::Variable, name_pos)?;
 
             self.skip_noise();
+
+            // A thing declaration takes no initializer in this task (§5).
+            if let Type::Thing(thing) = var_type {
+                return self.finish_thing_declaration(thing, name);
+            }
 
             // Timer has its own statement type.
             if var_type == Type::Timer {
@@ -313,7 +408,20 @@ impl Parser {
                 if *self.current() == Token::With || *self.current() == Token::Of {
                     self.advance();
                     self.skip_noise();
-                    self.expect(&Token::Size);
+                    // `size` and `capacity` are contextual: claim the lexeme,
+                    // not a token. `with capacity N` is the same phrase as
+                    // `with size N` (capacity is a synonym the user endorsed);
+                    // `expect_lexeme` advances on match, so a single guard
+                    // accepts either lexeme rather than two calls back-to-back.
+                    if matches!(
+                        self.current(),
+                        Token::Identifier(ref id)
+                            if id.to_lowercase() == "size" || id.to_lowercase() == "capacity"
+                    ) {
+                        self.advance();
+                    } else {
+                        return Err(self.error_expected_token("size or capacity", self.current()));
+                    }
                     self.skip_noise();
                     let size = self.parse_primary()?;
                     return Ok(Statement::BufferDecl { name, size });
@@ -346,13 +454,16 @@ impl Parser {
 
         // No type noun: parse the name directly (with optional "called" for
         // the bare untyped forms).
-        let name = if *self.current() == Token::Called {
+        if *self.current() == Token::Called {
             self.advance();
             self.skip_noise();
-            self.parse_name()
-        } else {
-            self.parse_name()
-        }?;
+        }
+        let name_pos = self.pos;
+        let name = self.parse_name()?;
+        // `Set point to 42.` brings a variable into being where none stood,
+        // which is a claim on the one identifier space like any other (plan
+        // 310 §4, §10). Writing an existing variable claims nothing new.
+        self.claim_name(&name, NameKind::Variable, name_pos)?;
 
         self.skip_noise();
 
@@ -368,12 +479,31 @@ impl Parser {
             Some(self.parse_expression()?)
         };
 
+        // `Set after to nudged of before.` declares `after` from what the
+        // call returns, exactly as `The after is ...` does (plan 310 §2):
+        // both spellings are an untyped assignment to a previously unseen
+        // name, and a whole thing is what decides the type.
+        if let Some(value) = value.as_ref() {
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, value) {
+                return Ok(declaration);
+            }
+        }
+
         Ok(Statement::VarDecl {
             name,
             var_type,
             value,
         })
     }
+
+    /// The builtin type nouns a declaration may name, spelled the way the
+    /// author writes them - the vocabulary `try_parse_type_noun` reads, in
+    /// words, for the diagnostic that has to say what was available. Kept
+    /// beside that function so the two cannot drift.
+    pub(crate) const DECLARATION_TYPE_NOUNS: [&'static str; 11] = [
+        "number", "float", "text", "boolean", "file", "list", "map", "buffer", "time", "timer",
+        "value",
+    ];
 
     /// Resolve a type noun at the current token position.
     ///
@@ -428,16 +558,40 @@ impl Parser {
     }
 
     pub(crate) fn parse_typed_var_decl(&mut self) -> Result<Statement, Box<CompileError>> {
+        // `a point's 'settled'.` - the type possessive stands where an
+        // ordinary call statement stands, for a member called to do
+        // something rather than to produce a value (plan 310 §4). One token
+        // of lookahead separates it from the declaration `a point called
+        // origin`: the `'s` against the `called`.
+        if self.type_possessive_follows() {
+            let Expr::FunctionCall { name, args } = self.parse_type_possessive_call()? else {
+                unreachable!("a type possessive parses into a call or errors")
+            };
+            return Ok(Statement::FunctionCall { name, args });
+        }
+
         self.advance(); // consume 'a' or 'an'
         self.skip_noise();
 
         if *self.current() == Token::Flag {
             return self.parse_flag_schema_decl();
         }
-        
+
+        // `A thing called <name> has ...` defines a type, not a variable
+        // (plan 310 §1). `thing` is not a lexer keyword, so the construct is
+        // recognised by sentence shape and `thing` stays an ordinary
+        // identifier everywhere else.
+        if self.thing_definition_follows() {
+            return self.parse_thing_definition();
+        }
+
         // Parse type noun: number, int, float, text, boolean, list, map,
-        // buffer, file, time, timer, value.
-        let var_type = self.try_parse_type_noun();
+        // buffer, file, time, timer, value - or a defined thing's name, which
+        // works everywhere a type keyword works (plan 310 §1).
+        let var_type = self
+            .try_parse_type_noun()
+            .or_else(|| self.try_parse_thing_type_noun());
+        self.reject_unknown_declared_type(var_type.is_some())?;
 
         // Types that must be followed by `called` in declaration position
         // get their existing specific diagnostic before the generic expect.
@@ -468,9 +622,18 @@ impl Parser {
 
         // Get variable name (plan 270: bare or quoted identifier, never a
         // string literal).
+        let name_pos = self.pos;
         let name = self.parse_name()?;
+        // Every declaration takes a name out of the one identifier space,
+        // whatever its type (plan 310 §4, §10).
+        self.claim_name(&name, NameKind::Variable, name_pos)?;
 
         self.skip_noise();
+
+        // A thing declaration takes no initializer in this task (§5).
+        if let Some(Type::Thing(thing)) = var_type {
+            return self.finish_thing_declaration(thing, name);
+        }
 
         // Timer has its own statement type.
         if var_type == Some(Type::Timer) {
@@ -529,7 +692,8 @@ impl Parser {
                     if *self.current() == Token::In {
                         self.advance();
                         self.skip_noise();
-                        if !self.expect(&Token::Size) {
+                        // `size` is contextual: claim the lexeme, not a token.
+                        if !self.expect_lexeme("size") {
                             return Err(self.error_expected_token("size", self.current()));
                         }
                     }
@@ -607,13 +771,16 @@ impl Parser {
 
         // Could be "the <type> called <name>" (typed reference) or just a name.
         let var_type = self.try_parse_type_noun();
+        let mut name_pos = self.pos;
         let name = if let Some(_) = var_type {
             self.skip_noise();
             if *self.current() == Token::Called {
                 self.advance();
                 self.skip_noise();
+                name_pos = self.pos;
                 self.parse_name()?
             } else if matches!(self.current(), Token::Identifier(_) | Token::StringLiteral(_)) {
+                name_pos = self.pos;
                 self.parse_name()?
             } else {
                 // "the number" without "called" - could be loop iterator reference
@@ -628,6 +795,11 @@ impl Parser {
 
         // Check for assignment: "is <value>"
         if matches!(self.current(), Token::Is | Token::Equals) {
+            // `The point is 42.` brings a variable into being just as `a
+            // number called point is 42.` does, so it claims the one
+            // identifier space at the same door (plan 310 §4, §10). Claimed
+            // before the value is read, so the caret is still on the name.
+            self.claim_name(&name, NameKind::Variable, name_pos)?;
             self.advance();
             self.skip_noise();
             // In-place retype of a `value` variable: `the name is a number.`.
@@ -635,6 +807,9 @@ impl Parser {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
             let value = self.parse_expression()?;
+            if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
+                return Ok(declaration);
+            }
             return Ok(Statement::Assignment { name, value });
         }
 
@@ -669,8 +844,32 @@ impl Parser {
             // identifier everywhere else); in a type position it denotes
             // the dynamic `value` type.
             Token::Identifier(n) if n == "value" => Some(Type::Value),
+            // A defined thing's name is a type noun wherever a builtin one
+            // is (plan 310 §6): `with a point called start` and `Return a
+            // point, start.`. Last in the table so a builtin noun always
+            // wins, and only in the two positions a type noun can occupy
+            // here - otherwise `Return point.` (a bare identifier that
+            // happens to spell a thing) would read as a return type with no
+            // expression after it.
+            Token::Identifier(n)
+                if self.things.contains_key(n) && self.thing_reads_as_a_type_noun() =>
+            {
+                Some(Type::Thing(n.clone()))
+            }
             _ => None,
         }
+    }
+
+    /// Whether the thing name at the cursor sits where a type noun goes: a
+    /// parameter or declaration writes `a point called <name>`, and a
+    /// declared return type writes `Return a point, <expression>`. Anywhere
+    /// else the name is an ordinary identifier.
+    fn thing_reads_as_a_type_noun(&self) -> bool {
+        let mut off = 1;
+        while matches!(self.peek(off), Token::Newline) {
+            off += 1;
+        }
+        matches!(self.peek(off), Token::Called | Token::Comma)
     }
 
     /// After an `is`/`equals` in a statement, check whether the next tokens

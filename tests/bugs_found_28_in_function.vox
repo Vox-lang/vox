@@ -1,0 +1,7 @@
+To make_b with a number called n.
+  If n is greater than 5 then,
+    a buffer called b is "x".
+  a buffer called b is "y".
+  Print b.
+
+make_b of 0.

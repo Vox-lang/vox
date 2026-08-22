@@ -1,0 +1,26 @@
+(Plan 310 §3 - structures defined in one file are usable from another via
+ `see`. The whole surface has to cross, not just the layout: the type noun in
+ a declaration, a field read and write, the manifest member reached by the
+ type possessive, and a global function taking a point first reached by the
+ instance possessive.
+
+ The seen file arrives where the `see` is written, so the same "defined
+ earlier" rule that orders one file orders the pair - every use below stands
+ after the definition it names.
+
+ Acceptance: the four lines in the .expected, in that order - the field
+ written through the boundary, both fields of the member's result, and the
+ global function's.)
+
+see "./include/geometry.vox".
+
+a point called origin.
+Set origin's x to 11.
+Print origin's x.
+
+The corner is a point's 'placed at' with 3 and 4.
+Print corner's x.
+Print corner's y.
+
+The 'shifted corner' is corner's 'shifted east'.
+Print 'shifted corner''s x.

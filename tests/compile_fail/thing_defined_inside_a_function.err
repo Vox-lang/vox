@@ -1,0 +1,3 @@
+A thing is defined at the top level, like a function
+Canonical form: A thing called measurement has <fields>.
+Move the definition above the block it is written in

@@ -1,0 +1,72 @@
+(Plan 310 task 2 - declaration position and field access. A thing name is a
+ type noun everywhere the builtin ones are, so `a point called origin.` and
+ `Create a point called 'the far corner'.` both declare storage sized from
+ the definition, with every field taking its declared default (plan 310 §10).
+
+ A field is an ordinary expression and an ordinary lvalue: read, `Set ... to`,
+ bare assignment, increment, decrement, format-string interpolation, and a
+ comparison in a condition all appear below, because §3 says a field works
+ everywhere either is allowed.
+
+ The `'bounding box'` lines were carved out of tests/330_thing_definition.vox
+ when definition parsing landed on its own; they are the only place a thing
+ name with a space is exercised in declaration position, and 'the far corner'
+ is the only place a variable with a space is read and written through a
+ possessive.
+
+ The water tank covers the rest of the v1 field set (§6): a float and a
+ boolean field, both with defaults, plus a number field with none - which
+ takes its type's zero. The cursor covers a function-LOCAL thing, whose
+ storage is stack rather than .bss.
+
+ Acceptance: the thirteen lines in the .expected, in that order.)
+
+A thing called point has
+  a number called x is 0,
+  a number called y is 0.
+
+A thing called 'bounding box' has
+  a number called width is 1,
+  a number called height is 1.
+
+A thing called 'water tank' has
+  a float called 'depth in metres' is 1.5,
+  a boolean called 'the pump is running' is true,
+  a number called 'litres drained'.
+
+a 'bounding box' called viewport.
+Print viewport's width.
+
+a point called origin.
+Set origin's x to 3.
+Set origin's y to 4.
+Print origin's x.
+origin's y is origin's y add 1.
+increment origin's x.
+Print origin's y.
+Print "origin sits at {origin's x}, {origin's y}".
+If origin's x is greater than 3 then,
+    Print "the origin moved right".
+
+Create a point called 'the far corner'.
+Print 'the far corner''s x.
+Set 'the far corner''s y to 2.
+Print 'the far corner''s y.
+
+a 'water tank' called cistern.
+Print cistern's 'depth in metres'.
+If cistern's 'the pump is running' then,
+    Print "the pump is running".
+Print cistern's 'litres drained'.
+Set cistern's 'depth in metres' to 2.5.
+decrement cistern's 'litres drained'.
+Print cistern's 'depth in metres'.
+Print cistern's 'litres drained'.
+
+To 'plot a point'.
+  a point called cursor.
+  Set cursor's x to 9.
+  increment cursor's y.
+  Print "the cursor sits at {cursor's x}, {cursor's y}".
+
+'plot a point'.

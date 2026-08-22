@@ -1,0 +1,10 @@
+A number called length is 0.
+Set length to length add 1.
+Print length.
+While length is less than 3,
+  Set length to length add 1,
+  Print length.
+To 'shift' with a number called length. Return a number, length add 10.
+Print 'shift' of length.
+a list called letters is ["a", "b", "c"].
+Print letters's length.
