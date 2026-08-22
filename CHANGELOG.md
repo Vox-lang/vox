@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- VS Code extension 0.4.2: README links the website (vox-lang.dev, /docs/), `homepage` set in package.json, the README's Visual Studio Marketplace link fixed to `vox-lang.vox-lang`.
+
+### Changed
 
 - **VS Code extension 0.4.1**: the grammar now scopes list/map literal
   punctuation — `[` `]` as `punctuation.section.brackets.begin/end.vox`,

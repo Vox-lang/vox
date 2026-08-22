@@ -4,9 +4,11 @@
 
 [Vox](https://github.com/vox-lang/vox) is a systems-level programming language with a constrained, sentence-based English syntax. This extension provides syntax highlighting, bracket/comment configuration, and code folding for `.vox` files.
 
+Website and full language reference: **[vox-lang.dev](https://vox-lang.dev)** — the browsable manual is at [vox-lang.dev/docs/](https://vox-lang.dev/docs/), generated from the compiler's `LANGUAGE.md`.
+
 ## Installation
 
-The extension is published on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox) (VS Code, Windsurf, Cursor, and other compatible editors) and the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=vox-lang.vox) (VS Code). Search for "Vox" in your editor's Extensions panel and click Install.
+The extension is published on the [Open VSX Marketplace](https://open-vsx.org/extension/vox-lang/vox) (VS Code, Windsurf, Cursor, and other compatible editors) and the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=vox-lang.vox-lang) (VS Code). Search for "Vox" in your editor's Extensions panel and click Install.
 
 For manual installation during development, see [Manual Installation](#manual-installation) below.
 
