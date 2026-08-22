@@ -3,6 +3,9 @@
 **Version 0.4.10**
 
 This document defines the syntax and semantics of Vox (sentence based code).
+It states the language as it is now. What changed in which release is in
+[CHANGELOG.md](CHANGELOG.md), the defect register
+[docs/BUGS_FOUND.md](docs/BUGS_FOUND.md), and [docs/HISTORY.md](docs/HISTORY.md).
 
 ---
 
@@ -612,7 +615,7 @@ If 1 is equal to 2,
   sanctioned dynamic type and keeps accepting any type across reassignment,
   exactly as documented in [Dynamic Values (`value`)](#dynamic-values-value)
   below — that section's behavior is unchanged by this rule, not an
-  exception carved out of it. This also covers the v0.3.6 in-place retype
+  exception carved out of it. This also covers the in-place retype
   statement `<valuevar> is a <type>.` (e.g. `numstr is a number.`), which
   reads the variable's runtime tag, converts the value, and updates the
   tag in place — see "A `value` can be retyped in place" below. The same
@@ -629,11 +632,9 @@ in the tables under [Object Properties](#object-properties) except
 the thing they are read from — ...). A value coming from a function call,
 an unprovable list/map read (a map literal with mixed value types, for
 instance), or anything else the compiler can't classify at compile time is
-allowed through unchecked, exactly as it was before this rule. This closes
-a large, concrete class of bugs — a variable's compiler-tracked type
-disagreeing with what it actually holds at runtime, which
-previously produced a wrong number on screen at best and a segfault at
-worst — not every possible source of type confusion, and it says nothing
+allowed through unchecked. This closes a large, concrete class of bugs — a
+variable's compiler-tracked type disagreeing with what it actually holds at
+runtime — not every possible source of type confusion, and it says nothing
 about type agreement across a `.lib` import boundary (a library's declared
 signature is currently trusted, not verified against its `.so`).
 
@@ -674,27 +675,18 @@ things.
 
 ## Names and strings
 
-Before 0.3.0, a double-quoted token was *both* a string literal and an
-identifier, decided by position. That single overload is the root of a family
-of silent wrong answers. This is the one that decided the change:
+One token cannot mean two things. `"..."` is a string literal everywhere, and
+a name is a bare or single-quoted identifier:
 
 ```vox fragment
 a number called "x" is "get five".
-print x.                              (prints: 4198480)
 ```
 
-The author meant to call the function `get five` and store its result in `x`.
-But `"get five"` in expression position was read as a string literal — a
-pointer to the function's code — and `x` quietly received that pointer as a
-number. A function pointer, printed as a number, silently. No error, no
-warning; the program runs and gives a wrong answer that looks like data.
-
-That is what one token meaning two things costs. So in 0.3.0 the two are
-split: `"..."` is a string literal everywhere, and a name is a bare or
-single-quoted identifier. The program above is now a compile error — `is
-"get five"` rejects the string in identifier position and points you at
-`'get five'`. The cost is that every program written before 0.3.0 must be
-migrated; the payoff is that this class of silent wrong answer is gone.
+That is a compile error — `is "get five"` rejects the string in identifier
+position and points you at `'get five'`. Were it accepted, `"get five"` in
+expression position would read as a string literal — a pointer to the
+function's code — and `x` would quietly receive that pointer as a number: a
+wrong answer that looks like data, with no error and no warning.
 
 ---
 
@@ -753,13 +745,13 @@ To 'check divisibility' of a number called divisor and a number called dividend.
   uses, so a mutation inside one function is never visible to another unless
   it is genuinely the same global.
 
-### Parameter and Local Types (v0.1.16)
+### Parameter and Local Types
 
 Parameters may use any of the 11 expressible types — `number`, `float`,
 `text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`, `value`
 — and a typed parameter supports the same properties and operations as a
 top-level variable of that type. The same 11 types are also legal as a
-declared `Return a <type>,` return type (plan 296) — parameters and returns
+declared `Return a <type>,` return type — parameters and returns
 share one vocabulary, not two. A parameter (or return type) may also be
 `value`, the dynamic type whose runtime tag travels with its payload across
 the call (a map rides this as payload + tag 5); see
@@ -795,12 +787,6 @@ Key points:
   assignment: reassigning an existing variable from a call
   (`the label is classify of n.`) preserves the correct type.
 
-(Buffer parameters, function-local buffer declarations with initializers,
-and reassignment from a function call were fixed in v0.1.16 - in earlier
-versions the first two were rejected by the analyzer and the third silently
-corrupted the variable's tracked type. The buffer-parameter rule above is
-newer: see docs/BUGS_FOUND.md #90.)
-
 #### A collection parameter is the caller's collection
 
 A `list` or `map` parameter names the caller's collection, not a copy of
@@ -826,11 +812,8 @@ collection built at the call itself (`'the size of' of [1, 2, 3]`) has
 nowhere to return growth to, so the function may read and grow it freely
 but the growth goes nowhere once the call ends.
 
-(Before v0.4.10 a collection grown through a parameter stopped at the size
-its literal happened to allocate, and every append past that was silently
-dropped: docs/BUGS_FOUND.md #75. An **exported** function's parameters
-changed shape to fix it, so a `.so` with a `list` or `map` parameter and
-the programs that `see` it must be built by the same version of Vox.)
+A `.so` with a `list` or `map` parameter and the programs that `see` it must
+be built by the same version of Vox.
 
 ### Function Calls
 
@@ -884,8 +867,7 @@ Positions that supply a type: a declared variable's declaration, a later
 assignment to one, and an argument landing on a declared parameter. Every
 other position — `print <call>`, a `{...}` interpolation, `append`, a list
 literal slot, `set element`, a map value, a `value` declaration — needs the
-return type declared. See
-[Mixed-Type Lists](#mixed-type-lists) for what the guess used to cost.
+return type declared. See [Mixed-Type Lists](#mixed-type-lists).
 
 ---
 
@@ -1763,10 +1745,7 @@ naming the other file. The diagnostic reads `'point' is already defined
 as a thing on line 4`, then names the file that defined it first
 (`include/point_defined_elsewhere.vox`) and the rule (`identifier space`).
 
-Two behaviour changes landed with cross-file things. A `see` of a file
-that cannot be read is now an error (it was previously silent without
-`-v`), and a duplicate type name across a `see` now errors at the second
-definition, naming the other file (above).
+A `see` of a file that cannot be read is an error.
 
 ### `.lib` export of a thing is not yet supported
 
@@ -1865,43 +1844,6 @@ nouns `is a <type>` recognises are the builtins (`number`, `text`,
 `list` or `map` of user things, or a `value` holding one, is likewise
 deferred. Things live in the compile-time type table, not the runtime tag.
 
-### Design notes for review
-
-The four items below are judgement calls the implementation made on the
-way; they are marked here so they are visible without hunting.
-
-1. **Members-only definitions are rejected.** A thing listing only `a
-   function called ...` entries and no data fields is a zero-byte thing,
-   so v1 refuses it (see [Definition diagnostics](#definition-diagnostics)).
-   Conservative and reversible: a later version could admit a member-only
-   thing as a pure interface.
-   <!-- REVIEW: members-only definitions -->
-
-2. **`.lib` export of a thing is refused.** An exported library signature
-   cannot take or return a thing yet; the diagnostic says to pass its
-   fields across the boundary instead (see
-   [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported)).
-   Ordinary compilation is unaffected. A cross-boundary type system that
-   knows about user things would lift this.
-   <!-- REVIEW: .lib export refused -->
-
-3. **The `origin` naming question.** The tests (and STYLE.md's own model
-   line `Print magnitude of origin.`) declare `a point called origin` then
-   set it to `(3,4)`. The origin is `(0,0)`, so the name is arguably
-   untruthful under the read-aloud guide. This is a guide-level question,
-   not a things-feature one — flagged here for a STYLE pass, not a
-   compiler change.
-   <!-- REVIEW: origin naming -->
-
-4. **Acyclicity — corrected from the plan.** Plan 310 framed things as
-   "acyclic by grammar"; that framing is wrong. Things are acyclic by two
-   mechanisms: the within-file defined-earlier ordering rule (a field type
-   must be defined above the line), and the analyzer's registry DFS across
-   files reached by `see`. The DFS is load-bearing across the merged
-   registry, not redundant — it is what proves the multi-file registry
-   acyclic.
-   <!-- REVIEW: acyclicity correction -->
-
 ---
 
 ## Expressions
@@ -1976,9 +1918,9 @@ the list is empty
 ### Logical Operators
 
 ```vox fragment
-<condition> and <condition>    ; true if both conditions are true
-<condition> or <condition>     ; true if either condition is true
-not <condition>                ; true if condition is false
+<condition> and <condition>    (true if both conditions are true)
+<condition> or <condition>     (true if either condition is true)
+not <condition>                (true if condition is false)
 ```
 
 `not` takes the whole condition after it, exactly as the fence above says
@@ -2420,7 +2362,7 @@ A function whose return type is **not** declared is the one thing a slot
 cannot be written from. Nothing proves what the result is, and nothing
 carries a tag for it either, so the write would have to guess — and a
 returned text stored under a guessed `number` tag reads back as the raw
-address of its bytes, which is the silent wrong answer the 0.3.0
+address of its bytes, which is the silent wrong answer the
 identifier/literal split exists to prevent (see
 [Names and strings](#names-and-strings)). So it is refused at compile time
 rather than guessed, and the error names both ways out: declare the return
@@ -2671,11 +2613,7 @@ runtime tag — see [Things](#things).
 
 ### Dynamic Values (`value`)
 
-A mixed-list element keeps its tag while it stays in the list, but the
-moment you pass it to a function the tag used to be lost — parameters are
-statically typed, so a mixed element passed `as a number` was reinterpreted
-and one passed `as a text` was dereferenced as a pointer. The `value` type
-fixes this: it is a declared dynamic type that carries its runtime tag
+The `value` type is a declared dynamic type that carries its runtime tag
 *alongside* its payload across the call, so a single function can accept
 "whatever this slot holds" and ask `is a ...` inside to find out which.
 
@@ -3396,7 +3334,7 @@ Print "Product: {x multiply y}".
 Print "Arguments: {arguments's count}".
 ```
 
-#### Format Strings as Values (v0.1.17)
+#### Format Strings as Values
 
 Format strings are expressions, not just print arguments. Used as a
 value, a format string materializes into a fresh NUL-terminated string,
@@ -3418,10 +3356,7 @@ Execute "/bin/echo" with arguments cmdargs.
 Each evaluation allocates a new string; the source buffer can be
 cleared and reused without affecting texts already created from it.
 
-(Before v0.1.17, a format string outside `Print` compiled to a NULL
-pointer: it printed as empty and corrupted `execve` argv arrays.)
-
-#### Format Strings Everywhere (v0.1.21)
+#### Format Strings Everywhere
 
 Every statement that takes a string value accepts a format string:
 `write`, buffer `set`/`copy`/`append`, filesystem paths (`Create a
@@ -3433,7 +3368,7 @@ result is printed, written to a file, or built into a text or a
 buffer - a float's precision included: `{ratio:.2}` reads `2.50` in
 every one of them.
 
-#### Declarations in Branches (v0.1.21)
+#### Declarations in Branches
 
 A variable (or file handle) declared in EVERY branch of an
 `if`/`otherwise` chain definitely exists afterwards: it can be used
@@ -5015,7 +4950,7 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `message` | `text` | Type name (`a message called ...` is treated as `text`) |
 | `string` | `text` | Type name (already listed in the type synonyms) |
 
-These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name. (`length` used to appear here as an alias of `size`; it is now a contextual keyword — see below — so `a number called length is 1.` compiles, and `x's length` still means the same as `x's size`.)
+These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name.
 
 Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'` — if you genuinely need it.)
 
@@ -5030,11 +4965,11 @@ Not every word with a special meaning is reserved. Vox distinguishes:
   something, and ordinary identifiers everywhere else: `start`/`begin`/
   `stop`/`finish` for timers, `send` for signals, `waiting` in
   `without waiting`, `available` in `is available`, the things words, the
-  property word `name`, and (since 0.4.2) the property word `count` —
+  property word `name`, and the property word `count` —
   claimed after a possessive marker and in the `the argument count` /
   `the environment variable count` phrases, so
   `a number called count is 0.` compiles while `arguments's count` keeps
-  its meaning. Since 0.4.3 the same treatment extends to the whole
+  its meaning. The same treatment extends to the whole
   possessive/phrase family: `capacity` (also the `with capacity N` /
   `of capacity N` buffer phrase), `raw`, `all` (also the
   `all the numbers from/between …` range), `first`, `last`, `second`
@@ -5130,14 +5065,14 @@ see "./utils.vox".
 see mathkit version "1.0" from "./libmathkit.lib".
 ```
 
-There is exactly **one** library form. Earlier syntaxes — `see "./path.so".`,
+There is exactly **one** library form. Three other shapes — `see "./path.so".`,
 `see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
-version "1.0".` — all pointed `see` at a `.so` directly. A `.so` is binary ELF:
+version "1.0".` — point `see` at a `.so` directly. A `.so` is binary ELF:
 it carries mangled symbol *names* but no Vox type information, so the compiler
-cannot check a call against it. Those forms are retired: `see` of a `.so`
+cannot check a call against it. All three are refused: `see` of a `.so`
 errors and directs you to the `.lib`, and the `see ... for ...` form has its
 own diagnostic — both name the canonical form `see '<lib>' version "<x.y>" from
-"<path>.lib".`. `see` of a `.vox` source is unchanged.
+"<path>.lib".`.
 
 **Search paths.** `see` resolves the path by its shape:
 
@@ -5177,8 +5112,7 @@ names a non-Vox caller needs.
 > produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
 > consumes it from Vox, export names are mangled, and multi-input `--shared`
 > links several libraries (and several versions of one library) into one `.so`.
-> Every output below is real, captured from this compiler (vox v0.4.9). A
-> foreign host can also call the `.so` directly — see
+> A foreign host can also call the `.so` directly — see
 > [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
 #### Writing a library
