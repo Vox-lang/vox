@@ -18,6 +18,10 @@
     { "include": "#booleans" },
     { "include": "#null-literal" },
     { "include": "#numbers" },
+    { "include": "#list-brackets" },
+    { "include": "#map-braces" },
+    { "include": "#map-key-value-separator" },
+    { "include": "#element-separator" },
     { "include": "#loop-expansion" },
     { "include": "#conditional-branch" },
     { "include": "#control-keywords" },
@@ -212,6 +216,30 @@
           "match": "-?\\b\\d+\\b"
         }
       ]
+    },
+    "list-brackets": {
+      "comment": "List literal delimiters: [1, 2, 3]. The grammar has no separate begin/end region for a list literal - every rule is flat over the whole source - so this only marks the bracket characters themselves; the elements between them are already matched by the ordinary top-level rules (numbers, strings, booleans, nothing, nested lists, ...).",
+      "patterns": [
+        { "name": "punctuation.section.brackets.begin.vox", "match": "\\[" },
+        { "name": "punctuation.section.brackets.end.vox", "match": "\\]" }
+      ]
+    },
+    "map-braces": {
+      "comment": "Map literal delimiters: {\"a\": 1, \"b\": 2}. Comment blocks are parenthesis-delimited (see #comments), so this cannot collide with them; the {...} string-interpolation braces live inside the strings region's own patterns and are matched there first, never reaching here.",
+      "patterns": [
+        { "name": "punctuation.section.braces.begin.vox", "match": "\\{" },
+        { "name": "punctuation.section.braces.end.vox", "match": "\\}" }
+      ]
+    },
+    "map-key-value-separator": {
+      "comment": "Colon between a map literal's key and value: {\"a\": 1}. The only top-level ':' in Vox syntax; the {h:02} format-spec colon in a string interpolation is inside the strings region's own scope and is never reached by this rule.",
+      "name": "punctuation.separator.key-value.vox",
+      "match": ":"
+    },
+    "element-separator": {
+      "comment": "Comma separating list/map elements ([1, 2, 3], {\"a\": 1, \"b\": 2}) and, in this flat grammar, every other comma in the source (e.g. 'For each pair in m, Print pair.') - there is no rule anywhere else, so this is deliberately general rather than scoped to just inside a literal.",
+      "name": "punctuation.separator.comma.vox",
+      "match": ","
     },
     "loop-expansion": {
       "comment": "Parameter loop expansion: 'each X from Y' - uses entity.name.tag for distinct blue color",
