@@ -313,31 +313,23 @@ vox example.vox
 
 Vox is under active development. Planned work includes:
 
-1. **Shared Libraries**
-   Versioned shared libraries with explicit naming, symbol scoping, and backward compatibility guarantees.
-
-2. **User-Defined Types**
-   Shipped in 0.4.0 as **things**: compile-time layout, possessive field
-   access, unlimited nesting, value copy semantics, function members, and
-   cross-file definitions (see the [Things](LANGUAGE.md#things) chapter).
-   Remaining: exact byte layout control - field widths, ordering, and
-   padding - which is gated on sized integers, since every field is an
-   8-byte slot today.
-
-3. **Networking Abstractions**
+1. **Networking Abstractions**
    High-level interfaces built on top of system calls, provided via libraries (e.g. HTTP/1.0 reference implementation).
 
-4. **Additional Architectures**
+2. **Additional Architectures**
    Planned targets include Win64, AArch64, ARM64, MIPS, and RISC-V.
 
-5. **Expanded System Interfaces**
-   Filesystem operations (directories, device nodes, symlinks), mounting, `pivot_root`, `execve`, process control (`fork`/`reap`, non-blocking `reap ... without waiting`, `the reaped status`, `Send signal` for `kill`), and system control (`shutdown`/`reboot`/`halt`) are implemented. Remaining: higher-level abstractions for multithreading and file descriptor polling (epoll/poll).
+3. **Multithreading and Polling**
+   Higher-level abstractions for multithreading and file descriptor polling (epoll/poll), on top of the process and filesystem interfaces already in place.
 
-6. **Math and Numeric Optimization**
+4. **Sized Integers**
+   Integer widths below the 8-byte slot, and with them exact byte layout control for things (field widths, ordering, padding).
+
+5. **Math and Numeric Optimization**
    Continued optimization of numeric code generation, with a goal of matching or exceeding C performance in benchmarks.
 
-7. **Structured Data and Serialization**
-   Lists, maps, nesting, and `nothing` are implemented — the pieces a JSON/YAML value needs. Remaining: the parser and emitter themselves, plus matrices and tuples. See [docs/COLLECTIONS_ROADMAP.md](docs/COLLECTIONS_ROADMAP.md).
+6. **Structured Data and Serialization**
+   A JSON/YAML parser and emitter over lists and maps, plus matrices and tuples. See [docs/COLLECTIONS_ROADMAP.md](docs/COLLECTIONS_ROADMAP.md).
 
 ---
 
@@ -358,7 +350,7 @@ Actively developed, free and open-source projects written in Vox:
   runs with none of them installed.
 
 Building something in Vox? We'd like this list to point to real, actively
-maintained FOSS projects — email **vox-lang@tegosec.com** to have yours added.
+maintained FOSS projects — email **info@vox-lang.net** to have yours added.
 
 ---
 
