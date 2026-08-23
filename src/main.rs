@@ -135,6 +135,17 @@ fn materialised_embedded_coreasm() -> Option<PathBuf> {
     }
 }
 
+/// Where `sudo make install` (or an RPM/deb package) puts an installed Vox
+/// library's `.lib` interface — the final step of a bare or relative `.lib`
+/// search in `see` (docs/BUGS_FOUND.md #99). It is checked LAST, after the
+/// containing file's directory and every `--lib-path`, which is the
+/// deliberate inverse of `find_coreasm_path`'s `system_paths` below: a
+/// coreasm override is meant to win over a stray system install, but a
+/// development `.lib` beside the source (or passed on `--lib-path`) must
+/// always shadow the installed one of the same name, not the other way
+/// round.
+pub const INSTALLED_LIB_DIR: &str = "/usr/include/vox";
+
 /// Find the coreasm library directory using industry-standard resolution order:
 /// 1. VOX_CORE_PATH environment variable (user override; the documented name),
 ///    with EC_CORE_PATH accepted as a deprecated alias (see below)
@@ -866,9 +877,21 @@ fn main() {
             // than a grep-findable marker. See plan 210 P6.
             dynamic_args.push("-dynamic-linker".to_string());
             dynamic_args.push("/lib64/ld-linux-x86-64.so.2".to_string());
-            for p in lib_paths.iter() {
-                dynamic_args.push("-rpath".to_string());
-                dynamic_args.push(p.clone());
+            // `--link` (LANGUAGE.md:5459-5462) puts a foreign .so with no
+            // .lib on the link line by soname stem alone, so the compiler
+            // never learns which --lib-path directory it actually lives in
+            // and documents every --lib-path landing on RUNPATH as the
+            // trade-off. A `see` import is different: `imported_sos` already
+            // names the exact resolved .so, so `import_rpaths` below is the
+            // real answer and blanket-adding every --lib-path would put
+            // interface-only directories (docs/BUGS_FOUND.md #99 — e.g.
+            // /usr/include/vox, which holds .lib files but no .so) onto the
+            // runtime search path for nothing.
+            if !link_libs.is_empty() {
+                for p in lib_paths.iter() {
+                    dynamic_args.push("-rpath".to_string());
+                    dynamic_args.push(p.clone());
+                }
             }
             for r in &import_rpaths {
                 dynamic_args.push("-rpath".to_string());

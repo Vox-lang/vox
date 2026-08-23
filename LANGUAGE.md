@@ -5125,11 +5125,14 @@ own diagnostic: both name the canonical form `see '<lib>' version "<x.y>" from
 
 Those three shapes describe a `.vox` source include. A `.lib` path resolves
 differently: relative or bare, it is tried against the containing file's
-directory first and then each `--lib-path` directory, and its `Location` `.so`
-against the `.lib`'s own directory first and then `--lib-path`; absolute paths
-are used as-is. `--lib-path` is not consulted for a `.vox` include at all; for
-`--link` it only passes search paths to the linker (`-L`). See
-[Consuming a library](#consuming-a-library).
+directory first, then each `--lib-path` directory, and finally
+`/usr/include/vox` — where an installed library's interface lives, checked
+last so a development `.lib` beside the source or on `--lib-path` always
+shadows an installed one of the same name. Its `Location` `.so` resolves
+against the `.lib`'s own directory first and then `--lib-path` (no system
+step); absolute paths are used as-is. `--lib-path` is not consulted for a
+`.vox` include at all; for `--link` it only passes search paths to the
+linker (`-L`). See [Consuming a library](#consuming-a-library).
 
 **Circular includes.** The compiler tracks files already seen and skips a
 `see` that would re-enter one.
@@ -5296,7 +5299,8 @@ does the linking, because the `.lib` says where the `.so` is.
 
 `see` of a `.lib` is the consumption path. The compiler:
 
-1. Resolves the `.lib` (relative to the source, then `--lib-path`).
+1. Resolves the `.lib` (relative to the source, then `--lib-path`, then
+   `/usr/include/vox`).
 2. Parses it and selects the block matching name **and** version.
 3. Resolves `Location` relative to the `.lib`, then `--lib-path`.
 4. **Verifies against the `.so`'s dynamic symbol table**: every mangled name
