@@ -1,6 +1,6 @@
 # Vox Roadmap: From Today to a Kernel Written in Vox
 
-This roadmap charts the path from the current state of Vox (v0.4.11) to the
+This roadmap charts the path from the current state of Vox (v0.4.12) to the
 long-term goal: a memory-safe, sentence-based systems language capable of
 expressing *any* program — including cryptographic libraries, network stacks,
 device drivers, and ultimately an operating system kernel — across multiple
