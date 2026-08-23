@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #99 fixture — the "--lib-path directory" half of the
+local-shadow pair; see shadow_local.vox. Built into a directory passed via
+--lib-path, never the consumer's own directory, so a test can prove the
+resolver reaches --lib-path only when the earlier (containing-directory)
+step misses, and that a --lib-path match wins over the last step, the
+installed-interface system directory, without that directory needing to
+exist on the test box at all. `which one` returns 2 here.)
+
+Library shadow version "1.0".
+
+To 'which one'.
+  Return a number, 2.

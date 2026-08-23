@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
-
+- **A bare or relative `.lib` name in `see` now resolves against an installed library's interface.** The search order for a `.lib` gains `/usr/include/vox` as its final step — after the containing file's directory and every `--lib-path` — so `see json version "0.1" from "json.lib".` finds an installed library with no flag needed, while a development `.lib` beside the source or on `--lib-path` still shadows the installed one of the same name. The "Paths tried" diagnostic on a miss now names the system directory too, and the emitted `RUNPATH` no longer copies every `--lib-path` directory verbatim — only directories a `see`d `.so` actually resolved from land on it (#99).
 - **A zero-width format specifier, `{n:0}` or `{n:00000}`, compiled as an
   unknown-specifier error.** A width of 0 pads nothing — the manual's width
   row carries no floor on `N`, and 0.4.10 already treated it as a no-op —

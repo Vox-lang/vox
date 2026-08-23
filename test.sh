@@ -887,7 +887,10 @@ Print the r.
 EOF
     if [[ "$err" != *"could not find the library interface file"* ]] \
         || [[ "$err" != *"nonexistent.lib"* ]] || [[ "$err" != *"--lib-path"* ]] \
-        || [[ "$err" == *"././"* ]]; then
+        || [[ "$err" != *"/usr/include/vox"* ]] || [[ "$err" == *"././"* ]]; then
+        # #99: "Paths tried" must name the installed-interface system
+        # directory too, not just the containing directory and --lib-path —
+        # the error grows as honest as the search order it is reporting on.
         sub_msg="diagnostics (missing .lib)"; printf '%s\n' "$err" >"$work/missing_lib.fail"
     fi
 
@@ -998,6 +1001,129 @@ EOF
     rm -rf "$work"
 }
 run_see_diagnostics_test
+
+# docs/BUGS_FOUND.md #99 — a bare/relative `.lib` name's search order gains
+# /usr/include/vox as its FINAL step, so an installed library resolves with
+# no flag at all, but a development `.lib` beside the source or passed on
+# `--lib-path` always shadows the installed one of the same name. CI has no
+# /usr/include/vox populated, so every case here proves the ordering WITHOUT
+# that directory existing: the local-shadow case proves the containing
+# directory wins by what the consumer PRINTS (two builds of the same
+# <lib,version> that answer differently — tests/shared/shadow_local.vox
+# prints 1, shadow_libpath.vox prints 2, so a pass proves which .so actually
+# got linked, not just that some build succeeded); the --lib-path case
+# proves resolution succeeds via --lib-path alone, meaning the system step
+# after it is never reached; the miss case proves the error names all three
+# paths tried; and the RUNPATH case proves a --lib-path directory holding
+# only a `.lib` (no `.so`) never lands on the runtime search path — the
+# "RUNPATH stops swallowing interface dirs" half of the fix. Must never skip.
+run_see_installed_lib_search_test() {
+    local work
+    work="$(mktemp -d)"
+    local fail_msg="" fail_log=""
+
+    local local_dir="$work/local" libpath_dir="$work/libpath" empty_dir="$work/empty" junk_dir="$work/junk"
+    mkdir -p "$local_dir" "$libpath_dir" "$empty_dir" "$junk_dir"
+
+    if ! "$VOX_BIN" "$SCRIPT_DIR/tests/shared/shadow_local.vox" --shared -o "$local_dir/libshadow.so" >"$work/build_local.log" 2>&1; then
+        fail_msg="see/installed-search (local shadow build)"; fail_log="$work/build_local.log"
+    elif ! "$VOX_BIN" "$SCRIPT_DIR/tests/shared/shadow_libpath.vox" --shared -o "$libpath_dir/libshadow.so" >"$work/build_libpath.log" 2>&1; then
+        fail_msg="see/installed-search (--lib-path shadow build)"; fail_log="$work/build_libpath.log"
+    fi
+
+    # 1. Local shadow: a consumer beside its OWN libshadow.lib must use that
+    #    one even though an identically-named library sits on --lib-path too
+    #    — the containing directory is the first search step.
+    if [[ -z "$fail_msg" ]]; then
+        cat >"$local_dir/use_local.vox" <<'EOF'
+see shadow version "1.0" from "libshadow.lib".
+Print 'which one'.
+EOF
+        local out
+        if ! "$VOX_BIN" "$local_dir/use_local.vox" --lib-path "$libpath_dir" -o "$local_dir/use_local" >"$work/c_local.log" 2>&1; then
+            fail_msg="see/installed-search (local-shadow consumer build)"; fail_log="$work/c_local.log"
+        elif ! out=$("$local_dir/use_local" 2>/dev/null) || [[ "$out" != "1" ]]; then
+            fail_msg="see/installed-search (local-shadow printed '$out', not 1 — the containing directory should have won)"
+        fi
+    fi
+
+    # 2. --lib-path wins over the (absent) system dir: a consumer with NO
+    #    local .lib resolves through --lib-path alone. This must succeed
+    #    with no /usr/include/vox on the test box — reaching a later step
+    #    only when the earlier ones miss is the whole point of the order.
+    if [[ -z "$fail_msg" ]]; then
+        cat >"$empty_dir/use_libpath.vox" <<'EOF'
+see shadow version "1.0" from "libshadow.lib".
+Print 'which one'.
+EOF
+        local out
+        if ! "$VOX_BIN" "$empty_dir/use_libpath.vox" --lib-path "$libpath_dir" -o "$work/use_libpath" >"$work/c_libpath.log" 2>&1; then
+            fail_msg="see/installed-search (--lib-path consumer build)"; fail_log="$work/c_libpath.log"
+        elif ! out=$("$work/use_libpath" 2>/dev/null) || [[ "$out" != "2" ]]; then
+            fail_msg="see/installed-search (--lib-path printed '$out', not 2)"
+        fi
+    fi
+
+    # 3. A miss names all three paths tried: containing directory,
+    #    --lib-path, and the system directory, in that order.
+    if [[ -z "$fail_msg" ]]; then
+        cat >"$empty_dir/use_missing.vox" <<'EOF'
+see nope version "1.0" from "nope.lib".
+Print "unreachable".
+EOF
+        local err
+        err=$( { cd "$empty_dir" && "$VOX_BIN" use_missing.vox --lib-path "$libpath_dir" -o use_missing ; } 2>&1 )
+        if [[ "$err" != *"nope.lib"* ]] || [[ "$err" != *"$libpath_dir"* ]] \
+            || [[ "$err" != *"/usr/include/vox"* ]]; then
+            fail_msg="see/installed-search (miss did not name all three search paths)"
+            printf '%s\n' "$err" >"$work/miss.fail"; fail_log="$work/miss.fail"
+        fi
+    fi
+
+    # 4. RUNPATH: a --lib-path directory holding only a `.lib` (its Location
+    #    pointing elsewhere) must never land on RUNPATH — only a directory a
+    #    `see`d `.so` actually resolved from does. junk_dir gets a COPY of
+    #    the local `.lib` with its Location rewritten to an absolute path at
+    #    local_dir's real `.so`, so junk_dir itself never holds a `.so`.
+    if [[ -z "$fail_msg" ]]; then
+        local real_dir junk_real
+        real_dir="$(realpath "$local_dir")"
+        junk_real="$(realpath "$junk_dir")"
+        sed "s#Location \"\./libshadow\.so\"\.#Location \"$real_dir/libshadow.so\".#" \
+            "$local_dir/libshadow.lib" > "$junk_dir/libshadow.lib"
+        if ! grep -q "$real_dir/libshadow.so" "$junk_dir/libshadow.lib"; then
+            fail_msg="see/installed-search (RUNPATH fixture: Location rewrite did not take)"
+        else
+            cat >"$empty_dir/use_runpath.vox" <<'EOF'
+see shadow version "1.0" from "libshadow.lib".
+Print 'which one'.
+EOF
+            if ! "$VOX_BIN" "$empty_dir/use_runpath.vox" --lib-path "$junk_dir" -o "$work/use_runpath" >"$work/c_runpath.log" 2>&1; then
+                fail_msg="see/installed-search (RUNPATH consumer build)"; fail_log="$work/c_runpath.log"
+            else
+                local runpath_line runpath_val
+                runpath_line=$(readelf -d "$work/use_runpath" | grep RUNPATH)
+                runpath_val=$(printf '%s' "$runpath_line" | sed -n 's/.*\[\(.*\)\].*/\1/p')
+                if [[ "$runpath_val" == *"$junk_real"* ]]; then
+                    fail_msg="see/installed-search (RUNPATH still carries the .lib-only junk dir: $runpath_line)"
+                elif [[ "$runpath_val" != *"$real_dir"* ]]; then
+                    fail_msg="see/installed-search (RUNPATH is missing the .so's real dir: $runpath_line)"
+                fi
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/installed-search (#99: local shadow, --lib-path shadow, honest miss, clean RUNPATH)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_installed_lib_search_test
 
 # A5 — retire the abandoned `see` syntax. The canonical form
 #   see "<lib>" version "<x.y>" from "<path>.lib".
