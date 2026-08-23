@@ -1,0 +1,43 @@
+(Loop expansion turns one action into a loop: `<action> each x from
+collection` runs the action once per element, and the same shape composes
+into a grid of several `each` clauses, or takes a `but if` branch inside
+the loop. See LANGUAGE.md, "Loop Expansion".)
+
+To 'announce a class' with a text called craft.
+  Print "This week: {craft}.".
+
+a list called crafts is ["pottery", "weaving", "smithing"].
+
+(A single each clause turns one call into one per item)
+'announce a class' of each craft from crafts.
+
+Print "".
+
+To 'pair a tool with a material' with a text called tool and a text called material.
+  Print "{tool} works {material}".
+
+a list called tools is ["chisel", "loom"].
+a list called materials is ["clay", "wool"].
+
+(Two each clauses chain into a grid: the leftmost clause is the outer
+ loop, so every tool gets a turn with every material)
+'pair a tool with a material' of each tool from tools and each material from materials.
+
+Print "".
+
+To 'schedule a class' with a text called weekday and a text called craft.
+  Print "{weekday}: {craft} class".
+
+a list called weekdays is ["Monday", "Wednesday"].
+
+(A `but if` branch attaches to the innermost call of a grid, so its
+ condition can read every loop variable at once - here, flagging the one
+ slot that is already booked)
+'schedule a class' of each weekday from weekdays and each craft from crafts,
+  but if weekday is "Wednesday" and craft is "smithing" print "{weekday}: smithing is full, try next week".
+
+Print "Done!".
+
+(Run output, 16 lines: three "This week: ..." lines, a blank, four
+ "... works ..." pairings, a blank, six scheduled slots with
+ Wednesday/smithing overridden, then "Done!")
