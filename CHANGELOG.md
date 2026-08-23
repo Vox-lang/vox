@@ -4,6 +4,19 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **A zero-width format specifier, `{n:0}` or `{n:00000}`, compiled as an
+  unknown-specifier error.** A width of 0 pads nothing — the manual's width
+  row carries no floor on `N`, and 0.4.10 already treated it as a no-op —
+  but the #98 fix that refused an unrecognised clause caught a clause of
+  nothing but zeros along with it, since stripping every leading zero for
+  the width left no digits behind either way. A bare `0` or `00...0` is now
+  read as its own case, a width of zero, rather than falling through to the
+  catch-all (#100).
+
 ## [0.4.11] - 2026-08-23
 
 ### Changed

@@ -1,0 +1,9 @@
+(Bug #100: the zero-width fix widens what counts as a width - a bare `0`
+ or all-zeros is now a legal width of 0 - but must not widen what counts
+ as a BASE specifier. Zeros followed by a letter that is none of `x`,
+ `X`, `b`, `o` is still zeros then junk, and junk stays an
+ unknown-specifier error exactly as #98 requires; it never falls into
+ the same no-op `{n:0}` gets on its own.)
+
+a number called n is 42.
+Print "{n:0q}".

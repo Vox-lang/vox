@@ -1,0 +1,3 @@
+'0q' is not a format specifier Vox knows
+270_zeros_then_junk_still_an_unrecognised_specifier.vox:9:11
+help: the specifiers are a width (`N`), a zero-padded width (`0N`), a decimal precision (`.N`), and a whole number's base - `x` (hexadecimal), `X` (hexadecimal, uppercase), `b` (binary) or `o` (octal), which a width can precede (`04x`). Drop the specifier to render the value plainly.

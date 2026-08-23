@@ -1,0 +1,28 @@
+(Bug #100: 0.4.10 rendered `{n:0}` and `{n:00000}` as width 0, which pads
+ nothing - the manual's width row has no floor on N, and 0.4.10 agreed.
+ 0.4.11's #98 fix read the zero-pad branch left to right, consuming the
+ leading `0` and then demanding digits after it; a clause of nothing BUT
+ zeros left no digits behind, fell into #98's new catch-all, and was
+ reported as an unknown specifier - a regression the fuzzer's own CI
+ caught on the 0.4.11 re-pin. Josj's ruling (2026-08-23): width 0 is a
+ legal no-op, same as any width too small to add characters.
+
+ A width asks nothing of a type (LANGUAGE.md, the width rule), so the
+ no-op holds for a float and a text exactly as it does for a number - none
+ of them pad. `{n:04x}` is unaffected on purpose: it has a nonzero width
+ (4) before the base letter, so it never reaches the all-zeros branch.)
+
+a number called n is 42.
+a float called f is 3.5.
+a text called t is "hi".
+
+(The bug's own repro shape: bare zero and all-zeros, both a no-op.)
+Print "[{n:0}]".
+Print "[{n:00000}]".
+
+(A width of zero on the other two types - same no-op, nothing padded.)
+Print "[{f:0}]".
+Print "[{t:0}]".
+
+(Regression: a real zero-padded width before a base letter must not move.)
+Print "[{n:04x}]".
