@@ -2786,3 +2786,74 @@ Otherwise, a number called s is 1, append s to out.\n";
         assert_eq!(spec.base, super::IntegerBase::HexLower);
         assert_eq!(fault, None);
     }
+
+    /// docs/BUGS_FOUND.md #100. The #98 fix above made an unrecognised
+    /// clause a compile error by reading the zero-pad branch left to
+    /// right: it consumes a leading `0` and then demands digits after it.
+    /// A clause of nothing BUT zeros - a bare `0`, or `00000` - leaves no
+    /// digits behind either way, so #98's catch-all reported it as an
+    /// unknown specifier. But the manual's width row has no floor on `N`,
+    /// and 0.4.10 rendered `{n:0}` as a no-op; Josj's ruling (2026-08-23,
+    /// vox-notes/VERIFIED-ZERO-WIDTH-SPECIFIER.md) is that width 0 is
+    /// legal, so a clause of all zeros must read as width 0, not as junk.
+    #[test]
+    fn a_clause_of_nothing_but_zeros_is_a_legal_width_of_zero() {
+        for spec_text in ["0", "00", "00000"] {
+            let (spec, fault) = super::read_format_spec(Some(spec_text));
+            assert_eq!(spec.width, Some(0), "{} should read as width 0", spec_text);
+            assert_eq!(fault, None, "{} is a no-op, not a fault", spec_text);
+        }
+    }
+
+    /// The width being legal must not loosen anything else in the same
+    /// clause: zeros followed by a letter that is not a base specifier are
+    /// still zeros-then-junk, and junk is still a fault (#98, unchanged).
+    /// This is the boundary the fix must not cross.
+    #[test]
+    fn zeros_followed_by_junk_are_still_an_unrecognised_specifier() {
+        for spec_text in ["0q", "00q", "0x"] {
+            let (_, fault) = super::read_format_spec(Some(spec_text));
+            assert_eq!(
+                fault,
+                Some(super::FormatSpecFault::UnknownSpecifier(
+                    spec_text.to_string()
+                )),
+                "{} should still be reported, zero-width did not swallow it",
+                spec_text
+            );
+        }
+    }
+
+    /// A real base specifier after real zero-padding is untouched by the
+    /// zero-width fix: `{n:04x}` has a nonzero width (4) before the `x`, so
+    /// it never reaches the all-zeros branch. Pinned beside the fix so a
+    /// future change to the zero branch cannot silently start eating this
+    /// one too.
+    #[test]
+    fn a_nonzero_width_before_a_base_specifier_is_unaffected_by_the_zero_fix() {
+        let (spec, fault) = super::read_format_spec(Some("04x"));
+        assert_eq!(spec.width, Some(4));
+        assert!(spec.zero_pad);
+        assert_eq!(spec.base, super::IntegerBase::HexLower);
+        assert_eq!(fault, None);
+    }
+
+    /// A width of zero is a no-op for every type, exactly as any other
+    /// width already is for a type with no padder (#71): it asks nothing
+    /// of the type, so it is dropped by the same silent path a bare `{f:8}`
+    /// or `{t:8}` already takes, not turned into a special case.
+    #[test]
+    fn a_zero_width_is_a_no_op_on_a_float_and_a_text() {
+        let asm = emit_one_hole(Some(super::VarType::Float), "0");
+        assert!(
+            asm.contains("PRINT_FLOAT") && !asm.contains("PADDED"),
+            "`:0` on a float is just the float: {}",
+            asm
+        );
+        let asm = emit_one_hole(Some(super::VarType::String), "0");
+        assert!(
+            asm.contains("PRINT_CSTR rdi") && !asm.contains("PADDED"),
+            "`:0` on a text is just the text: {}",
+            asm
+        );
+    }

@@ -609,6 +609,20 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
                 let consumed = fmt_str.len() - width_str.len() + width_end;
                 remaining = &fmt_str[consumed..];
             }
+        } else if width_str.is_empty() {
+            // The clause is nothing but zeros - a bare `0`, or `00...0` -
+            // and stripping every leading zero left no digits behind at
+            // all. That is a width of zero, not an absent width: the
+            // manual's table puts no floor on `N`, 0.4.10 rendered it as a
+            // no-op, and the #98 fix that made an unrecognised clause a
+            // compile error was never meant to reach a count this table
+            // already allows (docs/BUGS_FOUND.md #100). A zero-pad flag on
+            // a zero-width no-op pads nothing either way, so which value it
+            // takes cannot be observed in the rendering.
+            spec.width = Some(0);
+            spec.zero_pad = zero_pad;
+            has_width = true;
+            remaining = "";
         }
     }
 

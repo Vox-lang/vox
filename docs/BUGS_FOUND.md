@@ -11352,3 +11352,74 @@ resolved `.so`. LANGUAGE.md:~5125 gains the one sentence; the error's
 **Found by** the master's smoke test of the installed json library
 (vox-libs 0.2.0), 2026-08-23, immediately after `make install` — the first
 ever consumer of an installed Vox library from outside the vox-libs tree.
+
+---
+
+### 100. A zero-width format specifier — `{n:0}`, `{n:00000}` — regressed to an unknown-specifier error in 0.4.11, though a width of 0 is a legal no-op
+
+**Status:** **Fixed in 0.4.12**. Severity: **regression** — 0.4.10 compiled
+and ran `{n:0}` and `{n:00000}` as a width of 0 (pad nothing); #98's fix,
+which made an unrecognised specifier a compile error, swept these up with
+it. Regression tests:
+`tests/562_a_zero_width_specifier_is_a_legal_no_op.vox`,
+`tests/compile_fail/270_zeros_then_junk_still_an_unrecognised_specifier.vox`.
+
+```vox
+a number called n is 42.
+Print "[{n:0}]".
+```
+- **0.4.10:** compiles; prints `[42]`.
+- **0.4.11:** `error: '0' is not a format specifier Vox knows`. Same for
+  `{n:00000}`.
+
+**Root cause.** `read_format_spec` (`src/codegen/format.rs`) reads a
+zero-pad clause left to right: it strips every leading `0` off `remaining`
+looking for the width's digits, then reads however many digits follow.
+When the clause is nothing BUT zeros, stripping them leaves an empty
+string — no digits follow, because there is nothing left to follow — so
+the pre-#98 code left `width` unset and `remaining` untouched, and #98's
+new catch-all (anything not consumed as a width, a precision or a base
+letter is now a fault) caught the untouched `"0"` / `"00000"` as an
+unknown specifier. #98's mandate was unknown LETTERS (`q`, `#x`, `zzz`);
+zero counts were never part of that audit and nobody re-checked them
+against the width rule until the fuzzer did.
+
+**What the manual already said.** The width row, `{var:N}` → "Pad to N
+characters", carries no floor on `N`; the only bound LANGUAGE.md states is
+the top one, "a count the compiler can hold, at most
+9223372036854775807" — zero is a count the compiler can hold. Nothing
+anywhere said `N ≥ 1`. 0.4.10's behaviour and the manual's letter already
+agreed; only the #98 fix disagreed with both.
+
+**The fix.** The same branch now recognises "stripped every leading zero
+and nothing is left" as its own case — a width of 0, not an absence of
+one — rather than falling through unconsumed into #98's catch-all. It sets
+`spec.width = Some(0)` and consumes the whole clause. Everything #98 was
+actually written to catch is unmoved: a zero (or zeros) followed by
+anything that is not a base letter — `{n:0q}`, `{n:00q}`, `{n:0x}` — is
+still zeros-then-junk, still an unknown specifier, because the branch only
+fires when nothing but zeros is left after stripping; a trailing letter
+means something IS left, and the existing path (unchanged) carries it
+through to the catch-all exactly as before. `{n:04x}` and every other
+zero-padded width with a nonzero digit before its base letter never enters
+the new branch at all, since `width_end > 0` for those and the original
+path still runs first. Both were re-verified before and after: `{n:04x}`
+still prints `[0x002a]`, `{n:0x}` still errors as an unknown specifier — a
+bare `0x` has no width digit at all, so it was never a case this fix
+touches.
+
+**Found by** the fuzzer's own CI, on the pull request that re-pinned
+vox-fuzz's CI to compile against 0.4.11
+(`Vox-lang/vox-fuzz#56`): `280_gen_literals` emits format specifiers with
+random widths, one of which rolled zero, and the run that had passed every
+week since `random-unless-ruled` failed the moment CI built against the new
+compiler — a regression in a fix, caught by the fuzzer catching itself, the
+system working as designed. Verified by the master 2026-08-23
+(`vox-notes/VERIFIED-ZERO-WIDTH-SPECIFIER.md`); ruled by Josj the same day:
+"I completely agree width 0 is a legal no-op."
+
+**Family.** #98 (the fix this narrows — its mandate was unknown letters,
+never zero counts, and this entry is the correction, not a reversal),
+#85/#86 (the format-spec fault family both belong to), #61 (`WidthTooLarge`
+— the sibling fault for a count past what Vox can hold, on the same
+`read_format_spec` function).

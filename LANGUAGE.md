@@ -3315,6 +3315,8 @@ rounded (an exact tie goes to the even digit). Neither is capped (a very
 large `N` is simply a very large amount of output), but `N` has to be a
 count the compiler can hold, at most 9223372036854775807; past that it is a
 compile error naming the limit, not a width that quietly does nothing. A
+width may be zero - `{var:0}` and `{var:00}` pad nothing, the same no-op as
+any width too small to add characters. A
 precision past the value's exact decimal expansion pads with zeros, since the
 expansion has ended and not because accuracy has run out: a float is a
 binary fraction, so it always has an exact finite expansion, and `{pi:.50}`
