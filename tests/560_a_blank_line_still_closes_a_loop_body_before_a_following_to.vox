@@ -1,0 +1,13 @@
+(BUGS_FOUND #96 - the guard fires only when a clause is genuinely still
+ open at the `To`; a blank line force-closes the `For each` first (the
+ termination rule's rule 2), so the definition that follows is read at the
+ top level and this still compiles and runs, once.)
+
+For each n from 1 to 3,
+    If n is 99 then, Break.
+
+To examine with a value called v.
+    Print "{v's type}".
+
+examine of "".
+Exit 0.

@@ -1,0 +1,9 @@
+(The buffer spelling of docs/BUGS_FOUND.md #92.)
+
+a buffer called greeting is "old".
+
+To 'how long'.
+    Return a number, greeting's size.
+
+Set greeting to "newer".
+Print 'how long'.

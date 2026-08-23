@@ -539,6 +539,17 @@ impl Analyzer {
                 // lock applies to; a genuinely new `x` is a real
                 // declaration and must infer/lock its type as usual.
                 let was_already_declared = self.is_variable_declared_anywhere(name);
+                // Which of the two this is, asked of the walk rather than of
+                // the whole program. `was_already_declared` cannot answer it
+                // for an untyped `Set`: `collect_definite_decls` counts one
+                // as a definite declaration, so the name is in
+                // `global_variables` from the first statement and the answer
+                // is "already declared" on the very statement that brings it
+                // into being. Read before this statement declares the name,
+                // so it means "did `name` exist HERE, before this line?"
+                // (docs/BUGS_FOUND.md #95).
+                let brings_the_name_into_being =
+                    var_type.is_none() && !self.is_variable_available(name);
                 // A second explicitly-typed declaration of an
                 // already-declared name is a redeclaration, not scoping:
                 // Vox has no block-level lexical scoping today - If/While/
@@ -746,14 +757,22 @@ impl Analyzer {
                         }
                         _ => {}
                     }
-                } else if was_already_declared {
-                    // `Set n to <value>.` on an already-declared `n`: a
-                    // reassignment wearing a declaration's syntax. Enforce
-                    // the lock exactly like `Statement::Assignment` does,
-                    // instead of leaving scalar_types untouched (which is
-                    // how this exact case used to silently retype, or
-                    // silently do nothing, depending on the value's shape).
-                    if let Some(v) = value.as_ref() {
+                } else if let Some(v) = value.as_ref() {
+                    if brings_the_name_into_being {
+                        // `Set n to <value>.` on a name that does not exist
+                        // yet is the statement that brings it into being, so
+                        // it is a declaration and fixes `n`'s type from the
+                        // value - exactly what `a <type> called n is
+                        // <value>.` does, and what every later write to `n`
+                        // is then checked against (docs/BUGS_FOUND.md #95).
+                        self.bind_untyped_declaration_type(name, v);
+                    } else if was_already_declared {
+                        // `Set n to <value>.` on an already-declared `n`: a
+                        // reassignment wearing a declaration's syntax. Enforce
+                        // the lock exactly like `Statement::Assignment` does,
+                        // instead of leaving scalar_types untouched (which is
+                        // how this exact case used to silently retype, or
+                        // silently do nothing, depending on the value's shape).
                         self.check_type_lock(name, v);
                     }
                 }
@@ -817,6 +836,20 @@ impl Analyzer {
                 // type-checked at all, so capture it before the auto-declare
                 // below can change the answer.
                 let was_already_declared = self.is_variable_declared_anywhere(name);
+                // The same question asked of the walk. The two answers part
+                // company on one shape: a name that is in the whole-program
+                // set only because an untyped `Set` further down the file
+                // put it there. `collect_definite_decls` counts such a `Set`
+                // as a definite declaration, so this write - the statement
+                // that really does bring the name into being - looked like a
+                // reassignment of a name with no type, and neither recorded
+                // a type nor entered the name into this scope: the lock had
+                // nothing to check later writes against, and a read between
+                // the two was reported as used before its declaration
+                // (docs/BUGS_FOUND.md #95). Inside a function body the two
+                // always agree - the scope is seeded with `global_variables`
+                // there - so this changes nothing for #79's function case.
+                let brings_the_name_into_being = !self.is_variable_available(name);
                 // `elsewhere is origin.` on a name that holds a thing copies
                 // the whole thing into the storage it already has (plan 310
                 // §5); anything that is not a whole thing of that type is a
@@ -827,7 +860,7 @@ impl Analyzer {
                         return;
                     }
                 }
-                if !was_already_declared {
+                if brings_the_name_into_being {
                     if self.in_function_scope {
                         self.push_unknown_variable(name);
                     } else {
@@ -847,7 +880,7 @@ impl Analyzer {
 
                 self.analyze_expr(value);
 
-                if was_already_declared {
+                if !brings_the_name_into_being {
                     // Reassignment of an existing name: enforce the lock
                     // instead of relabelling scalar_types to match. On a
                     // mismatch, check_type_lock has already reported the
@@ -860,26 +893,7 @@ impl Analyzer {
                     // already reported "unknown variable") is a genuine
                     // declaration - infer and lock its type, exactly like an
                     // explicit `a <type> called name is <value>.` would.
-                    if !self.is_buffer_variable(name)
-                        && !self.is_list_variable(name)
-                        && !self.is_map_variable(name)
-                        && !self.file_variables.contains(name.as_str())
-                        && !self.timer_variables.contains(name.as_str())
-                    {
-                        match self.arithmetic_operand_type(value) {
-                            Some(t) => {
-                                self.scalar_types.insert(name.clone(), t);
-                            }
-                            None => {
-                                self.scalar_types.remove(name);
-                            }
-                        }
-                    }
-                    if !self.declared_locations.contains_key(name) {
-                        if let Some(loc) = self.find_declaration_location(name) {
-                            self.declared_locations.insert(name.clone(), loc);
-                        }
-                    }
+                    self.bind_untyped_declaration_type(name, value);
                 }
             }
 

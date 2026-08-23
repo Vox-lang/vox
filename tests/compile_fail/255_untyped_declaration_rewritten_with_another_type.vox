@@ -1,0 +1,9 @@
+(Bug #95, the headline repro. `Set zoo to 5.` declares `zoo` a number, so
+ the second write is the type-lock violation LANGUAGE.md's "Type
+ Immutability" promises to reject. It compiled clean and printed the
+ string's ADDRESS as a number: the name's type was never recorded, so the
+ lock had nothing to check the write against.)
+
+Set zoo to 5.
+Set zoo to "text now".
+Print zoo.

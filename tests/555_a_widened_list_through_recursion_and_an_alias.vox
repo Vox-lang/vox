@@ -1,0 +1,44 @@
+(Two shapes that make the call edge close on itself. A function that calls
+ ITSELF with the list it was handed, and two functions that call each other
+ with it, both have to settle rather than chase each other; the verdict for
+ a list parameter only ever climbs - no write, one proven type, then mixed -
+ so the pass runs out of moves. And a write through an ALIAS the callee took
+ of its parameter is a write into the caller's list: both names are the same
+ block. docs/BUGS_FOUND.md #97.)
+
+To 'countdown into' with a list called noted and a number called n.
+  If n is greater than 0 then,
+    append n to noted,
+    'countdown into' of noted and n subtract 1.
+
+To 'ping into' with a list called noted and a number called n.
+  If n is greater than 0 then,
+    append "ping" to noted,
+    'pong into' of noted and n subtract 1.
+
+To 'pong into' with a list called noted and a number called n.
+  If n is greater than 0 then,
+    append "pong" to noted,
+    'ping into' of noted and n subtract 1.
+
+To 'stash through an alias' with a list called noted and a text called label.
+  a list called kept is the noted.
+  append label to kept.
+
+(Straight recursion: every write is a number, and the caller had proven
+ nothing, so the reads go by tag and still come back as numbers.)
+a list called counted is [].
+'countdown into' of counted and 3.
+Print "counted: {counted}".
+Print "counted last: {counted's last}".
+
+(Mutual recursion: each function inherits what the other writes.)
+a list called sounded is [].
+'ping into' of sounded and 4.
+Print "sounded: {sounded}".
+Print "sounded last: {sounded's last}".
+
+(A write through an alias of the parameter.)
+a list called noted is [].
+'stash through an alias' of noted and "aliased".
+Print "noted last: {noted's last}".

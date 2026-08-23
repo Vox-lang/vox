@@ -1,0 +1,13 @@
+(BUGS_FOUND #96 - Josj verified, and the master confirmed in assembly
+ (vox-notes/ASM-ANALYSIS-96.md), that a double period closes the `If` and
+ the enclosing `For each` in the same step, byte-identical to the
+ blank-line form; the guard must key off "is a clause open", not off any
+ textual heuristic, so this still compiles and runs, once.)
+
+For each n from 1 to 3,
+    If n is 99 then, Break..
+To examine with a value called v.
+    Print "{v's type}".
+
+examine of "".
+Exit 0.

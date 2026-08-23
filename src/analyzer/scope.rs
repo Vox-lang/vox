@@ -257,17 +257,54 @@ impl Analyzer {
     /// for "where is this name used" but wrong here - a `Print "{src}"`
     /// anywhere in the file would outrank the actual `a text called src
     /// is ...` declaration, since interpolation is usually textually
-    /// earlier or just as likely to hit occurrence 0. Tries the `called
-    /// NAME` declaration syntax first (typed declarations, `Allocate`,
-    /// `FileOpen`, ...), then falls back to bare/loop-header forms that
-    /// have no `called` keyword at all (`NAME is <value>.`, `each NAME `).
+    /// earlier or just as likely to hit occurrence 0.
+    ///
+    /// Every spelling that can bring a name into being is searched, and the
+    /// EARLIEST of them in the file wins - `called NAME` (typed
+    /// declarations, `Allocate`, `FileOpen`, ...), the loop header `each
+    /// NAME`, and the three that name no type: `NAME is <value>.`, `the
+    /// NAME is <value>.` and `Set NAME to <value>.`. Pattern order cannot
+    /// decide it, because any of them may be the declaration and any of
+    /// them may be a later write: `Set zoo to 5.` above `the zoo is "x".`
+    /// declares on the first line, and the reverse order declares on the
+    /// other. The `Set`/`Create` spellings were missing here altogether, so
+    /// a name declared by `Set` had its declaration site reported as
+    /// whichever later line rewrote it - which put the type-lock error's
+    /// caret on the declaration and its "was declared at" note on the
+    /// offending write, backwards (docs/BUGS_FOUND.md #95).
+    ///
+    /// A hit in real code still beats one inside a text literal however
+    /// much earlier the literal sits, which is why the search runs as two
+    /// whole passes (code, then text) rather than one pass per pattern -
+    /// the same guarantee `find_pattern_location` gives a pattern group
+    /// (docs/BUGS_FOUND.md #46).
     pub(crate) fn find_declaration_location(&self, name: &str) -> Option<SourceLocation> {
-        let called_patterns = [format!("called {} is", name), format!("called {} ", name)];
-        self.find_pattern_location(name, &called_patterns, 0, None, false, false)
-            .or_else(|| {
-                let bare_patterns = [format!("{} is ", name), format!("each {} ", name)];
-                self.find_pattern_location(name, &bare_patterns, 0, None, false, false)
-            })
+        let patterns = [
+            format!("called {} is", name),
+            format!("called {} ", name),
+            format!("{} is ", name),
+            format!("each {} ", name),
+            format!("Set {} to ", name),
+            format!("Create {} to ", name),
+        ];
+        let earliest = |allow_text: bool| {
+            patterns
+                .iter()
+                .filter_map(|pattern| {
+                    self.scan_patterns(
+                        name,
+                        std::slice::from_ref(pattern),
+                        0,
+                        None,
+                        false,
+                        allow_text,
+                        false,
+                    )
+                })
+                .min_by_key(|loc| (loc.line, loc.column))
+        };
+        earliest(false)
+            .or_else(|| earliest(true))
             .or_else(|| self.find_symbol_location(name, 0))
     }
 

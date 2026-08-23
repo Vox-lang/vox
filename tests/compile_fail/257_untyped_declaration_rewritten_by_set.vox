@@ -1,0 +1,8 @@
+(Bug #95, the mirror of 256: `the ... is` declares and `Set` writes. One
+ untyped `Set` anywhere in the file used to switch the lock off for that
+ name in every spelling, so this program compiled and printed an address
+ even though the `the ... is` pair alone was correctly rejected.)
+
+the zoo is 5.
+Set zoo to "text now".
+Print zoo.

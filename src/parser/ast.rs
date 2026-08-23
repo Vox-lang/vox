@@ -760,12 +760,20 @@ pub enum DefiniteDeclKind {
 /// mirror labels) so the two can never disagree about which main-line
 /// declarations behave as globals.
 pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<String, DefiniteDeclKind> {
-    let mut out = std::collections::HashMap::new();
-    // A name whose recognised occurrences disagree on kind (e.g. `a text
+    collect_definite_decls_inner(stmts).kinds
+}
+
+/// One statement sequence's definite declarations, plus the two facts the
+/// merge of an if/otherwise chain needs in order to stay faithful: which
+/// names were poisoned, and which are held only by a write that named no
+/// type.
+struct DefiniteDecls {
+    kinds: std::collections::HashMap<String, DefiniteDeclKind>,
+    // A name whose recognised declarations disagree on kind (e.g. `a text
     // called src is "hello".` followed later by `open ... called src`,
-    // which this function would otherwise see as `Plain` then `File`) is
-    // poisoned: removed from `out` and never re-added, rather than letting
-    // whichever occurrence is scanned last silently win. That "last write
+    // which this walk would otherwise see as `Plain` then `File`) is
+    // poisoned: removed from `kinds` and never re-added, rather than letting
+    // whichever declaration is scanned last silently win. That "last write
     // wins" used to pre-register the *later* kind (into
     // buffer_variables/list_variables/map_variables/file_variables) before
     // the analyzer's own per-statement, declaration-order-respecting
@@ -774,67 +782,127 @@ pub fn collect_definite_decls(stmts: &[Statement]) -> std::collections::HashMap<
     // absent from the definite-decl map; the analyzer's linear walk still
     // sees and rejects the conflict when it reaches the second occurrence,
     // it just does so without this pre-pass having pre-judged the type.
-    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    poisoned: std::collections::HashSet<String>,
+    // Names in `kinds` that only ever arrived through a write naming no
+    // type. Such a write claims no kind, so a real declaration of the same
+    // name always overrides it and never collides with it.
+    untyped: std::collections::HashSet<String>,
+}
 
-    fn record(
-        out: &mut std::collections::HashMap<String, DefiniteDeclKind>,
-        poisoned: &mut std::collections::HashSet<String>,
-        name: &str,
-        kind: DefiniteDeclKind,
-    ) {
-        if poisoned.contains(name) {
+impl DefiniteDecls {
+    fn new() -> Self {
+        DefiniteDecls {
+            kinds: std::collections::HashMap::new(),
+            poisoned: std::collections::HashSet::new(),
+            untyped: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Record a declaration that names its type.
+    fn record(&mut self, name: &str, kind: DefiniteDeclKind) {
+        if self.poisoned.contains(name) {
             return;
         }
-        match out.get(name) {
+        match self.kinds.get(name) {
             Some(existing) if *existing != kind => {
-                out.remove(name);
-                poisoned.insert(name.to_string());
+                // A name an untyped write put here was never a claim about
+                // its kind, so the declaration simply takes it over. Two
+                // declarations that disagree are the real conflict.
+                if self.untyped.remove(name) {
+                    self.kinds.insert(name.to_string(), kind);
+                } else {
+                    self.kinds.remove(name);
+                    self.poisoned.insert(name.to_string());
+                }
             }
             _ => {
-                out.insert(name.to_string(), kind);
+                self.untyped.remove(name);
+                self.kinds.insert(name.to_string(), kind);
             }
         }
     }
 
+    /// Record a write that names no type - `Set xs to ["a"].` at top level.
+    /// `xs is <value>.`, `the xs is <value>.` and `Set xs to <value>.` are
+    /// three spellings of one write, checked the same way (LANGUAGE.md,
+    /// "Type Immutability"); the first two parse as an assignment and never
+    /// reach this walk, so the third must not be read as a competing
+    /// declaration either. Reading it as one used to collide with the
+    /// `List`/`Map`/`Buffer` the real declaration recorded and poison the
+    /// name, which stopped a global collection from being a global at all
+    /// (docs/BUGS_FOUND.md #92).
+    ///
+    /// It still registers a name nothing else declares, because `Set count
+    /// to 5.` on a fresh name brings `count` into being.
+    fn record_untyped_write(&mut self, name: &str) {
+        if self.poisoned.contains(name) || self.kinds.contains_key(name) {
+            return;
+        }
+        self.kinds.insert(name.to_string(), DefiniteDeclKind::Plain);
+        self.untyped.insert(name.to_string());
+    }
+
+    /// Keep only what this sequence and `other` both declare, under the same
+    /// kind - the intersection an if/otherwise chain's branches make. A name
+    /// stays untyped only while every branch left it untyped.
+    fn intersect_with(&mut self, other: &DefiniteDecls) {
+        self.kinds
+            .retain(|name, kind| other.kinds.get(name) == Some(kind));
+        let still_untyped: std::collections::HashSet<String> = self
+            .untyped
+            .iter()
+            .filter(|name| {
+                self.kinds.contains_key(name.as_str()) && other.untyped.contains(name.as_str())
+            })
+            .cloned()
+            .collect();
+        self.untyped = still_untyped;
+    }
+}
+
+fn collect_definite_decls_inner(stmts: &[Statement]) -> DefiniteDecls {
+    let mut decls = DefiniteDecls::new();
+
     for stmt in stmts {
         match stmt {
-            Statement::VarDecl { name, var_type, .. } => {
-                let kind = match var_type {
-                    Some(Type::Buffer) => DefiniteDeclKind::Buffer,
-                    Some(Type::List(_)) => DefiniteDeclKind::List,
-                    Some(Type::Map(_)) => DefiniteDeclKind::Map,
-                    _ => DefiniteDeclKind::Plain,
-                };
-                record(&mut out, &mut poisoned, name, kind);
-            }
+            Statement::VarDecl { name, var_type, .. } => match var_type {
+                Some(Type::Buffer) => decls.record(name, DefiniteDeclKind::Buffer),
+                Some(Type::List(_)) => decls.record(name, DefiniteDeclKind::List),
+                Some(Type::Map(_)) => decls.record(name, DefiniteDeclKind::Map),
+                Some(_) => decls.record(name, DefiniteDeclKind::Plain),
+                None => decls.record_untyped_write(name),
+            },
             Statement::BufferDecl { name, .. } => {
-                record(&mut out, &mut poisoned, name, DefiniteDeclKind::Buffer);
+                decls.record(name, DefiniteDeclKind::Buffer);
             }
             Statement::Allocate { name, .. } | Statement::TimerDecl { name } => {
-                record(&mut out, &mut poisoned, name, DefiniteDeclKind::Plain);
+                decls.record(name, DefiniteDeclKind::Plain);
             }
             Statement::FileOpen { name, .. } => {
-                record(&mut out, &mut poisoned, name, DefiniteDeclKind::File);
+                decls.record(name, DefiniteDeclKind::File);
             }
             Statement::GetTime { into } => {
-                record(&mut out, &mut poisoned, into, DefiniteDeclKind::Plain);
+                decls.record(into, DefiniteDeclKind::Plain);
             }
             Statement::If { then_block, else_if_blocks, else_block: Some(else_block), .. } => {
-                let mut definite = collect_definite_decls(then_block);
+                let mut definite = collect_definite_decls_inner(then_block);
                 for (_, block) in else_if_blocks {
-                    let branch = collect_definite_decls(block);
-                    definite.retain(|name, kind| branch.get(name) == Some(kind));
+                    definite.intersect_with(&collect_definite_decls_inner(block));
                 }
-                let branch = collect_definite_decls(else_block);
-                definite.retain(|name, kind| branch.get(name) == Some(kind));
-                for (name, kind) in definite {
-                    record(&mut out, &mut poisoned, &name, kind);
+                definite.intersect_with(&collect_definite_decls_inner(else_block));
+                for (name, kind) in &definite.kinds {
+                    if definite.untyped.contains(name) {
+                        decls.record_untyped_write(name);
+                    } else {
+                        decls.record(name, *kind);
+                    }
                 }
             }
             _ => {}
         }
     }
-    out
+
+    decls
 }
 
 /// Every typed declaration reachable in this statement sequence, at ANY

@@ -1,0 +1,3 @@
+'zzz' is not a format specifier Vox knows
+254_unrecognised_format_specifier_zzz.vox:6:11
+help: the specifiers are a width (`N`), a zero-padded width (`0N`), a decimal precision (`.N`), and a whole number's base - `x` (hexadecimal), `X` (hexadecimal, uppercase), `b` (binary) or `o` (octal), which a width can precede (`04x`). Drop the specifier to render the value plainly.

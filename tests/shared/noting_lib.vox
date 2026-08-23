@@ -1,0 +1,37 @@
+(docs/BUGS_FOUND.md #97, the shared-library half. A `.lib` is a signature,
+not a body: nothing on the consumer's side can prove what an imported
+function writes into a list it is handed, so a list passed to an imported
+function is widened conservatively and every read of it dispatches on the
+slot's own runtime tag - which `_list_append` stores whichever side of the
+boundary the append was written on. That costs the homogeneous fast path
+across an import and is right whatever the library does.
+
+The `.lib` cannot answer the question instead. It records an element type,
+not a write record, and the three functions here are why:
+
+  'note whatever'    appends a text          -> renders `list of text`
+  'report the size'  only reads the length   -> renders bare `list`
+  'stash a local'    appends a text it took
+                     out of its own list     -> renders bare `list`
+
+'stash a local' widens the caller's list and says nothing about it, so a
+consumer that trusted the `.lib` would leave that list on the fast path and
+print the appended text's address. And 'note whatever' promises `list of
+text` to every caller, including one whose list holds numbers - a consumer
+that trusted it would read an integer as a text pointer and segfault. The
+conservative widening is the answer to both.
+
+Built with `vox noting_lib.vox --shared -o libnoting.so`, which writes
+`noting.lib` beside it; the consumer `see`s the `.lib`.)
+
+Library noting version "1.0".
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+To 'report the size' with a list called noted.
+  Print "size: {noted's length}".
+
+To 'stash a local' with a list called noted.
+  a list called borrowed is ["borrowed"].
+  append element 1 of borrowed to noted.

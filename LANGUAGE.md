@@ -53,7 +53,7 @@ Keywords are **case-insensitive**. These are equivalent:
 
 ### Comments
 
-Comments use **parentheses** `( )` — just like parenthetical remarks in natural language writing.
+Comments use **parentheses** `( )`, just like parenthetical remarks in natural language writing.
 
 ```
 (This is a comment)
@@ -78,7 +78,7 @@ Comments can appear:
 
 ### Paragraph Breaks (Blank Lines)
 
-Blank lines (paragraph breaks) organize code into logical sections. They are optional and have no effect on program execution *between two fully-terminated top-level constructs* — for example, between two function definitions or between two complete statements at the top level.
+Blank lines (paragraph breaks) organize code into logical sections. They are optional and have no effect on program execution *between two fully-terminated top-level constructs*, for example, between two function definitions or between two complete statements at the top level.
 
 Inside an open clause they are **not** cosmetic: a blank line force-closes every clause that is still open, including an enclosing function definition. Use a blank line to end a construct deliberately (after a `while`, `for each`, `repeat`, `on error`, or nested `if` body), not to add visual spacing in the middle of a body.
 
@@ -88,7 +88,7 @@ print "Section 1".
 print "Section 2".
 ```
 
-**Note:** A function definition is closed by a **blank line (paragraph break)** — this is *required*, not a style convention. A period closes only the innermost open clause (rule 1 below), so the period ending a body statement does **not** close the function. Without a blank line after the body, every statement following the signature is absorbed into the function body; since the function is typically not called from within itself, the program then silently does nothing (exit 0, no output). A following `To` or `Library` does begin a new top-level construct and so ends the body, but any other statement is absorbed. The compiler warns when a function definition is still open at end of file. See [The termination rule](#the-termination-rule) below.
+**Note:** A function definition is closed by a **blank line (paragraph break)**: this is *required*, not a style convention. A period closes only the innermost open clause (rule 1 below), so the period ending a body statement does **not** close the function. Without a blank line after the body, every statement following the signature is absorbed into the function body; since the function is typically not called from within itself, the program then silently does nothing (exit 0, no output). A `To` or `Library` is only ever legal at the top level (see [Definition](#definition)), so one reached ahead of this body's blank line closes it rather than being absorbed like any other statement; reached while some other clause is still open, it is a compile error instead. The compiler warns when a function definition is still open at end of file. See [The termination rule](#the-termination-rule) below.
 
 ### Sentence Consumption
 
@@ -135,8 +135,8 @@ In the example above, the period after the inner `if` closes only that `if`. The
 
 Two rules govern where a construct's body ends, and together they explain everything above precisely:
 
-1. **A period closes the most recently opened clause** — the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`. One period closes one level; to close more than one, write more than one — see [Closing more than one level](#closing-more-than-one-level).
-2. **A blank line (paragraph break) force-closes every open clause at once** — including an enclosing function definition. Think of nested HTML `<div>`s: a paragraph boundary closes all of them together, the same way you would never continue a single sentence across a paragraph break in English.
+1. **A period closes the most recently opened clause**: the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`. One period closes one level; to close more than one, write more than one; see [Closing more than one level](#closing-more-than-one-level).
+2. **A blank line (paragraph break) force-closes every open clause at once**: including an enclosing function definition. Think of nested HTML `<div>`s: a paragraph boundary closes all of them together, the same way you would never continue a single sentence across a paragraph break in English.
 
 ```
 (A blank line closes everything still open, not just the nearest thing)
@@ -148,11 +148,11 @@ While retries is less than 3,
 Print "done".
 ```
 
-This prints `retrying` once (when `retries` is 1) then `done` once, after the loop runs its full three iterations — the blank line closes the `while` (rule 2) even though the `if`'s own period already closed the `if` (rule 1); there is nothing special about the `if` being the loop's last action, the blank line would close the loop the same way after any kind of action.
+This prints `retrying` once (when `retries` is 1) then `done` once, after the loop runs its full three iterations: the blank line closes the `while` (rule 2) even though the `if`'s own period already closed the `if` (rule 1); there is nothing special about the `if` being the loop's last action, the blank line would close the loop the same way after any kind of action.
 
-**This applies uniformly** — `while`, `for each`, `repeat`, and `on error` all terminate their body on a blank line, regardless of what the last body statement was (an ordinary statement, an `if`/`on error`, or another nested loop).
+**This applies uniformly**: `while`, `for each`, `repeat`, and `on error` all terminate their body on a blank line, regardless of what the last body statement was (an ordinary statement, an `if`/`on error`, or another nested loop).
 
-**Caution:** because rule 1 means a nested construct's own period doesn't close its parent, a blank line placed purely for visual readability *inside* a loop body — after a nested `if` or a nested loop, before more of the same loop's actions — will close that loop early, not just add whitespace:
+**Caution:** because rule 1 means a nested construct's own period doesn't close its parent, a blank line placed purely for visual readability *inside* a loop body (after a nested `if` or a nested loop, before more of the same loop's actions) will close that loop early, not just add whitespace:
 
 ```
 (This blank line is NOT cosmetic - it ends the outer while)
@@ -165,7 +165,7 @@ While round is less than 2,
     print "batch done".
 ```
 
-This prints `1 2 1 2 batch done` — not `1 2 batch done 1 2 batch done` as the indentation suggests. `print "batch done".` runs once, after the loop, not once per batch, because the blank line closed the `while` right after the nested `for each` closed itself.
+This prints `1 2 1 2 batch done`, not `1 2 batch done 1 2 batch done` as the indentation suggests. `print "batch done".` runs once, after the loop, not once per batch, because the blank line closed the `while` right after the nested `for each` closed itself.
 
 **This can hang your program with no error message, if the ejected statement happens to be the loop's own increment:**
 
@@ -180,9 +180,9 @@ While counter is less than or equal to 2,
 Print "end".
 ```
 
-`increment counter.` is ejected from the `while` body by the same blank line, so `counter` never changes and the loop never becomes false — it hangs forever, printing `inner 1` / `inner 2` on repeat, and `Print "end".` never runs. There is no error, no warning, and nothing in the output points at the blank line as the cause. If a loop that should terminate hangs instead, check for a blank line inside its body first.
+`increment counter.` is ejected from the `while` body by the same blank line, so `counter` never changes and the loop never becomes false: it hangs forever, printing `inner 1` / `inner 2` on repeat, and `Print "end".` never runs. There is no error, no warning, and nothing in the output points at the blank line as the cause. If a loop that should terminate hangs instead, check for a blank line inside its body first.
 
-A blank line placed **after a comma** (mid-sentence, more actions still to come) is the one exception — it is still just visual spacing there, since the sentence is explicitly still open:
+A blank line placed **after a comma** (mid-sentence, more actions still to come) is the one exception; it is still just visual spacing there, since the sentence is explicitly still open:
 
 ```
 (Safe: this blank line follows a comma, so it stays cosmetic)
@@ -205,9 +205,22 @@ If n is equal to 1 then,
 print "back at the top".
 ```
 
-This prints `back at the top`. The three periods close the innermost `if`, then the middle one, then the outer one, so `print "back at the top".` runs at the top level. Written with one period or two, it would still be inside an `if` whose condition is false, and would print nothing at all — with no error.
+This prints `back at the top`. The three periods close the innermost `if`, then the middle one, then the outer one, so `print "back at the top".` runs at the top level. Written with one period or two, it would still be inside an `if` whose condition is false, and would print nothing at all, with no error.
 
 Indentation is **not** what decides this. Vox ignores leading whitespace entirely, so a program can be minified without changing its meaning; the period count is the only thing that closes a clause.
+
+The stacked constructs need not be the same kind. Here two periods close the `if` and the enclosing `For each` together, so the `To` that follows is read at the top level rather than as a nested statement of the loop:
+
+```
+For each n from 1 to 3,
+    If n is 99 then, Break..
+To examine with a value called v.
+    Print "{v's type}".
+
+examine of "".
+```
+
+This prints `Text (dynamic)` once. Written with a single period, the `For each` would still be open when `To` is reached, which is a compile error (see [Definition](#definition)).
 
 #### This is how you choose which `if` an `Otherwise` belongs to
 
@@ -225,7 +238,7 @@ If m is equal to 1 then,
 Print "done".
 ```
 
-prints only `done`. The `Otherwise` continued the inner `if`, so the whole construct sits inside `If m is equal to 1`, which is false — nothing in it runs.
+prints only `done`. The `Otherwise` continued the inner `if`, so the whole construct sits inside `If m is equal to 1`, which is false: nothing in it runs.
 
 ```
 (TWO periods: the inner if is closed, so the Otherwise belongs to the OUTER one)
@@ -239,7 +252,7 @@ If m is equal to 1 then,
 Print "done".
 ```
 
-prints `outer else` then `done`, which is what the indentation in both versions suggests — but only the second one actually says it.
+prints `outer else` then `done`, which is what the indentation in both versions suggests, but only the second one actually says it.
 
 An empty `Otherwise,.` closes an inner chain the same way and is easier to read than a run of periods, since it names the thing being closed instead of asking you to count:
 
@@ -258,7 +271,7 @@ Print "done".
 
 This also prints `outer else` then `done`. The first `Otherwise,.` takes the inner `if`'s else branch and does nothing with it, which closes that chain; the second one is then free to continue the outer `if`.
 
-**Get the count wrong and nothing tells you.** Too few periods and the following statements are absorbed into a clause you thought you had left; too many and they escape one you meant to stay in. Either way the program still compiles and still runs. If a branch never seems to execute, or a loop that should finish hangs instead, count the periods between it and the construct it belongs to — and remember the hanging case is the same one described above under rule 2: the absorbed statement is the loop's own increment.
+**Get the count wrong and nothing tells you.** Too few periods and the following statements are absorbed into a clause you thought you had left; too many and they escape one you meant to stay in. Either way the program still compiles and still runs. If a branch never seems to execute, or a loop that should finish hangs instead, count the periods between it and the construct it belongs to, and remember the hanging case is the same one described above under rule 2: the absorbed statement is the loop's own increment.
 
 ### Ranges
 
@@ -319,11 +332,11 @@ The action executes once per item in the collection or range, with the loop vari
 - **Lists:** `[1, 2, 3]`, any list variable
 - `arguments's all` - all command-line arguments (argv[1..])
 
-#### Chained `each` clauses — a grid
+#### Chained `each` clauses: a grid
 
 More than one `each <variable> from <collection>` clause may appear in a single
 sentence, joined by `and`. The action then runs once per element of the
-**Cartesian product** of the collections, in **row-major order** — the
+**Cartesian product** of the collections, in **row-major order**: the
 leftmost clause is the outermost loop, exactly as if the clauses were nested
 `For each` loops written left to right:
 
@@ -331,7 +344,7 @@ leftmost clause is the outermost loop, exactly as if the clauses were nested
 'pair' of each x from [1, 2] and each y from [10, 20].
 ```
 
-runs `'pair'` four times — `(1,10), (1,20), (2,10), (2,20)` — identical to:
+runs `'pair'` four times: `(1,10), (1,20), (2,10), (2,20)`, identical to:
 
 ```
 For each x from [1, 2],
@@ -354,7 +367,7 @@ triangle iteration:
 'pair' of each row from [1, 2, 3] and each col from 1 to row.
 ```
 
-A range bound in an `each` clause takes a primary, not an expression —
+A range bound in an `each` clause takes a primary, not an expression:
 `each col from row add 1 to 4` is a parse error. Brace an arithmetic bound:
 `each col from {row add 1} to 4`.
 
@@ -431,7 +444,7 @@ append each name from names treating "" as "Anonymous" to cleaned.
 If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration.
 
 Equality is by type as well as by value: a `<match>` whose type differs from
-the element's never fires, and that element comes through unchanged — and
+the element's never fires, and that element comes through unchanged, and
 where the compiler can prove the mismatch, it says so at compile time
 instead. Where the element, the `<match>` or the `<replacement>` is a
 `value`, the runtime tag it carries is what the comparison reads, and a
@@ -453,7 +466,7 @@ substitution that fires hands the `<replacement>`'s own type out with it.
 | File | `file` | File descriptor handle (auto-cleaned) |
 | Time | `time` | Date/time value (unix timestamp with components) |
 | Timer | `timer` | Stopwatch for measuring durations |
-| Thing | `thing` *(contextual)* | User-defined composite value type — see [Things](#things) |
+| Thing | `thing` *(contextual)* | User-defined composite value type: see [Things](#things) |
 
 ---
 
@@ -483,10 +496,13 @@ Create a text called greeting to "Hello".
 Every declarable type supports two equivalent forms, both routed through
 the same type resolver:
 
-- **`A TYPE called NAME is VALUE.`** — declares `NAME` and initializes it
+- **`A TYPE called NAME is VALUE.`**: declares `NAME` and initializes it
   to `VALUE` immediately. `Set`/`Create` with `to <value>` (above) is the
-  same form with a different lead-in word.
-- **`Create a TYPE called NAME.`** — declares `NAME` with no initializer
+  same form with a different lead-in word. On a name that does not exist
+  yet the type noun is optional: `NAME is VALUE.`, `the NAME is VALUE.` and
+  `Set NAME to VALUE.` each bring `NAME` into being with `VALUE`'s type,
+  and it is fixed from then on like any other declaration's.
+- **`Create a TYPE called NAME.`**: declares `NAME` with no initializer
   and gets that type's default (zero) value:
 
   ```
@@ -495,7 +511,7 @@ the same type resolver:
   Create a boolean called b.      (b is false / 0)
   Create a list called items.     (items is [])
   Create a map called m.          (m is {})
-  Create a buffer called buf.     (buf is empty, 0 bytes, dynamic capacity)
+  Create a buffer called buf.     (buf starts with 4096 bytes of capacity, size 0)
   Create a value called v.        (v is nothing)
   Create a timer called t.        (t is ready to Start)
   ```
@@ -511,8 +527,8 @@ the same type resolver:
   | `buffer` | empty (0 bytes) |
   | `value` | `nothing` |
   | `timer` | ready to `Start` |
-  | `file` | **not supported** — see below |
-  | `time` | **not supported** — see below |
+  | `file` | **not supported**: see below |
+  | `time` | **not supported**: see below |
 
   **`file` and `time` require an initializer.** A default file or time
   value would be meaningless (no path to open, no timestamp to hold), so
@@ -545,7 +561,7 @@ a text called label is "hello".
 
 A function body is the exception, and for the same reason: a function runs
 when it is **called**, not where it is written, so a body may name a global
-declared further down the file — see [Function Scope](#function-scope).
+declared further down the file; see [Function Scope](#function-scope).
 
 ### Assignment (Existing Variable)
 
@@ -558,10 +574,10 @@ the counter is the counter add 1.
 
 ### Type Immutability
 
-**A variable's type is fixed at its declaration and never changes** —
+**A variable's type is fixed at its declaration and never changes**:
 `value` is the one deliberate exception, covered below. Every form that
-writes to an already-declared name — `x is <value>.`, `the x is <value>.`,
-and `Set x to <value>.` — is checked the same way: if the new value's type
+writes to an already-declared name (`x is <value>.`, `the x is <value>.`,
+and `Set x to <value>.`) is checked the same way: if the new value's type
 doesn't match the type `x` was declared with, that's a compile error, not a
 silent retype.
 
@@ -587,7 +603,7 @@ error: cannot assign text to 'n', which is a number
 ```
 
 Convert explicitly with [Type Casting](#type-casting) (`as a number` / `as
-text` / ...) — the same mechanism used everywhere else in the language, not
+text` / ...): the same mechanism used everywhere else in the language, not
 new syntax for this rule.
 
 This isn't limited to reassignment. Any construct that binds a name to a new
@@ -608,17 +624,17 @@ If 1 is equal to 2,
 **Two exemptions, both deliberate:**
 
 - **Buffers.** Writing into a buffer (`b is 42.`, `Set b to "text".`) copies
-  the value's text representation into the buffer's content — a format
-  operation, not a type change — so a buffer accepts any value type on every
+  the value's text representation into the buffer's content (a format
+  operation, not a type change), so a buffer accepts any value type on every
   write.
 - **`value`.** A variable declared `a value called x` is the language's
   sanctioned dynamic type and keeps accepting any type across reassignment,
   exactly as documented in [Dynamic Values (`value`)](#dynamic-values-value)
-  below — that section's behavior is unchanged by this rule, not an
+  below; that section's behavior is unchanged by this rule, not an
   exception carved out of it. This also covers the in-place retype
   statement `<valuevar> is a <type>.` (e.g. `numstr is a number.`), which
   reads the variable's runtime tag, converts the value, and updates the
-  tag in place — see "A `value` can be retyped in place" below. The same
+  tag in place; see "A `value` can be retyped in place" below. The same
   statement applied to a *statically*-typed variable (`n is a text.` where
   `n` is a `number`) is still rejected by this rule exactly like any other
   mismatched assignment; only a `value`-declared name can be retyped.
@@ -626,15 +642,15 @@ If 1 is equal to 2,
 **What this doesn't catch.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
 list/map whose element type is provably uniform, a `'s <property>` read
-whose property has the same type whatever it is read from — every property
+whose property has the same type whatever it is read from; every property
 in the tables under [Object Properties](#object-properties) except
 `first`, `last`, `absolute`, `duration` and `elapsed`, whose type follows
-the thing they are read from — ...). A value coming from a function call,
+the thing they are read from; ...). A value coming from a function call,
 an unprovable list/map read (a map literal with mixed value types, for
 instance), or anything else the compiler can't classify at compile time is
-allowed through unchecked. This closes a large, concrete class of bugs — a
+allowed through unchecked. This closes a large, concrete class of bugs (a
 variable's compiler-tracked type disagreeing with what it actually holds at
-runtime — not every possible source of type confusion, and it says nothing
+runtime), not every possible source of type confusion, and it says nothing
 about type agreement across a `.lib` import boundary (a library's declared
 signature is currently trusted, not verified against its `.so`).
 
@@ -652,11 +668,11 @@ no context-sensitivity:
 1. **`"..."` is never an identifier**, in any position. Where an identifier is
    expected and a string literal is found, that is a compile error.
 2. A **bare identifier** matches `[A-Za-z_][A-Za-z0-9_]*` and is not a reserved
-   keyword. Reserved keywords remain rejected as names — so a flag named
+   keyword. Reserved keywords remain rejected as names, so a flag named
    `number` or `version` must be written `'number'` / `'version'`.
 3. A **quoted identifier** is `'` … `'` containing **two or more characters**
    and no newline. Exactly one character between single quotes remains a
-   **character literal** (`'A'`) — that is why single-character quoted
+   **character literal** (`'A'`): that is why single-character quoted
    identifiers do not exist. Write `x`, not `'x'`.
 4. Single-word quoted identifiers (`'total'`) are legal but non-canonical; they
    lex identically to the bare form. Prefer bare.
@@ -682,10 +698,10 @@ a name is a bare or single-quoted identifier:
 a number called "x" is "get five".
 ```
 
-That is a compile error — `is "get five"` rejects the string in identifier
+That is a compile error: `is "get five"` rejects the string in identifier
 position and points you at `'get five'`. Were it accepted, `"get five"` in
-expression position would read as a string literal — a pointer to the
-function's code — and `x` would quietly receive that pointer as a number: a
+expression position would read as a string literal (a pointer to the
+function's code), and `x` would quietly receive that pointer as a number: a
 wrong answer that looks like data, with no error and no warning.
 
 ---
@@ -722,14 +738,28 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 - Multiple parameters joined with `and`
 - Return type follows `Return a <type>,`
 
+**Definitions are top-level only.** A function is defined where a `thing` is defined: at the top level. A `To` reached while an `If`, a loop, or another function's body is still open is a compile error, and the message says to move it above the block:
+
+```
+For each n from 1 to 3,
+    If n is 99 then, Break.
+To examine with a value called v.
+    Print "{v's type}".
+(compile error: A function is defined at the top level, like a thing
+   Canonical form: To <function name> with <parameters>. Return a <type>, <expression>.
+   Move the definition above the block it is written in)
+```
+
+A period stacks with the one that closes the `if` to close the `For each` too, in the same step: `Break..` compiles and runs exactly like a blank line ahead of the `To` would, once per program (see [Closing more than one level](#closing-more-than-one-level)). A `Library` declaration is top-level only for the same reason and gets the same compile error.
+
 ### Function Scope
 
-- Variables declared at top level are global and can be used inside functions —
+- Variables declared at top level are global and can be used inside functions:
   including inside a function written **above** the declaration, because the
   body runs when it is called, and it reads the global as its declared type
   either way. A function that runs *before* the declaration has been reached
-  reads the type's empty value — `""`, `[]`, `{}`, an empty buffer, `0`, `0.0`,
-  `false` — never the value the declaration will go on to store. Top-level code
+  reads the type's empty value: `""`, `[]`, `{}`, an empty buffer, `0`, `0.0`,
+  `false`, never the value the declaration will go on to store. Top-level code
   has no such licence: see [Declaration Order](#declaration-order).
 - Variables declared inside a function are local to that function and are not available at top level.
 - Referencing an unknown variable inside a function is a compile-time error.
@@ -747,11 +777,11 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 
 ### Parameter and Local Types
 
-Parameters may use any of the 11 expressible types — `number`, `float`,
-`text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`, `value`
-— and a typed parameter supports the same properties and operations as a
+Parameters may use any of the 11 expressible types: `number`, `float`,
+`text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`, `value`,
+and a typed parameter supports the same properties and operations as a
 top-level variable of that type. The same 11 types are also legal as a
-declared `Return a <type>,` return type — parameters and returns
+declared `Return a <type>,` return type: parameters and returns
 share one vocabulary, not two. A parameter (or return type) may also be
 `value`, the dynamic type whose runtime tag travels with its payload across
 the call (a map rides this as payload + tag 5); see
@@ -778,7 +808,7 @@ Key points:
   the current capacity moves the block, and the caller's variable follows
   it there. Declaring a buffer of the same name inside the function names
   a different buffer from that point on and leaves the caller's alone;
-  `Set <parameter> to ...` is not a rebinding — on a buffer it copies
+  `Set <parameter> to ...` is not a rebinding: on a buffer it copies
   bytes into the buffer the parameter already names, so the caller sees
   the new bytes.
 - Buffers declared **inside** a function body work with every
@@ -848,7 +878,7 @@ Print 'add numbers' of x and y.
 `Return a <type>,` is optional in the grammar, but it decides where the
 result may be read. A declared return type travels to every call site, so
 the result can be printed, interpolated, stored in a list or map slot, or
-put in a `value` — each of those reads it back as what it is.
+put in a `value`: each of those reads it back as what it is.
 
 A result with **no** declared return type has nothing to be read as, and
 the compiler will not guess: it is accepted only where the position itself
@@ -857,7 +887,7 @@ supplies the type, and refused where nothing does.
 ```vox fragment
 To 'opaque label'. Return "hi".
 
-a text called saved is 'opaque label'.   (fine — the declaration says text)
+a text called saved is 'opaque label'.   (fine: the declaration says text)
 print saved.                             (prints: hi)
 
 print 'opaque label'.                    (compile error: no declared return type)
@@ -865,25 +895,25 @@ print 'opaque label'.                    (compile error: no declared return type
 
 Positions that supply a type: a declared variable's declaration, a later
 assignment to one, and an argument landing on a declared parameter. Every
-other position — `print <call>`, a `{...}` interpolation, `append`, a list
-literal slot, `set element`, a map value, a `value` declaration — needs the
+other position (`print <call>`, a `{...}` interpolation, `append`, a list
+literal slot, `set element`, a map value, a `value` declaration) needs the
 return type declared. See [Mixed-Type Lists](#mixed-type-lists).
 
 ---
 
 ## Things
 
-Vox's eleven builtin types are the compiler's own composite values — a
+Vox's eleven builtin types are the compiler's own composite values: a
 buffer is `[capacity][length][flags][data]` with `'s` reading a field at a
 fixed offset. A **thing** opens that same mechanism to the program: a
 user-defined composite value type, built from named fields, with every
 offset fixed at compile time. No vtables, no dispatch, no runtime
-component — a thing is a layout, copied, printed, and compared by the
+component: a thing is a layout, copied, printed, and compared by the
 compiler the way a buffer is.
 
 A thing is defined once, at the top level, and its name then works
 everywhere a builtin type keyword works: in declarations, parameters, and
-return types. A definition declares a type — it allocates nothing and
+return types. A definition declares a type: it allocates nothing and
 emits no code, so the only output around it comes from the ordinary
 statements.
 
@@ -905,13 +935,13 @@ Print "defined".
 The keyword is **`thing`**, and the verb is **`has`**. A definition has two
 kinds of entry:
 
-- a **data field** — `a <type> called <name>`, with an optional `is
+- a **data field**: `a <type> called <name>`, with an optional `is
   <literal>` default;
-- a **function member** — `a function called <name>`, the manifest (see
+- a **function member**: `a function called <name>`, the manifest (see
   [The manifest](#the-manifest) below).
 
 A field without a default takes its type's zero value. `thing` is a
-keyword only inside this construct — everywhere else it is an ordinary
+keyword only inside this construct: everywhere else it is an ordinary
 identifier, exactly like `send`, so a variable may be called `thing`:
 
 ```
@@ -936,7 +966,7 @@ Print viewport's width.
 ```
 
 **Field types in v1.** A field may be `number`, `float`, `boolean`,
-`time`, or any **previously defined** thing (things nest to any depth —
+`time`, or any **previously defined** thing (things nest to any depth;
 see [Nesting](#nesting)). `text`, `list`, `map`, and `buffer` fields are
 deferred: they carry references and would reopen the aliasing question
 value copy semantics (below) is designed to avoid.
@@ -947,12 +977,12 @@ value copy semantics (below) is designed to avoid.
 pairs with **known identifiers**. The rule is load-bearing in the surface
 syntax, so it is worth naming once:
 
-- `A thing called point has ...` — a *type* comes into being, so `A`.
-- `a point called origin.` — a value of that type comes into being, so `a`.
+- `A thing called point has ...`: a *type* comes into being, so `A`.
+- `a point called origin.`: a value of that type comes into being, so `a`.
 - `the point's 'placed at'` in a member definition
-  (`To do the point's 'placed at'`) — `point` is a known identifier (the
+  (`To do the point's 'placed at'`): `point` is a known identifier (the
   type, declared in the manifest), so `the`.
-- `a point's 'placed at' with 1 and 0` — a *new point* comes into being
+- `a point's 'placed at' with 1 and 0`: a *new point* comes into being
   from the maker, so `a`.
 
 The same word, two articles, two meanings: `the point's` reads a known
@@ -981,7 +1011,7 @@ If origin's x is greater than 3 then,
 ```
 
 A field is an ordinary expression and an ordinary lvalue everywhere
-either is allowed — read, `Set ... to`, bare assignment, increment,
+either is allowed: read, `Set ... to`, bare assignment, increment,
 decrement, format-string interpolation, and a comparison in a condition
 all appear above. `Create` declares with defaults too, and a quoted
 variable name is read and written through the same possessive:
@@ -1034,7 +1064,7 @@ To 'plot a point'.
 
 A field may be a thing, so things nest to any depth. A nested thing
 contributes its own bytes inline, so a chained possessive is one sum of
-compile-time offsets — never a pointer chase — and the route's own
+compile-time offsets (never a pointer chase) and the route's own
 `'route number'` sits after the whole nested segment:
 
 ```
@@ -1078,7 +1108,7 @@ Print invitation's posted's 'cost in pence'.
 Print invitation's 'weight in grams'.
 ```
 
-A thing containing itself — directly, or through other things — has no
+A thing containing itself (directly, or through other things) has no
 finite size, so the definition that closes the cycle is a compile error
 naming the chain:
 
@@ -1100,7 +1130,7 @@ and it stands as defence-in-depth alongside the within-file ordering rule.
 ### Value copy semantics
 
 A thing is a value. Assignment copies the whole thing, and the copy
-shares nothing with the original — a thing's size is a compile-time
+shares nothing with the original: a thing's size is a compile-time
 constant, so a copy is a run of inline moves, no allocation and no
 pointer left aliased:
 
@@ -1117,8 +1147,8 @@ Print origin's x.
 Print moved's x.
 ```
 
-The three spellings of assignment — a declaration with an initialiser, a
-bare `is`, and `Set ... to` — are all assignment, so all three copy. A
+The three spellings of assignment (a declaration with an initialiser, a
+bare `is`, and `Set ... to`) are all assignment, so all three copy. A
 copy is deep by construction: a nested thing is just more bytes, so
 copying a letter carries its point along and neither half is shared:
 
@@ -1235,7 +1265,7 @@ Print nudged of before.
    What a call returns is copied into a point)
 ```
 
-The workaround is the inference form above — declare a scratch slot from
+The workaround is the inference form above: declare a scratch slot from
 the call, then print it:
 
 ```
@@ -1258,7 +1288,7 @@ Print after.
 things they hold, map-style. Every field name is baked into the emitted
 program, so nothing is read from a descriptor and nothing is allocated.
 A quoted field name prints in the quotes it is written with, and a
-function member takes no part — it is the type's API, not its state:
+function member takes no part; it is the type's API, not its state:
 
 ```
 A thing called point has
@@ -1299,8 +1329,8 @@ Print corner.
 
 A whole thing interpolates into a format string under `Print` (`Print "the
 span runs {span}".`), because `Print` is the sink that renders the fields.
-A text initializer is a different sink — it builds its bytes in a buffer
-— and interpolating a whole thing there is rejected, naming the field to
+A text initializer is a different sink (it builds its bytes in a buffer),
+and interpolating a whole thing there is rejected, naming the field to
 interpolate instead:
 
 ```
@@ -1344,8 +1374,8 @@ If origin is not marker then,
 ```
 
 Two things of *different* types cannot be compared (`origin is span` is
-rejected — only two of the same thing have the same fields), and there is
-no ordering on a whole thing — `origin is greater than marker` is
+rejected: only two of the same thing have the same fields), and there is
+no ordering on a whole thing: `origin is greater than marker` is
 rejected, naming the field to compare instead:
 
 ```
@@ -1367,8 +1397,8 @@ If origin is greater than marker then,
 A thing's callable API is declared in one place, the **manifest**: each
 `a function called <name>` entry names a member. The member is then
 defined with **`To do the <type>'s <name>`**, and `do` is a keyword only
-in that position — everywhere else it is an ordinary identifier. The
-member definition uses `the point's` (a known identifier) — the
+in that position: everywhere else it is an ordinary identifier. The
+member definition uses `the point's` (a known identifier): the
 [article rule](#the-article-rule):
 
 ```
@@ -1395,7 +1425,7 @@ Function members take no storage, so layout, copy, printing, and equality
 see only the data fields.
 
 **Every declared member returns its owner.** That is what gives the
-manifest a crisp meaning — it lists the functions that *produce or
+manifest a crisp meaning: it lists the functions that *produce or
 transform* the thing. A definition whose `Return` is not `Return a point,`
 is a compile error naming both lines:
 
@@ -1419,7 +1449,7 @@ To do the point's 'placed at', with a number called x.
 A function computing some other type from a point (like `'magnitude
 squared'`) is an ordinary global function, reached by the instance
 possessive, with no manifest entry at all. The owner-return check reads
-the body's `Return` lines, not the signature — so a member whose only
+the body's `Return` lines, not the signature, so a member whose only
 `Return` sits inside an `If` is not wrongly rejected.
 
 The manifest is checked both ways. A `To do` naming a member the
@@ -1460,7 +1490,7 @@ errors at the second definition, naming the first.
 
 Three ways to call, one rule each.
 
-**Free call** — the function's own name, unchanged, in the global
+**Free call**: the function's own name, unchanged, in the global
 namespace. `of`, `to`, `with`, and `on` all introduce arguments:
 
 ```
@@ -1479,7 +1509,7 @@ Set origin's y to 4.
 Print 'magnitude squared' of origin.
 ```
 
-**Instance possessive** — `receiver's 'member'`: sugar for `'member' of
+**Instance possessive** (`receiver's 'member'`): sugar for `'member' of
 receiver`. The receiver fills the function's *first parameter*; any
 further arguments follow the call preposition. A field always wins over
 a function of the same name, because the [collision rule](#one-identifier-space)
@@ -1519,9 +1549,9 @@ Set 'the line''s end's y to 12.
 Print 'the line''s end's 'magnitude squared'.
 ```
 
-**Type possessive** — `a <type>'s 'member'`: calls a member *declared in
+**Type possessive** (`a <type>'s 'member'`): calls a member *declared in
 the manifest*. The article is `a` because a new thing comes into being.
-This is the only way to call a **maker** — a member whose first parameter
+This is the only way to call a **maker**: a member whose first parameter
 is not the thing:
 
 ```
@@ -1542,7 +1572,7 @@ Print pin's x.
 
 A maker cannot be reached by the instance possessive (a receiver has
 nothing to fill), and the message says so rather than reporting the
-member as missing — the manifest does declare it:
+member as missing; the manifest does declare it:
 
 ```
 A thing called point has
@@ -1631,7 +1661,7 @@ defines a function called `do`, and `do.` calls it.
 Type names, variable names, and function names share a single global
 identifier namespace. This is what makes `the point's` unambiguous: there
 is only one `point`. Reusing a name is first-come-first-served, and the
-second definition errors at its own line, naming the first — whatever
+second definition errors at its own line, naming the first, whatever
 kind the first was:
 
 ```
@@ -1647,8 +1677,8 @@ inferred variable, or another thing, whichever came first. A thing's own
 fields and members live in a separate per-type **member space** (a type
 owns one), so `point's x` and `segment's x` do not collide. The collision
 rule there is first-come-first-served too: the second definition of any
-name in a type's member space — a field, a declared member, or a global
-function whose first parameter is that type — errors at its own line,
+name in a type's member space (a field, a declared member, or a global
+function whose first parameter is that type) errors at its own line,
 pointing at the first:
 
 ```
@@ -1664,7 +1694,7 @@ To x with a point called corner.
 
 ### Definitions are top-level only
 
-A thing is defined where a function is defined — at the top level. Its
+A thing is defined where a function is defined: at the top level. Its
 layout is fixed for the whole program and has no block scope, so a
 definition inside an `If`, a loop, or a function body is a compile error,
 and the message says to move it above the block:
@@ -1681,7 +1711,7 @@ To 'take a reading'.
 
 The ordering rule is about the **definition**, not about an instance of
 it. A definition stands above every use of its name; an instance is an
-ordinary top-level variable, so it obeys the ordinary rule instead —
+ordinary top-level variable, so it obeys the ordinary rule instead:
 "variables declared at top level are global and can be used inside
 functions", wherever on the page the declaration is written:
 
@@ -1700,11 +1730,11 @@ surface crosses the boundary: the type noun in a declaration, a field
 read and write, the manifest member reached by the type possessive, and
 a global function taking the thing reached by the instance possessive.
 The seen file arrives where the `see` is written, so the same
-defined-earlier rule that orders one file orders the pair — every use
+defined-earlier rule that orders one file orders the pair: every use
 below stands after the definition it names.
 
 ```vox fragment
-(./include/geometry.vox — the definition and the maker travel together)
+(./include/geometry.vox: the definition and the maker travel together)
 A thing called point has
   a function called 'placed at',
   a number called x is 0,
@@ -1724,7 +1754,7 @@ To 'shifted east' with a point called start.
 ```
 
 ```vox fragment
-(Consumer file — sees the definition above.)
+(Consumer file: sees the definition above.)
 see "./include/geometry.vox".
 
 a point called origin.
@@ -1753,10 +1783,10 @@ A `.lib` interface file names types by noun, and no noun spells a
 user-defined thing, so an exported signature that takes or returns a
 thing cannot be written. Ordinary compilation is unaffected; an exported
 library function whose signature mentions a thing is refused with a
-message naming the field and the canonical workaround — pass the thing's
+message naming the field and the canonical workaround: pass the thing's
 fields across the boundary instead. A library that exports a function
-`To 'nudged east' with a point called start.` — taking a point and, in the
-same case, returning one — is refused when compiled with `--shared`:
+`To 'nudged east' with a point called start.` (taking a point and, in the
+same case, returning one) is refused when compiled with `--shared`:
 
 > takes a point ('start'), which a library interface cannot describe yet  
 > returns a point, which a library interface cannot describe yet  
@@ -1765,7 +1795,7 @@ same case, returning one — is refused when compiled with `--shared`:
 The same source compiles fine as an ordinary program; the refusal fires
 only at the library interface, because the interface has no noun for a
 user-defined thing. The diagnostic names each crossing field and points at
-the workaround — pass `start's x` and `start's y` as separate values.
+the workaround: pass `start's x` and `start's y` as separate values.
 
 ### Sentence consumption and multi-line definitions
 
@@ -1774,7 +1804,7 @@ rules bite. Its entries are comma-separated, and the construct closes on
 a **period** or a **blank line**, the same termination rules every other
 construct follows: a period closes the entry list, and a blank line
 force-closes it (along with anything else still open). Indenting the
-entries is conventional but not required — the commas and the terminator
+entries is conventional but not required: the commas and the terminator
 carry the structure.
 
 ### Definition diagnostics
@@ -1811,7 +1841,7 @@ A thing called point has
    `a function called <name>` declares callable API, not storage.)
 ```
 
-A field default must be a literal of the field's own type — a computed
+A field default must be a literal of the field's own type: a computed
 value belongs in a function that returns the thing:
 
 ```
@@ -1927,14 +1957,14 @@ not <condition>                (true if condition is false)
 and exactly as English does: `If not heat is limit then,` reads "if it is
 not the case that heat is limit", never "if the negation of heat is
 limit". So `not` binds looser than every comparison and property check,
-and tighter than `and` and `or` — `not heat is 4 and limit is 6` is
+and tighter than `and` and `or`: `not heat is 4 and limit is 6` is
 `{not (heat is 4)} and (limit is 6)`. A `not` in front of a boolean is
 that same rule with the shortest condition: `If not door_open then,`.
 
 **A `not` always answers a boolean**, whatever it is applied to: `not 5` and
 `not greeting` are booleans, not a number and a text. On a text, list, map or
-buffer, `not` tests the value's pointer — which a declared variable always
-has — so it answers false whether or not the collection holds anything. Ask
+buffer, `not` tests the value's pointer (which a declared variable always
+has), so it answers false whether or not the collection holds anything. Ask
 about contents with `is empty` (see Property Checks above), never with `not`.
 
 ### Plural Comparisons with `are`
@@ -1994,25 +2024,25 @@ Convert values between types using the `as` or `in` keywords.
 A text made from a buffer is an **independent copy**, not a window onto
 the buffer. `a text called line is data as text.` reads the buffer's
 current bytes once and keeps its own copy, so clearing, refilling, or
-resizing `data` afterwards leaves `line` exactly as it was — the same
+resizing `data` afterwards leaves `line` exactly as it was: the same
 promise format strings make (see "Format Strings as Values"). This
 matters because resizing frees the buffer's old allocation: without the
 copy, reading such a text would be reading freed memory.
 
 **The cast is optional for this one conversion.** Every spelling that puts
 a buffer into a slot that holds text means the same thing and makes the
-same copy — `a text called line is data.`, `Set line to data.`, `the line
+same copy (`a text called line is data.`, `Set line to data.`, `the line
 is data.`, a `text` parameter given a buffer argument, and `Return a text,
-data.` — as do `data as text` and `"{data}"`. Writing the cast is still
+data.`) as do `data as text` and `"{data}"`. Writing the cast is still
 good style where the type change is worth pointing at, but leaving it out
 never changes what the sentence does. This does not loosen type
 immutability: `line` is text before the write and text after it, and every
 *other* mismatched write is still the compile error described under "Type
 Immutability".
 
-A `value` slot is one of those slots. A buffer written into a `value` — by
+A `value` slot is one of those slots. A buffer written into a `value` (by
 declaration, by `Set`, by `the ... is`, as a `value` argument, or by
-`Return a value` — arrives as text and reports `Text (dynamic)`, carrying
+`Return a value`) arrives as text and reports `Text (dynamic)`, carrying
 the same independent copy of the buffer's bytes. A `value` never holds a
 buffer as a buffer; there is no `Buffer (dynamic)` tag.
 
@@ -2165,6 +2195,8 @@ If ready then, print "a", print "b", print "c".
 - `When` can replace `If`
 - `Else` can replace `Otherwise`
 
+A period closes only the innermost open clause; to close an `if` nested inside something else in the same step, stack periods (see [Closing more than one level](#closing-more-than-one-level)).
+
 ### While Loop
 
 ```vox fragment
@@ -2190,6 +2222,8 @@ To sum of a number called n.
   While i is less than or equal to n, total is total add i, i is i add 1.
   Return a number, total.
 ```
+
+A period closes only the `while`'s own innermost open clause; to close it together with something nested inside it, stack periods (see [Closing more than one level](#closing-more-than-one-level)).
 
 ### For Each Loop
 
@@ -2217,6 +2251,8 @@ a list called nums is [1, 2, 3].
 For each n in nums, print the n.
 ```
 
+A period closes only the `for each`'s own innermost open clause; to close it together with something nested inside it, stack periods (see [Closing more than one level](#closing-more-than-one-level)).
+
 ### Repeat
 
 Run a body a fixed number of times.
@@ -2237,10 +2273,10 @@ exactly like `While`:
 Repeat 2 times, print "a", print "b".
 ```
 
-This prints `a`, `b`, `a`, `b` — two actions per iteration, two iterations.
+This prints `a`, `b`, `a`, `b`: two actions per iteration, two iterations.
 
 **Termination.** `Repeat` closes by the same rules as `While` and `For
-each`: a period ends the body (and closes the construct — rule 1), and a
+each`: a period ends the body (and closes the construct, rule 1), and a
 blank line force-closes it (rule 2). The statements after a closing
 period belong to the surrounding scope, not the loop:
 
@@ -2360,7 +2396,7 @@ and widens the list only because its type differs from the other elements.
 
 A function whose return type is **not** declared is the one thing a slot
 cannot be written from. Nothing proves what the result is, and nothing
-carries a tag for it either, so the write would have to guess — and a
+carries a tag for it either, so the write would have to guess, and a
 returned text stored under a guessed `number` tag reads back as the raw
 address of its bytes, which is the silent wrong answer the
 identifier/literal split exists to prevent (see
@@ -2374,21 +2410,21 @@ a list called items is [].
 append five of 4 to items.   (compile error: 'five' has no declared return type)
 ```
 
-The same rule holds everywhere else a result lands with no type of its own
-— `print <call>`, a `{...}` interpolation, a list literal slot, `set
+The same rule holds everywhere else a result lands with no type of its own:
+`print <call>`, a `{...}` interpolation, a list literal slot, `set
 element`, a map value, and a `value` declaration. A position that *does*
 supply a type is unaffected: a declared variable, a later assignment to
 one, and an argument landing on a declared parameter all read a result back
 as what the declaration says it is.
 
 Full runtime tag propagation, which would let an opaque call carry its own
-tag the way a `value` does, is stage 1d — see
+tag the way a `value` does, is stage 1d; see
 `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
 ### Nested Lists
 
 A list element may itself be a list. A nested list prints recursively with
-brackets, and the same per-slot tag machinery tracks it — a list value in
+brackets, and the same per-slot tag machinery tracks it: a list value in
 a slot carries the list tag (4), so a mixed list like `[1, [2, 3], "four"]`
 prints exactly as written, and a homogeneous list-of-lists like
 `[[1, 2], [3, 4]]` keeps the statically-typed fast path (it is not mixed):
@@ -2403,7 +2439,7 @@ print element 2 of element 2 of deep.   (prints: [3, 4])
 ```
 
 `element N of`, `first`/`last`, iteration, and whole-list print all yield
-a usable child list, so an extracted child behaves as a list — its
+a usable child list, so an extracted child behaves as a list: its
 `length`, its own `element N of`, and a `For each` over it all work:
 
 ```
@@ -2433,7 +2469,7 @@ a list called x is [].
 append x to x.
 print x.
 on error print "cyclic".
-(prints: [[...]] then cyclic — abbreviated: 64 opening brackets, then
+(prints: [[...]] then cyclic; abbreviated: 64 opening brackets, then
  `...`, then 64 closing brackets, then `cyclic`)
 ```
 
@@ -2446,7 +2482,7 @@ See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
 
 ### Maps
 
-A map is a key/value collection — a JSON object. Keys are text; values may
+A map is a key/value collection: a JSON object. Keys are text; values may
 be any type (number, text, decimal, boolean, list, or another map). A map
 literal uses braces with `"key": value` pairs, and an empty map is `{}`:
 
@@ -2477,7 +2513,7 @@ collection](#a-collection-parameter-is-the-callers-collection)):
 ```
 set person's "age" to 37.
 print person's "age".    (prints: 37)
-print person's length.   (prints: 2 — replace, not insert)
+print person's length.   (prints: 2; replace, not insert)
 ```
 
 The properties `length` (live entry count) and `empty` (true when zero
@@ -2491,17 +2527,17 @@ for each v in person's values, print v.     (prints: Ada, then 37)
 
 A missing key does not crash: the lookup sets the error flag, so an `on
 error` handler can react, and yields a value the destination can hold.
-Where the compiler can prove the key is absent — a map literal it can see
-all of — the read is the **number** 0 whatever the map's values are, so
+Where the compiler can prove the key is absent (a map literal it can see
+all of), the read is the **number** 0 whatever the map's values are, so
 read it into a `number` (a `float` or a `boolean` holds 0 too), and a
 `text`, `list` or `map` destination is refused with a diagnostic naming
-the key. Where it cannot prove it — a dynamic key, or a map an `Append`, a
-`Set`, an alias or a call can reach — the read yields the destination's
+the key. Where it cannot prove it (a dynamic key, or a map an `Append`, a
+`Set`, an alias or a call can reach), the read yields the destination's
 default value from the table under [Two Canonical
 Forms](#two-canonical-forms): `0` for a `number`, the empty text for a
 `text`, `[]` for a `list`, `{}` for a `map`, so no read ever dereferences
 a null pointer. Note this is deliberately *not* the same as a key that
-holds [`nothing`](#nothing-the-absent-value) — "no such key" stays
+holds [`nothing`](#nothing-the-absent-value): "no such key" stays
 distinguishable from "the key is set to nothing":
 
 ```
@@ -2522,7 +2558,7 @@ passed to a `value` parameter or returned from a `value` function carries
 its tag (5) alongside the payload, so it round-trips through functions
 intact.
 
-A map may also be an element of a list (`[{"a": 1}, {"b": 2}]`) — the
+A map may also be an element of a list (`[{"a": 1}, {"b": 2}]`): the
 slot carries the map tag (5), so `is a map` fires on a `For each` loop
 variable over such a list. The loop variable itself is deliberately
 untyped, though, and reading a key with `'s "key"` is a *static* check,
@@ -2570,17 +2606,17 @@ if item is not a number, print "not a number".
 `is a boolean` and `is a number` are distinct even though both print as
 numbers: a boolean carries tag 3, a number tag 0, and the predicate reads
 that tag. On a **statically-typed** value the predicate folds at compile
-time — `if x is a number` for a declared `a number called x` costs
-nothing and is always true — so the sentence is legal on any value, not
+time: `if x is a number` for a declared `a number called x` costs
+nothing and is always true, so the sentence is legal on any value, not
 just mixed ones.
 
-This is the guard idiom that makes mixed lists programmable — with one
+This is the guard idiom that makes mixed lists programmable: with one
 constraint worth stating plainly. The predicate reads the runtime tag; it
 does **not** narrow the static type. Arithmetic still dispatches
 statically, so operating on the tested value itself is refused inside the
 guard exactly as it is outside it ("Cannot use a value item in
 arithmetic"). Guarding therefore means getting the element into a
-*declared* variable, which a `For each` loop variable can never be — loop
+*declared* variable, which a `For each` loop variable can never be: loop
 over the positions instead:
 
 ```
@@ -2590,26 +2626,26 @@ For each position from 1 to mixedbag's length,
     a number called got is element position of mixedbag,
     print got add 1.
   otherwise print "guarded away".
-(prints: 2, then guarded away, then guarded away — 3.5 is a decimal,
+(prints: 2, then guarded away, then guarded away; 3.5 is a decimal,
  not a number, so `is a number` is false for it)
 ```
 
 (Automatic guarding is a later decision; see the roadmap.) The cast
 expression is *not* a way round this: `item as a number` on a
 dynamically-tagged element is rejected for the same reason ("casting a
-dynamically-tagged value is not currently supported by the compiler — a
+dynamically-tagged value is not currently supported by the compiler: a
 known gap"). `<value> as a <type>` converts a **statically**-typed value;
 see [Type Casting](#type-casting). Use the idiom above instead.
 
 A predicate result is itself a boolean value, so you can store one in a
-list — `append item is a number to flags` — and each stored slot carries
+list (`append item is a number to flags`) and each stored slot carries
 the boolean tag, so a later `is a boolean` recognises it.
 
 **User-defined things are not in this tag system in v1.** The nouns
 above are the builtins; there is no `is a point` for a thing you define,
 and a `list` or `map` of user things, or a `value` holding one, is
 likewise deferred. A thing lives in the compile-time type table, not the
-runtime tag — see [Things](#things).
+runtime tag; see [Things](#things).
 
 ### Dynamic Values (`value`)
 
@@ -2647,8 +2683,8 @@ For each item in data,
   append echo of item to out.
 ```
 
-After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact
-— the value return brought each tag back out, and the append forwarded it.
+After the loop, `out` holds `[1, "two", 3.5]` with the original tags intact:
+the value return brought each tag back out, and the append forwarded it.
 
 **`value` is not a reserved word.** It is recognized only where a type is
 expected: a parameter type, a return type, or directly before `called` in
@@ -2694,12 +2730,12 @@ print numstr add 1.           (prints: 358)
 
 The explicit `as` cast is not an alternative here: `numstr as number` is a
 compile error on a `value`, because a cast needs its source type at compile
-time and a `value` only knows its type at runtime — the in-place retype is
+time and a `value` only knows its type at runtime: the in-place retype is
 how a `value` is converted.
 
 The same phrase in **condition** position keeps its old meaning: `If numstr
 is a number then, ...` is still a type predicate that tests the runtime
-tag and returns a boolean. Position — statement versus condition — is what
+tag and returns a boolean. Position (statement versus condition) is what
 distinguishes a cast from a predicate:
 
 ```
@@ -2751,8 +2787,8 @@ correctly at any depth. `value` parameters compose: a `value` passed
 straight to another `value` function round-trips its tag.
 
 **Conditional `value` returns work.** A function whose only returns sit
-inside an `If`/`Otherwise` — the *factorial pattern*, with no `Return` on
-the `To` line — carries its declared return type just as the
+inside an `If`/`Otherwise` (the *factorial pattern*, with no `Return` on
+the `To` line) carries its declared return type just as the
 single-expression form does, and each branch hands back its own runtime
 tag:
 
@@ -2768,11 +2804,11 @@ print score of "hello".    (prints: 99)
 The same is true of a conditional return of any declared type: `Return a
 text, "big".` inside a branch makes the function a text-returning one. If
 no branch fires and the function falls off its end, it hands back the
-empty value of its declared type — empty text, zero, or a `value` tagged
+empty value of its declared type: empty text, zero, or a `value` tagged
 as the number `0`.
 
 **One limitation to know.** A function whose branches declare *different*
-types — `Return a text` in one and `Return a number` in the other — has no
+types (`Return a text` in one and `Return a number` in the other) has no
 single type for its `To` line to promise, so it declares none and the
 caller reads the result as a number. Declare the same type in every
 branch, or return a `value`, which is exactly the type for a result whose
@@ -2783,7 +2819,7 @@ the roadmap context is in `docs/COLLECTIONS_ROADMAP.md` (stage 1d).
 
 ### Nothing (the absent value)
 
-`nothing` is the value that means "no value here" — the equivalent of null
+`nothing` is the value that means "no value here": the equivalent of null
 in other languages. It can sit in a list slot, a map value, or a `value`
 parameter or return, and it prints as the word `nothing`:
 
@@ -2802,7 +2838,7 @@ produce the identical value. `nothing` is a reserved word, so it cannot be
 used as a variable name.
 
 **Test for it with `is nothing`**, which is an equality (like `is true`),
-not a type predicate — there is no `is a nothing`:
+not a type predicate; there is no `is a nothing`:
 
 ```
 If m's "absent" is nothing, print "no value stored".
@@ -2839,8 +2875,8 @@ a number called n is nothing add 1.
  'is nothing' first.)
 ```
 
-When a value only turns out to be `nothing` at run time — read out of a
-map or a mixed list — the compiler cannot catch it, so the operation sets
+When a value only turns out to be `nothing` at run time (read out of a
+map or a mixed list), the compiler cannot catch it, so the operation sets
 the error flag instead:
 
 ```
@@ -2851,7 +2887,7 @@ on error print "cannot do arithmetic on nothing".
 
 The reason for both is that the stored payload of `nothing` really is 0.
 Left unchecked, `total add missing_field` would quietly evaluate to
-`total` — a wrong answer that looks completely plausible. Guard with a
+`total`, a wrong answer that looks completely plausible. Guard with a
 predicate first, exactly as you would for a mixed element:
 
 ```
@@ -2931,7 +2967,7 @@ Print element i of nums.   (prints 20)
   index is past the end, it returns the **number** 0 whatever the list's
   elements are, so read it into a `number`; where it cannot, it returns the
   destination's default value from the table under [Two Canonical
-  Forms](#two-canonical-forms) — `0` for a `number`, the empty text for a
+  Forms](#two-canonical-forms): `0` for a `number`, the empty text for a
   `text`, `[]` for a `list`, `{}` for a `map`
 - Errors can be caught with `On error`
 
@@ -2966,13 +3002,13 @@ Use `clear <buffer>` to reset a buffer to empty while preserving capacity.
 - **Mixed types**: Appends of different types are allowed in any order; each
   element is printed by its own type, never by the list's (see Printing a
   List above)
-- **Works with any value**: integers — a negative literal included, `append
-  -5 to nums.` — floats, strings, booleans, `nothing`, variables, function
+- **Works with any value**: integers (a negative literal included, `append
+  -5 to nums.`), floats, strings, booleans, `nothing`, variables, function
   calls, arithmetic, and the collection reads `element N of <list>`, `byte N
   of <buffer>` and `<name>'s <property>`
 - **`to` is the separator, not an operator.** The value ends at the `to` that
   names the destination, so a value that would otherwise read `to` as a word
-  of its own — a call written `'twice' to i` — is written in braces:
+  of its own (a call written `'twice' to i`) is written in braces:
   `append {'twice' to i} to nums.` Braces hand the enclosed tokens to the
   general expression parser, exactly as they do in a value slot elsewhere
   (`append {i multiply i} to squares.`).
@@ -3097,7 +3133,7 @@ as printing both on one line. The single-value specialized forms (`print`,
 arity error above.
 
 One asymmetry, kept deliberately: in `print <func> of ...` the grid form
-requires the **first** clause to be an `each` — `print pair of 5 and each y
+requires the **first** clause to be an `each`: `print pair of 5 and each y
 from B` stays an error, because grid-parsing every printed call would change
 what `print f of x add 1` has always meant (`f(x) add 1`). When a fixed
 argument must come first, use a plain call statement and print inside the
@@ -3128,7 +3164,7 @@ every loop variable, since every loop is outside the conditional:
 ```
 
 **After-loop values.** Each loop variable retains its last-iteration value,
-independently — the same shadowing rule as a single clause, applied per
+independently: the same shadowing rule as a single clause, applied per
 variable. For a range clause, "last-iteration value" means what it means for
 a handwritten `For each ... from 1 to N`: the counter that ended the loop.
 
@@ -3139,7 +3175,7 @@ print the right.  (prints 20)
 ```
 
 **Zip is not the semantics.** `each x from A and each y from B` is a
-Cartesian product, not a zip — matching comprehension syntax in Haskell,
+Cartesian product, not a zip, matching comprehension syntax in Haskell,
 Python, and Rust. English's zip marker is `respectively`, which is reserved
 as a possible future marker for a zip mode; it is not parsed today.
 
@@ -3219,7 +3255,7 @@ append each name from names treating "" as "Anonymous" to cleaned.
 If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration.
 
 Equality is by type as well as by value: a `<match>` whose type differs from
-the element's never fires, and that element comes through unchanged — and
+the element's never fires, and that element comes through unchanged, and
 where the compiler can prove the mismatch, it says so at compile time
 instead. Where the element, the `<match>` or the `<replacement>` is a
 `value`, the runtime tag it carries is what the comparison reads, and a
@@ -3268,25 +3304,25 @@ Print "Hello, {name}! You are {age} years old.".
 | `{var:o}` | Octal | `{n:o}` | `0o10` |
 | `{var:04x}` | Padded hex | `{n:04x}` | `0x00ff` |
 
-The value inside `{}` must be a variable or expression, not a bare literal —
+The value inside `{}` must be a variable or expression, not a bare literal:
 `{255:x}` is rejected (`255` is read as a variable name). The examples above
 assume a declared `a number called n is 255.` (set `n` to 5 or 8 for the
 binary and octal rows).
 
 `N` is a count in both forms, and both render in full: `{var:N}` pads out to
 `N` characters and `{var:.N}` prints exactly `N` decimal places, correctly
-rounded (an exact tie goes to the even digit). Neither is capped — a very
-large `N` is simply a very large amount of output — but `N` has to be a
+rounded (an exact tie goes to the even digit). Neither is capped (a very
+large `N` is simply a very large amount of output), but `N` has to be a
 count the compiler can hold, at most 9223372036854775807; past that it is a
 compile error naming the limit, not a width that quietly does nothing. A
 precision past the value's exact decimal expansion pads with zeros, since the
 expansion has ended and not because accuracy has run out: a float is a
 binary fraction, so it always has an exact finite expansion, and `{pi:.50}`
-prints all fifty places of it. A whole number has an exact expansion too —
-itself, then zeros — so `{n:.2}` on `a number called n is 255.` prints
+prints all fifty places of it. A whole number has an exact expansion too (
+itself, then zeros), so `{n:.2}` on `a number called n is 255.` prints
 `255.00`, and prints it exactly for every number Vox can hold.
 
-**A specifier has to be one the value's type can answer.** A width asks
+**A specifier has to be one in the table, and one the value's type can answer.** A clause after the colon that is none of them is a compile error naming the valid forms. A width asks
 nothing of a type: every rendering is some number of characters long, so
 `{var:N}` is accepted whatever `var` is (on a `float` or a `text` the value
 is rendered and the padding is not applied yet). The other two do ask
@@ -3297,12 +3333,12 @@ out, not a wrong answer:
   a `float` and a `boolean` have one; a `text` or a `buffer` does not.
 - `{var:x}`, `{var:X}`, `{var:b}` and `{var:o}` write a **whole number** in
   another base. A `number` and a `boolean` are whole numbers. A `float` is
-  not — `{ratio:b}` is refused rather than quietly dropping the fraction, so
-  write `{ratio as a number:b}` when that is what you meant — and neither is
+  not; `{ratio:b}` is refused rather than quietly dropping the fraction, so
+  write `{ratio as a number:b}` when that is what you meant, and neither is
   a `text` or a `buffer`.
 
-Inside an *expression* hole the cast has nowhere to go — the braces a
-whole-expression cast needs are the hole's own — so work the value out into
+Inside an *expression* hole the cast has nowhere to go (the braces a
+whole-expression cast needs are the hole's own), so work the value out into
 a number first and render that:
 
 ```
@@ -3317,11 +3353,11 @@ it runs, so there is nothing to check.
 
 The two compose: `{var:8.2}` asks for two decimal places, padded out to
 eight characters. The precision decides the digits and the width decides the
-padding, and each is honoured wherever there is something to honour it with —
+padding, and each is honoured wherever there is something to honour it with:
 the same rule the width follows on its own. So `{n:8.2}` on `a number called
 n is 255.` prints `  255.00`, and `{n:08.2}` prints `00255.00`; on a `float`
 the places are printed and the padding is not, because there is no float
-padder yet — exactly as a bare `{f:8}` prints the float unpadded. (A width
+padder yet, exactly as a bare `{f:8}` prints the float unpadded. (A width
 composes with a radix too, which is the `{var:04x}` row above.)
 
 #### Expressions in Format Strings
@@ -3435,7 +3471,7 @@ a buffer called data.
 ```
 
 **Features:**
-- Start with zero capacity and grow automatically as needed
+- Start with 4096 bytes of capacity (size 0) and grow automatically as needed
 - No buffer overflows possible - memory expands dynamically
 - Automatically freed on program exit
 
@@ -3507,7 +3543,7 @@ print v's type.     (prints: Text (dynamic))
 
 Statically-typed variables (`number`, `float`, `text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`) report their type with `(static)` because the compiler knows the type from the declaration. A `value` variable reports whatever its runtime tag currently holds, so it always uses `(dynamic)`.
 
-This property is intended for printing and logging. For type *tests*, use the `is a <type>` predicate — comparing the display string is stringly-typed and can drift from the predicate.
+This property is intended for printing and logging. For type *tests*, use the `is a <type>` predicate: comparing the display string is stringly-typed and can drift from the predicate.
 
 #### Buffer Properties
 
@@ -3515,7 +3551,7 @@ This property is intended for printing and logging. For type *tests*, use the `i
 |----------|-------------|------|
 | `size` | Current number of bytes stored | Number |
 | `length` | Same as size | Number |
-| `capacity` | Maximum bytes the buffer can hold | Number |
+| `capacity` | Bytes allocated: a sized buffer keeps its capacity unless resized; a dynamic one grows automatically | Number |
 | `empty` | Whether the buffer has no data (size = 0) | Boolean |
 | `full` | Whether size equals capacity (for fixed buffers) | Boolean |
 
@@ -3662,8 +3698,8 @@ If src's size is greater than 1048576 then,
 **Checking whether a file exists.** There is no `exists` property: every
 property above describes a handle that is already open, and a file that
 did not exist could not have been opened, so `exists` on a handle would
-be trivially `true` and answer nothing. The question worth asking —
-"can this path be opened?" — is answered by opening it and catching the
+be trivially `true` and answer nothing. The question worth asking:
+"can this path be opened?" is answered by opening it and catching the
 failure with `On error`, the same pattern used for every other file
 operation that can fail:
 
@@ -3678,8 +3714,8 @@ On error print "no-such-file.txt: cannot be opened".
 ```
 → `data.txt: exists` then `no-such-file.txt: cannot be opened`
 
-A path-level `exists` predicate — asked before opening, with no handle
-involved — is a planned future addition; today the `On error` idiom
+A path-level `exists` predicate (asked before opening, with no handle
+involved) is a planned future addition; today the `On error` idiom
 above is how a program finds out.
 
 #### List Properties (Object Properties)
@@ -3728,7 +3764,7 @@ Print nums's last.         (prints 30)
   index is past the end, it returns the **number** 0 whatever the list's
   elements are, so read it into a `number`; where it cannot, it returns the
   destination's default value from the table under [Two Canonical
-  Forms](#two-canonical-forms) — `0` for a `number`, the empty text for a
+  Forms](#two-canonical-forms): `0` for a `number`, the empty text for a
   `text`, `[]` for a `list`, `{}` for a `map`
 - Errors can be caught with `On error`
 
@@ -3874,7 +3910,7 @@ a number called n is 72.
 Write "{n}" to output.
 ```
 
-A `value` is refused for the same reason — its type is only known at
+A `value` is refused for the same reason: its type is only known at
 runtime, so the compiler cannot tell a text it could write from a number
 it could not. Copy it into a typed variable and write that:
 
@@ -3885,7 +3921,7 @@ Write settled to output.
 ```
 
 **Writing rules:**
-- A failed `Write` sets the error flag and is catchable with `On error` — a
+- A failed `Write` sets the error flag and is catchable with `On error`: a
   write the system refused (no space, a handle opened for reading, a closed or
   never-opened handle) or one that transferred fewer bytes than asked for:
 
@@ -3947,7 +3983,7 @@ On error print "Read failed or buffer overflow!".
 **Catchable Errors:**
 - Out-of-bounds list/buffer access
 - Fixed buffer overflow (data exceeds capacity)
-- File operation failures — opening, seeking, reading, writing and deleting
+- File operation failures: opening, seeking, reading, writing and deleting
   alike. A failed `Write` sets the flag, and so does a `Read from`, a `Read
   line from` or a `Write` on a handle whose own `open` failed.
 
@@ -3992,7 +4028,7 @@ open a file for writing called log at "x". (Auto-closed on exit)
 
 #### Dynamic Buffers
 
-Buffers start at zero capacity and grow automatically. No size specification needed:
+Buffers start with 4096 bytes of capacity (size 0) and grow automatically. No size specification needed:
 
 ```
 a buffer called inputbuf.     (Grows as needed - never overflows)
@@ -4190,12 +4226,12 @@ be told apart:
 
 - a child finished → its PID, error flag cleared;
 - children exist but none has finished → `0`, error flag cleared (this is
-  **not** an error — it is how you tell "still running" from "gone");
+  **not** an error: it is how you tell "still running" from "gone");
 - genuine error, e.g. no such child (`ECHILD`) → negative, error flag set,
   catchable with `On error`.
 
 A non-blocking reap that returns `0` reaps nothing, so it does **not**
-disturb `the reaped status` (below) — only a reap that actually returns a
+disturb `the reaped status` (below); only a reap that actually returns a
 child's PID changes it. `without` is already a reserved keyword (it is the
 `print ... without newline` token), so the suffix cannot be confused with a
 call argument after the pid expression, and `waiting` remains an ordinary
@@ -4209,12 +4245,12 @@ Set status to the reaped status.
 ```
 
 `the reaped status` is an expression yielding the raw `wait4` status word as
-a plain number — exactly the `int status` the kernel writes, undecoded. It
+a plain number: exactly the `int status` the kernel writes, undecoded. It
 reflects the most recent *successful* reap in the current process. Before
 any successful reap it is `-1`, a sentinel no real status can take, so
 "never reaped" is distinguishable from "exited 0". The sentinel lives in
 loader-initialized `.data`, not `.bss`, because `_start` (which would zero
-a `.bss` global) is only emitted for executables — a `--shared` library
+a `.bss` global) is only emitted for executables: a `--shared` library
 would otherwise read `0` and silently report "exited cleanly" with no child
 ever reaped.
 
@@ -4225,7 +4261,7 @@ ordinary variable reference. (`tests/102_fork_reap.vox` does
 
 #### Decoding the status
 
-The compiler knows nothing about the wait-status encoding — `the reaped
+The compiler knows nothing about the wait-status encoding: `the reaped
 status` hands back the raw word, and a program decodes it with `divide`,
 `modulo`, and `bit-and`. Vox has no standard library on purpose, and this
 feature is complete with nothing installed:
@@ -4238,8 +4274,8 @@ To 'signal of' with a number called status.
   Return a number, status bit-and 127.
 ```
 
-For ready-made decoding — these two plus `crashed` and `'exited
-normally'`, matching the `<sys/wait.h>` macros — the `process` library
+For ready-made decoding (these two plus `crashed` and `'exited
+normally'`, matching the `<sys/wait.h>` macros), the `process` library
 lives at [Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs),
 installable as an ordinary shared library:
 
@@ -4262,8 +4298,8 @@ If 'exited normally' of status then,
 
 #### A supervisor loop, with no shelling out
 
-These pieces compose into a complete supervisor — poll a child with
-non-blocking reap, time it out, kill it, and report how it died — using
+These pieces compose into a complete supervisor (poll a child with
+non-blocking reap, time it out, kill it, and report how it died), using
 only Vox, no `/bin/sh` and no coreutils.
 [`examples/supervisor.vox`](examples/supervisor.vox) is this loop as a
 runnable program, supervising both a job that finishes and a job that
@@ -4469,7 +4505,7 @@ Stop the 'job timer'.
 - `Stop` / `Finish`
 
 These four words are **contextual, not reserved**. They open a timer
-statement only when a name operand follows — `Start the t.`, `stop t.` —
+statement only when a name operand follows (`Start the t.`, `stop t.`)
 and everywhere else they are ordinary identifiers, so `a number called
 stop is 0.` compiles, and a program may define and call its own
 zero-argument `start.` function. (`End` is not a Stop spelling: `end`
@@ -4826,8 +4862,8 @@ Print the user.
 
 `isn't` and `aren't` are contractions, and each stands for **two** words:
 `isn't` is `is not`, `aren't` is `are not`. Write them exactly where the
-spelled-out pair belongs — `If v1 isn't v2 then,` is `If v1 is not v2 then,`
-— and write a bare `not` everywhere no `is`/`are` belongs. These two are the
+spelled-out pair belongs (`If v1 isn't v2 then,` is `If v1 is not v2 then,`
+) and write a bare `not` everywhere no `is`/`are` belongs. These two are the
 only contractions in Vox: everywhere else an apostrophe is the possessive
 marker, a quoted name, or a character literal, and a word like `don't` or
 `it's` is not Vox (`it's length` is the possessive on a variable called
@@ -4950,22 +4986,22 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `message` | `text` | Type name (`a message called ...` is treated as `text`) |
 | `string` | `text` | Type name (already listed in the type synonyms) |
 
-These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases — so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name.
+These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases, so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name.
 
-Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name — `'flag'`, `'empty'` — if you genuinely need it.)
+Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name (`'flag'`, `'empty'`) if you genuinely need it.)
 
 ### Two classes of special word
 
 Not every word with a special meaning is reserved. Vox distinguishes:
 
-- **Reserved keywords** — banned as bare names everywhere, because they
+- **Reserved keywords**: banned as bare names everywhere, because they
   would be ambiguous anywhere: statement starters, operators (`times`,
   `add`), type names, connectors.
-- **Contextual keywords** — claimed only in the position where they mean
+- **Contextual keywords**: claimed only in the position where they mean
   something, and ordinary identifiers everywhere else: `start`/`begin`/
   `stop`/`finish` for timers, `send` for signals, `waiting` in
   `without waiting`, `available` in `is available`, the things words, the
-  property word `name`, and the property word `count` —
+  property word `name`, and the property word `count`,
   claimed after a possessive marker and in the `the argument count` /
   `the environment variable count` phrases, so
   `a number called count is 0.` compiles while `arguments's count` keeps
@@ -4973,7 +5009,7 @@ Not every word with a special meaning is reserved. Vox distinguishes:
   possessive/phrase family: `capacity` (also the `with capacity N` /
   `of capacity N` buffer phrase), `raw`, `all` (also the
   `all the numbers from/between …` range), `first`, `last`, `second`
-  (also the `Wait 1 second.` unit — `Set second to 1. Wait second seconds.`
+  (also the `Wait 1 second.` unit: `Set second to 1. Wait second seconds.`
   compiles and waits one second), `size` and its synonym `length` (also
   `with size N` and `N bytes in size`), and `version` (the
   `Library <name> version "…"` and `see <lib> version "…"` headers). Each
@@ -4988,7 +5024,7 @@ a word that would be ambiguous in ordinary positions is reserved.
 ### Contextual Keywords (Things)
 
 Three words the things feature claims only inside their construct, and
-treats as ordinary identifiers everywhere else — the same treatment
+treats as ordinary identifiers everywhere else: the same treatment
 `send`/`begin`/`stop` get for timers. None of them is a reserved variable
 name, so `a number called thing is 1.` and `To do.` (a function named
 `do`) both compile.
@@ -5053,10 +5089,10 @@ For each number from 1 to 15, print the number, but if 'check divisibility' of t
 
 `see` pulls in code from another file. It has two distinct jobs:
 
-- **`see "<path>.vox".`** — include another Vox source file. This works today:
+- **`see "<path>.vox".`**: include another Vox source file. This works today:
   the file is parsed as part of your program, so its functions become callable
   with no linking step. It is how you split a program across files.
-- **`see '<lib>' version "<ver>" from "<path>.lib".`** — consume a shared
+- **`see '<lib>' version "<ver>" from "<path>.lib".`**: consume a shared
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
 
@@ -5065,21 +5101,21 @@ see "./utils.vox".
 see mathkit version "1.0" from "./libmathkit.lib".
 ```
 
-There is exactly **one** library form. Three other shapes — `see "./path.so".`,
+There is exactly **one** library form. Three other shapes (`see "./path.so".`,
 `see "lib" version "1.0" from "./path.so".`, and `see "./path.so" for "lib"
-version "1.0".` — point `see` at a `.so` directly. A `.so` is binary ELF:
+version "1.0".`) point `see` at a `.so` directly. A `.so` is binary ELF:
 it carries mangled symbol *names* but no Vox type information, so the compiler
 cannot check a call against it. All three are refused: `see` of a `.so`
 errors and directs you to the `.lib`, and the `see ... for ...` form has its
-own diagnostic — both name the canonical form `see '<lib>' version "<x.y>" from
+own diagnostic: both name the canonical form `see '<lib>' version "<x.y>" from
 "<path>.lib".`.
 
 **Search paths.** `see` resolves the path by its shape:
 
-- `./…` or `../…` — resolved against the directory of the file that contains
+- `./…` or `../…`: resolved against the directory of the file that contains
   the `see` statement, and only there.
-- `/…` — used as-is (absolute).
-- a bare name — `/usr/share/vox/lib/<name>` is checked **first**, and only if
+- `/…`: used as-is (absolute).
+- a bare name: `/usr/share/vox/lib/<name>` is checked **first**, and only if
   that does not exist does it fall back to the containing file's directory.
   Watch this: a bare `see "utils.vox".` can silently pick up a system file in
   preference to the one sitting next to your source. Write `./utils.vox` when
@@ -5098,7 +5134,7 @@ are used as-is. `--lib-path` is not consulted for a `.vox` include at all; for
 
 ### Shared libraries
 
-A shared library is a `.so` you build from Vox and call from Vox — or from C,
+A shared library is a `.so` you build from Vox and call from Vox, or from C,
 Rust, or any other host. The chain is:
 
 **`.vox` → `see` a `.lib` → `Location` → `.so`**
@@ -5112,7 +5148,7 @@ names a non-Vox caller needs.
 > produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
 > consumes it from Vox, export names are mangled, and multi-input `--shared`
 > links several libraries (and several versions of one library) into one `.so`.
-> A foreign host can also call the `.so` directly — see
+> A foreign host can also call the `.so` directly; see
 > [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
 #### Writing a library
@@ -5133,15 +5169,15 @@ To greet.
 vox mathkit_lib.vox --shared -o libmathkit.so
 ```
 
-That writes two files: `libmathkit.so`, and `libmathkit.lib` beside it — the
+That writes two files: `libmathkit.so`, and `libmathkit.lib` beside it; the
 typed interface a Vox consumer `see`s, described in
 [The `.lib` file](#the-lib-file) below. The `.lib` name comes from `-o`, so the
 pair always travels together.
 
 This compiles to a self-contained shared object. It carries its own copy of
-the Vox runtime, so it is loadable from C, Rust, or any other host — not only
+the Vox runtime, so it is loadable from C, Rust, or any other host, not only
 from Vox. The runtime is position-independent, so a library may use the full
-core language — arithmetic, printing, buffers, files, floats, lists, maps —
+core language (arithmetic, printing, buffers, files, floats, lists, maps),
 not a runtime-free subset. Only the library's own function definitions are
 exported; every runtime symbol is kept out of the dynamic symbol table.
 
@@ -5157,13 +5193,13 @@ There are no relocations in this file.
 
 Two exports and nothing else leaked; zero absolute relocations, so the whole
 object is position-independent. The labels are the mangled
-`<library>_<version>_<func>` form — `mathkit_1_0_add_two_numbers` and
-`mathkit_1_0_greet` — so two versions of one library can live in one `.so`
+`<library>_<version>_<func>` form: `mathkit_1_0_add_two_numbers` and
+`mathkit_1_0_greet`, so two versions of one library can live in one `.so`
 without colliding; see [Mangling](#mangling) below.
 
 **A library needs an identity.** The `Library` declaration gives the library
 the name and version that drive mangling and the `.lib`. A `--shared` build
-with no `Library` line has no identity and is rejected — add the declaration.
+with no `Library` line has no identity and is rejected: add the declaration.
 
 **Top-level statements are rejected.** A shared library has no entry point, so
 a top-level executable statement (`Print`, assignment, `If`, a bare function
@@ -5186,7 +5222,7 @@ export at least one function.
 
 The `.lib` is the public interface to a library: its name and version, where
 its `.so` is, and a table of contents of every exported function's signature.
-It is what a consumer `see`s, and the only place Vox types live — ELF carries
+It is what a consumer `see`s, and the only place Vox types live: ELF carries
 mangled names but no types, so the `.lib` is the type source. A `--shared`
 build writes `<output-stem>.lib` beside the `.so`, one `Library` block per
 input. The `.lib` is a declared output like the `.so`, derived from the same
@@ -5203,24 +5239,24 @@ Table of Contents:
     To greet.
 ```
 
-- **`Library '<name>' version "<ver>".`** — the block's identity. Several
+- **`Library '<name>' version "<ver>".`**: the block's identity. Several
   `Library` blocks may appear in one `.lib`, each with its own `Location`;
   parsing runs to EOF, and a `Library` line starts a new block.
-- **`Location "<path>".`** — where the `.so` is. It resolves relative to the
+- **`Location "<path>".`**: where the `.so` is. It resolves relative to the
   `.lib` first, then `--lib-path`, then error. Absolute paths are honoured but
   never generated, so a `.lib` is portable.
-- **`Table of Contents:`** — one line per exported function, in the same
+- **`Table of Contents:`**, one line per exported function, in the same
   11-type vocabulary as Vox source, in EITHER position: `number`, `float`,
   `text`, `boolean`, `list`, `map`, `buffer`, `file`, `time`, `timer`,
   `value`; anything else is an error naming the unsupported type. `void`
-  isn't a spelling — a function returning nothing omits the `, returning`
-  clause entirely — and neither is `unknown`, the compiler's own internal
+  isn't a spelling: a function returning nothing omits the `, returning`
+  clause entirely; and neither is `unknown`, the compiler's own internal
   placeholder for an untyped parameter. A user-defined thing has no noun
   here either, so a `--shared` build refuses an export that takes or returns
-  one — see [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported).
+  one; see [`.lib` export of a thing is not yet supported](#lib-export-of-a-thing-is-not-yet-supported).
 - A `list` may optionally carry its element type: `a list of text called
   out`, `returning a list of text`. This is compiler-inferred, not author-
-  declared — Vox source has no generic/typed-collection syntax, so a library
+  declared: Vox source has no generic/typed-collection syntax, so a library
   author still just writes `a list called out`; a `--shared` build scans the
   exported function's own body and, when every appended/returned element
   provably agrees on one type, writes `list of <type>` for you. Disagreement
@@ -5230,13 +5266,13 @@ Table of Contents:
 - **`, returning a <type>`** exists only in `.lib` files. Vox source declares
   return types in the body (`Return a number, x.`), which a bodiless `.lib`
   declaration has no room for. No `returning` clause means the function
-  returns nothing — which is also why a list's element type only shows up in
+  returns nothing, which is also why a list's element type only shows up in
   the `.lib` when the exporting function has a *declared* return type
   (`Return a list, out.`) in the first place; a bare `Return out.` records no
   return type at all, list-element-typing included.
 
 A `.lib` is lexed with the Vox lexer but parsed by a dedicated parser, so it
-cannot carry executable statements — only the interface above.
+cannot carry executable statements: only the interface above.
 
 #### Consuming a library
 
@@ -5253,7 +5289,7 @@ $ ./consumer
 7
 ```
 
-That is the whole consumer build — no `--link`, no `-l`, no `-L`. The `see`
+That is the whole consumer build: no `--link`, no `-l`, no `-L`. The `see`
 does the linking, because the `.lib` says where the `.so` is.
 
 `see` of a `.lib` is the consumption path. The compiler:
@@ -5261,7 +5297,7 @@ does the linking, because the `.lib` says where the `.so` is.
 1. Resolves the `.lib` (relative to the source, then `--lib-path`).
 2. Parses it and selects the block matching name **and** version.
 3. Resolves `Location` relative to the `.lib`, then `--lib-path`.
-4. **Verifies against the `.so`'s dynamic symbol table** — every mangled name
+4. **Verifies against the `.so`'s dynamic symbol table**: every mangled name
    the `.lib` promises must exist in the `.so`. This is the staleness check: a
    `.lib` that lies about a function is a compile error, not a runtime crash.
 5. Registers the signatures, so calls type-check like any other function.
@@ -5276,9 +5312,9 @@ time; move the `.so` afterwards and the loader will not find it, unless
 Each failure is its own diagnostic naming the file and what was expected:
 missing `.lib`; no such library in it; **version mismatch, listing the
 versions the `.lib` does offer**; missing `.so` at `Location`; symbol absent
-from the `.so` (the stale-`.lib` case — it names the symbol); arity or type
+from the `.so` (the stale-`.lib` case: it names the symbol); arity or type
 mismatch at the call site; and reading the *result* of an entry that has no
-`, returning` clause, which returns nothing, so there is no value to read —
+`, returning` clause, which returns nothing, so there is no value to read:
 call it as a statement instead.
 
 The stale-`.lib` case is the one you meet by hand-editing a `.lib` or by
@@ -5294,14 +5330,14 @@ with `vox --shared` to regenerate the pair.
 
 The worked example set in [`examples/`](examples) shows the workflow:
 `mathkit_lib.vox` is the library and `mathkit_consumer.vox` is the Vox consumer
-above. A foreign caller — C, Rust, or assembly linking the `.so` directly — is
+above. A foreign caller (C, Rust, or assembly linking the `.so` directly) is
 shown in [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
 below.
 
 #### Several libraries in one `.so`
 
 `vox a.vox b.vox --shared -o lib.so` links several libraries into one `.so` in
-a single step — you cannot append to a linked `.so`, so one link step is the
+a single step: you cannot append to a linked `.so`, so one link step is the
 only way to combine them. The sources are parsed independently and then
 compiled into one unit, so the runtime is included once and shared by every
 library in the `.so`.
@@ -5309,7 +5345,7 @@ library in the `.so`.
 The reason this exists is **backwards compatibility**: two *versions* of the
 same library can live in one `.so`, kept apart by mangling. A consumer who
 upgrades the library keeps calling `mathkit_1_0_add_two_numbers` after
-`mathkit_2_0_add_two_numbers` ships beside it, with no recompile — both symbols
+`mathkit_2_0_add_two_numbers` ships beside it, with no recompile, both symbols
 are present and independently callable. That version isolation is why the
 whole design looks the way it does, and it is the case to keep in mind when
 the rest of it seems elaborate.
@@ -5331,16 +5367,16 @@ component is sanitized by mapping every character outside `[A-Za-z0-9_]` to `_`.
 The leading-digit prefix (a digit is not a legal C identifier start) applies
 only to the **library** component, which begins the symbol; the version and
 function components are interior and take the sanitizer alone, so the version
-`1.0` appears as `1_0` (the `.` becomes a single `_`, no prefix — applying the
+`1.0` appears as `1_0` (the `.` becomes a single `_`, no prefix: applying the
 prefix per component would yield `mathkit__1_0_add_two_numbers`, a double
 underscore). A
-non-Vox caller — C, Rust, anything that links the `.so` — needs this mangled
+non-Vox caller (C, Rust, anything that links the `.so`) needs this mangled
 name to call the function at all, which is why the scheme is documented here
 and not only in [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.md) (the full
 rules, including what is and is not mangled). There is no unmangled alias: an
 alias would defeat the version isolation above.
 
-**Runtime state is not mangled** — a deliberate non-goal. The runtime is
+**Runtime state is not mangled**: a deliberate non-goal. The runtime is
 emitted once per `.so` and shared by every library in it (one resource table,
 one `.fini_array`, one idempotent cleanup). Cross-`.so` isolation holds because
 each `.so` carries its own runtime and the version script hides it. Only
@@ -5348,11 +5384,11 @@ function labels are mangled. See [docs/SYMBOL_MANGLING.md](docs/SYMBOL_MANGLING.
 
 #### Calling a library from a non-Vox host
 
-A shared library is a plain `.so`, so any caller that can link one can use it —
+A shared library is a plain `.so`, so any caller that can link one can use it:
 C, Rust, or hand-written assembly. This is also the case the mangling scheme
 above exists for: the foreign caller must name the export by its mangled label.
 Build the example library, then call it from a small assembly driver (nasm + ld
-only — the tools Vox already requires). Run these from the `examples/` directory:
+only, the tools Vox already requires). Run these from the `examples/` directory:
 
 ```bash
 $ vox mathkit_lib.vox --shared -o libmathkit.so
@@ -5362,7 +5398,7 @@ $ nm -D --defined-only libmathkit.so
 ```
 
 ```nasm
-; mathkit_driver.asm — link against libmathkit.so and call its exports.
+; mathkit_driver.asm: link against libmathkit.so and call its exports.
 global _start
 extern mathkit_1_0_add_two_numbers
 extern mathkit_1_0_greet
@@ -5398,19 +5434,19 @@ convention: integer arguments in `rdi`, `rsi`, … and the result in `rax`.
 `-rpath '$ORIGIN'` makes it find `libmathkit.so` in its own directory, so the
 pair is relocatable. (The `.asm` extension is gitignored under `examples/`
 because the compiler emits `.asm` there as output, so this driver is shown here
-rather than tracked as a file — copy it out to run it.) The `extern` names are
+rather than tracked as a file: copy it out to run it.) The `extern` names are
 the mangled labels `mathkit_1_0_add_two_numbers` and `mathkit_1_0_greet`,
 matching what `nm -D` showed above.
 
 #### Linking an executable against a `.so` directly
 
 If the library has a `.lib`, you do not need this: `see` it, which registers
-its signatures *and* links its `.so`. `--link` is for a `.so` with no `.lib` —
-foreign, or hand-built — where the compiler knows no Vox signatures and only
+its signatures *and* links its `.so`. `--link` is for a `.so` with no `.lib`
+(foreign, or hand-built) where the compiler knows no Vox signatures and only
 the linker is involved.
 
 `--link` puts a built `.so` on the link line of an executable. It takes the
-library's soname *stem* — the part between `lib` and `.so` — so a file named
+library's soname *stem* (the part between `lib` and `.so`), so a file named
 `libmath.so` is linked as `--link math`:
 
 ```bash
@@ -5422,14 +5458,14 @@ $ readelf -d hello | grep -E 'NEEDED|RUNPATH'
 
 Because such an executable needs the dynamic loader at runtime, `--link`
 automatically adds the loader (`/lib64/ld-linux-x86-64.so.2`) and an `-rpath`
-for each `--lib-path` — but only when libraries are actually linked, so a plain
+for each `--lib-path`, but only when libraries are actually linked, so a plain
 `vox hello.vox` build stays a flat static binary with no loader dependency.
 
 `--link` alone does not teach the compiler a library's function signatures, so
-it does not let Vox source call the library's functions — that is what `see` of
+it does not let Vox source call the library's functions: that is what `see` of
 a `.lib` does (it registers the signatures *and* adds the `.so` to the link
 line). `--link` is for the case where the program already references the
-symbols another way, or for a non-Vox driver assembled by hand — the
+symbols another way, or for a non-Vox driver assembled by hand: the
 [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host)
 driver above is exactly that, linked with `ld` rather than `--link`.
 

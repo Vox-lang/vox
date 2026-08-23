@@ -1,0 +1,4 @@
+capacity: 4096
+size: 0
+capacity after append: 4096
+size after append: 2

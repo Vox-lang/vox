@@ -1,0 +1,13 @@
+(Bug #95. A format hole reads the slot as whatever type the name carries,
+ so a text brought into being by an untyped declaration interpolated the
+ address the integer formatter made of it - the same wrong answer `Print
+ label.` gave, arriving through the other reader.)
+
+Set label to "hello".
+Print "the label is {label}".
+
+the greeting is "good day".
+Print "{greeting}, all".
+
+Set tally to 5.
+Print "tally {tally}".

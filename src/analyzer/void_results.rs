@@ -136,10 +136,10 @@ impl Analyzer {
                     "'{}' has no declared return type in its .lib entry, so its result \
                      cannot be used as a value here\n  \
                      A `.lib` entry with no `, returning` clause is a function that \
-                     returns nothing (LANGUAGE.md:4963-4965), and consuming a library \
-                     type-checks its calls like any other function's \
-                     (LANGUAGE.md:4990) - so what lands here is whatever the call left \
-                     in the return register, not an answer.",
+                     returns nothing (LANGUAGE.md \"The `.lib` file\"), and consuming a \
+                     library type-checks its calls like any other function's \
+                     (LANGUAGE.md \"Consuming a library\") - so what lands here is \
+                     whatever the call left in the return register, not an answer.",
                     name
                 ),
                 format!(

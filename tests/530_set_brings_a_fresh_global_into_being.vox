@@ -1,0 +1,10 @@
+(`Set tally to 5.` on a name nothing else declares brings `tally` into being,
+ and a function may read it like any other global. The fix for
+ docs/BUGS_FOUND.md #92 stops such a write claiming a kind, so this pins the
+ half it must keep doing - registering the name.)
+
+To report.
+    Print tally.
+
+Set tally to 5.
+report.

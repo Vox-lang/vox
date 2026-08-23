@@ -1,0 +1,12 @@
+(Bug #93 part B. A fresh dynamic buffer's capacity is 4096, not 0 - the
+ runtime's INITIAL_BUF_CAP. size starts at 0 and stays independent of
+ capacity; a small append grows size but not capacity, since 4096 already
+ has room.)
+
+a buffer called b.
+Print "capacity: {b's capacity}".
+Print "size: {b's size}".
+
+Append "hi" to b.
+Print "capacity after append: {b's capacity}".
+Print "size after append: {b's size}".

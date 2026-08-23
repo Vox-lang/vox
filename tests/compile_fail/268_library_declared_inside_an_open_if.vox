@@ -1,0 +1,11 @@
+(Compile-fail: BUGS_FOUND #96 - a `Library` declaration is a top-level
+ construct exactly like a function definition (functions.rs already
+ special-cases both together for the "ends an open function body" rule),
+ so nesting one inside an open clause is refused the same way.)
+
+If 1 is 1 then,
+    Print "before",
+Library mathkit version "1.0".
+
+To greet.
+    Print "hello".

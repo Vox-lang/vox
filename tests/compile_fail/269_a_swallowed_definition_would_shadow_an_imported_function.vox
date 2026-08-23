@@ -1,0 +1,14 @@
+(Compile-fail: REPORT-CANDIDATES-ROUND-4.md §4 - a definition swallowed
+ into an open clause used to shadow an imported library function with no
+ warning at all, because the Stage A4 shadow loop scans only the flat top
+ level. Josj's Q1 ruling removes the swallow itself, so this now errors at
+ the `To`, before the shadow check ever runs.)
+
+see greetlib version "1.0" from "./269_a_swallowed_definition_would_shadow_an_imported_function.lib".
+
+For each attempt from 1 to 1,
+    If attempt is 99 then, Break.
+To greet.
+    Print "hello from the program".
+
+greet.

@@ -10225,3 +10225,1067 @@ was not before, is a `text`/`list`/`map` holder for a missed read — it no
 longer crashes, and it yields that type's empty value. Both leaves can
 widen to draw it.
 
+
+---
+
+### 92. `Set <global> to <value>.` at top level takes a `list`, `map` or `buffer` global out of scope, so every function reading it fails with `Unknown variable` — and the caret lands on the declaration
+
+**Status:** **fixed** in 0.4.11. Severity: **wrong rejection** — a correct
+six-line program is refused, and the byte-equivalent `the <global> is
+<value>.` compiles and runs. Regression tests:
+`tests/523_a_global_list_written_with_set_at_top_level.vox`,
+`tests/524_a_global_map_written_with_set_at_top_level.vox`,
+`tests/525_a_global_buffer_written_with_set_at_top_level.vox`,
+`tests/526_a_global_write_above_the_function_that_reads_it.vox`,
+`tests/527_a_global_list_written_with_set_in_every_branch.vox`,
+`tests/528_the_three_spellings_of_a_write_to_a_global.vox`,
+`tests/529_global_scalars_written_with_set_at_top_level.vox`,
+`tests/530_set_brings_a_fresh_global_into_being.vox`,
+`tests/531_a_global_list_a_function_appends_to_and_a_set_replaces.vox`,
+`tests/compile_fail/236_unknown_global_caret_lands_on_the_possessive.vox`,
+`tests/compile_fail/237_a_global_declared_as_both_a_list_and_a_buffer.vox`.
+
+**How it was found.** By the repin-tool worker on 2026-08-22, building the
+vox-fuzz ledger's repin citations (`feat/repin-citations`): a global `list`
+that a function read could not be reassigned by a top-level `Set`, and the
+tool shipped a one-line function wrapping the `Set` as a workaround. Probe
+preserved at `vox-fuzz docs/ledger/probes/repin/vox-global-list-set.vox`.
+Carried into the round-4 candidate list, adjudicated in
+`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §1 (mechanism traced and confirmed
+by two predictions), then **verified by the master himself** on 2026-08-23
+(`vox-notes/VERIFIED-ROUND-4.md` §92 — he re-ran the repro, the working
+neighbour and the whole behaviour table on `527cb89` = 0.4.10) and approved
+for fixing by Josj the same day.
+
+```vox
+a list called roster is [].
+
+To 'how many'.
+    Return a number, roster's length.
+
+Set roster to ["ada", "grace"].
+Print 'how many'.
+```
+→ `error: Unknown variable: roster`, with the caret on **line 1, the
+declaration**. The same program with `the roster is ["ada", "grace"].`, or
+with `roster is ["ada", "grace"].`, prints `2`.
+
+**What the manual promises.** LANGUAGE.md, *Type Immutability*, names the
+three write forms in one breath:
+
+> Every form that writes to an already-declared name — `x is <value>.`,
+> `the x is <value>.`, and `Set x to <value>.` — is checked the same way
+
+and *Function Scope* lists `[]`, `{}` and an empty buffer among the values a
+global reads as inside a function, so a global collection read from a
+function is contemplated throughout. No sentence anywhere gives `Set` its own
+rules for a global. **The manual needed no change for this fix.**
+
+**The pro-compiler reading, and why it fails.** A global `list`/`map`/`buffer`
+is a handle to heap storage, so rebinding it could leave an
+already-compiled reader holding a pointer to the old allocation — an
+aliasing hazard the compiler would be right to refuse. That reading does not
+survive its neighbours: `the roster is [...]` performs the same rebind at the
+same point on the same storage and is accepted, and the identical `Set`
+*inside* a function is accepted too, where the manual says it "mutates the
+global itself". The message is also `Unknown variable`, not a refusal that
+gives a reason.
+
+**Where it comes from.** A kind-mismatch poison in `collect_definite_decls`
+(`src/parser/ast.rs`), reached in four steps:
+
+1. `Set roster to [...]` carries no type noun, so it parses into
+   `Statement::VarDecl { var_type: None, .. }`
+   (`src/parser/declarations.rs`) — the same node shape a fresh declaration
+   produces. `the roster is [...]` instead parses into
+   `Statement::Assignment`. That one difference is the whole bug.
+2. `collect_definite_decls` mapped each `VarDecl` to a `DefiniteDeclKind`,
+   and `var_type: None` fell into the same `_ => Plain` arm as a `number`,
+   `float` or `text` declaration — conflating "names no type" with "names a
+   scalar type".
+3. Its `record` helper saw `roster` already recorded as `List`, saw the new
+   kind `Plain`, and since the two disagreed it **removed the name and
+   poisoned it** so it could never be re-added. That poison is right for a
+   genuine kind conflict — `a text called notes is "hello".` followed by
+   `open a file for reading called notes at ...` — and exists so the pre-pass
+   never pre-judges a type the analyzer's own ordered walk should judge
+   (plan 294 finding 3). A write is not a kind conflict.
+4. `src/analyzer/statements.rs` builds `global_variables` (and
+   `list_variables`/`map_variables`/`buffer_variables`) from that map, and
+   analyzes every function body against a clone of it. `roster` was absent,
+   so `is_variable_available` was false and
+   `src/analyzer/expressions.rs`'s `Expr::PropertyAccess` arm reported
+   `Unknown variable`.
+
+The scalars escaped for the same reason they now stay safe: `Some(Type::Integer)`,
+`Float`, `String`, `Boolean` all map to `Plain` too, which is the kind the
+untyped write yielded — no disagreement, no poison. `Append` is a different
+statement and was never recorded. A `Set` inside a function was never seen at
+all, because this walk does not enter function bodies. Position was
+irrelevant, because the map is built over every top-level statement before
+any of them is analyzed.
+
+**The fix: a write that names no type claims no kind.**
+`collect_definite_decls` now splits `VarDecl { var_type: None }` out of the
+scalar arm and routes it to `record_untyped_write`, which registers the name
+only if nothing else has, and never collides with, overrides or poisons a
+kind a real declaration recorded. A real declaration arriving *after* such a
+write takes the name over rather than poisoning it. The walk carries the
+distinction through the if/otherwise branch merge as well (a `DefiniteDecls`
+value now carries its poisoned and untyped sets alongside the kinds), so the
+same `Set` written into every branch behaves as it does at the top level.
+This mirrors `collect_all_typed_decls` two functions below, which has always
+ignored a `VarDecl` with no type noun.
+
+Registering the name is the half the untyped write must keep doing: `Set
+tally to 5.` on a name nothing else declares brings `tally` into being, and a
+function may read it (`tests/530_...`).
+
+**The caret, the same entry's second fault.** The `Expr::PropertyAccess` arm
+in `src/analyzer/expressions.rs` reported the failure through `push_error`,
+which anchors on the first textual occurrence of the name — the declaration.
+Its five sibling call sites all go through `push_unknown_variable`, which
+anchors on the failing read instead (and answers a too-early read in #79's
+words); this one now does too. Measured on
+`tests/compile_fail/236_unknown_global_caret_lands_on_the_possessive.vox`:
+the caret moves from `7:19` (`a list called scratch is [].`) to `10:22`
+(`Return a number, scratch's length.`).
+
+**The behaviour table, each row its own program, run on a clean `git archive
+527cb89` extract and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| `list` global, fn reader, top-level `Set` | **Unknown variable** | prints `2` |
+| `map` global, fn reader, top-level `Set` | **Unknown variable** | prints `2` |
+| `buffer` global, fn reader, top-level `Set` | **Unknown variable** | prints `5` |
+| the `Set` written above the function definition | **Unknown variable** | prints `1` |
+| the `Set` written into every branch of an if/otherwise | **Unknown variable** | prints `1` |
+| all three write spellings on one global | **Unknown variable** | prints `1`, `2`, `3` |
+| `list` global a function appends to and a `Set` replaces | **Unknown variable** | prints `1`, `2`, `3` |
+| identical program written `the roster is [...]` (control) | prints `2` | prints `2` |
+| `number`, `float`, `text` globals, top-level `Set` (control) | prints `5`, `2.5`, `new` | unchanged |
+| `Set` on a name nothing declares, read in a function (control) | prints `5` | unchanged |
+| `list` declared, then declared again as a `buffer` (control) | refused | still refused |
+| `a text called notes` then `open ... called notes` (control) | refused, names the conflict | unchanged |
+| `Set xs to [...]` with no declaration at all (control) | `Property 'size' requires a buffer, list, map, or file variable` | unchanged |
+
+The last row is the still-open question of what an untyped `Set` on a name
+nothing declares should mean, which is not this entry's to answer: the name
+is registered but no kind is, so a collection property on it is refused. That
+is unchanged by this fix and is Josj's ruling to make.
+
+**Family.** #46 and #89 (the caret anchored on a textually earlier mention
+rather than the failing read — this is the possessive-read spelling of the
+same fault), #79 (a name read before its declaration is answered in words
+that say so, which the corrected call site now inherits), #66 (the same
+"a function must see a top-level declaration whole" contract, on the codegen
+side), and #25 (`collect_definite_decls`' other consumer — the definite set
+decides which names get a bss mirror and which get a frame-setup default, so
+un-poisoning a name gives it both).
+
+---
+
+### 93. A user-facing diagnostic cites LANGUAGE.md by a stale line number, and the manual and a compiler warning both say a fresh dynamic buffer has zero capacity when the runtime gives it 4096 bytes
+
+**Status:** **fixed in 0.4.11**. Severity: **diagnostic/documentation
+only** — no runtime change; two unrelated inaccuracies bundled into one
+entry because both are the compiler or the manual telling the user
+something false about a value the user can check for themselves. Found
+2026-08-23 by the round-4 candidate audit
+(`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §6, "now VERIFIED BY EXECUTION")
+and by Josj's own recollection of the buffer default, put to him as design
+question Q2 (`vox-notes/DESIGN-RULINGS.md`); verified by the master by
+execution the same day (`vox-notes/VERIFIED-ROUND-4.md` #93); approved by
+Josj the same day (WhatsApp: "all are real bugs … please get those fixed
+for vox 0.4.11").
+
+#### Part A — `void_results.rs:139,141` cite LANGUAGE.md by line number, and both numbers are now stale
+
+```vox
+Library greetlib version "1.0".
+
+To greet.
+    Print "hi".
+```
+```vox
+see greetlib version "1.0" from "./libgreetlib.lib".
+
+a number called n is greet.
+Print n.
+```
+→
+```
+error: 'greet' has no declared return type in its .lib entry, so its result cannot be used as a value here
+  A `.lib` entry with no `, returning` clause is a function that returns nothing (LANGUAGE.md:4963-4965), and consuming a library type-checks its calls like any other function's (LANGUAGE.md:4990) - so what lands here is whatever the call left in the return register, not an answer.
+```
+
+`LANGUAGE.md:4963-4965` is the **Contextual Keywords** bullet list; `:4990`
+is "Three words the things feature claims only inside their construct" —
+neither has anything to do with `.lib` entries or `returning`. The rule the
+diagnostic means lives at **`LANGUAGE.md:5230-5232`**, section **"The
+`.lib` file"**, and **`LANGUAGE.md:5279-5282`**, section **"Consuming a
+library"**. A line number is the most precise citation available when it
+stays right, but LANGUAGE.md moves every release and nothing in the build
+kept these two in sync with it — a confidently wrong pointer is worse than
+a vaguer one that stays true. `src/analyzer/untyped_returns.rs:135-136`
+already cites its own LANGUAGE.md rule by section name
+(`(LANGUAGE.md "Functions")`); `void_results.rs`'s `LibraryEntry` arm was
+the only user-facing string in the diagnostic vocabulary that had not
+followed suit. `grep -rn 'LANGUAGE.md:[0-9]' src/ --include=*.rs` finds 46
+line-number citations; these two, inside a string literal a user actually
+sees, are the only ones this entry touches — the other 44 are stale too,
+but sit in comments and doc-comments that never reach a user, so they are
+left for a documentation pass (see "Not closed by this fix" below).
+
+**Fix.** `void_results.rs:139,141` now cite `` (LANGUAGE.md "The `.lib`
+file") `` and `` (LANGUAGE.md "Consuming a library") ``, matching
+`untyped_returns.rs`'s house style.
+
+#### Part B — the manual and a compiler warning say a fresh dynamic buffer has zero capacity; the runtime gives it 4096 bytes
+
+```vox
+a buffer called b.
+Print "capacity: {b's capacity}".
+Print "size: {b's size}".
+```
+→
+```
+Warning: Buffer "b" declared without size or initializer.
+  This creates a zero-capacity buffer which may not be useful.
+  Consider: a buffer called 'b' is 1024 bytes.
+capacity: 4096
+size: 0
+```
+
+The warning says "zero-capacity"; `capacity` reads **4096**, immediately
+and every time — `coreasm/x86_64/resource.asm:741` writes
+`INITIAL_BUF_CAP` (`:25`, `4096`) into `BUF_CAPACITY` at declaration, and
+the one `mmap` the declaration makes is sized `4121` bytes (`4096 +
+BUF_DATA + 1`). LANGUAGE.md agreed with the warning, wrongly, in three
+places: the `Create a buffer called buf.` comment at :498 ("buf is empty,
+0 bytes, dynamic capacity"), the Dynamic Buffers "Features" bullet at
+:3438 ("Start with zero capacity and grow automatically as needed"), and
+the Resource Management section at :3995 ("Buffers start at zero capacity
+and grow automatically"). Josj's own recollection (design ruling Q2,
+2026-08-23): "My understanding was that 4K of buffer is automatically
+given on a fresh dynamic buffer... The docs are wrong" — confirmed by the
+master's own run above and by reading the runtime source; **Option B:
+4096 is the rule.**
+
+**Fix (no runtime change).** LANGUAGE.md's three sentences now say,
+present tense, that a dynamic buffer starts with 4096 bytes of capacity
+(size 0) and grows as needed — each edit kept on its existing line, so the
+file's line count is unchanged (5545 lines before and after). The
+`capacity` property row (:3518, "Maximum bytes the buffer can hold") was
+also mis-stated for a dynamic buffer, whose capacity is not a fixed
+ceiling but a current allocation that grows — it now reads "Bytes
+currently allocated (fixed for a sized buffer, grows automatically for a
+dynamic one)". The compiler warning at `src/parser/declarations.rs:69-77`
+keeps suggesting a sized declaration (still useful advice when the size is
+known ahead of time) but no longer claims zero capacity — it now says the
+buffer starts at the default 4096 bytes and grows automatically.
+
+**Tests.**
+- `tests/bugs_found_93_lib_void_result_diagnostic.rs` (part A) — builds a
+  real `.so`/`.lib` pair and compiles a separate consumer against it: the
+  `LibraryEntry` diagnostic can only be triggered through the full `.lib`
+  import path wired up in `main.rs` (`lib_file::resolve_program_imports`),
+  and the analyzer-only `compile_fail` corpus (`src/compile_fail_tests.rs`)
+  never calls `.with_imports`, so it cannot exercise this diagnostic at
+  all. Asserts the error names both sections and no longer contains
+  `LANGUAGE.md:4963` or `LANGUAGE.md:4990`.
+- `tests/bugs_found_93_buffer_capacity_warning.rs` (part B) — asserts the
+  uninitialized-buffer warning states "4096 bytes of capacity", no longer
+  contains "zero capacity"/"zero-capacity", and still offers the sized-
+  declaration suggestion. No test previously asserted this warning's text
+  at all.
+- `tests/532_dynamic_buffer_default_capacity.vox` (part B) — a fresh
+  dynamic buffer's `capacity` is `4096` and `size` is `0`; after a small
+  `Append`, `capacity` is still `4096` and `size` is `2`.
+
+**LANGUAGE.md.** Four lines changed, all on their existing lines, no lines
+added or removed (5545 before and after): :498, :3438, :3518, :3995. No
+heading renamed, merged or removed.
+
+**Family.** #93 is a diagnostic/documentation entry, closest in kind to
+#89 (a diagnostic that pointed at the wrong place) and #85/#86 (LANGUAGE.md
+stating a rule the runtime did not actually follow).
+
+**Not closed by this fix.** The other 44 stale `LANGUAGE.md:<N>` citations
+the same grep finds sit in `src/` comments and doc-comments, never reach a
+user, and are left for a documentation pass rather than a diagnostic fix —
+see `vox-notes/REPORT-CANDIDATES-ROUND-4.md` §6.2. The `full` buffer
+property ("Whether size equals capacity (for fixed buffers)", :3520) and
+the "size is equal to capacity" example (:3488) were checked against the
+new capacity value and still read truthfully; neither needed a change.
+
+
+---
+
+### 94. `Set <reserved-type-noun> to <value>.` blames the following `to`, not the reserved word the author actually typed
+
+**Status:** **fixed** in 0.4.11. Severity: **diagnostic quality** — a
+one-line program is refused for the right reason with the wrong caret, and
+the compiler already had the correct message one branch over. Found by the
+language-lawyer adjudicator during the Round-4 audit's candidate review
+(`audit/round-4`, `vox-notes/REPORT-CANDIDATES-ROUND-4.md` §2); verified
+independently by the master against `vox v0.4.10` on 2026-08-23
+(`vox-notes/VERIFIED-ROUND-4.md` §#94); approved by Josj the same day
+(WhatsApp: "all are real bugs … please get those fixed for vox 0.4.11").
+Regression tests: `tests/compile_fail/238`–`251`,
+`tests/533`–`540`.
+
+```vox
+Set message to "x".
+```
+```
+error: Cannot use 'to' as a variable name - it's a reserved keyword.
+  Tip: Try a more descriptive name like 'to_value' or 'my_to'
+  --> repro.vox:1:13
+    |
+  1 | Set message to "x".
+    |             ^--- here
+```
+
+The working neighbour, the declaration path, shows the diagnostic the
+compiler is capable of:
+
+```vox
+a number called message is 1.
+```
+```
+error: Cannot use 'message' as a variable name - it's a reserved keyword.
+  'message' is an alternate spelling of the reserved keyword 'text'.
+  Tip: Try a more descriptive name like 'message_value' or 'my_message'
+  --> repro.vox:1:17
+```
+
+`Set text to "x".` (the canonical spelling, not the `message` alias) gives
+the same wrong shape, caret on `to` — this is not about the alias.
+
+**Where it comes from.** `LANGUAGE.md`'s declaration section documents
+`Set a <type> called <name> to <value>.`; the author wrote a type noun and
+omitted `called`. That much the parser gets right. The bug is that the
+message it then gives blames whatever token happens to sit where a name
+would go, not the token that caused the trouble.
+
+**Mechanism.** `parse_var_decl` (`src/parser/declarations.rs`) reads `Set`,
+then `try_parse_type_noun` matches `message` (the lexer folds it onto
+`Token::Text` before the parser ever sees it) and consumes it, believing it
+is reading `Set a text called <name> …`. The next line was
+`self.expect(&Token::Called);` with **the return value discarded** — `to`
+is not `called`, so nothing is consumed and nothing is reported. The
+following `self.check_not_keyword(self.current())?` then finds `to` sitting
+at the cursor and correctly, but pointlessly, reports that `to` is
+reserved. Two more call sites carry the identical discarded-`expect`
+pattern one function over: `parse_typed_var_decl` (the `a <type> called
+<name>` statement form, for `a message is "x".` with `called` omitted
+entirely) and `parse_the_statement` (the `The <name> is <value>.` form),
+which instead of a discarded `expect` fell back to a hardcoded `"_iter"`
+placeholder name — meant for `The number is 5.` reassigning a `for each`
+loop's implicit iterator, a form `LANGUAGE.md`'s Variable Reference section
+documents only as a read (`the number` — an expression), never as an
+assignment target; `claim_name` unconditionally refuses any name starting
+with `_`, so that fallback could never actually succeed and was already
+dead code for every type noun, including `number`. All three sites now
+report through the same message.
+
+**Fix.** `check_not_keyword` (`declarations.rs:87`) already builds the
+right diagnostic from the source lexeme at the parser's current position —
+the family #45/#62/#63 house standard: name what the author actually did.
+A new helper, `err_type_noun_as_name`, saves the type noun's own token
+position before it is consumed, and — only once the fallback token also
+turns out to be unusable as a name — rewinds to that saved position and
+raises the diagnostic against the type noun itself, matching the caret
+convention #46 fixed. The "only once" matters: `Set float pi to 3.0.` and
+`a float pi is 3.0.` (`examples/pi.vox` uses the latter) never write
+`called` and are legal — `pi` is a perfectly good name sitting right where
+the parser looks next, so the existing fallback-to-whatever-follows
+behaviour is preserved whenever that fallback IS a usable name. The
+blame only redirects to the type noun when it is not, which is exactly
+the case a reserved word was mistaken for a name.
+
+**Every reserved type noun and alternate**, both through `Set … to` and
+`The … is`, and the `a … is` shorthand: `number`, `int`/`integer`, `text`/
+`message`/`string`, `boolean`/`bool`, `float`, `list`/`array`, `map`,
+`file` all now name themselves correctly. `buffer`/`time`/`timer` were
+never affected — `require_called_after_type` already reports their own
+specific "Missing 'called' after 'buffer'" message before the generic path
+is ever reached, and that message is untouched (`tests/compile_fail/250`
+pins it). `value` and a defined thing's name are unaffected for a
+different reason: both already require `called` to be confirmed by
+lookahead before `try_parse_type_noun`/`try_parse_thing_type_noun` will
+consume them at all, so the discarded-`expect` path can never be reached
+for them.
+
+**#95's boundary.** An untyped `Set <fresh name> to <value>.` (no type
+noun consumed at all — `Set greeting to 5.`) is untouched: it is legal, it
+creates the name, and it stays that way (`tests/536`). Its separate defect
+— a `Set`-created name carrying a stale dynamic type tag that prints an
+address on retype — is entry #95's, not this one's.
+
+**Family.** #6 (recovering the source lexeme for an aliased keyword,
+which `check_not_keyword` already did — this entry is that same recovery
+reaching a call site it hadn't before), #45 (name what the author actually
+did), #46 (the caret belongs on the real offending token), #62/#63 (the
+house standard for a diagnostic naming the actual mistake and the way
+out).
+
+
+### 95. A name brought into being by an untyped `Set` escapes the type lock and carries no type at all, so a rewrite of another type prints an ADDRESS — and LANGUAGE.md never said `Set` declares
+
+**Status:** **fixed** in 0.4.11. Severity: **wrong answer, silently** — a
+three-line program, compiled clean, prints a pointer where the manual
+promises a compile error; and a two-line one prints a pointer where the
+manual promises the text that was put there. Regression tests:
+`tests/542_untyped_declaration_takes_the_values_type.vox`,
+`tests/543_the_and_bare_forms_declare_the_same_way.vox`,
+`tests/544_an_untyped_declaration_reports_a_static_type.vox`,
+`tests/545_an_untyped_declaration_takes_a_same_type_rewrite.vox`,
+`tests/546_a_read_between_an_untyped_declaration_and_a_later_set.vox`,
+`tests/547_an_untyped_declaration_of_a_text_interpolates.vox`, and
+compile-fail cases
+`tests/compile_fail/255_untyped_declaration_rewritten_with_another_type.vox`,
+`256_set_declared_name_rewritten_by_the_form.vox`,
+`257_untyped_declaration_rewritten_by_set.vox` and
+`258_declared_name_rewritten_by_set.vox` (the working neighbour, which was
+always right and is byte-identical before and after).
+
+**How it was found.** The candidate audit of 2026-08-23 went looking for
+what `Set count to 5.` means on a name with no declaration — a form the
+parser has always accepted and the manual has never described — and chasing
+what type such a name gets turned up a defect that was not on the candidate
+list (`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §2b, verdicts 2b-i and
+2b-ii). Verified by the master on 2026-08-23 against
+`vox v0.4.10` with the manual read at `527cb89`
+(`vox-notes/VERIFIED-ROUND-4.md` §#95); approved by Josj the same day, with
+the design sub-question — what an untyped `Set` on a fresh name should mean
+— ruled shape **(b)**: it declares the name with the value's type and locks
+it like any declaration.
+
+```vox
+Set zoo to 5.
+Set zoo to "text now".
+Print zoo.
+```
+→ `[compile exit 0]`, prints **`4198488`**.
+
+The same file with a declaration is correctly refused:
+
+```vox
+a number called zoo is 5.
+Set zoo to "text now".
+```
+→ `error: cannot assign text to 'zoo', which is a number`, caret on line 2,
+note on line 1.
+
+**And it does not take a rewrite to reach it.** The name got no type at
+all, so the very first read of one was wrong wherever the type mattered:
+
+```vox
+Set label to "hello".
+Print label.
+```
+→ prints **`4198488`**. `Set ages to {"ann": 30}. Print ages.` prints the
+map's heap address. `Print label's type.` answers `Number (dynamic)` — a
+type the name never held, and `(dynamic)`, which LANGUAGE.md reserves for a
+`value`.
+
+**Root cause — one question asked of the wrong half of the compiler.**
+`Set NAME to VALUE.` parses into `Statement::VarDecl` with `var_type: None`
+(`src/parser/declarations.rs:462-465`, whose own comment reads "`Set point
+to 42.` brings a variable into being where none stood"). Whether such a
+statement is a *declaration* or a *write* decides whether the type lock at
+LANGUAGE.md's "Type Immutability" applies, and the analyzer asked
+`is_variable_declared_anywhere` — the whole-program question
+(`src/analyzer/statements.rs:541`). But `collect_definite_decls`
+(`src/parser/ast.rs:800-808`) counts an untyped `Set` as a definite
+declaration, so the name is in `global_variables` from the first statement
+and the answer is already "already declared" **on the very statement that
+creates it**. The declaration branch was therefore never taken:
+`scalar_types` never learned the type, `check_type_lock`
+(`src/analyzer/types.rs:1664-1670`) resolves no declared type and returns
+"allow", and `src/codegen/statements.rs`'s inference arms — which label a
+slot from a list literal, a float, an argv/environ read or another
+variable — have no arm for a plain text or map literal, so `variable_types`
+stayed empty and every read fell through to the integer formatter.
+
+The same one question poisons the other two spellings, which is why the
+bug is not confined to `Set`. `the NAME is VALUE.` and `NAME is VALUE.`
+parse into `Statement::Assignment`, whose arm asked the same whole-program
+question — so a single untyped `Set` **anywhere in the file**, including
+below, made the earlier `the`/bare write look like a reassignment of a name
+nothing had declared. `the zoo is 5.` followed by `the zoo is "text now".`
+is correctly rejected; adding a `Set zoo to 7.` further down made the
+rejection vanish. It also cost a correct program its compile: with the
+name never entered into the walk's own scope, a read between the write that
+really declared it and that later `Set` was reported as `'tally' is used
+before it is declared`.
+
+**The fix: an untyped write on a name that does not exist yet is a
+declaration, and a declaration fixes the name's type.**
+
+1. **The question** (`src/analyzer/statements.rs`). Both arms now ask
+   `is_variable_available` — read before the statement declares the name,
+   so it means "did this name exist HERE, before this line?" — which is the
+   question the walk can answer and the whole-program set cannot. Inside a
+   function body the two answers are identical (the scope is seeded with
+   `global_variables` there), so #79's function case is untouched.
+2. **The type** (`src/analyzer/types.rs`, `bind_untyped_declaration_type`).
+   One helper, shared by both arms, records the value's type in
+   `scalar_types` and the declaration's own site in `declared_locations`.
+   That is what gives `check_type_lock` something to check every later
+   write against; it reuses the existing diagnostic verbatim.
+3. **The slot** (`src/codegen/vars.rs`, `declare_untyped_from_value`, called
+   from the `VarDecl` and `Assignment` arms of `src/codegen/statements.rs`).
+   The same declaration labels the storage — `variable_types` so the value
+   renders as its own type, and `declared_types` so `NAME's type` answers
+   `(static)` from the declaration like every other statically-typed name
+   rather than off a runtime tag byte only a `value` ever writes. It only
+   ever fills a gap: a name that already carries a type keeps it, so no
+   write can retag a slot out from under an earlier read even if the lock
+   were reopened.
+4. **The caret** (`src/analyzer/scope.rs`, `find_declaration_location`).
+   The declaration-site search had no `Set NAME to` pattern at all, and
+   took the first pattern that matched anywhere rather than the earliest
+   match in the file — so a `Set`-declared name's declaration was reported
+   as whichever later line rewrote it, which put the new error's caret on
+   the declaration and its "was declared at" note on the offending write,
+   backwards. It now searches every spelling that can bring a name into
+   being and takes the earliest, keeping the code-before-text-literal
+   guarantee of #46 by running the whole search as two passes.
+
+**The matrix, each row its own program, measured on a clean `git archive
+527cb89` extract and on the fix:**
+
+| program | before | after |
+|---|---|---|
+| `Set zoo to 5.` then `Set zoo to "text now".` | prints **`4198488`** | compile error, caret on the write |
+| `Set zoo to 5.` then `the zoo is "text now".` | prints **`4198488`** | compile error, caret on the write |
+| `the zoo is 5.` then `Set zoo to "text now".` | prints **`4198488`** | compile error, caret on the write |
+| `Set label to "hello". Print label.` | prints **`4198488`** | prints `hello` |
+| `the greeting is "hello". Print greeting.` | prints **`4198536`** | prints `hello` |
+| `motto is "carry on". Print motto.` | prints **`4198542`** | prints `carry on` |
+| `Set ages to {"ann": 30}. Print ages.` | prints a **heap address** | prints `{"ann": 30}` |
+| `roster is ["ann", "bo"]. Print roster.` | prints a **heap address** | prints `["ann", "bo"]` |
+| `Set label to "hello".` in a format hole | prints **`the label is 4198488`** | prints `the label is hello` |
+| `Set label to "hello". Print label's type.` | `Number (dynamic)` | `Text (static)` |
+| `Set tally to 5. Print tally's type.` | `Number (dynamic)` | `Number (static)` |
+| `Set ratio to 2.5. Print ratio's type.` | `Float (dynamic)` | `Float (static)` |
+| `Set ready to true. Print ready's type.` | `Number (dynamic)` | `Boolean (static)` |
+| `tally is 5. Print tally.` with a `Set tally to 7.` below | **rejected**, "used before it is declared" | prints `5` then `7` |
+| `Set tally to 9.` then `a text called tally is "x".` | prints `x` | compile error, the two declarations conflict |
+| `Set zoo to 5.` then `Set zoo to 7.` (control) | prints `7` | prints `7` |
+| `Set tally to 9.` then `a number called tally is 5.` (control, test 518) | prints `5` | prints `5` |
+| `a number called zoo is 5.` then `Set zoo to "x".` (control) | compile error | compile error, byte-identical |
+| `a value called v is 5.` then `Set v to "text now".` (control) | prints `text now` | prints `text now` |
+| `Set tally to 3.` inside a function (control) | prints `3` | prints `3` |
+
+**LANGUAGE.md, one sentence.** "Two Canonical Forms" listed only the
+spellings that name a type, and nothing in the manual said an untyped
+`Set`/`the`/bare write may create a name — the parser has always intended
+it, and a reader had no way to know what type the name took or whether it
+was locked. The first canonical form's bullet now says it: on a name that
+does not exist yet the type noun is optional, the three spellings each
+bring the name into being with the value's type, and it is fixed from then
+on like any other declaration's.
+
+**What this does not change.** An untyped declaration of a `list` or `map`
+still is not registered as a collection *name*, so `items's length` after
+`Set items to ["a", "b"].` is refused with "Property 'size' requires a
+buffer, list, map, or file variable". That refusal is identical for all
+three untyped spellings, was identical before this fix, and is not part of
+this entry — the collection reads and writes it, prints as one, and reports
+`List`; only the property path does not know it. Left for its own
+adjudication.
+
+**Family.** #79 (the same split between "the name exists" and "its type is
+known", one scope out — the read side; its `is_variable_declared_anywhere`
+is the function this entry re-aimed), #66 (the same split one scope in),
+#57, #65 and #72 (the type lock's other holes — an initialiser of the wrong
+type, `nothing`, a provable missed read), #51 and #87 (what a bare
+assignment means when the source is a buffer, which this fix leaves
+untouched), #46 (the code-before-text-literal rule the declaration-site
+search keeps), and #42 (`Text (dynamic)` from a tag that disagreed with the
+slot).
+
+**For the fuzzer.** Any generator that emits `Set NAME to VALUE.` on a
+fresh name now has a locked type to respect from that statement on: a
+second write of another type is a compile error, in every spelling, and is
+no longer a way to produce a program that runs and prints something wrong.
+The three untyped spellings are interchangeable as declarations, which is
+one more shape a declaration leaf may draw.
+
+**Resolved by #96.** Josj ruled Option B on "The parse half" above: a `To`
+reached while a clause is still open is now a compile error, not a
+force-closed clause, which also closes "A related blind spot" just above
+(the swallow it depended on can no longer happen). The eight regression
+tests this entry added (`442`-`449`) exercised the ABI fix on a program
+shape that no longer compiles, so #96 removes them and replaces their
+coverage with compile_fail tests proving the shape is now refused.
+
+---
+
+### 96. A `To` (function definition) inside a still-open `If`/loop/function body was parsed into that body instead of refused, silently moving every following statement's control flow
+
+**Status:** **fixed** in 0.4.11. Severity: **insufficient compile-time
+coverage** (Josj's framing, 2026-08-23) — a program shape that should be
+rejected was instead silently mis-parsed; no runtime or codegen change (the
+assembly is already correct either way, `vox-notes/ASM-ANALYSIS-96.md`).
+Regression tests: compile_fail `265`-`269` (a loop body, an `If` body, a
+clause nested inside another function's body, a `Library` declaration, and
+the #73 §4 shadow-warning repro); run `560`/`561` (the blank-line-closed
+and double-period forms still compile and run once). Superseded run tests
+`442`-`449` (see "Family" below): they exercised #73's ABI fix for a
+program shape this entry now refuses at parse time, so they no longer
+compile and are removed.
+
+Found by the round-4 candidate audit, `vox-notes/REPORT-CANDIDATES-ROUND-4.md`
+§4 ("#73 incidental (1)", the Stage A4 shadow-warning blind spot) and
+design question 1 (`vox-notes/DESIGN-QUESTIONS-FOR-JOSJ.md`); Josj ruled
+Option B in `vox-notes/DESIGN-RULINGS.md` (2026-08-23): "function
+declarations are not supposed to be nestable... through a compiler error."
+
+```vox
+For each n from 1 to 3,
+    If n is 99 then, Break.
+To examine with a value called v.
+    Print "{v's type}".
+
+examine of "".
+Exit 0.
+```
+→ compiled clean and printed `Text (dynamic)` three times: the `To` was
+parsed as a nested statement of the still-open `For each` body, so the call
+after it was drawn into the loop and ran once per iteration.
+
+The manual said both things at once. Its termination rule named only a
+period and a blank line as closers, so by that rule a `To` belonged to the
+open body; the note just above it said "a following `To` or `Library`...
+ends the body," but only of a *function's own* body; and the sibling
+`thing` rule (LANGUAGE.md, "Definitions are top-level only") already made
+the identical shape a compile error for `thing`, with no matching guard on
+`To`.
+
+**Root cause.** `Token::To => self.parse_function_def()`
+(`src/parser/statements.rs`) had no top-level guard, unlike
+`parse_thing_definition` (`src/parser/things.rs`), which already calls
+`self.at_top_level()` before accepting a `thing`. `parse_library_decl`
+(`src/parser/functions.rs`) had the identical gap: `Library mathkit version
+"1.0".` reached while a clause is open was silently swallowed too, on a
+plain non-shared compile (there is no shared-library check to catch it
+there, since that check only runs in `--shared` mode).
+
+**The fix.** One `if !self.at_top_level() { return Err(...) }` at the head
+of `parse_function_def` and of `parse_library_decl`, reusing
+`at_top_level()` (already used by `things.rs`) and mirroring its message
+shape: name the construct, state the canonical form, say to move the
+definition above the block. The guard fires on `statement_depth`, not on
+any textual heuristic, so it is exactly as forgiving as the manual's own
+termination rule: a blank line or a stacked period (`Break..`) that closes
+the enclosing clause first leaves the following `To`/`Library` genuinely
+at the top level, and both forms still compile and run (tests 560, 561).
+The pre-existing, unrelated leniency that lets a function's own unclosed
+body end on a following `To`/`Library` with no blank line
+(`src/parser/functions.rs`'s body-parsing loop, guarding against
+BUGS_FOUND #5) is untouched: that mechanism decides the next `To` is never
+dispatched as a nested statement in the first place, so the new guard
+never sees it as nested.
+
+No codegen changed: `vox-notes/ASM-ANALYSIS-96.md` shows the swallowed and
+blank-line forms emit byte-identical code for the function itself, and the
+only difference is where the trap places a caller's statement (inside the
+loop instead of after it); a parse-time rejection removes the trap
+program, not any correct one.
+
+**Closes the #73 §4 shadow-warning blind spot.** A definition swallowed
+into an open clause used to shadow an imported library function with no
+warning, because the Stage A4 shadow loop (`src/analyzer/statements.rs`)
+scans only the flat top level while its neighbour twenty lines above
+already descends through `nested_function_defs`. Since the swallow is now
+refused at the `To`, the shadow check never has a swallowed definition to
+miss. Compile_fail `269` reproduces the report's own repro
+(`consumer_swallowed.vox`: a definition inside a `For each` shadowing a
+`see`n `greet`) and confirms it now errors before the shadow check ever
+runs, instead of compiling silently.
+
+**`Library`, checked.** The `.lib`/`--shared` section already documents
+`Library` as top-level only ("Only function definitions, `Library`, and
+`see` may appear at the top level of a `--shared` compile"), and
+`src/parser/functions.rs` already treats `Token::To` and `Token::Library`
+identically for the "ends an open function body" leniency. A nested
+`Library` was reachable and silently swallowed outside `--shared` mode (a
+`--shared` compile's own top-level-statement check flags the enclosing
+`If` first, not the `Library`, so this exact shape was unreachable there;
+a plain non-shared compile had no such check at all). Guarded the same way
+(compile_fail `268`). `see` is unaffected: it is not a definition, and
+`things.rs`'s own guard does not extend to it either, so this entry does
+not touch it.
+
+**Family.** #73 (the codegen ABI fix for the same swallow; its regression
+tests 442-449 exercised a program shape this entry now refuses, so they
+are removed, see the note added to #73's entry), #46 (the caret lands on
+the offending token, `To` or `Library`, because the guard runs before
+either is consumed).
+
+---
+
+### 97. A text appended into a caller's list through a `list` parameter reads back as its address — the heterogeneous verdict stopped at the callee's own parameter
+
+**Status:** **fixed** in 0.4.11. Severity: **wrong answer**, and **memory
+safety** across a `.lib` boundary (see "The shared-library corner" below).
+Regression tests:
+`tests/550_a_text_appended_through_a_parameter.vox`,
+`tests/551_a_widened_list_reads_back_every_way.vox`,
+`tests/552_a_proven_list_keeps_its_fast_path.vox`,
+`tests/553_a_buffer_and_a_map_through_a_parameter.vox`,
+`tests/554_a_list_widened_along_a_chain_of_helpers.vox`,
+`tests/555_a_widened_list_through_recursion_and_an_alias.vox`,
+`tests/556_a_global_widened_through_a_shadowing_parameter.vox`,
+the `see/list-parameter` case in `test.sh` over
+`tests/shared/noting_lib.vox`, and four codegen unit tests in
+`src/codegen/tests.rs`.
+Found by the #75 fix report as incidental (2), 21–22 Aug 2026; separated
+out and adjudicated by the candidate audit of 2026-08-23
+(`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §5), verified by the master the
+same day (`vox-notes/VERIFIED-ROUND-4.md` §97) and approved by Josj that
+day, with the fix shape ruled to be **(A), the caller widens**.
+
+```vox
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+a list called noted is [].
+'note whatever' of noted and "tail".
+Print "last: {noted's last}".
+```
+→ **`last: 4198536`** — the text's address, printed as a number.
+
+The working neighbour is the same append written at the caller:
+
+```vox
+a list called noted is [].
+append "tail" to noted.
+Print "last: {noted's last}".
+```
+→ `last: tail`.
+
+**Where it comes from.** `prescan_mixed_lists`
+(`src/codegen/collections.rs`) walks each function body on a *snapshot* of
+the global pre-scan state and partitions the verdict per function, so a
+function's own locals never leak into another's analysis. A `list`
+parameter is one of those locals. The callee's `append label to noted` is
+therefore attributed to the callee's parameter and dropped when the
+snapshot is restored; the caller's `noted` is left with the verdict it had
+before the call — for `[]`, no proven element type at all. The caller then
+reads `noted's last` off the untagged fast path and hands the raw stored
+word to the integer formatter.
+
+The slot itself was never wrong. `_list_append` takes the element's tag in
+`dl` and stores it in the list's tag array on **every** append
+(`coreasm/x86_64/list.asm:361`), and the callee emits the right one —
+`mov edx, 1  ; element type tag` for a `text` parameter. The bug is
+entirely on the read: the caller had proven something the callee's write
+made false, and never learned.
+
+**What the manual says.** Mixed-Type Lists, LANGUAGE.md:
+
+> The compiler earns the homogeneous fast path by **proof**, not
+> assumption. A value whose type it cannot statically prove widens the list
+> to mixed, so reads dispatch on each slot's runtime tag rather than on one
+> assumed type.
+
+and, in the same section:
+
+> Appending, `set element`, `element N of`, `first`/`last`, iteration, and
+> `{...}` format interpolation all respect each element's actual type.
+
+Both are wrong here in the same direction: the compiler took the fast path
+on a list it had *not* proven homogeneous, and `first`/`last` did not
+respect the element's actual type. **No LANGUAGE.md change was needed** —
+the first sentence is exactly the rule the fix implements.
+
+**The reading in which the compiler is right, and why it does not reach
+this output.** Vox lists dispatch statically, and the choice must be made
+where the read is written — in the caller. To know the list is mixed the
+caller would have to see inside every callee it hands the list to, which is
+whole-program analysis and is impossible past a `.lib` entry that has no
+body. That argument is sound as far as it goes, and it is why codegen
+partitions per function in the first place. But what it supports is
+*refusing* the callee's append, or *widening the caller's list at the call
+site* — a one-level, intra-program question, and codegen already runs
+several whole-program pre-passes of exactly that character
+(`collect_definite_decls`, `collect_literal_collection_shapes`,
+`collect_constant_numbers`, `collect_global_declared_types`). Nothing in it
+makes printing a pointer as a number the right answer. Josj ruled for the
+widening: refusing the callee would forbid a reasonable, readable program —
+a helper that collects into whatever list it is given.
+
+**The fix — the caller widens.** A new pre-pass,
+`collect_list_param_writes` (`src/codegen/collections.rs`), records for
+every function what a call writes into the caller's list through each
+`list` parameter, as one of three verdicts: no write, one proven tag, or
+`Unknowable`. `prescan_walk` then joins that verdict into the caller's list
+at each call site: the list is widened to mixed **unless** the callee
+provably writes the one tag the caller has already proven the list holds.
+Reads of a widened list dispatch on each slot's runtime tag, which was
+always there.
+
+Three properties fall out of doing it this way:
+
+- **The fast path survives where it is earned.** A list the function only
+  reads is untouched; a list proven to hold numbers, handed to a function
+  that appends a `number` parameter, keeps its untagged path. `tests/552`
+  emits no tag dispatch at all.
+- **It is transitive.** A helper that hands its own `list` parameter on to
+  a second helper inherits what that one writes, and the verdict loop runs
+  to a fixed point, so a chain of helpers, direct recursion and mutual
+  recursion all settle. A local the callee declared as an alias of its
+  parameter is the same block, so a write through it counts too.
+- **It is conservative where it cannot prove.** A callee that appends a
+  body-local, or a call result, reads `Unknowable` and widens. The output
+  is right either way — the tagged path is always correct — and only the
+  fast path is lost.
+- **It survives name shadowing.** The pre-scan walks each function body on
+  a snapshot precisely so two same-named things keep opposite verdicts, and
+  the widening is applied inside that walk, so it lands on the caller's
+  list — a global two calls away included — and not on a callee parameter
+  that happens to carry the same name.
+
+`set element N of` through a parameter goes through the same join, so
+`tests/551`'s number list given a text in slot 1 reads slot 1 back as
+`one` and slot 2 as `2`.
+
+**The shared-library corner — and the segfault it was hiding.** A `.lib`
+carries types, not bodies. The chosen policy is the conservative one: every
+`list` parameter of an imported function widens the caller's list
+unconditionally. The alternative — trusting what the `.lib` already says —
+was measured and rejected, because the `.lib`'s `list of <type>` is an
+element-type inference, not a record of what the function writes:
+
+```vox
+To 'stash a local' with a list called noted.
+  a list called borrowed is ["borrowed"].
+  append element 1 of borrowed to noted.
+```
+renders in the `.lib` as bare `` `a list called noted` `` — no element type
+— while it does append a text into the caller's list. A consumer trusting
+the `.lib` would leave that list on the fast path, which is this same bug
+one boundary over. Recording "this function widens its list parameter"
+would mean changing the `.lib` format, and no evidence yet asks for it.
+
+The corner was worse than the local case. `list of text` is promised to
+**every** caller, including one whose list holds numbers:
+
+```vox
+see noting version "1.0" from "./libnoting.lib".
+
+a list called stashed is [].
+'stash a local' of stashed.
+Print "stashed: {stashed's last}".
+
+a list called tally is [1, 2, 3].
+'note whatever' of tally and "four".
+Print "tally first: {tally's first}".
+```
+On 0.4.10 this prints `stashed: 139735983992975` and then **segfaults
+(139)** — the caller believed the `.lib`'s `list of text`, read the integer
+`1` as a `char*`, and dereferenced it. With the widening it prints
+`stashed: borrowed`, `tally first: 1`, `tally last: four`. That row is in
+the `see/list-parameter` test.
+
+**The neighbours, measured.** Each row its own program, on a clean
+`git archive 527cb89` extract (= 0.4.10) and on the fix:
+
+| program | before | after |
+|---|---|---|
+| text appended through a parameter, `'s last` | **`4198536`** | `tail` |
+| the same, `'s first` | **`4211090`** | `first entry` |
+| the same, `element 2 of` | `second entry` | `second entry` |
+| the same, iteration | `first entry` / `second entry` | unchanged |
+| the same, whole-list `Print` | `["first entry", "second entry"]` | unchanged |
+| `set element 1 of` a number list to a text, then `'s first` | **`4211165`** | `one` |
+| a buffer appended through a parameter | **`140202178994176`** | `buffered` |
+| a list appended through a parameter | **`140202178985984`** | `[1, 2]` |
+| a two-argument helper, the widened list | **`4198536`** | `hello` |
+| the same, the list given a number (control) | `99` | `99` |
+| a chain of two helpers | **`4198557`** | `chained` |
+| the call written as an initialiser | **`4198575`** | `held` |
+| the call written inside a `{...}` hole | **`4198575`** | `held` |
+| mutual recursion, `'s last` | **`4202637`** | `pong` |
+| a write through an alias of the parameter | **`4202692`** | `aliased` |
+| a global widened by a call inside another function | **`4198536`** | `reached the global` |
+| the same, a global given its own proven type (control) | `3` | `3` |
+| a `.lib` function that widens, `.lib` says bare `list` | **`139735983992975`** | `borrowed` |
+| a `.lib` `list of text` onto a caller's number list | **segfault (139)** | `1` / `four` |
+| direct recursion, whole-list print (control) | `[3, 2, 1]` | `[3, 2, 1]` |
+| a map given a text through a parameter (control) | `written` | `written` |
+| a number list read only by the callee (control) | `3` | `3` |
+| a number list given a number by the callee (control) | `30` | `30` |
+| a text list given a text by the callee (control) | `bea` | `bea` |
+
+Fourteen of twenty-four faulted or printed an address; the seven controls
+and the three rows that already read the tag are byte-identical.
+
+**Why `element N of`, iteration and the whole-list print already worked.**
+They read through paths that consult the slot tag (or `_list_print`, which
+always does), while `'s first` and `'s last` took the element type from the
+caller's static verdict. That is why the defect looked narrower than it
+was: the same list answered the same question two ways depending on which
+spelling asked it, which is exactly what LANGUAGE.md's "all respect each
+element's actual type" forbids.
+
+**A map does not share the path.** A map slot always carries its value's
+tag, so `Set <map>'s "<key>" to` through a `map` parameter already read
+back as what it is, before this fix and after. `tests/553` pins that it
+still does.
+
+**Family.** #75 (a list or map grown through a parameter stops at the
+literal's capacity — the same parameter, the storage half), #90 (a buffer
+grown past its capacity through a parameter is a use-after-free — the same
+parameter, the memory half), and #87 (a buffer in a `value` carries its
+struct pointer, not its bytes). Those three are about what crosses the call
+*into* the callee; this one is about what the caller believes *after* it
+returns. Also #45, and the stage-1b rule it settled ("static is a
+proof; mixed is the default") which `tests/155_unknowable_append_widens.vox`
+pins — this entry extends that rule from one function to the call edge.
+
+**For the fuzzer.** Any leaf that builds a list and reads it back can now
+also draw the shape "hand it to a function that appends to it" — the
+invariant is unchanged (the element reads back as what it is), and the
+generated program no longer has to keep every append in one function to be
+correct. A leaf drawing a `.lib` consumer may pass a list to an imported
+function without pinning the element type first.
+
+### 98. An unrecognised format specifier is silently discarded — `{n:q}`, `{n:#x}` and `{n:zzz}` render as a bare `{n}`, no warning, no error
+
+**Status:** **fixed in 0.4.11**. Severity: **silent, no diagnostic** — a
+typo in a format spec (the obvious `#x` for hex) compiles clean and prints
+the wrong thing with nothing to say so. Regression tests:
+`tests/541_unknown_specifier_fix_leaves_valid_forms_alone.vox`,
+`tests/compile_fail/252_unrecognised_format_specifier_q.vox`,
+`tests/compile_fail/253_unrecognised_format_specifier_hash_x.vox`,
+`tests/compile_fail/254_unrecognised_format_specifier_zzz.vox`. Found while
+checking candidate 7 during the round-4 audit (`c7-badspec.vox`,
+`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §N1); reproduced and verified by
+the master 2026-08-23 (`vox-notes/VERIFIED-ROUND-4.md` §#98); approved by
+Josj the same day (WhatsApp: "all are real bugs … please get those fixed
+for vox 0.4.11").
+
+```vox
+a number called n is 255.
+Print "{n:q}|{n:#x}|{n:zzz}|{n:x}|{n:8}|".
+```
+→ **`255|255|255|0xff|     255|`** — the first three holes are not
+specifiers Vox defines at all (not a width, not a precision, not a base
+letter) and each renders as if the `:SPEC` were never written; the last two
+prove the spec parser is working when it does recognise the text.
+
+**Root cause.** The base-specifier match at the end of `read_format_spec`
+(`src/codegen/format.rs`, formerly lines 661–666) is:
+
+```rust
+match remaining {
+    "x" => spec.base = IntegerBase::HexLower,
+    "X" => spec.base = IntegerBase::HexUpper,
+    "b" => spec.base = IntegerBase::Binary,
+    "o" => spec.base = IntegerBase::Octal,
+    _ => {
+        if has_width { spec.base = IntegerBase::Decimal; }
+    }
+}
+```
+
+The catch-all accepts anything: no `FormatSpecFault` comes out of it, so
+nothing downstream — codegen or the analyzer — can ever report the text was
+wrong. The Format Specifiers table (LANGUAGE.md's specifier table) is a
+closed enumeration, and the section's own principle for a specifier the
+compiler cannot honour is stated twice, once for an over-large count and
+once for the wrong type: a compile error naming the way out, "not a width
+that quietly does nothing" and "not a wrong answer". A specifier that
+matches nothing in the table is the same wrong under that principle — it
+was just the one case the catch-all still let through.
+
+**The fix.** A new `FormatSpecFault::UnknownSpecifier(String)` variant
+carries the clause exactly as written; the catch-all raises it whenever
+`remaining` is non-empty, matches none of the base letters, and no
+more-specific count fault (`WidthTooLarge`/`PrecisionTooLarge`) already
+claimed the spot. The analyzer (`check_format_spec`,
+`src/analyzer/expressions.rs`) turns it into a named diagnostic, riding the
+same path #46/#61/#85 already built for a spec fault: quote what was
+written, caret on the `:SPEC` clause, and a `help:` line listing the actual
+forms (a width, a zero-padded width, a decimal precision, and the four base
+letters, alone or with a width):
+
+```
+error: 'q' is not a format specifier Vox knows
+  --> n1-repro.vox:2:11
+  |
+2 | Print "{n:q}|{n:#x}|{n:zzz}|{n:x}|{n:8}|".
+  |           ^--- here
+  |
+  help: the specifiers are a width (`N`), a zero-padded width (`0N`), a
+  decimal precision (`.N`), and a whole number's base - `x` (hexadecimal),
+  `X` (hexadecimal, uppercase), `b` (binary) or `o` (octal), which a width
+  can precede (`04x`). Drop the specifier to render the value plainly.
+```
+
+`{n:#x}` and `{n:zzz}` are each refused the same way, caret on their own
+clause. `codegen`'s `parse_format_spec` keeps dropping the fault exactly as
+it already dropped `WidthTooLarge`/`PrecisionTooLarge` — the analyzer has
+already refused the program by the time codegen would see it.
+
+**A boundary this fix does not move.** A width followed by a `.` that is
+not itself a count — `{n:8.}`, `{n:8.2z}` — stays the quiet no-op it was
+before #85 settled that shape (`read_format_spec`'s own test,
+`a_width_followed_by_something_that_is_not_a_count_is_not_a_fault`): the
+new fault only fires when `remaining` does not start with `.`, so that
+already-settled boundary is untouched.
+
+**Found in the wild.** `examples/format_strings.vox` already carried three
+live instances of exactly this bug: `{small:<6}`, `{small:>6}` and
+`{small:^6}`, labelled "Left aligned" / "Right aligned" / "Center aligned".
+Vox has no alignment specifier — the table has a width and a zero-padded
+width and nothing else — and all three silently rendered as the bare,
+unpadded `[42]`, which the shipped example printed and called "aligned".
+The example now shows only the padding forms that are real; the false
+alignment lines are removed rather than made to compile, since nothing in
+LANGUAGE.md ever promised them.
+
+**Family.** #45/#62/#63 (name what the author wrote and the way out, the
+house standard this diagnostic follows), #46 (the caret-on-the-spec
+anchoring this reuses), #61 (`WidthTooLarge` — the sibling fault for a
+count past what Vox can hold), #71 (a specifier the value's *type* cannot
+answer — this entry is the specifier itself not existing, one check
+earlier), #85/#86 (the format-spec fault family this variant joins).
+
+**LANGUAGE.md.** Line 3289 stated the rule for a specifier the wrong
+*type* asks for, but never said what happens to a clause that is not in
+the table at all — the same gap this entry closes in the compiler. One
+line, run long rather than split, states both:
+
+> **A specifier has to be one in the table, and one the value's type can
+> answer.** A clause after the colon that is none of them is a compile
+> error naming the valid forms. A width asks nothing of a type: …
+
+Nothing new is promised beyond what the section's own principle already
+implied for the other two cases (an over-large count, the wrong type); this
+is the sentence naming the third.
+
+**Incidental.**
+- The manual's specifier table and the compiler's now agree on every entry
+  checked; no other disagreement found.
+- An empty spec, `{n:}`, is not ruled on anywhere in LANGUAGE.md — the
+  table lists specifier *shapes*, not what a bare trailing `:` with nothing
+  after it means, and no sentence elsewhere addresses it either. Left as
+  before (renders exactly as a bare `{n}`) rather than guessed at; a ruling
+  belongs to Josj, not to this fix.
+- A sibling silent gap exists one branch earlier: `read_format_spec`'s
+  leading-`.` path (`fmt_str.starts_with('.')`) returns immediately when
+  what follows is not a count, so `{n:.z}` also renders as a bare `{n}`
+  with no diagnostic — the same family as this entry, but outside the
+  catch-all this fix targets and guarded by the same "not a count" boundary
+  #85 already settled for `8.`/`8.2z`. Not fixed here; flagged for its own
+  entry rather than widening this one.
+

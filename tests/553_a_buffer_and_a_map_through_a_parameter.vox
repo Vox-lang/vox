@@ -1,0 +1,35 @@
+(The two neighbours of #97's path. A BUFFER appended into a caller's list
+ through a parameter goes down the same list-slot path a text does - it is a
+ string-tagged slot - so it widens the caller's list and reads back as its
+ contents, not as its address. A nested LIST element is the same shape one
+ tag over. A MAP does not share the path: a map slot always carries its
+ value's tag, so `Set <map>'s "<key>" to` through a parameter already read
+ back as what it is; this pins that it still does. docs/BUGS_FOUND.md #97.)
+
+To 'stash' with a list called kept and a buffer called scratch.
+  append scratch to kept.
+
+To 'nest' with a list called outer and a list called inner.
+  append inner to outer.
+
+To 'record under' with a map called ledger and a text called label.
+  Set ledger's "note" to label.
+
+(A buffer through the parameter.)
+a buffer called scratch is 16 bytes in size.
+Copy "buffered" to scratch.
+a list called kept is [].
+'stash' of kept and scratch.
+Print "kept last: {kept's last}".
+
+(A list through the parameter, into a list.)
+a list called outer is [].
+a list called inner is [1, 2].
+'nest' of outer and inner.
+Print "outer last: {outer's last}".
+
+(A map the caller proved holds numbers, given a text through a parameter.)
+a map called ledger is {"count": 3}.
+'record under' of ledger and "written".
+Print "note: {ledger's \"note\"}".
+Print "count: {ledger's \"count\"}".

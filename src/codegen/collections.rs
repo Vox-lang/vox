@@ -15,6 +15,12 @@ impl CodeGenerator {
     /// Aliasing a mixed list (`a list called b is the a.`) propagates
     /// mixedness.
     pub(crate) fn prescan_mixed_lists(&mut self, statements: &[Statement]) {
+        // The call edge first: what each function writes into a list handed
+        // to it, so a call site below can join that verdict into the caller's
+        // list. It is a property of the callee's body alone, so it is decided
+        // once, before the fixed point, and is available whichever side of the
+        // call the definition sits on (docs/BUGS_FOUND.md #97).
+        self.collect_list_param_writes(statements);
         // Iterate to a fixed point so aliases and later evidence propagate
         // regardless of declaration order. Termination: each pass only ever
         // *adds* to `mixed_lists`, which is bounded by the number of list
@@ -74,6 +80,14 @@ impl CodeGenerator {
         list_seen_tags: &mut HashMap<String, u8>,
     ) {
         for stmt in statements {
+            // A call can widen a list the caller owns, so the verdict has to
+            // land before this statement's own arm reads `list_seen_tags`.
+            // Nested blocks are reached by this walk's own recursion, so
+            // `prescan_note_call_edge` deliberately looks no further than the
+            // statement's own expressions.
+            if !matches!(stmt, Statement::FunctionDef { .. }) {
+                self.prescan_note_call_edge(stmt, list_seen_tags);
+            }
             match stmt {
                 Statement::VarDecl { name, value, var_type, .. } => {
                     // A declared scalar type is a static proof of the slot tag
@@ -588,4 +602,449 @@ pub(crate) fn is_fallible_collection_read(expr: &Expr) -> bool {
                 ..
             }
     )
+}
+
+// ---------------------------------------------------------------------------
+// The call edge: what a callee writes into the caller's list
+// ---------------------------------------------------------------------------
+
+/// Join one more write into a list parameter's running verdict. The lattice
+/// climbs only: no write yet (`None`) → one proven tag (`Known(t)`) →
+/// `Unknowable`, which is where two different proven tags also land. Returns
+/// whether the verdict moved, so the fixed point below knows to run again.
+fn join_param_verdict(slot: &mut Option<TagInfo>, write: TagInfo) -> bool {
+    let next = match (*slot, write) {
+        (None, w) => w,
+        (Some(TagInfo::Unknowable), _) => TagInfo::Unknowable,
+        (Some(_), TagInfo::Unknowable) => TagInfo::Unknowable,
+        (Some(TagInfo::Known(a)), TagInfo::Known(b)) => {
+            if a == b {
+                TagInfo::Known(a)
+            } else {
+                TagInfo::Unknowable
+            }
+        }
+    };
+    if *slot == Some(next) {
+        false
+    } else {
+        *slot = Some(next);
+        true
+    }
+}
+
+/// The list name an argument passes, when the argument is a bare name. A name
+/// is the only argument shape that hands a caller's own list over; anything
+/// else builds a fresh value the caller cannot read back.
+fn argument_list_name(arg: &Expr) -> Option<&str> {
+    match arg {
+        Expr::Identifier(n) | Expr::StringLit(n) => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+/// Visit every function call written inside `e`, at any depth.
+fn expr_calls(e: &Expr, f: &mut impl FnMut(&str, &[Expr])) {
+    match e {
+        Expr::FunctionCall { name, args } => {
+            f(name, args);
+            for a in args {
+                expr_calls(a, f);
+            }
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            expr_calls(left, f);
+            expr_calls(right, f);
+        }
+        Expr::UnaryOp { operand, .. } => expr_calls(operand, f),
+        Expr::Cast { value, .. } | Expr::TreatingAs { value, .. } => expr_calls(value, f),
+        Expr::TypeCheck { value, .. } => expr_calls(value, f),
+        Expr::ListLit { elements } => {
+            for x in elements {
+                expr_calls(x, f);
+            }
+        }
+        Expr::MapLit { pairs } => {
+            for (k, v) in pairs {
+                expr_calls(k, f);
+                expr_calls(v, f);
+            }
+        }
+        Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => {
+            expr_calls(list, f);
+            expr_calls(index, f);
+        }
+        Expr::FormatString { parts } => {
+            for part in parts {
+                if let FormatPart::Expression { expr, .. } = part {
+                    expr_calls(expr, f);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Visit every function call in a statement's OWN expressions — its
+/// arguments, its initialiser, its condition — and NOT in a block it
+/// encloses. Both walks that use this reach a nested block by their own
+/// recursion, so descending here would visit those calls twice; harmless for
+/// the verdict, but it would also step into a body the enclosing walk
+/// deliberately skips (a `for each` over an empty literal runs zero times).
+fn stmt_own_calls(stmt: &Statement, f: &mut impl FnMut(&str, &[Expr])) {
+    let mut visit = |e: &Expr| expr_calls(e, f);
+    match stmt {
+        Statement::FunctionCall { name, args } => {
+            f(name, args);
+            for a in args {
+                expr_calls(a, f);
+            }
+        }
+        Statement::Print { value, .. } => visit(value),
+        Statement::VarDecl { value: Some(v), .. } => visit(v),
+        Statement::Assignment { name: _, value } => visit(value),
+        Statement::Return { value: Some(v), .. } => visit(v),
+        Statement::Exit { code } => visit(code),
+        Statement::ListAppend { value, .. } => visit(value),
+        Statement::ElementSet { index, value, .. } => {
+            visit(index);
+            visit(value);
+        }
+        Statement::MapSet { key, value, .. } => {
+            visit(key);
+            visit(value);
+        }
+        Statement::ByteSet { index, value, .. } => {
+            visit(index);
+            visit(value);
+        }
+        Statement::SetThingField { value, .. } => visit(value),
+        Statement::BufferCopy { source, .. } => visit(source),
+        Statement::Allocate { size, .. } => visit(size),
+        Statement::If { condition, .. } | Statement::While { condition, .. } => visit(condition),
+        Statement::ForRange { range, .. } => visit(range),
+        Statement::ForEach { collection, .. } => visit(collection),
+        Statement::Repeat { count, .. } => visit(count),
+        _ => {}
+    }
+}
+
+impl CodeGenerator {
+    /// Pre-pass for the call edge (`docs/BUGS_FOUND.md #97`): record, for every
+    /// function, what a call writes into the CALLER's list through each `list`
+    /// parameter.
+    ///
+    /// `prescan_mixed_lists` decides each function's lists in isolation, so a
+    /// callee's `append label to noted` is attributed to the callee's own
+    /// parameter and never reaches the caller's list. The caller then proves
+    /// homogeneous a list the callee widened, and reads it off an untagged
+    /// path over slots `_list_append` did tag - `'s last` renders a text's
+    /// address as a number. This pass supplies the missing edge:
+    /// `prescan_walk` joins the verdict recorded here into the caller's list
+    /// at every call site, exactly as an append written at the caller would.
+    ///
+    /// The verdict describes what the callee EMITS, so parameters are seeded
+    /// from their declared types - that is the tag `emit_time_expr_tag` puts
+    /// in the slot. Anything else the body appends (a body-local, a call
+    /// result) reads `Unknowable` and widens: conservative, never wrong, and
+    /// it costs only the fast path.
+    ///
+    /// Transitive by construction - a function that hands its own list
+    /// parameter on inherits the verdict of the function it hands it to - and
+    /// the loop runs to a fixed point, so a chain of helpers and a recursive
+    /// call both settle. Termination: each verdict only climbs the three-step
+    /// lattice `None` -> `Known(t)` -> `Unknowable`, and there are finitely
+    /// many parameters.
+    pub(crate) fn collect_list_param_writes(&mut self, statements: &[Statement]) {
+        // Every definition first, with the library identity in force where it
+        // sits: a body may call a function defined further down the file, and
+        // the verdict for that call has to be reachable when the body is
+        // scanned. `Library` precedes its own functions, so the source-order
+        // walk assigns each the identity its label is mangled with.
+        let saved_library = self.current_library.clone();
+        let mut defs: Vec<(String, Option<(String, String)>, &[(String, Type)], &[Statement])> =
+            Vec::new();
+        for stmt in statements {
+            match stmt {
+                Statement::LibraryDecl { name, version } => {
+                    self.current_library = Some((name.clone(), version.clone()));
+                }
+                Statement::FunctionDef { name, params, body, .. } => {
+                    defs.push((
+                        self.function_label(name),
+                        self.current_library.clone(),
+                        params.as_slice(),
+                        body.as_slice(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        let mut verdicts: HashMap<String, Vec<Option<TagInfo>>> = HashMap::new();
+        for (label, _, params, _) in &defs {
+            verdicts.insert(label.clone(), vec![None; params.len()]);
+        }
+        // The shared-library boundary, decided the conservative way: a `.lib`
+        // entry is a signature, not a body, so nothing here can prove what it
+        // writes. Every `list` parameter it declares widens the caller's list,
+        // which costs the fast path across an import and is always right. The
+        // `.lib` format carries types only - it has no place to record that a
+        // function widens a parameter - so the precise alternative would mean
+        // changing that format, and no evidence yet asks for it.
+        for imp in &self.imports {
+            let widened = imp
+                .params
+                .iter()
+                .map(|(_, t)| {
+                    if matches!(t, Type::List(_)) {
+                        Some(TagInfo::Unknowable)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            verdicts.insert(imp.mangled.clone(), widened);
+        }
+
+        let no_lists: HashMap<String, u8> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (label, library, params, body) in &defs {
+                // The label a call inside this body resolves to is mangled
+                // with the library this definition sits in, not the last one
+                // the collection loop saw.
+                self.current_library = library.clone();
+                let env = Self::param_tag_env(params);
+                for (idx, (pname, ptype)) in params.iter().enumerate() {
+                    if !matches!(ptype, Type::List(_)) {
+                        continue;
+                    }
+                    // Indexed through `get`, never `[idx]`: two definitions
+                    // that mangle to one label would leave a shorter row here,
+                    // and a compiler must not panic on a program it can parse.
+                    let mut verdict: Option<TagInfo> =
+                        verdicts.get(label).and_then(|v| v.get(idx).copied()).flatten();
+                    let names = Self::list_param_alias_names(body, pname);
+                    self.scan_list_param_writes(
+                        body,
+                        &names,
+                        &env,
+                        &no_lists,
+                        &verdicts,
+                        &mut verdict,
+                        &mut changed,
+                    );
+                    if let Some(slot) =
+                        verdicts.get_mut(label).and_then(|v| v.get_mut(idx))
+                    {
+                        if *slot != verdict {
+                            *slot = verdict;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        self.current_library = saved_library;
+        self.list_param_writes = verdicts;
+    }
+
+    /// A function's parameters as the pre-scan's `env`: a declared parameter
+    /// type IS the tag the callee emits for a write of that parameter, so it
+    /// is a proof here. A `value` parameter (and a file, a timer) has no slot
+    /// tag, so it is left out and reads `Unknowable`.
+    fn param_tag_env(params: &[(String, Type)]) -> HashMap<String, TagInfo> {
+        let mut env = HashMap::new();
+        for (name, ty) in params {
+            if let Some(tag) = type_to_tag(ty) {
+                env.insert(name.clone(), TagInfo::Known(tag));
+            }
+        }
+        env
+    }
+
+    /// Every name in this body that refers to the list parameter `pname`:
+    /// the parameter itself, plus any local declared as an alias of one of
+    /// them (`a list called kept is the noted.` - both names are the same
+    /// block, so a write through either is a write into the caller's list).
+    /// Collected to a fixed point over a SET, which is what keeps a pair of
+    /// declarations that alias each other from recursing forever.
+    fn list_param_alias_names(
+        body: &[Statement],
+        pname: &str,
+    ) -> std::collections::HashSet<String> {
+        fn note_aliases(
+            body: &[Statement],
+            names: &mut std::collections::HashSet<String>,
+            grew: &mut bool,
+        ) {
+            for stmt in body {
+                match stmt {
+                    Statement::VarDecl { name, value: Some(v), var_type } => {
+                        // Only a list-typed (or undeclared) alias can be one:
+                        // a quoted name is a variable reference in Vox, so
+                        // `a text called t is "noted".` must not be read as
+                        // an alias of a parameter that happens to be `noted`.
+                        let could_be_a_list =
+                            matches!(var_type, None | Some(Type::List(_)));
+                        if could_be_a_list
+                            && argument_list_name(v).is_some_and(|src| names.contains(src))
+                            && names.insert(name.clone())
+                        {
+                            *grew = true;
+                        }
+                    }
+                    Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                        note_aliases(then_block, names, grew);
+                        for (_, block) in else_if_blocks {
+                            note_aliases(block, names, grew);
+                        }
+                        if let Some(block) = else_block {
+                            note_aliases(block, names, grew);
+                        }
+                    }
+                    Statement::While { body, .. }
+                    | Statement::ForRange { body, .. }
+                    | Statement::ForEach { body, .. }
+                    | Statement::Repeat { body, .. } => note_aliases(body, names, grew),
+                    Statement::OnError { actions } => note_aliases(actions, names, grew),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        names.insert(pname.to_string());
+        loop {
+            let mut grew = false;
+            note_aliases(body, &mut names, &mut grew);
+            if !grew {
+                return names;
+            }
+        }
+    }
+
+    /// Accumulate into `verdict` every write this body makes into the list
+    /// parameter - its own appends and element-sets, through the parameter's
+    /// name or any alias of it, and whatever the functions it hands the
+    /// parameter on to write.
+    #[allow(clippy::too_many_arguments)]
+    fn scan_list_param_writes(
+        &self,
+        body: &[Statement],
+        names: &std::collections::HashSet<String>,
+        env: &HashMap<String, TagInfo>,
+        list_seen_tags: &HashMap<String, u8>,
+        verdicts: &HashMap<String, Vec<Option<TagInfo>>>,
+        verdict: &mut Option<TagInfo>,
+        changed: &mut bool,
+    ) {
+        for stmt in body {
+            match stmt {
+                Statement::ListAppend { list, value } if names.contains(list) => {
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
+                    *changed |= join_param_verdict(verdict, tag);
+                }
+                Statement::ElementSet { list, value, .. } if names.contains(list) => {
+                    let tag = self.prescan_expr_tag(value, env, list_seen_tags);
+                    *changed |= join_param_verdict(verdict, tag);
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    self.scan_list_param_writes(
+                        then_block, names, env, list_seen_tags, verdicts, verdict, changed,
+                    );
+                    for (_, block) in else_if_blocks {
+                        self.scan_list_param_writes(
+                            block, names, env, list_seen_tags, verdicts, verdict, changed,
+                        );
+                    }
+                    if let Some(block) = else_block {
+                        self.scan_list_param_writes(
+                            block, names, env, list_seen_tags, verdicts, verdict, changed,
+                        );
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. } => {
+                    self.scan_list_param_writes(
+                        body, names, env, list_seen_tags, verdicts, verdict, changed,
+                    );
+                }
+                Statement::OnError { actions } => {
+                    self.scan_list_param_writes(
+                        actions, names, env, list_seen_tags, verdicts, verdict, changed,
+                    );
+                }
+                // A nested definition is not run by this call.
+                Statement::FunctionDef { .. } => continue,
+                _ => {}
+            }
+            // Handing the parameter on: whatever that function writes into
+            // its own parameter lands in this caller's list too.
+            let mut inherited: Vec<TagInfo> = Vec::new();
+            stmt_own_calls(stmt, &mut |name, args| {
+                let label = self.resolved_call_label(name);
+                if let Some(callee) = verdicts.get(&label) {
+                    for (i, arg) in args.iter().enumerate() {
+                        if !argument_list_name(arg).is_some_and(|n| names.contains(n)) {
+                            continue;
+                        }
+                        if let Some(Some(tag)) = callee.get(i) {
+                            inherited.push(*tag);
+                        }
+                    }
+                }
+            });
+            for tag in inherited {
+                *changed |= join_param_verdict(verdict, tag);
+            }
+        }
+    }
+
+    /// The caller's half of the call edge: widen every list this statement's
+    /// own calls write into, unless the callee provably writes the one type
+    /// the caller has already proven. Reads of a widened list dispatch on each
+    /// slot's runtime tag, which `_list_append` has always stored - so the
+    /// element comes back as what it is instead of as its address.
+    ///
+    /// A list the caller has proven homogeneous and hands to a function that
+    /// appends that same proven type keeps its fast path; nothing else can,
+    /// because the caller writes no append of its own for the element type to
+    /// be read off.
+    pub(crate) fn prescan_note_call_edge(
+        &mut self,
+        stmt: &Statement,
+        list_seen_tags: &HashMap<String, u8>,
+    ) {
+        let mut widened: Vec<String> = Vec::new();
+        stmt_own_calls(stmt, &mut |name, args| {
+            let label = self.resolved_call_label(name);
+            let Some(callee) = self.list_param_writes.get(&label) else {
+                return;
+            };
+            for (i, arg) in args.iter().enumerate() {
+                let Some(list) = argument_list_name(arg) else {
+                    continue;
+                };
+                let Some(Some(tag)) = callee.get(i) else {
+                    continue;
+                };
+                let proven = list_seen_tags.get(list).copied();
+                if !matches!((tag, proven), (TagInfo::Known(t), Some(p)) if *t == p) {
+                    widened.push(list.to_string());
+                }
+            }
+        });
+        for list in widened {
+            self.mixed_lists.insert(list);
+        }
+    }
 }

@@ -436,6 +436,19 @@ impl CodeGenerator {
                     // already written its own type into the table above, so a
                     // later `a text called b is ...` still re-types freely.
                     let is_buffer_var = self.variable_types.get(name) == Some(&VarType::Buffer);
+                    // `Set x to <value>.` / `Create x to <value>.` on a name
+                    // with no type yet is a declaration, and a declaration
+                    // fixes the name's type from its value. Runs before the
+                    // arms below - they refine what they recognise, and this
+                    // is the one place that answers for a value none of them
+                    // does (a text, a map) as well as for the name's declared
+                    // type, which nothing recorded at all
+                    // (docs/BUGS_FOUND.md #95). Reads the same three flags
+                    // the arms do: a `value`, a buffer and a buffer copied
+                    // into a text all keep the type they have.
+                    if var_type.is_none() && !is_value_var && !is_buffer_var && !is_text_from_buffer {
+                        self.declare_untyped_from_value(name, val);
+                    }
                     // Track list type and element type for lists
                     if !is_value_var && !is_buffer_var && !is_text_from_buffer {
                         if let Expr::ListLit { elements } = val {
@@ -874,6 +887,18 @@ impl CodeGenerator {
                     }
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
                 } else if let Some(label) = self.global_var_label(name).cloned() {
+                    // A global mirror exists for every name an untyped `Set`
+                    // claims anywhere in the file, so this branch takes the
+                    // `name is <value>.` / `the name is <value>.` that brings
+                    // such a name into being as well as every later write to
+                    // it. The creating one is a declaration and fixes the
+                    // name's type; the later ones find a type already there
+                    // and keep it. Without this the slot stayed unlabelled
+                    // and read as a number, so `the label is "first". Print
+                    // label.` printed the string's ADDRESS whenever a `Set`
+                    // on the same name appeared further down
+                    // (docs/BUGS_FOUND.md #95).
+                    self.declare_untyped_from_value(name, value);
                     if self.variable_types.get(name) == Some(&VarType::Buffer) {
                         // Reassigning an existing global buffer: copy/append the
                         // source into the buffer, preserving the allocated struct,
@@ -926,6 +951,14 @@ impl CodeGenerator {
                         }
                     }
                 } else {
+                    // No slot and no global mirror: `name is <value>.` /
+                    // `the name is <value>.` on a name that does not exist
+                    // yet, which brings it into being here. That is a
+                    // declaration, so it fixes the name's type from its
+                    // value - the reassignment path above already labels the
+                    // slot, and this is the same thing for the write that
+                    // creates it (docs/BUGS_FOUND.md #95).
+                    self.declare_untyped_from_value(name, value);
                     self.generate_expr(value);
                     let offset = self.alloc_var(name);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));

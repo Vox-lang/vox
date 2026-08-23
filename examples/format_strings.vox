@@ -21,13 +21,10 @@ Print "Pi to 2 decimals: {pi:.2}".
 Print "Pi to 4 decimals: {pi:.4}".
 Print "Pi to 0 decimals: {pi:.0}".
 
-(Padding and alignment)
+(Padding)
 a number called small is 42.
 Print "Padded to 6 chars: [{small:6}]".
 Print "Zero-padded: [{small:06}]".
-Print "Left aligned: [{small:<6}]".
-Print "Right aligned: [{small:>6}]".
-Print "Center aligned: [{small:^6}]".
 
 Print "".
 Print "=== Different Number Bases ===".

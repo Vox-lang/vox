@@ -2658,6 +2658,121 @@ Otherwise, a number called s is 1, append s to out.\n";
         }
     }
 
+    // ---- The call edge: a list widened through a parameter (#97) ----
+    //
+    // The pre-scan decides each function's lists in isolation, so a callee's
+    // `append label to noted` used to stop at the callee's own parameter. The
+    // caller then read a list it believed homogeneous off an untagged path,
+    // over slots `_list_append` had tagged, and `'s last` rendered a text's
+    // address as a number. These pin the edge and the proof that bounds it.
+
+    /// The repro: an empty list handed to a function that appends a text to
+    /// it. The caller has proven nothing about the list, so every read of it
+    /// after the call must dispatch on the slot's runtime tag.
+    #[test]
+    fn a_text_appended_through_a_parameter_widens_the_callers_list() {
+        let asm = compile_to_asm(
+            "To 'note whatever' with a list called noted and a text called label.\n\
+             \x20 append label to noted.\n\n\
+             a list called noted is [].\n\
+             'note whatever' of noted and \"tail\".\n\
+             print noted's last.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "a list a callee appended a text to must read back through tag dispatch"
+        );
+    }
+
+    /// The bound on it: a list the caller has PROVEN holds one type, handed
+    /// to a function that appends that same type, keeps the untagged fast
+    /// path. The widening is earned by a write that disagrees with the proof,
+    /// not by the call.
+    #[test]
+    fn a_proven_list_keeps_its_fast_path_across_a_matching_call() {
+        let asm = compile_to_asm(
+            "To 'add one more' with a list called tally and a number called extra.\n\
+             \x20 append extra to tally.\n\n\
+             a list called tally is [1, 2, 3].\n\
+             'add one more' of tally and 4.\n\
+             print tally's last.\n",
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "an int list given an int through a parameter must keep the fast path"
+        );
+    }
+
+    /// A function that only READS the list it is handed writes nothing into
+    /// it, so it cannot widen it.
+    #[test]
+    fn a_read_only_parameter_does_not_widen_the_callers_list() {
+        let asm = compile_to_asm(
+            "To 'report the size' with a list called tally.\n\
+             \x20 print tally's length.\n\n\
+             a list called tally is [1, 2, 3].\n\
+             'report the size' of tally.\n\
+             print tally's last.\n",
+        );
+        assert!(
+            !asm.contains("mixp_"),
+            "a read-only parameter must leave the caller's proof standing"
+        );
+    }
+
+    /// The edge is followed as far as it goes: a helper that hands its own
+    /// list parameter on to a second helper inherits what that one writes.
+    #[test]
+    fn a_widening_write_carries_along_a_chain_of_helpers() {
+        let asm = compile_to_asm(
+            "To 'note whatever' with a list called noted and a text called label.\n\
+             \x20 append label to noted.\n\n\
+             To 'note through' with a list called noted and a text called label.\n\
+             \x20 'note whatever' of noted and label.\n\n\
+             a list called noted is [].\n\
+             'note through' of noted and \"chained\".\n\
+             print noted's last.\n",
+        );
+        assert!(
+            asm.contains("mixp_"),
+            "a write two calls away must still reach the caller's list"
+        );
+    }
+
+    /// Bug #98: a letter (or run of letters) that matches none of the base
+    /// specifiers used to fall into the same catch-all as an unremarkable
+    /// no-op and vanish - `{n:q}`, `{n:#x}` (the obvious hex typo) and
+    /// `{n:zzz}` all rendered as a bare `{n}`. Each is now a fault carrying
+    /// the clause exactly as written, so the diagnostic can quote it.
+    #[test]
+    fn an_unrecognised_specifier_is_a_fault() {
+        for spec_text in ["q", "#x", "zzz", "8q"] {
+            let (_, fault) = super::read_format_spec(Some(spec_text));
+            assert_eq!(
+                fault,
+                Some(super::FormatSpecFault::UnknownSpecifier(
+                    spec_text.to_string()
+                )),
+                "{} should be reported, not swallowed",
+                spec_text
+            );
+        }
+    }
+
+    /// A count fault is the more specific complaint when the clause has
+    /// both - a width past what Vox can hold beside trailing junk still
+    /// reports the width, not the junk.
+    #[test]
+    fn a_count_fault_outranks_an_unrecognised_specifier() {
+        let (_, fault) = super::read_format_spec(Some("99999999999999999999q"));
+        assert_eq!(
+            fault,
+            Some(super::FormatSpecFault::WidthTooLarge(
+                "99999999999999999999".to_string()
+            ))
+        );
+    }
+
     /// More than one leading zero used to leave the base specifier
     /// unconsumed - `{n:004x}` read as a zero-padded *decimal* because
     /// `remaining` was cut at a fixed offset of one zero instead of at the

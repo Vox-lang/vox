@@ -90,7 +90,26 @@ impl Parser {
         result
     }
 
+    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — Josj's Q1
+    /// ruling (2026-08-23): a library declaration is a top-level construct
+    /// like a function or a thing, so one reached while an `If`, a loop, or
+    /// a function body is still open is refused here rather than silently
+    /// parsed into that body (BUGS_FOUND #96).
+    fn err_library_declared_inside_a_block(&self) -> Box<CompileError> {
+        self.err(
+            "A library declaration is defined at the top level, like a function\n  \
+             Canonical form: Library <name> version \"<ver>\".\n  \
+             Move the declaration above the block it is written in: a library's \
+             identity is fixed for the whole program, so a declaration inside an \
+             'If', a loop, or a function body has no scope to belong to."
+        )
+    }
+
     pub(crate) fn parse_library_decl(&mut self) -> Result<Statement, Box<CompileError>> {
+        if !self.at_top_level() {
+            return Err(self.err_library_declared_inside_a_block());
+        }
+
         // Library 'name' version "1.0".
         // Plan 270 §6: the library *name* is an identifier (bare or quoted);
         // the *version* is a string literal (data, not a name).
@@ -368,7 +387,29 @@ impl Parser {
         Ok(Some(statements?))
     }
 
+    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — Josj's Q1
+    /// ruling (2026-08-23): "function declarations are not supposed to be
+    /// nestable." A `To` reached while an `If`, a loop, or another
+    /// function's body is still open used to be parsed as a nested
+    /// statement of that body (silently changing the control flow of every
+    /// statement written after it - BUGS_FOUND #96); it is refused here
+    /// instead. The caret lands on `To` itself (BUGS_FOUND #46) because this
+    /// runs before it is consumed.
+    fn err_function_defined_inside_a_block(&self) -> Box<CompileError> {
+        self.err(
+            "A function is defined at the top level, like a thing\n  \
+             Canonical form: To <function name> with <parameters>. Return a <type>, <expression>.\n  \
+             Move the definition above the block it is written in: a function's \
+             body is not nestable, so a definition inside an 'If', a loop, or \
+             another function's body has no scope to belong to."
+        )
+    }
+
     pub(crate) fn parse_function_def(&mut self) -> Result<Statement, Box<CompileError>> {
+        if !self.at_top_level() {
+            return Err(self.err_function_defined_inside_a_block());
+        }
+
         // Location of the `To` keyword, used by the "function still open at
         // end of file" warning (BUGS_FOUND #5) to point at the definition.
         let def_loc = self.current_location();

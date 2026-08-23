@@ -1,0 +1,16 @@
+(The scalar globals a top-level `Set` always reached. They share the fix's
+ code path, so they are pinned against it moving.)
+
+a number called tally is 0.
+a float called ratio is 1.0.
+a text called verdict is "old".
+
+To report.
+    Print tally.
+    Print ratio.
+    Print verdict.
+
+Set tally to 5.
+Set ratio to 2.5.
+Set verdict to "new".
+report.

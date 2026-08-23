@@ -1,0 +1,8 @@
+(Bug #95. The declaration and the write are spelled differently, and the
+ answer is the same: `Set` declares, `the ... is` writes, and the write's
+ type does not match the one the declaration fixed. The caret belongs on
+ the write and the note on the declaration, not the other way round.)
+
+Set zoo to 5.
+the zoo is "text now".
+Print zoo.

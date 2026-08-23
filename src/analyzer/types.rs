@@ -1792,6 +1792,46 @@ explicitly:  a {} called {} is {} as {}.",
         true
     }
 
+    /// The other half of the type lock: fix `name`'s type from the value it
+    /// is brought into being with. A name can be declared without naming a
+    /// type - `name is <value>.`, `the name is <value>.` and `Set name to
+    /// <value>.` all declare one when `name` does not exist yet - and such a
+    /// name is locked exactly like `a <type> called name is <value>.`
+    /// (LANGUAGE.md "Two Canonical Forms" / "Type Immutability"). Recording
+    /// the type here is what gives `check_type_lock` something to check the
+    /// name's later writes against; a name whose type was never recorded is
+    /// waved through by every one of them (docs/BUGS_FOUND.md #95).
+    ///
+    /// A collection, buffer, file or timer name is tracked in its own set,
+    /// which `named_value_type` consults first, so `scalar_types` must not
+    /// be given a second opinion about it. A value whose type cannot be
+    /// determined statically leaves the name untracked, exactly as the
+    /// checks that read it are permissive there.
+    pub(crate) fn bind_untyped_declaration_type(&mut self, name: &str, value: &Expr) {
+        if self.is_buffer_variable(name)
+            || self.is_list_variable(name)
+            || self.is_map_variable(name)
+            || self.file_variables.contains(name)
+            || self.timer_variables.contains(name)
+            || self.value_typed_names.contains(name)
+        {
+            return;
+        }
+        match self.arithmetic_operand_type(value) {
+            Some(t) => {
+                self.scalar_types.insert(name.to_string(), t);
+            }
+            None => {
+                self.scalar_types.remove(name);
+            }
+        }
+        if !self.declared_locations.contains_key(name) {
+            if let Some(loc) = self.find_declaration_location(name) {
+                self.declared_locations.insert(name.to_string(), loc);
+            }
+        }
+    }
+
     /// `a {} number` / `text` / etc. - the article Vox's own cast syntax
     /// uses (`as a number`, but `as text` with none). Shared by
     /// `check_type_lock` and `bind_variable_type` so both error shapes

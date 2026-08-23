@@ -1,0 +1,13 @@
+(Two declarations of one name that disagree about its kind are a real
+ conflict, and the definite-declaration walk still refuses to pick a winner:
+ `kept` is left out of the map, so the function reading it is refused. The
+ fix for docs/BUGS_FOUND.md #92 exempts only a write that names no type -
+ this, where both occurrences name one, must stay refused.)
+
+a list called kept is [].
+
+To 'how many'.
+    Return a number, kept's length.
+
+a buffer called kept is 16 bytes in size.
+Print 'how many'.

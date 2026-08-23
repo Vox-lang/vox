@@ -1,0 +1,12 @@
+(A loop body may run zero times, so a name declared inside one is never a
+ definite declaration and no function can read it. The caret belongs on the
+ possessive that failed, not on the declaration further up that happens to
+ spell the same name - docs/BUGS_FOUND.md #46, #89, #92.)
+
+Repeat 1 times,
+    a list called scratch is [].
+
+To 'how many'.
+    Return a number, scratch's length.
+
+Print 'how many'.

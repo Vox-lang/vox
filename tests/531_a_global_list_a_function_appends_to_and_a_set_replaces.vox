@@ -1,0 +1,20 @@
+(The two ways a global collection changes, composed: a function appends to it
+ in place, and a top-level `Set` replaces it whole. Both must reach the same
+ global.)
+
+a list called roster is [].
+
+To enlist.
+    Append "ada" to roster.
+
+To 'how many'.
+    Return a number, roster's length.
+
+enlist.
+Print 'how many'.
+
+Set roster to ["grace", "katherine"].
+Print 'how many'.
+
+enlist.
+Print 'how many'.

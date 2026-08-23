@@ -197,6 +197,22 @@ then
     exit 1
 fi
 
+# Packaging invariant: vox.spec's vendored build path hand-lists every crate
+# it bundles as `Provides: bundled(crate(...))`, and that list is only true
+# for as long as it matches Cargo.lock. The spec cannot be generated (Copr
+# builds one SRPM for every chroot), so this is what stops the two drifting.
+if [[ -x "$SCRIPT_DIR/scripts/check-spec-bundled.sh" ]]; then
+    echo -e "${YELLOW}Checking vox.spec bundled crates...${NC}"
+    if "$SCRIPT_DIR/scripts/check-spec-bundled.sh"; then
+        echo -e "  ${GREEN}PASS${NC} vox.spec bundled() matches Cargo.lock"
+        ((PASSED++))
+    else
+        echo -e "  ${RED}FAIL${NC} vox.spec bundled() disagrees with Cargo.lock"
+        ((FAILED++))
+    fi
+    echo ""
+fi
+
 for test_file in "${TEST_FILES[@]}"; do
     run_test "$test_file"
 done
@@ -701,6 +717,77 @@ EOF
     rm -rf "$work"
 }
 run_see_collection_return_test
+
+# A4.4 / docs/BUGS_FOUND.md #97 — a list handed ACROSS the .lib boundary to a
+# function that appends to it. A `.lib` is a signature, not a body, so nothing
+# on the consumer's side can prove what an imported function writes into a list
+# it is given; a list passed to one is widened conservatively, and every read
+# of it dispatches on the slot's own runtime tag. Before #97 the consumer proved
+# the list homogeneous and `'s last` printed the appended text's address as a
+# number. Builds tests/shared/noting_lib.vox, then a consumer that appends
+# through the import and reads the list back every way. Must never skip.
+run_see_list_parameter_test() {
+    local work lib_src
+    lib_src="$SCRIPT_DIR/tests/shared/noting_lib.vox"
+    work="$(mktemp -d)"
+
+    local fail_msg=""
+    local fail_log=""
+
+    if ! "$VOX_BIN" "$lib_src" --shared -o "$work/libnoting.so" >"$work/build.log" 2>&1; then
+        fail_msg="see/list-parameter (library build)"; fail_log="$work/build.log"
+    elif [[ ! -f "$work/libnoting.lib" ]]; then
+        fail_msg="see/list-parameter (.lib not emitted beside the .so)"
+    else
+        cat >"$work/use_noting.vox" <<'EOF'
+see noting version "1.0" from "./libnoting.lib".
+
+a list called noted is [].
+'note whatever' of noted and "through a library".
+'note whatever' of noted and "and again".
+Print "last: {noted's last}".
+Print "first: {noted's first}".
+Print "element 2: {element 2 of noted}".
+'report the size' of noted.
+
+(A library function that widens the list and whose .lib says bare `list`.)
+a list called stashed is [].
+'stash a local' of stashed.
+Print "stashed: {stashed's last}".
+
+(A caller's list proven to hold NUMBERS, handed a text by the library. The
+ .lib promises `list of text` to every caller; trusting it here read the
+ integer 1 as a text pointer and segfaulted.)
+a list called tally is [1, 2, 3].
+'note whatever' of tally and "four".
+Print "tally first: {tally's first}".
+Print "tally last: {tally's last}".
+EOF
+        if ! "$VOX_BIN" "$work/use_noting.vox" -o "$work/use_noting" >"$work/consumer.log" 2>&1; then
+            fail_msg="see/list-parameter (consumer build)"; fail_log="$work/consumer.log"
+        else
+            local out expected
+            out=$("$work/use_noting" 2>"$work/run.log")
+            expected=$'last: and again\nfirst: through a library\nelement 2: and again\nsize: 2\nstashed: borrowed\ntally first: 1\ntally last: four'
+            if [[ "$out" != "$expected" ]]; then
+                fail_msg="see/list-parameter (a text appended through an imported function did not read back as text)"
+                { echo "stdout:"; echo "$out"; echo "expected:"; echo "$expected"; cat "$work/run.log"; } >"$work/out.log"
+                fail_log="$work/out.log"
+            fi
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} see/list-parameter (a list widened across the .lib boundary)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_see_list_parameter_test
 
 # A4.2 — two versions of one library in one .so, each consumed from its own
 # program. Reuses the A2 flags .so (flags 0.1 and 1.0 in one binary); two

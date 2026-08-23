@@ -1,0 +1,10 @@
+(The map spelling of docs/BUGS_FOUND.md #92 - the same top-level `Set`, the
+ same function reader, and the same refusal before the fix.)
+
+a map called prices is {}.
+
+To 'how many'.
+    Return a number, prices's length.
+
+Set prices to {"apple": 3, "pear": 5}.
+Print 'how many'.

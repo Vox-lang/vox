@@ -522,6 +522,12 @@ pub(crate) enum FormatSpecFault {
     WidthTooLarge(String),
     /// `{f:.N}` with N past `FORMAT_MAX_COUNT` decimal places.
     PrecisionTooLarge(String),
+    /// `{x:SPEC}` where SPEC is none of the specifiers in the table - not a
+    /// width, not a `0`-padded width, not a precision, not a base letter.
+    /// Carries the clause exactly as written after the `:`, so the
+    /// diagnostic can quote it and the caret can find it (docs/BUGS_FOUND.md
+    /// #98).
+    UnknownSpecifier(String),
 }
 
 /// Read the text after the `:` in `{value:SPEC}`.
@@ -660,6 +666,26 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
             "b" => spec.base = IntegerBase::Binary,
             "o" => spec.base = IntegerBase::Octal,
             _ => {
+                // Not a base letter, and not consumed as a width or a
+                // precision above: `remaining` is the part of the clause
+                // that matches none of the specifiers in the table (`q`,
+                // `#x`, `zzz`, a stray suffix after a width like `8q`). A
+                // width-too-large or precision-too-large fault already read
+                // from an earlier part of the same clause is the more
+                // specific complaint, so it wins and this one is dropped
+                // (docs/BUGS_FOUND.md #98).
+                //
+                // A `remaining` that still starts with `.` only gets here
+                // by way of the width+precision block above deciding what
+                // follows is not a count (`8.`, `8.2z`) and leaving it
+                // untouched on purpose - that boundary is already settled
+                // (`a_width_followed_by_something_that_is_not_a_count_is_not_a_fault`)
+                // and #98 does not move it: a dangling `.` after a width is
+                // a different clause shape from an unknown specifier letter,
+                // not one more instance of it.
+                if fault.is_none() && !remaining.starts_with('.') {
+                    fault = Some(FormatSpecFault::UnknownSpecifier(fmt_str.to_string()));
+                }
                 // If we parsed a width but no base, treat as decimal
                 if has_width {
                     spec.base = IntegerBase::Decimal;

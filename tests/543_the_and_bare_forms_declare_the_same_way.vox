@@ -1,0 +1,16 @@
+(Bug #95. The other two spellings of an untyped declaration. `the NAME is
+ VALUE.` and `NAME is VALUE.` bring a name into being exactly as `Set NAME
+ to VALUE.` does, so a text declared either way must read back as its own
+ text and not as the address the integer formatter made of it.)
+
+the greeting is "hello".
+Print greeting.
+
+motto is "carry on".
+Print motto.
+
+the score is 7.
+Print score.
+
+roster is ["ann", "bo"].
+Print roster.
