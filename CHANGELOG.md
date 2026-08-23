@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The `examples/` set is curated for the site.** Six dev-scratch files
+  (`test_simple.vox`, `exit_test.vox`, `func_test.vox`, `file_test.vox`,
+  `file_simple.vox`, `count.vox`) that were never showcase material are
+  removed, and `loop_expansion_test.vox` becomes `expansion.vox`, a real
+  demonstration of a single `each` expansion, a chained two-`each` grid, and
+  a `but if` branch inside an expansion.
+
 ### Fixed
 - **A bare or relative `.lib` name in `see` now resolves against an installed library's interface.** The search order for a `.lib` gains `/usr/include/vox` as its final step — after the containing file's directory and every `--lib-path` — so `see json version "0.1" from "json.lib".` finds an installed library with no flag needed, while a development `.lib` beside the source or on `--lib-path` still shadows the installed one of the same name. The "Paths tried" diagnostic on a miss now names the system directory too, and the emitted `RUNPATH` no longer copies every `--lib-path` directory verbatim — only directories a `see`d `.so` actually resolved from land on it (#99).
 - **A zero-width format specifier, `{n:0}` or `{n:00000}`, compiled as an
