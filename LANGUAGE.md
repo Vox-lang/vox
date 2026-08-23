@@ -116,6 +116,22 @@ If x is greater than 10 then, print "big", set y to 1. Otherwise, print "small",
 - **Comma** (`,`) separates multiple actions within the same construct
 - Only **function definitions** can span multiple sentences (using paragraph breaks)
 
+**The words that open a consuming clause.** Comma-chained actions exist
+only inside a clause one of these opens; everything after its comma
+belongs to it, to the period that closes it:
+
+- `If <condition> then,` (and its `Otherwise,`)
+- `While <condition>,`
+- `For each <name> in <collection>,` / `For each <name> from <a> to <b>,`
+- `Repeat <count> times,`
+- `On error`
+- `but if <condition>` inside a loop expansion, which branches the
+  expanded action
+
+Nothing else in Vox chains actions with a comma: a bare sentence takes
+exactly one statement, so `Print "hello", print "world".` is a compile
+error at the comma, not two prints.
+
 **Sentence ownership (nested constructs):**
 - A nested construct (especially `if ... then`) owns its **own trailing period**.
 - Outer constructs (`while`, `for each`, `repeat`) do **not** steal that inner period.
@@ -5126,7 +5142,7 @@ own diagnostic: both name the canonical form `see '<lib>' version "<x.y>" from
 Those three shapes describe a `.vox` source include. A `.lib` path resolves
 differently: relative or bare, it is tried against the containing file's
 directory first, then each `--lib-path` directory, and finally
-`/usr/include/vox` — where an installed library's interface lives, checked
+`/usr/include/vox`, where an installed library's interface lives, checked
 last so a development `.lib` beside the source or on `--lib-path` always
 shadows an installed one of the same name. Its `Location` `.so` resolves
 against the `.lib`'s own directory first and then `--lib-path` (no system
