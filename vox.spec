@@ -22,11 +22,15 @@
 # `rpmbuild --with vendor` forces the vendored path anywhere, `--without
 # vendor` the unbundled one (Copr can set either per chroot).
 #
-# %%{fedora} alone is the right test: "The ELN buildroot defines the %%{rhel}
+# %%{fedora} alone is NOT quite the right test: Amazon Linux 2023 defines
+# %%{fedora} too (it is Fedora-derived) yet ships neither cargo-rpm-macros nor
+# the rust-* crates, so it is excluded by %%{amzn} and builds vendored - found
+# when the v0.4.11 tag build failed on exactly that chroot with 'No matching
+# package to install: cargo-rpm-macros'. For everything else, "The ELN buildroot defines the %%{rhel}
 # macro ... and does not define the %%{fedora} macro" --
 # https://docs.fedoraproject.org/en-US/eln/eln-macros/ -- and neither do RHEL,
 # CentOS Stream, openSUSE or Mageia.
-%if 0%{?fedora}
+%if 0%{?fedora} && !0%{?amzn}
 %bcond_with vendor
 %else
 %bcond_without vendor
