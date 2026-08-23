@@ -494,7 +494,8 @@ fn normalise_display(p: &Path) -> PathBuf {
 
 /// Find `name` relative to `first_dir`, then each `--lib-path` directory.
 /// Returns the first existing candidate; `tried` collects every candidate
-/// for the not-found diagnostic.
+/// for the not-found diagnostic. Used for `Location` `.so` resolution, which
+/// #99 leaves unchanged — a `.so` has no system search step.
 fn search_paths(name: &str, first_dir: &Path, lib_paths: &[String]) -> (Option<PathBuf>, Vec<PathBuf>) {
     let mut tried = Vec::new();
     for c in std::iter::once(first_dir.join(name))
@@ -508,9 +509,31 @@ fn search_paths(name: &str, first_dir: &Path, lib_paths: &[String]) -> (Option<P
     (None, tried)
 }
 
+/// Find `name` relative to `first_dir`, then each `--lib-path` directory,
+/// then `crate::INSTALLED_LIB_DIR` — the `.lib` search order (#99). The
+/// system directory is checked LAST so a development `.lib` beside the
+/// source, or on `--lib-path`, always shadows an installed interface of the
+/// same name. Returns the first existing candidate; `tried` collects every
+/// candidate, in this order, for the not-found diagnostic.
+fn search_lib_paths(name: &str, first_dir: &Path, lib_paths: &[String]) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let mut tried = Vec::new();
+    for c in std::iter::once(first_dir.join(name))
+        .chain(lib_paths.iter().map(|p| Path::new(p).join(name)))
+        .chain(std::iter::once(Path::new(crate::INSTALLED_LIB_DIR).join(name)))
+    {
+        tried.push(c.clone());
+        if c.exists() {
+            return (Some(c), tried);
+        }
+    }
+    (None, tried)
+}
+
 /// Resolve the `.lib` named by a `see` statement: relative to the source file
-/// first, then each `--lib-path` directory. Absolute paths are honoured.
-/// The not-found error names every path tried and mentions `--lib-path`.
+/// first, then each `--lib-path` directory, then `crate::INSTALLED_LIB_DIR`
+/// (#99 — where an installed library's interface lives). Absolute paths are
+/// honoured as-is, with no search. The not-found error names every path
+/// tried and mentions `--lib-path`.
 fn resolve_lib_file(path: &str, source_dir: &Path, lib_paths: &[String]) -> Result<PathBuf, String> {
     let p = Path::new(path);
     if p.is_absolute() {
@@ -523,7 +546,7 @@ fn resolve_lib_file(path: &str, source_dir: &Path, lib_paths: &[String]) -> Resu
             path
         ));
     }
-    let (found, tried) = search_paths(path, source_dir, lib_paths);
+    let (found, tried) = search_lib_paths(path, source_dir, lib_paths);
     found.ok_or_else(|| {
         let tried_list = tried
             .iter()
@@ -985,5 +1008,96 @@ Table of Contents:\n\
         assert!(!err.contains("././"), "elf error path leaked a '././': {}", err);
         assert!(err.contains("notelf.so"), "got: {}", err);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // #99 — a bare `.lib` name's candidate list is exactly [containing dir,
+    // each --lib-path in order, then the installed-interface system dir],
+    // checked in that order so a development .lib always shadows an
+    // installed one. This must hold whether or not /usr/include/vox exists
+    // on the box running the test — `search_lib_paths` only checks
+    // existence, it never requires the system dir to be real — so the probe
+    // name is deliberately NOT a real library name (this dev box has
+    // vox-libs' json.lib genuinely installed at /usr/include/vox; a name
+    // that collides with a real installed interface would make `found`
+    // resolve early on exactly the machines #99 cares about).
+    #[test]
+    fn bare_lib_candidate_list_ends_with_the_system_dir() {
+        let dir = Path::new("/some/source/dir");
+        let lib_paths = vec!["/opt/a".to_string(), "/opt/b".to_string()];
+        let (found, tried) = search_lib_paths("vox99_never_installed.lib", dir, &lib_paths);
+        assert!(found.is_none(), "none of these paths should exist on a test box");
+        assert_eq!(
+            tried,
+            vec![
+                PathBuf::from("/some/source/dir/vox99_never_installed.lib"),
+                PathBuf::from("/opt/a/vox99_never_installed.lib"),
+                PathBuf::from("/opt/b/vox99_never_installed.lib"),
+                PathBuf::from(crate::INSTALLED_LIB_DIR).join("vox99_never_installed.lib"),
+            ]
+        );
+    }
+
+    // Same shape for a relative `./x.lib` path: LANGUAGE.md's search-path
+    // rule groups relative and bare together ("relative or bare, it is
+    // tried against the containing file's directory first and then each
+    // --lib-path directory"), and #99 adds the system dir to both alike —
+    // only a genuinely absolute path skips the search entirely.
+    #[test]
+    fn relative_lib_candidate_list_also_ends_with_the_system_dir() {
+        let dir = Path::new("/some/source/dir");
+        let (found, tried) = search_lib_paths("./x.lib", dir, &[]);
+        assert!(found.is_none());
+        assert_eq!(
+            tried,
+            vec![
+                PathBuf::from("/some/source/dir/x.lib"),
+                PathBuf::from(crate::INSTALLED_LIB_DIR).join("./x.lib"),
+            ]
+        );
+    }
+
+    // An absolute `.lib` path is unchanged by #99: no search list at all, so
+    // the system dir never enters into it — a missing absolute path is its
+    // own diagnostic, not a "paths tried" list.
+    #[test]
+    fn absolute_lib_path_has_no_search_list_and_ignores_the_system_dir() {
+        let err = resolve_lib_file("/definitely/not/here.lib", Path::new("."), &[])
+            .unwrap_err();
+        assert!(err.contains("no search locations apply"), "got: {}", err);
+        assert!(
+            !err.contains(crate::INSTALLED_LIB_DIR),
+            "an absolute path must not mention the system dir: {}",
+            err
+        );
+    }
+
+    // The not-found diagnostic for a bare name lists the system dir too
+    // (#99's "the error grows honest") — end to end through
+    // `resolve_lib_file`, not just the candidate-list helper above.
+    #[test]
+    fn missing_bare_lib_error_names_the_system_dir_last() {
+        let err = resolve_lib_file("nope.lib", Path::new("."), &["/opt/libs".to_string()])
+            .unwrap_err();
+        assert!(err.contains("Paths tried"), "got: {}", err);
+        let sys_line = format!("{}", Path::new(crate::INSTALLED_LIB_DIR).join("nope.lib").display());
+        assert!(err.contains(&sys_line), "got: {}", err);
+        // Order: containing dir, then --lib-path, then the system dir last.
+        let lib_path_pos = err.find("/opt/libs").expect("--lib-path dir should appear");
+        let sys_pos = err.find(&sys_line).expect("system dir line should appear");
+        assert!(lib_path_pos < sys_pos, "system dir must be listed last:\n{}", err);
+    }
+
+    // `resolve_location` (the `.lib`'s `Location` `.so`) is explicitly
+    // unchanged by #99 — it has no system search step, only the .lib's own
+    // directory then --lib-path, so its not-found error must never mention
+    // the installed-interface dir.
+    #[test]
+    fn location_so_resolution_never_mentions_the_installed_lib_dir() {
+        let err = resolve_location("missing.so", Path::new("/some/lib/dir"), &[]).unwrap_err();
+        assert!(
+            !err.contains(crate::INSTALLED_LIB_DIR),
+            "Location resolution must stay untouched by #99: {}",
+            err
+        );
     }
 }

@@ -11294,9 +11294,9 @@ is the sentence naming the third.
 
 ### 99. A bare `.lib` name in `see` never finds an installed interface — `/usr/include/vox` is not in the search order, though every doc says installed interfaces live there
 
-**Status:** **open** — logged 2026-08-23 on Josj's instruction, verified by
-the master the same day (minimal repro below re-run against vox 0.4.11 and
-the installed vox-libs 0.2.0). Severity: **usability / doc-behaviour
+**Status:** **Fixed in 0.4.12** — logged 2026-08-23 on Josj's instruction,
+verified by the master the same day (minimal repro below re-run against vox
+0.4.11 and the installed vox-libs 0.2.0). Severity: **usability / doc-behaviour
 mismatch** — every consumer of an installed library must pass
 `--lib-path /usr/include/vox` by hand, which no documentation tells them
 and the language designer expected not to be needed ("no path, should auto
@@ -11352,6 +11352,60 @@ resolved `.so`. LANGUAGE.md:~5125 gains the one sentence; the error's
 **Found by** the master's smoke test of the installed json library
 (vox-libs 0.2.0), 2026-08-23, immediately after `make install` — the first
 ever consumer of an installed Vox library from outside the vox-libs tree.
+
+**Fixed**, exactly the agreed shape. `src/lib_file.rs`'s `resolve_lib_file`
+now searches a bare or relative `.lib` name through a new `search_lib_paths`:
+containing directory, then each `--lib-path`, then `crate::INSTALLED_LIB_DIR`
+(a named constant in `src/main.rs`, next to `find_coreasm_path`'s own
+`system_paths`, with a comment cross-referencing this entry and spelling out
+why the order is the inverse of coreasm's). `resolve_location` (the `.lib`'s
+`Location` `.so`) is untouched — a `.so` still has no system search step.
+Absolute `.lib` paths are untouched too: they never entered a search list at
+all. The not-found diagnostic's "Paths tried" now lists the system directory
+because `search_lib_paths` puts it in the same `tried` vector the error
+renders from — no separate message to keep in sync.
+
+The RUNPATH half: `src/main.rs`'s executable link path (the non-`--shared`
+branch) used to add `-rpath` for *every* `--lib-path` directory unconditionally.
+That is now gated on `!link_libs.is_empty()` — `--link`'s documented behaviour
+(LANGUAGE.md ~5459) keeps it, since `--link` names a `.so` by soname stem
+alone and the compiler never learns which `--lib-path` directory it actually
+lives in — while a `see` import instead relies on `import_rpaths`, built
+per-import from the resolved `.so`'s own canonicalized directory, which was
+already correct and unconditional. So a `--lib-path` that holds only `.lib`
+interface files (the installed-library case: `/usr/include/vox` has no `.so`
+in it) no longer reaches RUNPATH at all. The `--shared` build path was
+already correct — it only ever added `import_rpaths`, never blanket
+`--lib-path` — so it needed no change.
+
+LANGUAGE.md gained the system directory as the stated final search step in
+both the `see` "Search paths" paragraph (~5124) and the "Consuming a library"
+numbered resolution list (~5300), present tense, on the existing lines.
+
+**Tests.** Rust unit tests beside the resolver (`src/lib_file.rs`): the
+ordered candidate list for a bare and for a relative name ends with the
+system directory (using a probe name that is deliberately not a real
+installed library — this dev box has vox-libs' `json.lib` genuinely
+installed, so a test asserting "not found" against that name would pass or
+fail depending on the box); an absolute path's error never mentions the
+system directory; `resolve_location` errors never mention it either. Integration,
+in `test.sh`'s shared-library style (`run_see_installed_lib_search_test`,
+built on two new fixtures, `tests/shared/shadow_local.vox` and
+`shadow_libpath.vox`, that answer differently so the test can tell which
+copy actually linked): a `.lib` in the source's own directory wins over an
+identical `<lib,version>` on `--lib-path`; a `--lib-path` `.lib` resolves
+with no `/usr/include/vox` on the test box at all (proving the ordering
+without needing the system directory to be real); a miss names all three
+paths tried; and a `--lib-path` directory holding only a `.lib` (its
+`Location` rewritten to an absolute path elsewhere) is proven absent from
+`readelf -d`'s `RUNPATH` while the `.so`'s real directory is present. The
+existing `run_see_diagnostics_test` "missing .lib" sub-case was extended to
+also assert `/usr/include/vox` appears in that diagnostic. No numbered
+`tests/*.vox` run case or `tests/compile_fail` case was needed: `.lib`
+resolution is a driver-level (`main.rs`) step that runs before the analyzer
+the `compile_fail` harness exercises, and a numbered run-test has no way to
+pass `--lib-path`, so neither format could exercise this fix — the reserved
+run 570+ / cf 275+ ranges go unused here.
 
 ---
 

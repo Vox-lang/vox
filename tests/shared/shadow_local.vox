@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #99 fixture — the "development copy" half of a local-
+shadow pair. Built into the consumer's OWN directory so `see shadow.lib`
+(bare, no --lib-path) resolves it against the containing file's directory,
+the first step of the search order. `which one` returns 1 here and 2 in
+shadow_libpath.vox, so a test can tell which copy actually got linked by
+what the consumer prints, not just that it compiled.)
+
+Library shadow version "1.0".
+
+To 'which one'.
+  Return a number, 1.
