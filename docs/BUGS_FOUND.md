@@ -11289,3 +11289,66 @@ is the sentence naming the third.
   #85 already settled for `8.`/`8.2z`. Not fixed here; flagged for its own
   entry rather than widening this one.
 
+
+---
+
+### 99. A bare `.lib` name in `see` never finds an installed interface — `/usr/include/vox` is not in the search order, though every doc says installed interfaces live there
+
+**Status:** **open** — logged 2026-08-23 on Josj's instruction, verified by
+the master the same day (minimal repro below re-run against vox 0.4.11 and
+the installed vox-libs 0.2.0). Severity: **usability / doc-behaviour
+mismatch** — every consumer of an installed library must pass
+`--lib-path /usr/include/vox` by hand, which no documentation tells them
+and the language designer expected not to be needed ("no path, should auto
+resolve" — Josj, 2026-08-23).
+
+**Repro.** With vox-libs installed (`json.lib` in `/usr/include/vox`,
+`libjson.so` in `/usr/lib64`):
+
+```vox
+see json version "0.1" from "json.lib".
+Print 'to json' of 42.
+```
+
+```
+$ vox consumer.vox -o consumer
+Error: could not find the library interface file 'json.lib'.
+Paths tried:
+  json.lib
+Use --lib-path <dir> to add directories to this search.
+```
+
+The same program with `--lib-path /usr/include/vox` compiles, links
+dynamically (`NEEDED [libjson.so]`, resolved via the `.lib`'s `Location`),
+and runs correctly.
+
+**Why it is a bug and not a reading.** LANGUAGE.md's search-path rule for a
+`.lib` ("relative or bare, it is tried against the containing file's
+directory first and then each `--lib-path` directory") is implemented
+faithfully — but it contradicts the rest of the project's own story:
+`docs/INSTALL.md` installs interfaces into `/usr/include/vox/` and calls it
+where consumers find them; `man vox` lists `/usr/include/vox/*.lib` under
+FILES as "interface files of installed Vox libraries"; and a bare `.vox`
+source include DOES get a system default (`/usr/share/vox/lib` is checked
+first). The `.lib` shape is the one kind of `see` with no system location,
+which makes `sudo make install` produce libraries nothing can find without
+a flag.
+
+**Incidental, fix together:** the emitted `RUNPATH` copies every
+`--lib-path` directory verbatim, so an interface directory ends up on the
+runtime library search path (`RUNPATH [/usr/include/vox:/usr/lib64]`
+observed). Interfaces and shared objects are different search spaces.
+
+**Agreed fix shape (awaiting Josj's "fix #99" to start):** append
+`/usr/include/vox` as the FINAL step of the `.lib` search order — containing
+directory, then `--lib-path`, then the system directory — so a development
+`.lib` beside the source or on `--lib-path` always shadows the installed
+one (the deliberate inverse of the coreasm resolution order, whose
+system-first trap is documented in the man page). Its `Location` `.so`
+resolves as today. RUNPATH gains only directories that actually contain a
+resolved `.so`. LANGUAGE.md:~5125 gains the one sentence; the error's
+"Paths tried" lists the system directory too.
+
+**Found by** the master's smoke test of the installed json library
+(vox-libs 0.2.0), 2026-08-23, immediately after `make install` — the first
+ever consumer of an installed Vox library from outside the vox-libs tree.
