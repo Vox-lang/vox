@@ -1,0 +1,19 @@
+(A list is handed to a function, the function appends a text to it, and the
+ caller reads the list back. LANGUAGE.md: the compiler earns the homogeneous
+ fast path by proof, and a value whose type it cannot statically prove widens
+ the list to mixed - so a read dispatches on the slot's own tag. The pre-scan
+ used to decide each function's lists in isolation, so the caller proved a
+ list homogeneous that the callee had widened through the parameter, and
+ `'s last` rendered the text's address as a number. docs/BUGS_FOUND.md #97.)
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+a list called noted is [].
+'note whatever' of noted and "tail".
+Print "last: {noted's last}".
+
+(The same append written at the caller - the neighbour that always worked.)
+a list called written is [].
+append "tail" to written.
+Print "written: {written's last}".

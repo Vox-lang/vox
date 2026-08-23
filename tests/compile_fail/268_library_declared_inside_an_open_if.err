@@ -1,0 +1,2 @@
+A library declaration is defined at the top level, like a function
+Move the declaration above the block it is written in

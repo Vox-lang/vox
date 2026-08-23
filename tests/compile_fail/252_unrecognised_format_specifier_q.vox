@@ -1,0 +1,7 @@
+(Bug #98: a letter after the `:` that is none of the specifiers in the
+ table used to be dropped in silence and the hole rendered as a bare
+ `{n}` - no padding request, no base request, no diagnostic. `q` is not
+ a width, a precision, or a base letter, so it is refused by name.)
+
+a number called n is 255.
+Print "{n:q}".

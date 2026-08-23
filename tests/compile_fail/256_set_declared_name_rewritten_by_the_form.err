@@ -1,0 +1,4 @@
+cannot assign text to 'zoo', which is a number
+256_set_declared_name_rewritten_by_the_form.vox:7:5
+note: 'zoo' was declared as a number at 256_set_declared_name_rewritten_by_the_form.vox:6:5
+help: convert it explicitly:  zoo is "text now" as a number.

@@ -1,0 +1,43 @@
+(The call edge is followed as far as it goes. A two-argument helper widens
+ each list it writes into and leaves the others alone; a helper that hands
+ its own parameter on to a second helper inherits what that one writes; and
+ a call written in expression position - a declaration's initialiser, a
+ `{...}` hole - carries the same verdict as a call written as a statement.
+ docs/BUGS_FOUND.md #97.)
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+To 'note through' with a list called noted and a text called label.
+  'note whatever' of noted and label.
+
+To 'seed both' with a list called left and a list called right and a text called label.
+  append label to left,
+  append 99 to right.
+
+To 'note and count' with a list called noted and a text called label.
+  append label to noted.
+  Return a number, noted's length.
+
+(Two lists, one call: each takes only the writes aimed at it.)
+a list called left is [].
+a list called right is [].
+'seed both' of left and right and "hello".
+Print "left: {left's last}".
+Print "right: {right's last}".
+
+(Through a second helper: the chain carries the write back.)
+a list called relayed is [].
+'note through' of relayed and "chained".
+Print "relayed: {relayed's last}".
+
+(The call as an initialiser, and the call inside a format hole.)
+a list called counted is [].
+a text called held is "held".
+a number called 'how many' is 'note and count' of counted and held.
+Print "how many: {'how many'}".
+Print "counted: {counted's last}".
+
+a list called interpolated is [].
+Print "grew to: {'note and count' of interpolated and held}".
+Print "interpolated: {interpolated's last}".

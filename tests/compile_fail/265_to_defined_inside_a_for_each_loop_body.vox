@@ -1,0 +1,12 @@
+(Compile-fail: Josj's Q1 ruling, 2026-08-23 - a function definition is
+ never nestable. A `To` reached while a `For each` body is still open used
+ to be silently parsed into that body instead of being refused (BUGS_FOUND
+ #96); the sibling run tests 560/561 prove the blank-line-closed and
+ double-period forms still compile.)
+
+For each attempt from 1 to 3,
+    If attempt is 99 then, Break.
+To examine with a value called given.
+    Print "{given's type}".
+
+examine of "".

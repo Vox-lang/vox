@@ -1,0 +1,30 @@
+(Every read of a list a callee widened through a parameter: `'s first`,
+ `'s last`, `element N of`, iteration, and a `{...}` hole. LANGUAGE.md states
+ that appending, `set element`, `element N of`, `first`/`last`, iteration and
+ format interpolation all respect each element's actual type, so one widened
+ list has to answer all five the same way. docs/BUGS_FOUND.md #97.)
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+To 'relabel the first' with a list called noted and a text called label.
+  set element 1 of noted to label.
+
+a list called noted is [].
+'note whatever' of noted and "first entry".
+'note whatever' of noted and "second entry".
+
+Print "first: {noted's first}".
+Print "last: {noted's last}".
+Print "element 2: {element 2 of noted}".
+For each entry in noted,
+  Print "each: {entry}".
+Print noted.
+
+(`set element` through the parameter widens a list the caller had proven
+ holds numbers, so the replaced slot reads back as the text it now holds and
+ the untouched slots still read back as numbers.)
+a list called tally is [1, 2, 3].
+'relabel the first' of tally and "one".
+Print "tally first: {tally's first}".
+Print "tally second: {element 2 of tally}".

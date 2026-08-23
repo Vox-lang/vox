@@ -1,0 +1,14 @@
+(`Set roster to [...]` at top level is one of the three spellings of a write
+ to an already-declared name (LANGUAGE.md, "Type Immutability"), so the
+ function reading the global must still see the global. The write used to be
+ read as a rival declaration of an untyped name, which took `roster` out of
+ the definite-declaration map altogether and left the reader with nothing to
+ read - docs/BUGS_FOUND.md #92.)
+
+a list called roster is [].
+
+To 'how many'.
+    Return a number, roster's length.
+
+Set roster to ["ada", "grace"].
+Print 'how many'.

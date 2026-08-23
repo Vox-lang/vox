@@ -41,6 +41,12 @@ release.sh
 /cat
 /rmdir_check
 
+# Cargo home written into the tree by an rpm-style build: both build paths in
+# vox.spec put a `.cargo/config.toml` here in %prep (one pointing at vendor/,
+# one written by %cargo_prep), and cargo then caches into the same directory.
+# Build output, never source.
+/.cargo/
+
 # Local Claude Code session state (permissions, scheduler locks) - not project
 # files, and specific to whichever machine/session generated them.
 .claude/

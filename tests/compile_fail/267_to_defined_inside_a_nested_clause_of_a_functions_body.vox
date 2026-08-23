@@ -1,0 +1,12 @@
+(Compile-fail: BUGS_FOUND #96 - the guard is keyed on "is a clause open",
+ not on which top-level construct opened it, so a `To` swallowed by a `For
+ each` that itself lives inside another function's body is refused exactly
+ like one written directly at the top level.)
+
+To 'outer'.
+    For each attempt from 1 to 2,
+        Print "looping",
+To 'inner'.
+    Print "hi".
+
+'outer'.

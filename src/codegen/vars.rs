@@ -198,6 +198,54 @@ impl CodeGenerator {
         }
     }
 
+    /// Fix a name's type from the value that brings it into being. A
+    /// declaration that names no type still declares - `NAME is <value>.`,
+    /// `the NAME is <value>.` and `Set NAME to <value>.` all do, on a name
+    /// that does not exist yet - and the name is then an ordinary
+    /// statically-typed one (LANGUAGE.md "Two Canonical Forms").
+    ///
+    /// Nothing recorded that type, so the slot carried none: every read of
+    /// it went to the integer formatter, which is how `Set t to "hello".
+    /// Print t.` printed the string's ADDRESS and a map printed its struct
+    /// pointer; and `t's type` fell through to the runtime-tag dispatch,
+    /// answering `(dynamic)` off a tag byte nothing but a `value` ever
+    /// writes (docs/BUGS_FOUND.md #95). Both halves are recorded here, so
+    /// such a name renders and reports its type exactly as `a <type> called
+    /// NAME is <value>.` does.
+    ///
+    /// Only ever fills a gap: a name that already carries a type keeps it,
+    /// so this can never retag a slot out from under an earlier read.
+    pub(crate) fn declare_untyped_from_value(&mut self, name: &str, value: &Expr) {
+        if self.variable_types.contains_key(name) {
+            return;
+        }
+        let Some(inferred) = self.infer_expr_type(value) else {
+            return;
+        };
+        let declared = match inferred {
+            // `true`/`false` infer as `Integer` because a boolean is stored
+            // as 0/1, but the name IS a boolean and `name's type` must say
+            // `Boolean (static)`, exactly as the declared spelling does.
+            VarType::Integer if matches!(value, Expr::BoolLit(_)) => Type::Boolean,
+            VarType::Integer => Type::Integer,
+            VarType::Float => Type::Float,
+            VarType::String => Type::String,
+            VarType::Boolean => Type::Boolean,
+            // Element and value types are not written down in an untyped
+            // declaration, which is the same thing `a list called xs is
+            // [...]` records - Vox source has no typed-collection syntax.
+            VarType::List => Type::List(Box::new(Type::Unknown)),
+            VarType::Map => Type::Map(Box::new(Type::Unknown)),
+            // A buffer name reaches its storage through its own paths, and
+            // the other two mean "not known statically" - which is what an
+            // unlabelled slot already says. Left exactly as they were.
+            VarType::Buffer | VarType::Mixed | VarType::Unknown => return,
+        };
+        self.variable_types
+            .insert(name.to_string(), vartype_of_declared_type(&declared));
+        self.declared_types.insert(name.to_string(), declared);
+    }
+
     /// Frame setup for the forward case of `docs/BUGS_FOUND.md` #25: a global
     /// whose type a function body had to take from the declaration below it is
     /// now read AS that type, so the window before the declaration executes -

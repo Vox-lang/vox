@@ -1,0 +1,6 @@
+(Bug #98: a multi-character specifier that matches none of the table's
+ rows - not a width, not a `0`-padded width, not a precision, not a base
+ letter - used to fall through the catch-all and vanish the same way.)
+
+a number called n is 255.
+Print "{n:zzz}".

@@ -1,0 +1,26 @@
+(The call edge against name shadowing. The list being widened is a GLOBAL;
+ the call that widens it is written inside another function, which has no
+ list parameter of its own; and the widening function's parameter carries
+ the SAME name as the global it will be handed. The pre-scan walks each
+ function body on a snapshot precisely so two same-named things keep
+ opposite verdicts, so the widening has to land on the global without the
+ callee's parameter of that name catching it instead. docs/BUGS_FOUND.md
+ #97.)
+
+a list called noted is [].
+a list called counted is [1, 2].
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+To 'add one more' with a list called counted and a number called extra.
+  append extra to counted.
+
+To 'grow the globals'.
+  'note whatever' of noted and "reached the global",
+  'add one more' of counted and 3.
+
+'grow the globals'.
+Print "noted last: {noted's last}".
+Print "counted last: {counted's last}".
+Print "counted: {counted}".

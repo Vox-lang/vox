@@ -1,0 +1,10 @@
+(Compile-fail: Josj's Q1 ruling, 2026-08-23, closes BUGS_FOUND #73's other
+ everyday shape - a `To` inside a still-open `If` body was drawn into the
+ `If`'s body exactly like the loop case; now both are refused at the `To`.)
+
+If 1 is 1 then,
+    Print "inside the if",
+To examine with a value called given.
+    Print "{given's type}".
+
+examine of 3.

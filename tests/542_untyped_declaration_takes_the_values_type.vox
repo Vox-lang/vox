@@ -1,0 +1,23 @@
+(Bug #95. `Set NAME to VALUE.` on a name that does not exist yet brings it
+ into being with the value's type (LANGUAGE.md "Two Canonical Forms"). The
+ text and the map are the two that had no type at all: the slot was read by
+ the integer formatter, so this file printed the string's ADDRESS and the
+ map's struct pointer instead of what was put in them.)
+
+Set tally to 5.
+Print tally.
+
+Set ratio to 2.5.
+Print ratio.
+
+Set label to "hello".
+Print label.
+
+Set ready to true.
+Print ready.
+
+Set colours to ["red", "green"].
+Print colours.
+
+Set ages to {"ann": 30}.
+Print ages.

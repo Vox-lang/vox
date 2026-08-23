@@ -1,0 +1,8 @@
+first: first entry
+last: second entry
+element 2: second entry
+each: first entry
+each: second entry
+["first entry", "second entry"]
+tally first: one
+tally second: 2

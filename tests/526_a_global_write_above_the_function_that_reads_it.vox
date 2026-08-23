@@ -1,0 +1,13 @@
+(Where the `Set` stands makes no difference: a top-level name is visible from
+ every function in the file, including one written below the write
+ (LANGUAGE.md, "Function Scope"). docs/BUGS_FOUND.md #92 refused this shape
+ too, so it is pinned separately from the ordinary ordering.)
+
+a list called roster is [].
+
+Set roster to ["ada"].
+
+To 'how many'.
+    Return a number, roster's length.
+
+Print 'how many'.

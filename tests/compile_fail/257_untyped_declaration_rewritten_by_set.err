@@ -1,0 +1,4 @@
+cannot assign text to 'zoo', which is a number
+257_untyped_declaration_rewritten_by_set.vox:7:5
+note: 'zoo' was declared as a number at 257_untyped_declaration_rewritten_by_set.vox:6:5
+help: convert it explicitly:  zoo is "text now" as a number.

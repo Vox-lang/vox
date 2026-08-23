@@ -35,6 +35,7 @@
           postInstall = ''
             mkdir -p $out/share/vox
             cp -r coreasm $out/share/vox/coreasm
+            install -Dm0644 man/vox.1 $out/share/man/man1/vox.1
           '';
 
           meta = with pkgs.lib; {

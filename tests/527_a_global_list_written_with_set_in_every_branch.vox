@@ -1,0 +1,17 @@
+(A write in EVERY branch of an if/otherwise is definite, so the branch merge
+ has to carry the same rule the top level does: `Set` names no type and so
+ claims nothing about the global's kind. docs/BUGS_FOUND.md #92 struck here
+ as well, through the merge.)
+
+a list called roster is [].
+a boolean called crewed is true.
+
+To 'how many'.
+    Return a number, roster's length.
+
+If crewed then,
+    Set roster to ["ada"].
+Otherwise,
+    Set roster to ["ada", "grace", "katherine"].
+
+Print 'how many'.

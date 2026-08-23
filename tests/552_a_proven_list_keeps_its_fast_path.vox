@@ -1,0 +1,31 @@
+(The widening is earned, not assumed. A list stays on the homogeneous fast
+ path when the function it is handed to only reads it, and when the function
+ appends the very type the caller has already proven the list holds - the
+ call edge carries the callee's write into the caller's proof, and a write
+ that agrees with the proof is no widening at all. docs/BUGS_FOUND.md #97.)
+
+To 'report the size' with a list called tally.
+  Print "size: {tally's length}".
+
+To 'add one more' with a list called tally and a number called extra.
+  append extra to tally.
+
+To 'note whatever' with a list called noted and a text called label.
+  append label to noted.
+
+(Read only: nothing is written, so nothing widens.)
+a list called counted is [1, 2, 3].
+'report the size' of counted.
+Print "counted last: {counted's last}".
+
+(Written with the type the caller proved: still one type, still homogeneous.)
+a list called measured is [10, 20].
+'add one more' of measured and 30.
+Print "measured last: {measured's last}".
+Print "measured: {measured}".
+
+(A list of texts handed to a function that appends a text keeps its proof
+ the same way.)
+a list called guests is ["ann"].
+'note whatever' of guests and "bea".
+Print "guests last: {guests's last}".

@@ -1,0 +1,5 @@
+counted: [3, 2, 1]
+counted last: 1
+sounded: ["ping", "pong", "ping", "pong"]
+sounded last: pong
+noted last: aliased

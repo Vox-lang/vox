@@ -1,0 +1,18 @@
+(LANGUAGE.md, "Type Immutability": `roster is <value>.`, `the roster is
+ <value>.` and `Set roster to <value>.` all write a name that is already
+ declared, and all three are checked the same way. The function reading the
+ global reads whichever spelling wrote it last.)
+
+a list called roster is [].
+
+To 'how many'.
+    Return a number, roster's length.
+
+Set roster to ["ada"].
+Print 'how many'.
+
+the roster is ["ada", "grace"].
+Print 'how many'.
+
+roster is ["ada", "grace", "katherine"].
+Print 'how many'.

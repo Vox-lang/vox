@@ -65,11 +65,12 @@ impl Parser {
         ))
     }
 
-    /// Emits a warning for uninitialized buffers (zero capacity)
+    /// Emits a warning for uninitialized (default-capacity) buffers
     pub fn warn_uninitialized_buffer(&self, buffer_name: &str) {
         eprintln!(
             "Warning: Buffer \"{}\" declared without size or initializer.\n  \
-             This creates a zero-capacity buffer which may not be useful.\n  \
+             This starts it at the default 4096 bytes of capacity and grows \
+             automatically; a sized declaration is cheaper if the size is known.\n  \
              Consider: a buffer called '{}' is 1024 bytes.",
             buffer_name, buffer_name
         );
@@ -103,6 +104,34 @@ impl Parser {
         } else {
             Ok(())
         }
+    }
+
+    /// A type noun was read expecting `called <name>` to follow, and it does
+    /// not. The token just consumed *is* the name the author typed: `Set
+    /// message to "x".` and `The message is "x".` both read `message` as
+    /// the type noun `text` because the lexer folds the alias early, then
+    /// find no `called` and no name after it (BUGS_FOUND #94). Every type
+    /// noun `try_parse_type_noun` can consume this far without `called`
+    /// already confirmed is a bare reserved-keyword token - `value` and a
+    /// defined thing's name both require `called` to be next before they
+    /// are consumed at all - so the rewind below always lands on a genuine
+    /// keyword and `check_not_keyword` always has something to say; the
+    /// generic fallback exists only so this can never panic if that stops
+    /// being true.
+    ///
+    /// Rewinds to the type noun's saved position to build the diagnostic
+    /// against the token the author actually wrote, not whatever the parser
+    /// next stumbles on, then restores the cursor before returning.
+    pub(crate) fn err_type_noun_as_name(&mut self, type_tok_pos: usize) -> Box<CompileError> {
+        let resume = self.pos;
+        self.pos = type_tok_pos;
+        let tok = self.current().clone();
+        let err = self
+            .check_not_keyword(&tok)
+            .err()
+            .unwrap_or_else(|| self.err("Expected 'called' or a name here"));
+        self.pos = resume;
+        err
     }
 
     /// Whether a string is a legal *bare* identifier (plan 270 §2:
@@ -318,6 +347,7 @@ impl Parser {
         // thing's name is a type noun here exactly like a builtin one, which
         // is what makes `Create a point called p.` valid and equivalent to
         // `a point called p.` (plan 310 §10).
+        let type_tok_pos = self.pos;
         let var_type = self
             .try_parse_type_noun()
             .or_else(|| self.try_parse_thing_type_noun());
@@ -343,11 +373,22 @@ impl Parser {
             }
 
             self.skip_noise();
-            self.expect(&Token::Called);
+            let has_called = self.expect(&Token::Called);
             self.skip_noise();
 
-            // Check for keyword used as variable name
-            self.check_not_keyword(self.current())?;
+            // Check for keyword used as variable name. `Set float pi to
+            // 3.0.` (no `called`) is legal shorthand when what follows IS a
+            // usable name, so this only redirects blame to the type noun
+            // when the fallback isn't a name either (BUGS_FOUND #94) -
+            // `Set message to "x".` has nothing usable after `message`
+            // (`to` is reserved too), so the mistake is `message` itself,
+            // not whatever token the parser stumbled onto next.
+            if let Err(err) = self.check_not_keyword(self.current()) {
+                if !has_called {
+                    return Err(self.err_type_noun_as_name(type_tok_pos));
+                }
+                return Err(err);
+            }
 
             let name_pos = self.pos;
             let name = self.parse_name()?;
@@ -588,6 +629,7 @@ impl Parser {
         // Parse type noun: number, int, float, text, boolean, list, map,
         // buffer, file, time, timer, value - or a defined thing's name, which
         // works everywhere a type keyword works (plan 310 §1).
+        let type_tok_pos = self.pos;
         let var_type = self
             .try_parse_type_noun()
             .or_else(|| self.try_parse_thing_type_noun());
@@ -614,11 +656,21 @@ impl Parser {
         }
 
         self.skip_noise();
-        self.expect(&Token::Called);
+        let has_called = self.expect(&Token::Called);
         self.skip_noise();
 
-        // Check for keyword used as variable name
-        self.check_not_keyword(self.current())?;
+        // Check for keyword used as variable name. `a float pi is 3.0.`
+        // (no `called`) is legal shorthand when what follows IS a usable
+        // name, so this only redirects blame to the type noun when the
+        // fallback isn't a name either (BUGS_FOUND #94); an untyped
+        // `a <name> is <value>.` has no type noun to blame and keeps its
+        // existing behaviour.
+        if let Err(err) = self.check_not_keyword(self.current()) {
+            if var_type.is_some() && !has_called {
+                return Err(self.err_type_noun_as_name(type_tok_pos));
+            }
+            return Err(err);
+        }
 
         // Get variable name (plan 270: bare or quoted identifier, never a
         // string literal).
@@ -779,6 +831,7 @@ impl Parser {
         self.skip_noise();
 
         // Could be "the <type> called <name>" (typed reference) or just a name.
+        let type_tok_pos = self.pos;
         let var_type = self.try_parse_type_noun();
         let mut name_pos = self.pos;
         let name = if let Some(_) = var_type {
@@ -792,9 +845,13 @@ impl Parser {
                 name_pos = self.pos;
                 self.parse_name()?
             } else {
-                // "the number" without "called" - could be loop iterator reference
-                // But as a statement, this needs "is" to be an assignment
-                "_iter".to_string()
+                // `The number is 5.` etc: the type noun just read is not
+                // followed by `called` or a name, so it is the reserved
+                // word the author typed as a name (BUGS_FOUND #94), not a
+                // loop-iterator reference - that reading is expression-only
+                // (`Print number.`; LANGUAGE.md's Variable Reference
+                // section) and never reaches this assignment-statement path.
+                return Err(self.err_type_noun_as_name(type_tok_pos));
             }
         } else {
             self.parse_name()?

@@ -1,0 +1,24 @@
+(Bug #95. A name declared without a type noun is a statically-typed name
+ like any other, so `NAME's type` names that type and says `(static)` -
+ LANGUAGE.md: a variable reports `(static)` "because the compiler knows the
+ type from the declaration", and only a `value` reports `(dynamic)`. These
+ answered off a runtime tag byte nothing but a `value` ever writes, so a
+ text called itself a Number and every one of them said `(dynamic)`.)
+
+a text called declared is "hello".
+Print declared's type.
+
+Set label to "hello".
+Print label's type.
+
+Set tally to 5.
+Print tally's type.
+
+Set ratio to 2.5.
+Print ratio's type.
+
+Set ready to true.
+Print ready's type.
+
+motto is "carry on".
+Print motto's type.

@@ -1,0 +1,18 @@
+(Bug #95's nearest working neighbour. The type an untyped declaration fixes
+ is the value's own, so a later write of that same type is in order and must
+ keep compiling - in every spelling, whichever spelling declared the name.
+ A fix that locked too hard would fail here first.)
+
+Set tally to 5.
+Set tally to 7.
+the tally is 9.
+tally is 11.
+Print tally.
+
+the label is "first".
+Set label to "second".
+Print label.
+
+motto is "carry on".
+the motto is "carry on regardless".
+Print motto.

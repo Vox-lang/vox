@@ -74,6 +74,14 @@ pub struct CodeGenerator {
     local_mixed_lists: HashMap<String, std::collections::HashSet<String>>,
     local_unprovable_scalars: HashMap<String, std::collections::HashSet<String>>,
     local_names: HashMap<String, std::collections::HashSet<String>>,
+    // What a call writes into the CALLER's list through a `list` parameter,
+    // keyed by the callee's resolved label and indexed by parameter position.
+    // `None` means the parameter is not a list, or the body never writes into
+    // it. The per-function pre-scan decides each function's lists in
+    // isolation, so without this the caller proves a list homogeneous that a
+    // callee then widens through the parameter, and the caller's reads take
+    // an untagged path over tagged slots (docs/BUGS_FOUND.md #97).
+    list_param_writes: HashMap<String, Vec<Option<TagInfo>>>,
     stack_offset: i64,
     shared_lib_mode: bool,
     exported_functions: Vec<String>,
@@ -485,6 +493,7 @@ impl CodeGenerator {
             collection_backing_slots: HashMap::new(),
             file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
+            list_param_writes: HashMap::new(),
             local_unprovable_scalars: HashMap::new(),
             local_names: HashMap::new(),
             stack_offset: 0,

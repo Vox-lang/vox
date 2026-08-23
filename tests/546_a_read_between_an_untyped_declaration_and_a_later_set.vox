@@ -1,0 +1,16 @@
+(Bug #95, the false rejection the same root cause produced. The name is
+ declared on line 1 and read on line 2, which is the order LANGUAGE.md's
+ "Declaration Order" asks for. The `Set` on line 3 is a later write, but the
+ whole-program pre-pass counts an untyped `Set` as a declaration, so line 1
+ was read as a reassignment of a name nothing had declared yet - and this
+ program was rejected with "'tally' is used before it is declared".)
+
+tally is 5.
+Print tally.
+Set tally to 7.
+Print tally.
+
+the label is "first".
+Print label.
+Set label to "second".
+Print label.

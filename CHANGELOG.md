@@ -7,9 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **LANGUAGE.md carries no em dashes.** The house rule for public copy now applies to the specification: every em dash is rewritten as ordinary punctuation, no sentence changed, and one heading reads “Chained `each` clauses: a grid”.
+- A `To` (function definition) or `Library` declaration reached while an `If`, a loop, or another definition's body is still open is now a compile error naming the construct and saying to move it above the block, instead of being silently parsed into that body and shifting the control flow of every statement written after it (#96).
+- **Packaging: `vox.spec` passes `fedora-review`.** The spec now builds two
+  ways from one file: unbundled on Fedora, against the packaged
+  `rust-*-devel` crates with the cargo RPM macros, and vendored everywhere
+  else (EPEL, CentOS Stream, openSUSE, Mageia, Amazon Linux, openEuler,
+  Azure Linux, ELN) with every bundled crate declared. It gained a `%check`
+  that runs the Rust test suite, `BuildRequires: gcc`, the effective licence
+  of the binary (`GPL-3.0-or-later AND (MIT OR Apache-2.0)`), and a changelog
+  entry for the version it builds; `.copr/Makefile` now ships the exact
+  upstream GitHub archive as `Source0` for a release build, so its checksum
+  matches the URL in the spec.
+- **`man vox`.** A manual page covering every flag, the six-step `coreasm`
+  resolution order, the files the compiler reads and writes, and four worked
+  examples. Installed by `make install`, by the RPM, and by the Nix flake.
 - VS Code extension 0.4.2: README links the website (vox-lang.dev, /docs/), `homepage` set in package.json, the README's Visual Studio Marketplace link fixed to `vox-lang.vox-lang`.
-
-### Changed
 
 - **VS Code extension 0.4.1**: the grammar now scopes list/map literal
   punctuation — `[` `]` as `punctuation.section.brackets.begin/end.vox`,
@@ -18,6 +31,63 @@ adheres to [Semantic Versioning](https://semver.org/).
   `punctuation.separator.comma.vox`. Previously these characters carried no
   scope at all inside a list or map literal (`a list called xs is [1, "two",
   nothing].`) while every value between them was already highlighted.
+
+### Fixed
+
+- **A `list`, `map` or `buffer` global written with `Set` at top level is
+  still a global.** `Set roster to ["ada"].` after `a list called roster is
+  [].` took the name out of scope entirely, so every function reading it was
+  refused with `Unknown variable`, while the byte-equivalent `the roster is
+  ["ada"].` compiled and ran; a write that names no type now claims no kind.
+  The `Unknown variable` caret for a possessive read also lands on the read
+  that failed rather than on the declaration ([#92](docs/BUGS_FOUND.md)).
+
+- The diagnostic for reading the result of a `.lib` entry with no `,
+  returning` clause cited LANGUAGE.md by line number; both citations had
+  drifted onto unrelated text. It now cites the two sections by name,
+  `(LANGUAGE.md "The .lib file")` and `(LANGUAGE.md "Consuming a
+  library")`, matching the rest of the compiler's diagnostics (#93).
+- LANGUAGE.md and the compiler's uninitialized-buffer warning said a fresh
+  dynamic buffer starts with zero capacity; the runtime has always given it
+  4096 bytes up front. LANGUAGE.md and the warning now say so (#93).
+- `Set message to "x".` named `to` as the reserved keyword instead of `message`, and `The message is "x".` raised an unrelated internal-name error — both blamed whatever token happened to follow a reserved type noun used without `called`, instead of the type noun itself. Both statement forms (and the equivalent `a message is "x".`) now name the reserved word the author actually typed, matching the diagnostic the `a <type> called <name>` declaration path already gave (#94).
+- **A name brought into being without a type noun is now locked to that
+  type, and reads back as it** — `Set zoo to 5.` followed by `Set zoo to
+  "text now".` compiled clean and printed `4198488`, the string's own
+  address, instead of the compile error `a number called zoo is 5.` gives
+  for the same write; and `Set label to "hello". Print label.` printed an
+  address on the first read, no rewrite involved, as did a map. `Set NAME
+  to VALUE.`, `the NAME is VALUE.` and `NAME is VALUE.` on a name that does
+  not exist yet each declare it with the value's type, which is then fixed
+  like any other declaration's — so `NAME's type` names it and says
+  `(static)`, and a later write of another type is refused with the caret on
+  the write and the note on the declaration. One untyped `Set` anywhere in a
+  file used to switch the type lock off for that name in every spelling, and
+  to make a read placed between an earlier write and that `Set` fail as
+  "used before it is declared" ([#95](docs/BUGS_FOUND.md)).
+- **A list handed to a function that appends to it stayed on the caller's
+  homogeneous fast path**, so an element the callee stored reads back as its
+  address: `To 'note whatever' with a list called noted and a text called
+  label. append label to noted.`, called on an empty `noted`, made
+  `Print "{noted's last}"` print `4198536` where the same append written at
+  the caller printed `tail`. The heterogeneous pre-scan decided each
+  function's lists in isolation, so a write through a `list` parameter never
+  reached the list's owner. It now carries across the call: a list is widened
+  to mixed at a call site unless the callee provably writes the one type the
+  caller has already proven the list holds, so `'s first`, `'s last`,
+  `element N of`, iteration and a `{...}` hole all read the slot's own
+  runtime tag. A list only read by the function it is handed to, or given the
+  type it already holds, keeps the fast path. Across a `.lib` boundary the
+  widening is unconditional — a signature cannot say what a body writes — which
+  also ends a segfault there: a library declaring `a list of text` was believed
+  by a caller whose list held numbers, and the first read dereferenced the
+  integer `1` ([#97](docs/BUGS_FOUND.md)).
+- **An unrecognised format specifier compiled clean and quietly rendered as
+  a bare `{name}`** — `{n:q}`, `{n:#x}` and `{n:zzz}` all printed `n`'s plain
+  value with no warning, so a typo like `#x` for hex silently gave the wrong
+  output. Any specifier that is not a width, a zero-padded width, a decimal
+  precision, or one of the base letters is now a compile error naming what
+  was written and the valid forms (#98).
 
 ## [0.4.10] - 2026-08-22
 

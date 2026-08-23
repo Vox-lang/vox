@@ -20,7 +20,9 @@ Vox is an experiment in compiler design, language ergonomics, and low-level syst
 The full language reference is browsable at
 **[vox-lang.dev/docs/](https://vox-lang.dev/docs/)** — one page per
 `LANGUAGE.md` section, plus the whole spec on one page at
-[/docs/all/](https://vox-lang.dev/docs/all/). Every page has a Markdown
+[/docs/all/](https://vox-lang.dev/docs/all/); the examples are browsable
+at [/examples/](https://vox-lang.dev/examples/) and the project's test and
+fuzzing posture at [/quality](https://vox-lang.dev/quality). Every page has a Markdown
 twin at the same path with `.md` appended (plain-Markdown twins for
 tools and crawlers). It's generated from `LANGUAGE.md` on `main` at
 build time, so it stays current; each page states the commit it was

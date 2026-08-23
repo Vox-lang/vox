@@ -1,0 +1,425 @@
+.\" Manual page for the Vox compiler.
+.\" Written in groff man macros (not mdoc) so every man implementation
+.\" renders it -- see docs/plans/313_man_page.md.
+.\" Keep the version in the .TH line in step with Cargo.toml on release.
+.TH VOX 1 "2026-08-22" "vox 0.4.10" "Vox Compiler Manual"
+.
+.SH NAME
+vox \- compile English sentences to native x86_64 executables
+.
+.SH SYNOPSIS
+.B vox
+.I source.vox
+.RI [ options ]
+.br
+.B vox
+.IR source.vox " [" source.vox " ...]"
+.B \-\-shared
+.RB [ \-o
+.IR libname.so ]
+.
+.SH DESCRIPTION
+.B vox
+compiles a constrained, sentence\-based English grammar directly to native
+x86\-64 NASM assembly, assembles it with
+.BR nasm (1)
+and links it with
+.BR ld (1).
+A program is written as English sentences ending in a full stop
+.RB ( "Print \(dqHello, World!\(dq." ),
+and the compiler resolves every abstraction at compile time.
+.PP
+What surprises people is what
+.B vox
+does
+.I not
+do. There is no libc: the emitted code makes Linux system calls directly.
+There is no garbage collector and no resident runtime system, so an
+executable it produces is a flat static binary with no interpreter and no
+shared\-library dependencies unless you ask for them. There is no standard
+library either \(em the compiler builds and runs with
+.I /usr/include/vox
+empty. The only thing the compiler ships is
+.IR coreasm ,
+a tree of NASM macros the emitted assembly
+.BR %include s;
+see
+.B ENVIRONMENT
+for how it is found.
+.PP
+This page documents the
+.I program.
+The language itself \(em its grammar, types, and standard vocabulary \(em is
+specified in LANGUAGE.md, at
+.UR https://vox\-lang.dev/docs/
+.UE .
+.
+.SH OPTIONS
+.TP
+.B \-\-emit\-asm
+Write the generated assembly to
+.I <stem>.asm
+and stop there: nothing is assembled and nothing is linked, and
+.BR nasm (1)
+and
+.BR ld (1)
+are never invoked. Use it to read what the compiler produced, or to hand the
+assembly to another toolchain.
+.TP
+.B \-\-keep\-asm
+Leave
+.I <stem>.asm
+on disk after a successful assemble\-and\-link, instead of deleting it. It
+also applies to a build that fails after code generation, so the assembly
+that
+.BR nasm (1)
+rejected is still there to look at.
+.TP
+.B \-\-run
+Run the executable immediately after linking it.
+.B vox
+then exits with the program's own exit status, so a Vox program's exit code
+survives the compile\-and\-run in one step. Rejected with
+.BR \-\-shared ,
+which produces a library that cannot be executed.
+.TP
+.B \-\-shared
+Build a position\-independent shared library
+.RI ( .so )
+instead of an executable, and write a companion
+.I .lib
+interface file beside it describing the exported functions and their types.
+This is the only mode that accepts several source files: they are combined
+into one compilation unit and linked in a single step, so the
+.I coreasm
+runtime is emitted once and shared by every library in the
+.IR .so .
+.TP
+.BI \-\-link " libs"
+Put already\-built shared libraries on the link line, named by soname
+.I stem
+\(em the part between
+.B lib
+and
+.BR .so ,
+so
+.I libmath.so
+is
+.BR "\-\-link math" .
+Several are comma\-separated. Linking anything this way makes the output a
+dynamic executable: the compiler adds the loader
+.RI ( /lib64/ld\-linux\-x86\-64.so.2 )
+and an
+.B \-rpath
+for each
+.BR \-\-lib\-path .
+It does not teach the compiler the library's function signatures \(em that is
+what
+.B see
+of a
+.I .lib
+does \(em so it is for a
+.I .so
+with no
+.IR .lib :
+foreign, or hand\-built.
+.TP
+.BI \-\-lib\-path " paths"
+Additional directories, comma\-separated, to search for libraries. A
+.I .lib
+named by a
+.B see
+statement is looked for in the containing file's directory first and then in
+each of these; the
+.I .so
+its
+.B Location
+names is looked for beside the
+.I .lib
+first and then in each of these. They are also passed to the linker as
+.B \-L
+and recorded as
+.B \-rpath
+entries. They are
+.I not
+consulted for a
+.B see
+of a
+.I .vox
+source file.
+.TP
+.BI \-\-target " arch"
+Select the target architecture. This names the
+.I coreasm
+subdirectory the emitted assembly includes and the dialect it is written in.
+.B x86_64
+is the default and the only complete target;
+.I coreasm/aarch64
+and
+.I coreasm/Win64
+carry a partial core only, and the link step is x86\-64 specific.
+.TP
+.BI \-o " file"
+Name the output file. Without it an executable takes the first source file's
+stem
+.RI ( hello.vox
+becomes
+.IR hello )
+and a
+.B \-\-shared
+build becomes
+.IR lib<stem>.so .
+The companion
+.I .lib
+of a shared build is derived from this name, not from the source.
+.TP
+.BR \-v ", " \-\-verbose
+Report each stage as it happens \(em which file is being compiled, where the
+assembly was written, when
+.BR nasm (1)
+and
+.BR ld (1)
+run, and whether the intermediate assembly was kept or removed.
+.TP
+.BR \-h ", " \-\-help
+Print the option summary and exit successfully.
+.TP
+.BR \-V ", " \-\-version
+Print the compiler version and exit successfully.
+.
+.SH ENVIRONMENT
+.TP
+.B VOX_CORE_PATH
+Directory holding the
+.I coreasm
+runtime, or its parent \(em both are accepted. Highest priority of every
+source below, and the one to set when working on the compiler or on
+.I coreasm
+itself.
+.TP
+.B EC_CORE_PATH
+Deprecated alias for
+.BR VOX_CORE_PATH ,
+left working for shell profiles and CI written before the
+.BR ec " \(-> " vox
+rename.
+.B VOX_CORE_PATH
+wins when both are set; when only this one is found the compiler prints a
+one\-line note pointing at the new name.
+.TP
+.BR XDG_CONFIG_HOME ", " HOME
+Locate the per\-user configuration file described under
+.BR FILES .
+.TP
+.BR XDG_CACHE_HOME ", " HOME
+Locate the per\-user cache the compiler writes its embedded copy of
+.I coreasm
+into, as the last resort described below.
+.
+.SS Finding coreasm
+The compiler needs
+.I coreasm
+on every compile that assembles anything, and searches for it in this order,
+taking the first that exists:
+.IP 1. 4
+.B VOX_CORE_PATH
+.RB ( EC_CORE_PATH
+as a deprecated alias).
+.IP 2. 4
+.IR ~/.config/vox/config ,
+the
+.B core_path=
+line
+.RI ( ~/.config/ec/config
+as a deprecated alias).
+.IP 3. 4
+.IR /usr/local/share/vox/coreasm ,
+then
+.IR /usr/share/vox/coreasm ,
+then
+.IR /opt/vox/coreasm .
+.IP 4. 4
+A
+.I coreasm
+directory beside the
+.B vox
+executable, or in any directory above it \(em for portable installs.
+.IP 5. 4
+.I ./coreasm
+in the current working directory.
+.IP 6. 4
+The copy carried inside the binary itself, written out to
+.I ~/.cache/vox/<version>/coreasm
+on first use. This is last on purpose, so every choice above still wins; it
+exists because
+.B cargo install
+copies only the binary and leaves the crate's
+.I coreasm
+behind.
+.PP
+Step 3 is a trap worth knowing if you develop on the compiler with a package
+installed: with
+.B VOX_CORE_PATH
+unset, the installed
+.I /usr/share/vox/coreasm
+wins over the
+.I coreasm
+in your source tree, even when you run
+.I ./target/release/vox
+from inside it. Edits to
+.I coreasm/*/*.asm
+then appear to do nothing. Export
+.B VOX_CORE_PATH="$PWD/coreasm"
+whenever you test a
+.I coreasm
+change by hand.
+.
+.SH FILES
+.TP
+.I /usr/share/vox/coreasm
+The NASM runtime macros installed by the package.
+.TP
+.I ~/.config/vox/config
+Per\-user configuration. One
+.B core_path=<path>
+line, naming either the
+.I coreasm
+directory or its parent. Lines starting with
+.B #
+are comments.
+.I ~/.config/ec/config
+is read as a deprecated alias, with the
+.B vox
+file winning when both exist.
+.TP
+.I ~/.cache/vox/<version>/coreasm
+Where the compiler materialises its embedded copy of
+.I coreasm
+on first use. Keyed by compiler version, so two installed versions never
+share one tree.
+.TP
+.I /usr/include/vox/*.lib
+Interface files of installed Vox libraries, and
+.I /usr/lib64/lib*.so
+their shared objects. Neither is needed to build or run the compiler; they
+ship separately, in
+.BR vox\-libs .
+.TP
+.I <stem>.asm
+Generated assembly, written next to where the compiler runs. Removed after a
+successful link unless
+.B \-\-keep\-asm
+was given; kept as the whole output of
+.BR \-\-emit\-asm .
+.TP
+.I <stem>.o
+The assembled object file. Always removed once the link succeeds.
+.
+.SH EXAMPLES
+.PP
+Compile and run a program in one step:
+.PP
+.EX
+$ cat hello.vox
+Print "Hello, World!".
+$ vox hello.vox \-\-run
+Hello, World!
+.EE
+.PP
+Build an executable under a chosen name, and read the assembly the compiler
+would have handed to
+.BR nasm (1)
+\(em the
+.B %include
+lines are how it reaches
+.IR coreasm :
+.PP
+.EX
+$ vox hello.vox \-o greeter
+$ ./greeter
+Hello, World!
+$ vox hello.vox \-\-emit\-asm
+$ grep '%include' hello.asm
+%include "coreasm/x86_64/core.asm"
+%include "coreasm/x86_64/io.asm"
+%include "coreasm/x86_64/string.asm"
+.EE
+.PP
+Build a shared library and consume it from Vox. The
+.B see
+statement resolves the
+.IR .lib ,
+type\-checks the call against it, and links the
+.I .so
+\(em there is no
+.B \-\-link
+on the consumer's command line:
+.PP
+.EX
+$ cat mathkit_lib.vox
+Library mathkit version "1.0".
+
+To 'add two numbers' with a number called aa and a number called b. Return a number, aa add b.
+$ vox mathkit_lib.vox \-\-shared \-o libmathkit.so
+$ cat consumer.vox
+see mathkit version "1.0" from "./libmathkit.lib".
+
+a number called sum is 'add two numbers' of 3 and 4.
+Print the sum.
+$ vox consumer.vox \-o consumer \-\-run
+7
+.EE
+.PP
+Link an executable against a
+.I .so
+that has no
+.I .lib
+\(em named by soname stem, found through a search path:
+.PP
+.EX
+$ vox main.vox \-\-link mathkit \-\-lib\-path ./libs \-o main
+.EE
+.
+.SH EXIT STATUS
+.TP
+.B 0
+The requested work completed: the program was compiled, or
+.B \-\-help
+or
+.B \-\-version
+was printed.
+.TP
+.B 1
+The compiler refused or failed \(em no source file was given, a source file
+could not be read, the program did not parse or did not type\-check, several
+sources were given without
+.BR \-\-shared ,
+or
+.BR nasm (1)
+or
+.BR ld (1)
+failed. Diagnostics go to standard error.
+.PP
+With
+.BR \-\-run ,
+a successful compile is followed by the program itself, and
+.B vox
+exits with
+.I that
+program's status rather than its own.
+.
+.SH SEE ALSO
+.BR nasm (1),
+.BR ld (1)
+.PP
+The language specification, tutorial and examples:
+.UR https://vox\-lang.dev/docs/
+.UE .
+.
+.SH AUTHOR
+Josjuar Lister.
+.
+.SH BUGS
+Report bugs at
+.UR https://github.com/Vox\-lang/vox/issues
+.UE .

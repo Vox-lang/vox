@@ -423,6 +423,12 @@ impl Analyzer {
                 format!(".{}", digits),
                 digits,
             ),
+            FormatSpecFault::UnknownSpecifier(written) => (
+                format!("'{}' is not a format specifier Vox knows", written),
+                written.clone(),
+                written.clone(),
+                "the specifiers are a width (`N`), a zero-padded width (`0N`), a decimal precision (`.N`), and a whole number's base - `x` (hexadecimal), `X` (hexadecimal, uppercase), `b` (binary) or `o` (octal), which a width can precede (`04x`). Drop the specifier to render the value plainly.".to_string(),
+            ),
         };
         let mut err = CompileError::new(&message);
         // Two spec faults writing the same text are two errors, each
@@ -769,7 +775,11 @@ impl Analyzer {
                 }
                 self.track_identifier(object);
                 if !self.is_variable_available(object) {
-                    self.push_error(format!("Unknown variable: {}", object), Some(object));
+                    // Through `push_unknown_variable`, not `push_error`: the
+                    // caret belongs on the possessive that failed, not on the
+                    // (textually earlier) declaration that happens to spell
+                    // the same name (docs/BUGS_FOUND.md #46, #89, #92).
+                    self.push_unknown_variable(object);
                 } else {
                     let is_buf = self.is_buffer_variable(object);
                     let is_list = self.is_list_variable(object);

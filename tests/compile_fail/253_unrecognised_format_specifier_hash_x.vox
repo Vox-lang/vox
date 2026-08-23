@@ -1,0 +1,7 @@
+(Bug #98: `#x` is the obvious typo for hexadecimal - the `#` does not
+ belong in Vox's table (the correct form is bare `x`) - and used to
+ silently print decimal, which is exactly the "wrong answer" the manual's
+ own principle for specifiers forbids (LANGUAGE.md:3293-3295).)
+
+a number called n is 255.
+Print "{n:#x}".

@@ -1,0 +1,7 @@
+(Bug #95's working neighbour, which was always right and must stay right: a
+ name declared with its type noun rejects a `Set` of another type. This is
+ the answer the three above now give too.)
+
+a number called zoo is 5.
+Set zoo to "text now".
+Print zoo.
