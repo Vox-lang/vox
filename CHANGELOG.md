@@ -4,7 +4,7 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.11] - 2026-08-23
 
 ### Changed
 - **LANGUAGE.md carries no em dashes.** The house rule for public copy now applies to the specification: every em dash is rewritten as ordinary punctuation, no sentence changed, and one heading reads “Chained `each` clauses: a grid”.

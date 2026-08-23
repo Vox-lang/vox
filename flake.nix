@@ -14,7 +14,7 @@
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "vox";
-          version = "0.4.10";
+          version = "0.4.11";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
 
