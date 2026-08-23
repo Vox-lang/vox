@@ -37,7 +37,7 @@
 %bcond_without check
 
 Name:           vox
-Version:        0.4.10
+Version:        0.4.11
 Release:        1%{?dist}
 Summary:        Compiler for a constrained, sentence-based English programming language
 
@@ -223,6 +223,9 @@ cargo test --release --offline
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Sun Aug 23 2026 TheJostler <josj@tegosec.com> - 0.4.11-1
+- New upstream release 0.4.11
+
 * Sat Aug 22 2026 TheJostler <josj@tegosec.com> - 0.4.10-1
 - Update to 0.4.10 and ship a manual page, so "man vox" works
 - Build against Fedora's packaged crates instead of vendored ones, and run
