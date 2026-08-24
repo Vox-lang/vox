@@ -4,6 +4,31 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.13] - 2026-08-24
+
+### Changed
+- **The coreasm runtime is modular, and programs pull only what they
+  use.** The resource monolith is now four focused modules (fd tracking,
+  buffer lifecycle, line reading, render sink); process control lives in
+  its own `proc.asm`; a bare `Print` no longer carries the string
+  helpers. Binaries shrink accordingly: hello world drops 832 bytes,
+  `file_secure.vox` 3,192 — with byte-identical output.
+- **Codegen speaks in named macros.** Twenty-two coreasm macros replace
+  ~120 inline instruction sequences (`SET_LAST_ERROR`,
+  `BUFFER_DATA_ADDR`, `BOOL_FROM_RAX`, the `INT_IS_` family and
+  friends), and the dead 16-byte `BUFFER_DATA_PTR` trap is deleted —
+  the emitted behavior is unchanged, the x86_64 knowledge now lives in
+  one place per idea.
+- **The examples tell only the present truth.** Six stale comment
+  claims rewritten — two had outlived the features they called proposed,
+  one printed a float caveat its own output disproved.
+
+### Fixed
+- **A freshly built compiler now uses its own coreasm.** The runtime
+  search prefers the tree next to the executable over an installed
+  `/usr/share/vox/coreasm`, so a development build can no longer
+  silently assemble against an older release's runtime (#233).
+
 ## [0.4.12] - 2026-08-24
 
 ### Changed
