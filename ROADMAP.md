@@ -2,21 +2,21 @@
 
 This roadmap charts the path from the current state of Vox (v0.4.12) to the
 long-term goal: a memory-safe, sentence-based systems language capable of
-expressing *any* program — including cryptographic libraries, network stacks,
-device drivers, and ultimately an operating system kernel — across multiple
+expressing *any* program, including cryptographic libraries, network stacks,
+device drivers, and ultimately an operating system kernel, across multiple
 target architectures.
 
 Guiding principles, in priority order:
 
 1. **Memory safety is non-negotiable.** Every new low-level capability must
    enter the language through a declared, bounds-checked, or explicitly fenced
-   construct — never through silent undefined behavior.
+   construct, never through silent undefined behavior.
 2. **Turing completeness must be robust, not theoretical.** The computational
    core (loops, recursion, unbounded memory) must be stress-tested and
    guaranteed, not just demonstrated.
 3. **Libraries before features.** Once the syscall surface and shared library
    system exist, capabilities like crypto and networking are written *in Vox*
-   as libraries — not baked into the compiler.
+   as libraries, not baked into the compiler.
 4. **Port the runtime, not the programs.** Architecture support means
    rewriting `coreasm/` per target behind a stable interface, so user programs
    and libraries compile unchanged.
@@ -36,7 +36,7 @@ graph LR
 
 ---
 
-## Milestone 0 — Correctness & Memory-Safety Baseline
+## Milestone 0: Correctness & Memory-Safety Baseline
 
 *The safety claims in README.md must be true before anything is built on them.*
 
@@ -64,12 +64,12 @@ graph LR
       no valid Vox program may segfault at runtime.
 - [x] **Fix the compiler-tracked-type-vs-runtime-type divergence family.**
       *(Fixed in v0.3.3. A variable's type is now fixed at its declaration
-      and locked for good — a type-differing write is a compile error, not a
+      and locked for good: a type-differing write is a compile error, not a
       silent retype. This closed 18 confirmed findings across the class,
       documented in `docs/plans/294_retype_audit.md`; see LANGUAGE.md's "Type
       Immutability" section for the user-facing rule. Two things this does
       NOT close, tracked as their own follow-ups in the same audit: casting a
-      dynamically-tagged `value` still can't convert (finding 21 — currently
+      dynamically-tagged `value` still can't convert (finding 21, currently
       a compile error instead of a silent wrong answer, which is the safe
       state, but the conversion itself isn't implemented), and a `.lib`'s
       declared signature is trusted, not verified against its `.so` (audit
@@ -80,7 +80,7 @@ documented Vox can crash the generated binary.
 
 ---
 
-## Milestone 1 — Robust Turing Completeness
+## Milestone 1: Robust Turing Completeness
 
 *Vox is already computationally universal on paper (verified: recursion,
 `while` loops, dynamic buffers growing without bound). This milestone makes
@@ -88,7 +88,7 @@ that guarantee load-bearing.*
 
 - [ ] Guarantee unbounded memory: dynamic buffers and lists must grow until
       `mmap` fails, and allocation failure must set the error flag (or exit
-      cleanly) — never corrupt memory.
+      cleanly), never corrupt memory.
 - [ ] Guarantee deep recursion: document stack behavior, detect/handle stack
       exhaustion predictably.
 - [ ] **Acceptance test: a Brainfuck interpreter written in pure Vox** (a
@@ -104,31 +104,31 @@ stress tests run at 10⁶+ iterations and 10⁸+ bytes without faults.
 
 ---
 
-## Milestone 2 — Language Foundations for Systems Code
+## Milestone 2: Language Foundations for Systems Code
 
 *The building blocks that crypto, networking, and drivers all require.
 Design doc: [docs/STRUCTS_AND_OBJECTS.md](docs/STRUCTS_AND_OBJECTS.md).*
 
-- [x] **Structs / user-defined types** — SHIPPED in 0.4.0 as **things**
+- [x] **Structs / user-defined types**: SHIPPED in 0.4.0 as **things**
       (see LANGUAGE.md §6 and `docs/plans/310_user_defined_structures.md`):
       compile-time layout, the possessive `'s` accessor, unlimited
       nesting, value copy semantics, manifest function members, and
       cross-file definitions. Adversarially tested. Still open from the
       original item: *exact byte layout control* (field widths, ordering,
-      padding) for packet headers, device registers, and on-disk formats
-      — today every field is an 8-byte slot, so the IPv4-header exit
+      padding) for packet headers, device registers, and on-disk formats;
+      today every field is an 8-byte slot, so the IPv4-header exit
       criterion below remains gated on sized integers.
 - [ ] **Sized integers**: 8/16/32/64-bit reads and writes, signed and
       unsigned, with explicit width in the syntax (today everything is a
       64-bit `number`). Wrapping/overflow semantics defined, not accidental.
-- [ ] **Function references / indirect calls** — required later for interrupt
+- [ ] **Function references / indirect calls**: required later for interrupt
       vector tables, driver operation tables, and callback-style library APIs.
 - [ ] Typed multi-byte buffer access (`word N of buf`, `dword N of buf`),
       bounds-checked like byte access, with explicit endianness.
 - [ ] Richer numerics per README roadmap item 6 (float completeness, division
       semantics, bit rotation).
 - [ ] **Decouple compute from I/O in the runtime.** Audit finding: several
-      `coreasm/x86_64` routines currently do both in one place — e.g.
+      `coreasm/x86_64` routines currently do both in one place, e.g.
       `float.asm` (lines ~178, 222, 230, 291) and `format.asm` convert a
       number to text *and* call `sys_write` inline, in the same routine.
       Split every such routine into a pure "value → bytes in a buffer" step
@@ -138,12 +138,12 @@ Design doc: [docs/STRUCTS_AND_OBJECTS.md](docs/STRUCTS_AND_OBJECTS.md).*
       swap the I/O backend if formatting logic is welded to it).
 
 **Exit criteria:** a Vox program can define an IPv4 header as a struct,
-populate it field-by-field into a buffer, and read it back — all
+populate it field-by-field into a buffer, and read it back, all
 bounds-checked.
 
 ---
 
-## Milestone 3 — Dynamic / Shared Library System
+## Milestone 3: Dynamic / Shared Library System
 
 *Design doc: [docs/SHARED_LIBRARIES_DESIGN.md](docs/SHARED_LIBRARIES_DESIGN.md).
 The producer side works today: `--shared` emits a versioned `.lib` and `.so`,
@@ -177,7 +177,7 @@ recompile of dependents.
 
 ---
 
-## Milestone 4 — Syscall Surface
+## Milestone 4: Syscall Surface
 
 *Design doc: [docs/SYSCALLS_BRAINSTORM.md](docs/SYSCALLS_BRAINSTORM.md).
 Baseline was mmap, read, write, open, close, exit, clock_gettime.*
@@ -190,11 +190,11 @@ passing, 4 skipped as root/namespace-only manual tests):
 `mount`(165), `pivot_root`(155), `execve`(59). Full plan in
 [docs/initramfs-implementation-plan.md](docs/initramfs-implementation-plan.md);
 end-to-end demonstration in
-[examples/initramfs.vox](examples/initramfs.vox) — a real early-userspace
+[examples/initramfs.vox](examples/initramfs.vox): a real early-userspace
 init sequence (mount `/proc`/`/sys`/`/dev`, create device nodes, wait for the
 root device, mount it, `pivot_root`, `chdir`, `execve` into `/sbin/init`).
 `pivot_root` was verified end-to-end inside an isolated mount namespace
-(`unshare --mount`), confirmed via a marker file only visible post-switch —
+(`unshare --mount`), confirmed via a marker file only visible post-switch,
 not just a zero return code.
 
 ### Delivered: post-#81 hardening and system-control syscalls
@@ -203,15 +203,15 @@ Follow-up work on the same branch:
 - **`unmount`/`umount`** (umount2, 166), with `lazily` (MNT_DETACH). Syncs
   nothing; the initramfs example now uses `unmount "/oldroot" lazily` to
   release the old root after `pivot_root`, and `put_old` is created before
-  the switch (both were latent bugs — pivot_root would have failed ENOENT).
-- **`shutdown`/`poweroff`, `reboot`/`restart`, `halt`** (reboot, 169) — each
+  the switch (both were latent bugs: pivot_root would have failed ENOENT).
+- **`shutdown`/`poweroff`, `reboot`/`restart`, `halt`** (reboot, 169): each
   `sync`s then issues the matching `LINUX_REBOOT_CMD_*`. Non-root failure
   sets the error flag instead of aborting, so `On error` works and an
   accidental run never powers off. This is the piece an init needs to
   handle its own shutdown path.
 - **`execute` argument flexibility**: a bare `execute "/bin/sh".` synthesizes
   `argv = [path, NULL]`; a **list variable** (not just a literal) is now
-  accepted, with argv built at runtime by `_list_to_argv` — the array is
+  accepted, with argv built at runtime by `_list_to_argv`; the array is
   sized and the copy bounded from a single read of the list length, so it
   cannot be overrun regardless of contents.
 - Whole-system demonstration on real hardware: an all-Vox two-stage chain
@@ -221,7 +221,7 @@ Follow-up work on the same branch:
 
 **Important scope note:** this is a **hosted-Linux** achievement, not a step
 toward M7. Every one of these syscalls requires a kernel already booted and
-servicing `syscall` — it means Vox can now write the *first userspace program*
+servicing `syscall`; it means Vox can now write the *first userspace program*
 a Linux kernel execs (an initramfs `/init`, replacing what's usually a shell
 script), not that Vox is any closer to being that kernel. Keep this distinct
 from the freestanding work in M7.
@@ -229,13 +229,13 @@ from the freestanding work in M7.
 **Design-choice lesson learned, feeding back into this milestone's remaining
 work:** each of these 9 syscalls got its own hand-written grammar (`Create a
 directory called ...`, `Mount ... at ... with type ...`, `Execute ... with
-arguments [...]`) and its own parser + AST + codegen path — roughly 1,500
+arguments [...]`) and its own parser + AST + codegen path, roughly 1,500
 lines changed across `parser/mod.rs`, `parser/ast.rs`, `codegen/mod.rs`, and
 `coreasm/x86_64/file.asm` for 9 syscalls. That reads beautifully, but doesn't
 scale linearly to the ~20+ syscalls a network stack needs
 (socket/bind/listen/accept/connect/send/recv/setsockopt/poll/epoll/...) or to
 crypto's need for things like `getrandom`. This is concrete evidence for why
-the generic primitive below still matters — it shouldn't cost a feature
+the generic primitive below still matters; it shouldn't cost a feature
 branch and a parser change per syscall, and it's the right form for
 lower-traffic, protocol-shaped syscalls where dedicated natural-language
 grammar would read awkwardly anyway (e.g. `setsockopt`).
@@ -255,10 +255,10 @@ grammar would read awkwardly anyway (e.g. `setsockopt`).
       through this primitive.
 - [ ] Safe wrappers in the seed library for the high-value remaining
       syscalls: sockets (socket/bind/listen/accept/connect/send/recv),
-      polling (epoll/poll), fork/wait, pipes, signals — prioritized per the
+      polling (epoll/poll), fork/wait, pipes, signals, prioritized per the
       brainstorm doc.
 - [ ] Error-flag integration: negative syscall returns set the Vox error
-      flag and preserve errno for inspection — extend the pattern already
+      flag and preserve errno for inspection; extend the pattern already
       established by the mount/pivot_root/execve error paths.
 
 **Exit criteria:** a TCP echo server written in pure Vox (no compiler
@@ -266,12 +266,12 @@ changes), using only the syscall primitive plus library wrappers.
 
 ---
 
-## Milestone 5 — Crypto & Network Stacks as Vox Libraries
+## Milestone 5: Crypto & Network Stacks as Vox Libraries
 
 *The proving ground: real, hostile-input systems code written in the safe
 subset of the language. Abstractions get layered on top of these later.*
 
-- [ ] `vox-crypto`: SHA-256, HMAC, ChaCha20 (or AES), Poly1305 — pure Vox,
+- [ ] `vox-crypto`: SHA-256, HMAC, ChaCha20 (or AES), Poly1305, pure Vox,
       operating on buffers with sized-integer ops from M2.
   - [ ] Constant-time discipline: document which language constructs are
         safe for secret-dependent code; add a roadmap note for
@@ -280,7 +280,7 @@ subset of the language. Abstractions get layered on top of these later.*
 - [ ] `vox-net`: sockets layer (M4 wrappers) → DNS resolver → HTTP/1.0
       client and server (README roadmap item 3).
 - [ ] Fuzz both libraries with malformed input; bounds-checked buffers
-      should make memory corruption impossible — prove it.
+      should make memory corruption impossible: prove it.
 - [ ] Build one real tool on top (e.g. a static-file HTTP server with TLS
       out of scope, or a checksum utility) and dogfood it.
 
@@ -289,7 +289,7 @@ survives a fuzzing run and serves real traffic.
 
 ---
 
-## Milestone 6 — IR & Multi-Architecture coreasm
+## Milestone 6: IR & Multi-Architecture coreasm
 
 *Design docs: [docs/IR_DESIGN.md](docs/IR_DESIGN.md),
 [docs/MULI_ARCH_PLAN.md](docs/MULI_ARCH_PLAN.md). The `--target` flag and
@@ -297,21 +297,21 @@ survives a fuzzing run and serves real traffic.
 others have 3.*
 
 - [ ] Introduce the IR between analyzer and codegen (per IR_DESIGN.md), so
-      optimizations and lowering are portable — "optimize the IR, not the
+      optimizations and lowering are portable: "optimize the IR, not the
       assembly."
 - [ ] Define the **coreasm contract**: the fixed set of runtime routines
       (heap, list, buffer, string, io, file, format, time, resource...) with
       documented register/ABI expectations per architecture, so a port is
       "implement this checklist," not reverse-engineering.
-- [ ] **AArch64 (ARM64) port** — first non-x86 target; full coreasm rewrite
+- [ ] **AArch64 (ARM64) port**: first non-x86 target; full coreasm rewrite
       plus IR lowering; run the whole `tests/` suite under qemu or native.
-- [ ] **RISC-V (rv64) port** — second port; proves the contract generalizes.
-- [ ] Win64 port (PE output, Windows syscall/API strategy) — tracked but
+- [ ] **RISC-V (rv64) port**: second port; proves the contract generalizes.
+- [ ] Win64 port (PE output, Windows syscall/API strategy): tracked but
       lowest priority of the three.
 - [ ] CI runs the full test suite per architecture (qemu-user is sufficient).
 - [ ] **The grid as a math kernel** *(design: [docs/plans/321_grid_math_kernel.md](docs/plans/321_grid_math_kernel.md))*.
       A chained loop expansion (`'f' of each i from ... and each j from ...`,
-      shipped 0.4.5, plan 320) desugars to a **perfect affine loop nest** —
+      shipped 0.4.5, plan 320) desugars to a **perfect affine loop nest**,
       explicit iteration space, affine bounds, order fixed by clause order,
       body a single pure call. That is exactly the shape vectorizers and
       polyhedral optimizers want, and it is stated as grammar rather than
@@ -319,30 +319,30 @@ others have 3.*
       element in ~30 instructions of ceremony (a real `call`, prologue,
       `_check_call_depth`/`_dec_call_depth`, stack-spilled params,
       push/pop expression evaluation, a duplicated `_last_error` clear)
-      around as little as two of real work — scalar, and roughly 50–200×
+      around as little as two of real work: scalar, and roughly 50–200×
       off an FMA kernel for matmul-shaped work. On the IR, in payoff order:
-      (a) **inline small callees at grid sites** — the desugar already owns
+      (a) **inline small callees at grid sites**: the desugar already owns
       the call, so this deletes the call/prologue/depth-checks/spills in one
       stroke, the single biggest win; (b) **registerize induction variables**
       (row/col in registers, not `inc qword [rbp-24]`); (c) **vectorize the
-      innermost clause** — the rightmost clause is known-innermost by the
+      innermost clause**: the rightmost clause is known-innermost by the
       language rule, so its lanes map to SIMD over `float` buffers as the
-      contiguous tensor substrate — the entry point to real vector calculus;
-      (d) **cache tiling for free** — a blocked kernel is just more clauses
+      contiguous tensor substrate, the entry point to real vector calculus;
+      (d) **cache tiling for free**: a blocked kernel is just more clauses
       (`each iblock ... and each jblock ... and each i ... and each j`),
       expressible today with no new syntax. IR-gated: do it once, portably,
       not per-arch. Prereq for any serious numerical Vox (M5 crypto included).
 
 ---
 
-## Milestone 7 — Freestanding Vox & the Kernel Path
+## Milestone 7: Freestanding Vox & the Kernel Path
 
 *Everything above assumes a Linux userspace underneath. Concretely: `syscall`
 with no kernel present raises `#UD` (EFER.SCE is never set), there is no IDT
 to catch it, and the fault cascades into a triple fault. `_start` also
 assumes the Linux ELF loader's stack layout (argc/argv/envp), which a
 bootloader never provides. This milestone removes the Linux-hosted assumption
-without giving up the safety model — it does **not** mean "no interaction
+without giving up the safety model; it does **not** mean "no interaction
 with hardware," it means "no dependency on a resident kernel to mediate that
 interaction." Hardware access under `--freestanding` goes through declared
 device regions or fenced asm instead of `syscall`.*
@@ -354,20 +354,20 @@ which *builtins* are available and what backs them:
 
 | Tier | Capability | Hosted backend | Freestanding backend |
 |---|---|---|---|
-| 0 | Arithmetic, control flow, recursion, structs, sized ints | native instructions | identical — no change |
+| 0 | Arithmetic, control flow, recursion, structs, sized ints | native instructions | identical; no change |
 | 1 | Buffers, lists (memory) | `mmap` | static linker-reserved arena, later a Vox-authored page allocator |
-| 2 | Print, write | `sys_write` | declared device region (serial/VGA) — compile error if none declared |
-| 2 | Files, argv, env, time | `open`/`read`, loader stack, `clock_gettime` | **compile-time error under `--freestanding`** — no filesystem, no loader, no RTC syscall exists to back these |
+| 2 | Print, write | `sys_write` | declared device region (serial/VGA); compile error if none declared |
+| 2 | Files, argv, env, time | `open`/`read`, loader stack, `clock_gettime` | **compile-time error under `--freestanding`**: no filesystem, no loader, no RTC syscall exists to back these |
 | 3 | Device regions, interrupts, fenced asm | n/a (doesn't exist hosted) | new, freestanding-only |
 
 Tier 2 is intentionally split in two: I/O has a real freestanding backend
-(a UART is just a device region), but files/argv/env/time do not — pretending
+(a UART is just a device region), but files/argv/env/time do not; pretending
 otherwise would be exactly the kind of silent, undocumented gap that produced
 the M0 list-append bug. Vox rejecting `open a file` under `--freestanding`
 with a clear compiler error is the correct outcome, not a limitation to hide.
 
 **Audit of `coreasm/x86_64`'s 14 modules** (which ones actually execute a
-`syscall` instruction today, not just mention one) — this is what the fork
+`syscall` instruction today, not just mention one): this is what the fork
 actually costs:
 
 | Group | Modules | Freestanding treatment |
@@ -381,15 +381,15 @@ actually costs:
       over `coreasm/x86_64/hosted/` (rename current tree to `hosted/` first),
       mirroring the existing per-`--target` arch selection.
 - [ ] Tier-1 fork: static-arena allocator for buffers/lists, sized at link
-      time or via a kernel-provided region — no `mmap`.
+      time or via a kernel-provided region, no `mmap`.
 - [ ] Tier-2 fork: retarget `io.asm`'s print/write to a declared device
       region; compiler rejects `file`/`args`/`environment`/`time` builtins
       under `--freestanding` with a clear diagnostic (not a silent no-op).
 - [ ] Freestanding `_start`: user- or boot-convention-defined entry symbol,
       no Linux stack-layout assumption.
-- [ ] Linker control: custom link scripts, section placement, load address —
+- [ ] Linker control: custom link scripts, section placement, load address,
       needed for boot code.
-- [ ] **Declared hardware regions** — the memory-safe MMIO story:
+- [ ] **Declared hardware regions**: the memory-safe MMIO story:
       ```
       a device region called "uart" at 0x3F8 of 8 bytes.
       set byte 1 of uart to 'A'.
@@ -398,19 +398,19 @@ actually costs:
       every access stays bounds-checked exactly like buffers today. Volatile
       semantics (never cached, never reordered, never elided) guaranteed for
       region access.
-- [ ] **Fenced assembly blocks** — the explicit, minimal escape hatch for
+- [ ] **Fenced assembly blocks**: the explicit, minimal escape hatch for
       privileged instructions (`cli`/`sti`, `lgdt`/`lidt`, CR/MSR access,
       port I/O), clearly marked as outside the safety guarantee, mirroring
       Rust's `unsafe` philosophy: safe by default, auditable exceptions.
 - [ ] Interrupt support: declare a function as an interrupt handler
       (compiler emits the entry/exit frame), vector table via M2 function
       references.
-- [ ] **Kernel milestone A:** bare-metal "hello" — boots under QEMU
+- [ ] **Kernel milestone A:** bare-metal "hello": boots under QEMU
       (Multiboot2 or UEFI stub), prints over serial from a Vox device region.
-- [ ] **Kernel milestone B:** toy kernel — GDT/IDT setup, keyboard IRQ,
+- [ ] **Kernel milestone B:** toy kernel: GDT/IDT setup, keyboard IRQ,
       physical page allocator feeding the freestanding buffer system.
 - [ ] **Kernel milestone C:** the M5 network stack running on a Vox NIC
-      driver (virtio-net under QEMU) — the full vision: driver, stack, and
+      driver (virtio-net under QEMU): the full vision: driver, stack, and
       abstraction layers all in Vox.
 
 **Exit criteria:** milestone B boots and handles input under QEMU on x86_64
@@ -422,7 +422,7 @@ and at least one other M6 architecture.
 
 | Order | Milestone | Unblocks |
 |-------|-----------|----------|
-| 1 | M0 Safety baseline | Everything — the guarantees must be real |
+| 1 | M0 Safety baseline | Everything; the guarantees must be real |
 | 2 | M1 Robust Turing completeness | Confidence to build big programs |
 | 3 | M2 Language foundations | M3, M4, M6 |
 | 4 | M3 Shared libraries + M4 Syscalls (parallel) | M5 |
@@ -430,6 +430,6 @@ and at least one other M6 architecture.
 | 6 | M6 IR & multi-arch | M7 on non-x86 |
 | 7 | M7 Freestanding & kernel | The end goal |
 
-M3/M4 can proceed in parallel after M2. M6 can start any time after M2 —
+M3/M4 can proceed in parallel after M2. M6 can start any time after M2,
 earlier is cheaper, since every feature added before the IR exists must be
 ported by hand later.
