@@ -33,6 +33,7 @@ fn compile(work: &std::path::Path, source: &str) -> Result<std::path::PathBuf, S
     let vox = env!("CARGO_BIN_EXE_vox");
     let bin = work.join("prog");
     let output = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(work.join("prog.vox"))
         .arg("-o")
         .arg(&bin)

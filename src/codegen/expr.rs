@@ -1754,6 +1754,9 @@ impl CodeGenerator {
             }
 
             Expr::ArgumentHas { value } => {
+                // Calls _str_eq in the per-arg loop below (audit rec 6: set
+                // uses_strings at the genuine call site, not on every Print).
+                self.uses_strings = true;
                 let loop_label = self.new_label("arg_has_loop");
                 let found_label = self.new_label("arg_has_found");
                 let done_label = self.new_label("arg_has_done");
@@ -1838,6 +1841,9 @@ impl CodeGenerator {
                 );
 
                 if (is_buffer || matches!(treating_type, Some(VarType::String))) && !match_cannot_be_text {
+                    // This branch calls _str_eq / _mem_eq / _str_len (audit rec
+                    // 6: set uses_strings at the genuine call site).
+                    self.uses_strings = true;
                     // Evaluate the value
                     self.generate_expr(value);
                     self.emit_indent("push rax  ; save original value (struct ptr if buffer)");
@@ -1927,9 +1933,10 @@ impl CodeGenerator {
                     "lea rax, [rel {}]  ; empty text for missing env var", empty_label));
                 self.emit_indent("SET_LAST_ERROR 1  ; env var not set");
                 self.emit(&format!("{}:", done_label));
-                self.uses_strings = true;
+                // Shared .data empty-text label, not a string.asm routine
+                // (audit rec 6).
             }
-            
+
             Expr::EnvironmentVariableCount => {
                 self.emit_indent("call _get_env_count");
             }
@@ -1986,12 +1993,14 @@ impl CodeGenerator {
 
             Expr::Fork => {
                 self.uses_files = true;
+                self.uses_proc = true;  // FORK macro lives in proc.asm
                 self.emit_indent("; fork() - 0 in child, child pid in parent, negative on error");
                 self.emit_indent("FORK");
             }
 
             Expr::ReapChild { pid, no_hang } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // REAP_CHILD macro lives in proc.asm
                 match pid {
                     None => {
                         self.emit_indent("mov rdi, -1  ; wait for any child");

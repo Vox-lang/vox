@@ -11,7 +11,8 @@
 %include "coreasm/x86_64/io.asm"
 %include "coreasm/x86_64/string.asm"
 %include "coreasm/x86_64/file.asm"
-%include "coreasm/x86_64/resource.asm"
+%include "coreasm/x86_64/resource_fd.asm"
+%include "coreasm/x86_64/resource_buffer.asm"
 
 %define O_RDONLY 0
 %define O_WRONLY 1

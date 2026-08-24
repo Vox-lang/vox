@@ -419,7 +419,9 @@ impl CodeGenerator {
             "lea rax, [rel {}]  ; empty text for out-of-range positional read", empty_label));
         self.emit_indent("SET_LAST_ERROR 1  ; out of range");
         self.emit(&format!("{}:", done_label));
-        self.uses_strings = true;
+        // No string.asm routine is called here: the empty-text pointer is a
+        // shared .data label (get_empty_string_label -> add_string ""), so
+        // uses_strings must not be set (audit rec 6).
     }
 
     /// The empty value of a pointer-typed slot, left in `rax`: the shared
@@ -437,7 +439,7 @@ impl CodeGenerator {
                 let label = self.get_empty_string_label();
                 self.emit_indent(&format!(
                     "lea rax, [rel {}]  ; empty text", label));
-                self.uses_strings = true;
+                // Shared .data label, not a string.asm routine (audit rec 6).
                 true
             }
             VarType::List => {

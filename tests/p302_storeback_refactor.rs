@@ -36,6 +36,7 @@ fn run_vox_fixture(name: &str) -> String {
 
     let bin = work.join("prog");
     let compile = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(&src)
         .arg("-o")
         .arg(&bin)

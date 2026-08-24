@@ -27,6 +27,7 @@ fn compile(work: &std::path::Path, source: &str) -> std::path::PathBuf {
     let vox = env!("CARGO_BIN_EXE_vox");
     let bin = work.join("prog");
     let output = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(work.join("prog.vox"))
         .arg("-o")
         .arg(&bin)
@@ -80,6 +81,7 @@ Print "{n}".
     )
     .unwrap();
     let output = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(work.join("prog.vox"))
         .arg("-o")
         .arg(work.join("prog"))
@@ -264,6 +266,7 @@ fn heterogeneous_map_value_read_still_crashes_a_known_gap() {
     .unwrap();
     let bin = work.join("prog");
     let compile_output = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(work.join("prog.vox"))
         .arg("-o")
         .arg(&bin)
@@ -304,6 +307,7 @@ fn dynamic_value_cast_is_rejected_not_silently_wrong() {
     )
     .unwrap();
     let output = Command::new(vox)
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(work.join("prog.vox"))
         .arg("-o")
         .arg(work.join("prog"))
