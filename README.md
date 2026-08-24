@@ -354,6 +354,10 @@ Actively developed, free and open-source projects written in Vox:
   rotating duty scheduler for bi-weekly meetings, written in Vox: circular
   rotation with availability and per-person assignment caps, from a
   `names.txt` to a balanced, predictable plan.
+- **[vox-coreutils](https://github.com/b8c0ffee00/vox-coreutils)**: Unix
+  utilities written in Vox, each checked against an independently written
+  implementation rather than a hand-written expectation. `xxd`, `wc` and
+  `base64` so far, diffed case by case against the system tools.
 
 Building something in Vox? We'd like this list to point to real, actively
 maintained FOSS projects; email **info@vox-lang.dev** to have yours added.
