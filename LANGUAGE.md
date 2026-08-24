@@ -2070,7 +2070,12 @@ eighteen significant digits with the point up to twenty-two places away
 from them - wider than a `float` can tell apart - and a longer decimal
 is read as the nearest float those eighteen digits describe. This is
 what lets a number read from a file, an argument or an environment
-variable be compared against a literal in the same program.
+variable be compared against a literal in the same program. A source
+literal longer than eighteen significant digits is itself read to the
+nearest float all its digits describe, so beyond the guarantee the
+literal and the same decimal read from text can differ by one unit in
+the last place. Compare an over-precise value within one route, never
+across the two.
 
 **Radix (Base) Conversions:**
 
