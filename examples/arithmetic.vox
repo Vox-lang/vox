@@ -28,7 +28,6 @@ Set val1 to 10.5.
 Set val2 to 3.2.
 
 Print "val1 = 10.5, val2 = 3.2".
-Print "(Note: floats currently display as truncated integers)".
 Print "".
 
 Print "Addition: val1 add val2 =".

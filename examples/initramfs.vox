@@ -1,5 +1,5 @@
 (Initramfs Setup Example)
-(Demonstrates proposed mount and related syscalls for initramfs operations)
+(Demonstrates mount and related syscalls for initramfs operations)
 
 A text called 'Program Version' is "0.1.0".
 

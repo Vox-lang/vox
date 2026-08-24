@@ -9,10 +9,11 @@
 )
 
 (========================================================================)
-(                    PROPOSED FEATURE: FLAG SCHEMA                       )
+(                    DECLARATIVE FLAG PARSING                            )
 (========================================================================)
 (
-    IDEA: Declarative flag definitions that automatically parse arguments
+    Vox supports declarative flag definitions that automatically parse
+    command-line arguments.
     
     Syntax examples:
     

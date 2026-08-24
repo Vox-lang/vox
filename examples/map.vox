@@ -1,4 +1,4 @@
-(Example: map.vox — key/value collections (stage 1e2, tag 5).
+(Example: map.vox — key/value collections.
 
 A map is a JSON-style object: text keys, any-typed values, insertion-
 ordered. Literals use {"key": value, ...}; `map's "key"` reads a value;
