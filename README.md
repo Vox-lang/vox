@@ -7,7 +7,7 @@
 [![Copr build status](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/vox-lang/Vox/package/vox/)
 [![crates.io](https://img.shields.io/crates/v/vox-lang?style=flat-square)](https://crates.io/crates/vox-lang)
 
-**Vox** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly — without a **resident runtime system**, virtual machine, or standard library.
+**Vox** is a minimal systems compiler that translates a constrained, sentence-based English syntax directly into native x86_64 assembly, without a **resident runtime system**, virtual machine, or standard library.
 
 The generated binaries consist solely of application code and direct system calls, with no background services, schedulers, garbage collectors, or support libraries.
 
@@ -18,7 +18,7 @@ Vox is an experiment in compiler design, language ergonomics, and low-level syst
 ## Documentation
 
 The full language reference is browsable at
-**[vox-lang.dev/docs/](https://vox-lang.dev/docs/)** — one page per
+**[vox-lang.dev/docs/](https://vox-lang.dev/docs/)**: one page per
 `LANGUAGE.md` section, plus the whole spec on one page at
 [/docs/all/](https://vox-lang.dev/docs/all/); the examples are browsable
 at [/examples/](https://vox-lang.dev/examples/) and the project's test and
@@ -41,7 +41,7 @@ Vox explores how far a human-readable, deterministic syntax can be lowered *dire
 The project is intentionally minimal:
 there is no libc, no garbage collector, and no hidden runtime system. All abstractions are resolved at compile time, and the generated code consists of straightforward NASM assembly and direct system calls.
 
-Rather than hiding system behavior, Vox aims to make it explicit — just expressed in a readable form.
+Rather than hiding system behavior, Vox aims to make it explicit, just expressed in a readable form.
 
 ---
 
@@ -126,7 +126,7 @@ This makes Vox well-suited for static utilities, constrained environments, and s
   path with no tag checks emitted
 * An explicit dynamic `value` type for carrying "whatever this slot holds"
   across function boundaries, and a `nothing` value distinct from `0`
-* User-defined composite types - **things**. `A thing called point has a
+* User-defined composite types: **things**. `A thing called point has a
   number called x is 0, a number called y is 0.` declares a type with a
   compile-time layout; things nest to any depth, copy by value, print
   themselves, compare field by field, and carry their own function members,
@@ -136,7 +136,7 @@ This makes Vox well-suited for static utilities, constrained environments, and s
 * Filesystem, mount, and process-control operations (directories, device
   nodes, symlinks, mount/unmount, `pivot_root`, `execve`, `fork`/`reap`,
   `Send signal` (`kill`), non-blocking `reap ... without waiting`,
-  `the reaped status`, `shutdown`/`reboot`/`halt`) - enough to write a
+  `the reaped status`, `shutdown`/`reboot`/`halt`), enough to write a
   working early-userspace init entirely in Vox, see
   [examples/initramfs.vox](examples/initramfs.vox), or a process supervisor
   with no shell and no coreutils, see
@@ -250,7 +250,7 @@ sudo dnf install vox
 ```
 
 Libraries live in their own project,
-[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs), and are optional —
+[Vox-lang/vox-libs](https://github.com/Vox-lang/vox-libs), and are optional,
 Vox has no standard library and the compiler never needs them. They ship from
 the same Copr repository, so no extra setup is required:
 
@@ -258,7 +258,7 @@ the same Copr repository, so no extra setup is required:
 sudo dnf install vox-libs
 ```
 
-Or with cargo, on any platform with a Rust toolchain — the compiler
+Or with cargo, on any platform with a Rust toolchain; the compiler
 carries its own `coreasm` and needs nothing else installed:
 
 ```bash
@@ -339,24 +339,24 @@ Vox is under active development. Planned work includes:
 
 Actively developed, free and open-source projects written in Vox:
 
-- **[voxos](https://github.com/TheJostler/voxos)** — a collection of utilities
+- **[voxos](https://github.com/TheJostler/voxos)**: a collection of utilities
   and an init for a minimal operating system, written in pure Vox.
-- **[vox-fuzz](https://github.com/Vox-lang/vox-fuzz)** — a fuzzer for this
+- **[vox-fuzz](https://github.com/Vox-lang/vox-fuzz)**: a fuzzer for this
   compiler, written in Vox. It generates random valid programs, compiles
   them, and supervises the binaries natively (fork, non-blocking reap,
   deadline kill, raw wait status) to catch any that die by signal, hang,
   or make the compiler itself fall over. Its first hunt found two
   memory-safety bugs, both fixed in 0.4.3.
-- **[vox-libs](https://github.com/Vox-lang/vox-libs)** — shared libraries
+- **[vox-libs](https://github.com/Vox-lang/vox-libs)**: shared libraries
   for Vox, written in Vox. Not a standard library: the compiler builds and
   runs with none of them installed.
-- **[Duty-Scheduler](https://github.com/TheJostler/Duty-Scheduler)** — a
+- **[Duty-Scheduler](https://github.com/TheJostler/Duty-Scheduler)**: a
   rotating duty scheduler for bi-weekly meetings, written in Vox: circular
   rotation with availability and per-person assignment caps, from a
   `names.txt` to a balanced, predictable plan.
 
 Building something in Vox? We'd like this list to point to real, actively
-maintained FOSS projects — email **info@vox-lang.dev** to have yours added.
+maintained FOSS projects; email **info@vox-lang.dev** to have yours added.
 
 ---
 
