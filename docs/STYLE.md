@@ -1,7 +1,7 @@
-# Vox style — writing code that reads
+# Vox style: writing code that reads
 
 Vox's whole premise is that a program is a readable English document. A
-name that would be fine in C — `i`, `tns`, `buf` — breaks that premise,
+name that would be fine in C (`i`, `tns`, `buf`) breaks that premise,
 because it turns a sentence back into code. This guide is the house
 style, derived from the reference programs in `examples/`: **`cat.vox`,
 `pi.vox`, and `controller.vox` are the models.** When this document and
@@ -25,14 +25,14 @@ If h then,                                (says nothing)
 The rule is **not** "long names." It is: the name must be what the thing
 is actually called. Length is irrelevant; truthfulness is everything.
 
-**Good, and short** — because these are the real names:
+**Good, and short**, because these are the real names:
 
 ```vox
 a float pi is 3.0.                        (pi IS its name)
 a number called x is 0.                   (x IS a coordinate's name)
 ```
 
-**Bad at any length** — placeholders, abbreviations, and mangles:
+**Bad at any length**, being placeholders, abbreviations, and mangles:
 
 | Avoid | Why | Instead |
 |---|---|---|
@@ -41,7 +41,7 @@ a number called x is 0.                   (x IS a coordinate's name)
 | `SafetyGate2`, `temp2` | a number instead of a distinction | name what makes the second one different |
 | `flag1`, `data`, `thing` | says nothing about the role | `'wants version'`, `'staged output'` |
 
-If two names need numbering, they have two different jobs — name the
+If two names need numbering, they have two different jobs, so name the
 jobs. If a name needs an abbreviation, Vox's quoted multi-word names
 remove the excuse.
 
@@ -61,7 +61,7 @@ then,` needs no comment, no comparison, and no second reading.
 
 ## Booleans read as conditions
 
-Name a boolean so the `if` line is a sentence — a claim that is true or
+Name a boolean so the `if` line is a sentence: a claim that is true or
 false, not a noun:
 
 ```vox
@@ -71,7 +71,7 @@ If help_flag is true then,                (weaker: noun, plus a redundant test)
 ```
 
 `controller.vox` shows the pattern at its plainest: `door_open`,
-`lift_moving`, `lift_full` — each reads as a statement of fact in the
+`lift_moving`, `lift_full`: each reads as a statement of fact in the
 condition.
 
 ## Function names read at the call site
@@ -89,7 +89,7 @@ calc(s, 2)                               (not Vox, and not English)
 
 ## Loop variables name the item
 
-The `each` form makes this natural — name the element, never the index:
+The `each` form makes this natural; name the element, never the index:
 
 ```vox
 Open a file called source for reading at each filename from arguments's all.
@@ -116,7 +116,7 @@ constraint earns its place.
 ## Structure
 
 - Group with blank lines **only at top level between complete
-  constructs** — never inside a loop or conditional body, where a blank
+  constructs**, never inside a loop or conditional body, where a blank
   line silently closes the construct (see LANGUAGE.md, The termination
   rule).
 - Prefer a named intermediate over a dense expression when the name adds
@@ -127,8 +127,8 @@ constraint earns its place.
 
 ## Scope of this guide
 
-- **All new Vox** — examples, tests, `lib/`, and tooling written in Vox
-  (vox-fuzz, the benchmarking tool) — follows this guide.
+- **All new Vox**, meaning examples, tests, `lib/`, and tooling written in Vox
+  (vox-fuzz, the benchmarking tool), follows this guide.
 - **Rust inside the compiler** follows ordinary Rust conventions, but
   the anti-abbreviation spirit still applies: no `tns`, no `cfg2`.
 - **The existing test suite predates this guide** and is full of `b`,
