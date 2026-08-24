@@ -1456,8 +1456,8 @@ To run.\n  Print double of 21.\n";
              check of nothing.\n",
         );
         assert!(
-            asm.contains("cmp r11, 6"),
-            "`is nothing` on a value must compare the runtime tag against 6"
+            asm.contains("TAG_EQ_IMM 6"),
+            "`is nothing` on a value must compare the runtime tag against 6 (via the TAG_EQ_IMM macro)"
         );
         assert!(
             !asm.contains("cmp rax, rbx"),
@@ -1471,7 +1471,7 @@ To run.\n  Print double of 21.\n";
             "a static integer (tag 0) must fold `is nothing` to false"
         );
         assert!(
-            !asm_fold.contains("cmp r11, 6"),
+            !asm_fold.contains("TAG_EQ_IMM 6"),
             "a statically-folded `is nothing` must not emit a runtime tag compare"
         );
     }

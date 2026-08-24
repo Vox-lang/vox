@@ -252,7 +252,7 @@ impl CodeGenerator {
         // is set here rather than reported as a compile error.
         if self.emit_time_expr_tag(e) == Some(TAG_NOTHING) {
             self.emit_indent(
-                "mov qword [rel _last_error], 1  ; nothing in arithmetic (static)",
+                "SET_LAST_ERROR 1  ; nothing in arithmetic (static)",
             );
             return;
         }
@@ -267,7 +267,7 @@ impl CodeGenerator {
         let ok = self.new_label("arith_not_nothing");
         self.emit_indent(&format!("cmp r11, {}  ; nothing operand?", TAG_NOTHING));
         self.emit_indent(&format!("jne {}", ok));
-        self.emit_indent("mov qword [rel _last_error], 1  ; nothing in arithmetic");
+        self.emit_indent("SET_LAST_ERROR 1  ; nothing in arithmetic");
         self.emit(&format!("{}:", ok));
     }
 
@@ -626,11 +626,11 @@ impl CodeGenerator {
                                             ));
                                         }
                                         self.emit_indent("xor rax, rax");
-                                        self.emit_indent(&format!(
-                                            "cmp r11, {}  ; is nothing?", TAG_NOTHING
-                                        ));
-                                        self.emit_indent(if equal { "sete al" } else { "setne al" });
-                                        self.emit_indent("movzx rax, al");
+                                        self.emit_indent(&if equal {
+                                            format!("TAG_EQ_IMM {}  ; is nothing?", TAG_NOTHING)
+                                        } else {
+                                            format!("TAG_NE_IMM {}  ; is not nothing?", TAG_NOTHING)
+                                        });
                                     }
                                     // No tag anywhere and r11 holds unrelated
                                     // data (a call or syscall clobbers it), so
@@ -779,7 +779,7 @@ impl CodeGenerator {
                     let arith = self.is_arithmetic_operator(op);
                     if arith {
                         self.emit_indent(
-                            "mov qword [rel _last_error], 0  ; clear error before arithmetic",
+                            "CLEAR_LAST_ERROR  ; clear error before arithmetic",
                         );
                     }
                     self.generate_expr(right);
@@ -889,29 +889,19 @@ impl CodeGenerator {
                 self.generate_expr(value);
                 match property {
                     Property::Even => {
-                        self.emit_indent("test rax, 1");
-                        self.emit_indent("setz al");
-                        self.emit_indent("movzx rax, al");
+                        self.emit_indent("INT_IS_EVEN");
                     }
                     Property::Odd => {
-                        self.emit_indent("test rax, 1");
-                        self.emit_indent("setnz al");
-                        self.emit_indent("movzx rax, al");
+                        self.emit_indent("INT_IS_ODD");
                     }
                     Property::Zero => {
-                        self.emit_indent("test rax, rax");
-                        self.emit_indent("setz al");
-                        self.emit_indent("movzx rax, al");
+                        self.emit_indent("INT_IS_ZERO");
                     }
                     Property::Positive => {
-                        self.emit_indent("test rax, rax");
-                        self.emit_indent("setg al");
-                        self.emit_indent("movzx rax, al");
+                        self.emit_indent("INT_IS_POSITIVE");
                     }
                     Property::Negative => {
-                        self.emit_indent("test rax, rax");
-                        self.emit_indent("setl al");
-                        self.emit_indent("movzx rax, al");
+                        self.emit_indent("INT_IS_NEGATIVE");
                     }
                     Property::Empty => {
                         // Buffers and lists carry an explicit length at
@@ -982,11 +972,7 @@ impl CodeGenerator {
                                     ));
                                 }
                                 self.emit_indent("xor rax, rax");
-                                self.emit_indent(&format!(
-                                    "cmp r11, {}  ; is a {}?", target, noun
-                                ));
-                                self.emit_indent("sete al");
-                                self.emit_indent("movzx rax, al");
+                                self.emit_indent(&format!("TAG_EQ_IMM {}  ; is a {}?", target, noun));
                             }
                             // No tag exists for this value and r11 holds
                             // something unrelated. Such a value is stored with
@@ -1026,22 +1012,14 @@ impl CodeGenerator {
                 self.uses_lists = true;
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
                 
-                // Allocate memory using mmap (heap allocation)
-                self.emit_indent("mov rdi, 0  ; addr = NULL");
-                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
-                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
-                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
-                self.emit_indent("mov r8, -1  ; fd = -1");
-                self.emit_indent("mov r9, 0  ; offset = 0");
-                self.emit_indent("mov rax, 9  ; sys_mmap");
-                self.emit_indent("syscall");
-                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
+                // Allocate via HEAP_ALLOC (page-aligns the size, runs the
+                // -errno failure test, and tracks the block for HEAP_FREE).
+                // Returns the pointer in rax, or 0 on mmap failure.
                 let mmap_ok = self.new_label("list_mmap_ok");
-                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
-                self.emit_indent(&format!("jbe {}", mmap_ok));
-                self.emit_indent("mov rdi, 1          ; exit code 1");
-                self.emit_indent("mov rax, 60         ; sys_exit");
-                self.emit_indent("syscall");
+                self.emit_indent(&format!("HEAP_ALLOC {}  ; size; returns ptr or 0", total_size));
+                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent(&format!("jnz {}", mmap_ok));
+                self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("push rax  ; save list pointer");
                 
@@ -1061,12 +1039,12 @@ impl CodeGenerator {
                     self.emit_indent("push rbx ; save it back");
                     self.generate_expr(elem);
                     self.emit_indent("pop rbx  ; get list pointer");
-                    self.emit_indent(&format!("mov [rbx+{}], rax", header_size + i * 8));
+                    self.emit_indent(&format!("LIST_SET_ELEM [rbx + {}], rax", header_size + i * 8));
                     match self.emit_time_expr_tag(elem) {
                         Some(tag) => {
                             if tag != TAG_INTEGER {
                                 self.emit_indent(&format!(
-                                    "mov byte [rbx+{}], {}  ; slot {} type tag",
+                                    "LIST_SET_TAG [rbx + {}], {}  ; slot {} type tag",
                                     tags_base + i,
                                     tag,
                                     i + 1
@@ -1082,7 +1060,7 @@ impl CodeGenerator {
                                     loc.operand()
                                 ));
                                 self.emit_indent(&format!(
-                                    "mov [rbx+{}], cl  ; slot {} type tag",
+                                    "LIST_SET_TAG [rbx + {}], cl  ; slot {} type tag",
                                     tags_base + i,
                                     i + 1
                                 ));
@@ -1182,7 +1160,7 @@ impl CodeGenerator {
                 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                 // A miss yields the number 0, whatever the collection holds
                 // (LANGUAGE.md: "the lookup yields 0", "returns 0"). It is the
                 // pointer-typed CONSUMER that must not take that 0 as an
@@ -1200,7 +1178,7 @@ impl CodeGenerator {
                 // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
                 // Data starts at offset 24
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                 if is_mixed {
                     // tag_addr = base + 24 + capacity*8 + index; tag rides in
                     // r11 for the immediate consumer.
@@ -1252,11 +1230,23 @@ impl CodeGenerator {
                         // Buffer/List properties
                         ObjectProperty::Size => {
                             if var_type == VarType::Buffer {
-                                self.emit_indent("mov rax, [rax + 8]  ; buffer length/size");
+                                self.emit_indent("BUFFER_LENGTH rax  ; buffer length/size");
                             } else if var_type == VarType::List {
-                                self.emit_indent("mov rax, [rax + 8]  ; list length at offset 8");
+                                // LIST_LENGTH lives in list.asm; a list
+                                // reached here as a variable (e.g. returned
+                                // from a `.lib` call), not a literal, so the
+                                // literal-fill site that would otherwise set
+                                // the flag never ran. Set it at every macro
+                                // emit site so the include gate is faithful.
+                                self.uses_lists = true;
+                                self.emit_indent("LIST_LENGTH rax  ; list length at offset 8");
                             } else if var_type == VarType::Map {
-                                self.emit_indent("mov rax, [rax + 8]  ; map length (live entries)");
+                                // Symmetric to the List case above: MAP_LENGTH
+                                // lives in map.asm, and a map variable's size
+                                // access never passes through a map-literal
+                                // site that sets the flag.
+                                self.uses_maps = true;
+                                self.emit_indent("MAP_LENGTH rax  ; map length (live entries)");
                             } else {
                                 // For files, call _file_size
                                 self.emit_indent("mov rdi, rax");
@@ -1264,19 +1254,19 @@ impl CodeGenerator {
                             }
                         }
                         ObjectProperty::Capacity => {
-                            self.emit_indent("mov rax, [rax]  ; buffer capacity");
+                            self.emit_indent("BUFFER_CAPACITY rax  ; buffer capacity");
                         }
                         ObjectProperty::Empty => {
                             if var_type == VarType::List {
-                                self.emit_indent("mov rax, [rax + 8]  ; get list length (offset 8)");
+                                self.uses_lists = true;
+                                self.emit_indent("LIST_IS_EMPTY rax  ; 1 if empty, 0 otherwise");
                             } else if var_type == VarType::Map {
-                                self.emit_indent("mov rax, [rax + 8]  ; get map length (offset 8)");
+                                self.uses_maps = true;
+                                self.emit_indent("MAP_LENGTH rax  ; get map length (offset 8)");
+                                self.emit_indent("INT_IS_ZERO  ; 1 if empty, 0 otherwise");
                             } else {
-                                self.emit_indent("mov rax, [rax + 8]  ; get buffer size");
+                                self.emit_indent("BUFFER_IS_EMPTY rax  ; 1 if empty, 0 otherwise");
                             }
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setz al");
-                            self.emit_indent("movzx rax, al  ; 1 if empty, 0 otherwise");
                         }
                         // Map properties: keys/values yield a fresh list of
                         // the map's keys (text pointers) or values (with their
@@ -1301,11 +1291,7 @@ impl CodeGenerator {
                                 self.emit_indent("xor rax, rax  ; lists are never full");
                             } else {
                                 // Buffer: compare size to capacity
-                                self.emit_indent("mov rbx, [rax]      ; capacity");
-                                self.emit_indent("mov rax, [rax + 8]  ; size");
-                                self.emit_indent("cmp rax, rbx");
-                                self.emit_indent("sete al");
-                                self.emit_indent("movzx rax, al  ; 1 if full, 0 otherwise");
+                                self.emit_indent("BUFFER_IS_FULL  ; 1 if full, 0 otherwise");
                             }
                         }
 
@@ -1362,7 +1348,7 @@ impl CodeGenerator {
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
-                            self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                             // `first`/`last` of an empty list misses like any
                             // other fallible read: the number 0 here, re-typed
                             // by the consumer (#91).
@@ -1372,7 +1358,7 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
-                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                            self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                             if is_mixed {
                                 // tags[0] = base + 24 + capacity*8
                                 self.emit_indent("mov r11, [rax]  ; capacity");
@@ -1398,7 +1384,7 @@ impl CodeGenerator {
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
                             self.emit(&format!("{}:", error_label));
-                            self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                            self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                             // `first`/`last` of an empty list misses like any
                             // other fallible read: the number 0 here, re-typed
                             // by the consumer (#91).
@@ -1408,7 +1394,7 @@ impl CodeGenerator {
                             }
                             self.emit_indent(&format!("jmp {}", done_label));
                             self.emit(&format!("{}:", ok_label));
-                            self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                            self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                             self.emit_indent("dec rbx             ; 0-indexed");
                             if is_mixed {
                                 // tags[len-1] = base + 24 + capacity*8 + (len-1)
@@ -1429,42 +1415,25 @@ impl CodeGenerator {
 
                         // Number properties
                         ObjectProperty::Absolute => {
-                            let lbl = self.label_counter;
-                            self.label_counter += 1;
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent(&format!("jns .abs_done_{}", lbl));
-                            self.emit_indent("neg rax");
-                            self.emit(&format!(".abs_done_{}:", lbl));
+                            self.emit_indent("INT_ABS");
                         }
                         ObjectProperty::Sign => {
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("mov rbx, 1");
-                            self.emit_indent("mov rcx, -1");
-                            self.emit_indent("cmovg rax, rbx  ; positive -> 1");
-                            self.emit_indent("cmovl rax, rcx  ; negative -> -1");
-                            self.emit_indent("cmovz rax, rax  ; zero -> 0 (already)");
+                            self.emit_indent("INT_SIGN");
                         }
                         ObjectProperty::Even => {
-                            self.emit_indent("and rax, 1");
-                            self.emit_indent("xor rax, 1  ; 1 if even, 0 if odd");
+                            self.emit_indent("INT_IS_EVEN");
                         }
                         ObjectProperty::Odd => {
-                            self.emit_indent("and rax, 1  ; 1 if odd, 0 if even");
+                            self.emit_indent("INT_IS_ODD");
                         }
                         ObjectProperty::Positive => {
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setg al");
-                            self.emit_indent("movzx rax, al");
+                            self.emit_indent("INT_IS_POSITIVE");
                         }
                         ObjectProperty::Negative => {
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setl al");
-                            self.emit_indent("movzx rax, al");
+                            self.emit_indent("INT_IS_NEGATIVE");
                         }
                         ObjectProperty::Zero => {
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setz al");
-                            self.emit_indent("movzx rax, al");
+                            self.emit_indent("INT_IS_ZERO");
                         }
 
                         // Time properties (unix timestamp -> component extraction)
@@ -1677,21 +1646,13 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                self.emit_indent("mov rsi, rax  ; size");
-                self.emit_indent("xor rdi, rdi  ; addr = NULL");
-                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
-                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
-                self.emit_indent("mov r8, -1  ; fd = -1");
-                self.emit_indent("xor r9, r9  ; offset = 0");
-                self.emit_indent("mov rax, 9  ; sys_mmap");
-                self.emit_indent("syscall");
-                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
+                // HEAP_ALLOC page-aligns, runs the -errno failure test, and
+                // tracks the block; size is in rax. Returns ptr in rax or 0.
                 let mmap_ok = self.new_label("arglist_mmap_ok");
-                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
-                self.emit_indent(&format!("jbe {}", mmap_ok));
-                self.emit_indent("mov rdi, 1          ; exit code 1");
-                self.emit_indent("mov rax, 60         ; sys_exit");
-                self.emit_indent("syscall");
+                self.emit_indent("HEAP_ALLOC rax  ; size in rax; returns ptr or 0");
+                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent(&format!("jnz {}", mmap_ok));
+                self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
@@ -1719,8 +1680,8 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_parsed_arg");
-                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
-                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
+                self.emit_indent(&format!("LIST_SET_ELEM [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("LIST_SET_TAG [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -1753,21 +1714,13 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                self.emit_indent("mov rsi, rax  ; size");
-                self.emit_indent("xor rdi, rdi  ; addr = NULL");
-                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
-                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
-                self.emit_indent("mov r8, -1  ; fd = -1");
-                self.emit_indent("xor r9, r9  ; offset = 0");
-                self.emit_indent("mov rax, 9  ; sys_mmap");
-                self.emit_indent("syscall");
-                // Check for mmap failure (raw syscall returns -errno, not MAP_FAILED)
+                // HEAP_ALLOC page-aligns, runs the -errno failure test, and
+                // tracks the block; size is in rax. Returns ptr in rax or 0.
                 let mmap_ok = self.new_label("argraw_mmap_ok");
-                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
-                self.emit_indent(&format!("jbe {}", mmap_ok));
-                self.emit_indent("mov rdi, 1          ; exit code 1");
-                self.emit_indent("mov rax, 60         ; sys_exit");
-                self.emit_indent("syscall");
+                self.emit_indent("HEAP_ALLOC rax  ; size in rax; returns ptr or 0");
+                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent(&format!("jnz {}", mmap_ok));
+                self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("mov r14, rax  ; r14 = list ptr");
 
@@ -1787,8 +1740,8 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jge {}", done_label));
                 self.emit_indent("mov rdi, r15");
                 self.emit_indent("call _get_raw_arg");
-                self.emit_indent(&format!("mov [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
-                self.emit_indent(&format!("mov byte [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
+                self.emit_indent(&format!("LIST_SET_ELEM [r14 + r15*8 + {}], rax", LIST_DATA_OFFSET));
+                self.emit_indent(&format!("LIST_SET_TAG [rbx + r15], {}  ; slot type tag: TAG_STRING", TAG_STRING));
                 self.emit_indent("inc r15");
                 self.emit_indent(&format!("jmp {}", loop_label));
                 self.emit(&format!("{}:", done_label));
@@ -1966,13 +1919,13 @@ impl CodeGenerator {
                 let done_label = self.new_label("env_done");
                 self.emit_indent("test rax, rax");
                 self.emit_indent(&format!("jz {}  ; env var not set", missing_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; env var found");
+                self.emit_indent("CLEAR_LAST_ERROR  ; env var found");
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", missing_label));
                 let empty_label = self.get_empty_string_label();
                 self.emit_indent(&format!(
                     "lea rax, [rel {}]  ; empty text for missing env var", empty_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; env var not set");
+                self.emit_indent("SET_LAST_ERROR 1  ; env var not set");
                 self.emit(&format!("{}:", done_label));
                 self.uses_strings = true;
             }
@@ -2183,7 +2136,7 @@ impl CodeGenerator {
                             let done_label = self.new_label("bool_done");
                             self.emit_indent(&format!("jz {}", null_label));
                             if src_type == Some(VarType::Buffer) {
-                                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
+                                self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area");
                             }
                             self.emit_indent("mov rdi, rax");
                             self.emit_indent("call _text_to_boolean");
@@ -2194,9 +2147,7 @@ impl CodeGenerator {
                         } else {
                             // Convert to boolean (0 = false, non-zero = true)
                             self.emit_indent("; Cast to boolean");
-                            self.emit_indent("test rax, rax");
-                            self.emit_indent("setne al");
-                            self.emit_indent("movzx rax, al");
+                            self.emit_indent("BOOL_FROM_RAX");
                         }
                     }
                     Type::String => {
@@ -2258,10 +2209,7 @@ impl CodeGenerator {
                             }
 
                             self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                            self.emit_indent(&format!(
-                                "add rax, {}  ; buffer data area -> NUL-terminated C string",
-                                BUF_DATA_OFFSET
-                            ));
+                            self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area -> NUL-terminated C string");
                         }
                     }
                     _ => {
@@ -2344,15 +2292,15 @@ impl CodeGenerator {
 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                 self.emit_indent("xor rax, rax  ; return 0 on error");
                 self.emit_indent(&format!("jmp {}", done_label));
 
                 // Success path: safe access
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
+                self.emit_indent("BUFFER_DATA_ADDR rbx  ; skip to buffer data area");
                 self.emit_indent("xor rax, rax");
                 self.emit_indent("mov al, [rbx + rcx]");
 
@@ -2386,7 +2334,7 @@ impl CodeGenerator {
                 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                 // A miss yields the number 0, whatever the collection holds
                 // (LANGUAGE.md: "the lookup yields 0", "returns 0"). It is the
                 // pointer-typed CONSUMER that must not take that 0 as an
@@ -2403,7 +2351,7 @@ impl CodeGenerator {
                 // Success path: safe access
                 // Data starts at offset 24, 1-indexed so element 1 is at offset 24
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 if is_mixed {
                     // Runtime type tag travels in r11 (captured immediately
@@ -2463,10 +2411,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("mov [rbp-{}], rax", tmp));
                 self.emit_format_parts_into_buffer_slot(tmp, parts, false);
                 self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                self.emit_indent(&format!(
-                    "add rax, {}  ; buffer data area (header is {} bytes)",
-                    BUF_DATA_OFFSET, BUF_DATA_OFFSET
-                ));
+                self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area");
             }
         }
     }

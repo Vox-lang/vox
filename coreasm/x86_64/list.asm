@@ -234,6 +234,44 @@ section .text
     pop rbx
 %endmacro
 
+; ============================================================================
+; LIST ELEMENT WRITE PRIMITIVES (no bounds check, no register save)
+; ============================================================================
+; The lowest-level per-slot stores a list-literal / argv fill loop is built
+; from. Unlike LIST_SET / LIST_SET_SAFE (which take a 1-based runtime index,
+; compute the element address with imul, and push/pop callee-saves), these
+; take the full effective address of the slot and store straight to it -
+; the fill loop owns the address arithmetic (a compile-time offset for a
+; literal, a runtime-indexed [base + idx*8 + 24] for argv) and the loop, so
+; the primitive is just the named store. A fill loop can't be a macro (the
+; element count and per-element value expressions are compile-time-varying),
+; but every store the loop makes routes through these two so a backend that
+; changes the slot width or the tag layout does it in one place.
+;
+; Reads follow the BYTE_READ / BYTE_READ_SAFE precedent: a bounds check is a
+; composable macro, not fused into the load. LIST_GET_SAFE below is the
+; existing fused (check + load) form; a future split would decompose it into
+; a LIST_BOUNDS_CHECK + LIST_GET to match that precedent. That refactor is
+; out of scope here (it would change the codegen element-access error path).
+
+; LIST_SET_ELEM <mem>, <value> — store a qword element value into a list
+; slot. %1 is the full effective address of the slot: a compile-time offset
+; in a literal fill loop ([rbx + 24 + i*8]) or a runtime-indexed address in
+; an argv fill loop ([r14 + r15*8 + 24]). The loop owns the address
+; arithmetic; the primitive is just the named qword store.
+%macro LIST_SET_ELEM 2
+    mov %1, %2
+%endmacro
+
+; LIST_SET_TAG <mem>, <tag> — store a single tag byte into a list slot's tag
+; byte. %2 may be an immediate tag (TAG_STRING, ...) or a byte register (cl)
+; holding a runtime-copied tag. The explicit `byte` prefix makes the size
+; unambiguous for the register form; it assembles to the same opcode as the
+; bare `mov [...], cl` it replaces.
+%macro LIST_SET_TAG 2
+    mov byte %1, %2
+%endmacro
+
 ; Get first element
 ; Args: list_ptr
 ; Returns: first element in rax

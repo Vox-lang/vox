@@ -503,7 +503,7 @@ impl CodeGenerator {
             Type::Boolean => TAG_BOOLEAN,
             _ => {
                 self.emit_indent("; value retype to non-scalar target is unsupported");
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 return;
             }
         };
@@ -515,14 +515,14 @@ impl CodeGenerator {
             format!("[rel {}]", label)
         } else {
             self.emit_indent("; value retype target variable not found");
-            self.emit_indent("mov qword [rel _last_error], 1");
+            self.emit_indent("SET_LAST_ERROR 1");
             return;
         };
         let tag_loc = match self.mixed_element_tag_slot(&Expr::Identifier(name.to_string())) {
             Some(loc) => loc,
             None => {
                 self.emit_indent("; value retype target has no tag slot");
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 return;
             }
         };
@@ -588,13 +588,11 @@ impl CodeGenerator {
                 self.emit_indent("xor r9, r9");
                 self.emit_indent("call _buffer_append_formatted_int");
                 self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
+                self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area");
             }
             TAG_BOOLEAN => {
                 self.emit_indent("; integer -> boolean");
-                self.emit_indent("test rax, rax");
-                self.emit_indent("setne al");
-                self.emit_indent("movzx rax, al");
+                self.emit_indent("BOOL_FROM_RAX");
             }
             _ => unreachable!(),
         }
@@ -627,13 +625,11 @@ impl CodeGenerator {
                 self.emit_indent("pop rax  ; restore float bits");
                 self.emit_indent("call _buffer_append_float");
                 self.emit_indent(&format!("mov rax, [rbp-{}]", tmp));
-                self.emit_indent(&format!("add rax, {}  ; buffer data area", BUF_DATA_OFFSET));
+                self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area");
             }
             TAG_BOOLEAN => {
                 self.emit_indent("; float -> boolean");
-                self.emit_indent("test rax, rax");
-                self.emit_indent("setne al");
-                self.emit_indent("movzx rax, al");
+                self.emit_indent("BOOL_FROM_RAX");
             }
             _ => unreachable!(),
         }
@@ -720,7 +716,7 @@ impl CodeGenerator {
         } else {
             self.emit_indent("xor rax, rax");
         }
-        self.emit_indent("mov qword [rel _last_error], 1");
+        self.emit_indent("SET_LAST_ERROR 1");
         self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
 
         // ---- store result back ----

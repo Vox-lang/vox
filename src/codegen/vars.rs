@@ -411,13 +411,13 @@ impl CodeGenerator {
         let done_label = self.new_label(&format!("{}_done", label_prefix));
         self.emit_indent("test rax, rax");
         self.emit_indent(&format!("jz {}  ; out of range", missing_label));
-        self.emit_indent("mov qword [rel _last_error], 0  ; in range");
+        self.emit_indent("CLEAR_LAST_ERROR  ; in range");
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", missing_label));
         let empty_label = self.get_empty_string_label();
         self.emit_indent(&format!(
             "lea rax, [rel {}]  ; empty text for out-of-range positional read", empty_label));
-        self.emit_indent("mov qword [rel _last_error], 1  ; out of range");
+        self.emit_indent("SET_LAST_ERROR 1  ; out of range");
         self.emit(&format!("{}:", done_label));
         self.uses_strings = true;
     }

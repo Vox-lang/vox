@@ -1104,9 +1104,16 @@ impl Analyzer {
             }
             
             // Argument and environment variable expressions
-            Expr::ArgumentCount | Expr::ArgumentName | Expr::ArgumentFirst | 
-            Expr::ArgumentSecond | Expr::ArgumentLast | Expr::ArgumentEmpty |
+            // ArgumentAll / ArgumentRaw build a Vox list from argv via
+            // HEAP_ALLOC, so they need the heap runtime (heap.asm) included
+            // alongside args.asm.
             Expr::ArgumentAll | Expr::ArgumentRaw => {
+                self.deps.uses_args = true;
+                self.deps.uses_heap = true;
+            }
+
+            Expr::ArgumentCount | Expr::ArgumentName | Expr::ArgumentFirst |
+            Expr::ArgumentSecond | Expr::ArgumentLast | Expr::ArgumentEmpty => {
                 self.deps.uses_args = true;
             }
 

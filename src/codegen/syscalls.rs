@@ -30,10 +30,7 @@ impl CodeGenerator {
     pub(crate) fn generate_cstr_expr(&mut self, expr: &Expr) {
         self.generate_expr(expr);
         if self.infer_expr_type(expr) == Some(VarType::Buffer) {
-            self.emit_indent(&format!(
-                "add rax, {}  ; buffer data area (header is {} bytes, data is NUL-terminated)",
-                BUF_DATA_OFFSET, BUF_DATA_OFFSET
-            ));
+            self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area (data is NUL-terminated)");
         }
     }
 

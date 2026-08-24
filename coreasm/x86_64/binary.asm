@@ -182,14 +182,11 @@ section .text
 ; ============================================================================
 ; BUFFER UTILITIES
 ; ============================================================================
-
-; Get buffer data pointer (skip header: capacity + length = 16 bytes)
-; Args: buffer_var_ptr
-; Returns: data pointer in rax
-%macro BUFFER_DATA_PTR 1
-    mov rax, %1
-    add rax, 16                 ; skip capacity (8) + length (8)
-%endmacro
+; NOTE: binary.asm is not currently %included by the codegen preamble, so the
+; macros below are dead from the live build's perspective. The authoritative
+; buffer-header layout and the live BUFFER_LENGTH / BUFFER_CAPACITY / data-
+; address macros now live in core.asm (always included). They are kept here
+; only to avoid deleting beyond this brief's scope; see REPORT-COREASM-MACROS.
 
 ; Get buffer length
 ; Args: buffer_var_ptr
