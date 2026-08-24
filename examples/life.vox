@@ -64,11 +64,9 @@ To 'alive neighbors' with a number called r and a number called c.
   Return a number, tally.
 
 (print row is single-argument (row) -- a loop-expansion candidate.)
-(Each cell is appended straight into a line buffer rather than printed)
-(character-by-character: "but if" is print-only -- confirmed by testing,)
-(it rejects "append" -- and printing per-character can't suppress the)
-(newline inside a but-if chain either, so building the row as one buffer)
-(and printing it once sidesteps both limits at once.)
+(Each cell is appended into a line buffer, then the whole row is printed)
+(as a single line. Building one buffer and printing it once lays the row)
+(out as a line in one step.)
 
 To 'print row' with a number called row.
   a buffer called line is 64 bytes in size.

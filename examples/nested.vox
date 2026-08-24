@@ -1,6 +1,6 @@
 (Nested lists - a small walker that builds a nested list, prints it,
  extracts a child, and classifies elements with `is a list`.
- Demonstrates Collections stage 1e1: a list element may be a list.)
+ Demonstrates nested lists: a list element may be a list.)
 
 a list called data is [1, [2, 3], "four", [5, [6, 7]]].
 print data.
