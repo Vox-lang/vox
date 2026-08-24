@@ -1761,12 +1761,19 @@ impl CodeGenerator {
                 
                 // Get list pointer
                 // List structure: [capacity:8][length:8][elem_size:8][data...]
+                // Iterating a collection emits LIST_LENGTH (and reads slots)
+                // from list.asm. When the collection is a list *variable* —
+                // e.g. one returned from a `.lib` call, not a literal — no
+                // literal-fill site sets the flag, so set it here to keep the
+                // include gate faithful. (A literal or `map's keys`/`values`
+                // collection already set it; this is idempotent for them.)
+                self.uses_lists = true;
                 self.generate_expr(collection);
                 let list_ptr = self.alloc_var(&format!("{}_list", variable));
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; list pointer", list_ptr));
-                
+
                 // Get list length (at offset 8)
-                self.emit_indent("mov rax, [rax + 8]  ; get length (offset 8)");
+                self.emit_indent("LIST_LENGTH rax  ; get length (offset 8)");
                 let list_len = self.alloc_var(&format!("{}_len", variable));
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; list length", list_len));
                 
@@ -1934,12 +1941,12 @@ impl CodeGenerator {
 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                 self.emit_indent(&format!("jmp {}", done_label));
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                 self.emit_indent("push rbx  ; save buffer pointer");
                 self.emit_indent("push rcx  ; save 1-indexed position");
                 // Get value
@@ -1953,7 +1960,7 @@ impl CodeGenerator {
                 self.emit_indent("mov [rbx + 8], rcx  ; extend length to include this byte");
                 self.emit(&format!("{}:", noupd_label));
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent(&format!("add rbx, {}  ; skip to buffer data area", BUF_DATA_OFFSET));
+                self.emit_indent("BUFFER_DATA_ADDR rbx  ; skip to buffer data area");
                 self.emit_indent("mov [rbx + rcx], dl  ; write byte");
 
                 self.emit(&format!("{}:", done_label));
@@ -1983,12 +1990,12 @@ impl CodeGenerator {
 
                 // Error path: out of bounds
                 self.emit(&format!("{}:", error_label));
-                self.emit_indent("mov qword [rel _last_error], 1  ; set error flag");
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
                 self.emit_indent(&format!("jmp {}", done_label));
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error on success");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
                 self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 self.emit_indent("push rbx  ; save list pointer");
                 self.emit_indent("push rcx  ; save index");
@@ -2310,12 +2317,12 @@ impl CodeGenerator {
 
                     self.emit(&format!("{}:", fd_ok_label));
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; borrowed file descriptor", offset));
-                    self.emit_indent("mov qword [rel _last_error], 0");
+                    self.emit_indent("CLEAR_LAST_ERROR");
                     self.emit_indent(&format!("jmp {}", fd_done_label));
 
                     self.emit(&format!("{}:", fd_invalid_label));
                     self.emit_indent(&format!("mov qword [rbp-{}], -1  ; invalid fd", offset));
-                    self.emit_indent("mov qword [rel _last_error], 22  ; EINVAL");
+                    self.emit_indent("SET_LAST_ERROR 22  ; EINVAL");
 
                     self.emit(&format!("{}:", fd_done_label));
                     self.emit_mirror_stack_var_to_global_if_needed(name, offset);
@@ -2358,12 +2365,12 @@ impl CodeGenerator {
                 
                 // Error path: set _last_error
                 self.emit_indent("neg rax  ; convert to positive errno");
-                self.emit_indent("mov [rel _last_error], rax");
+                self.emit_indent("SET_LAST_ERROR_RAX");
                 self.emit_indent(&format!("jmp {}", done_label));
                 
                 // Success path: register fd for cleanup
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0  ; clear error");
+                self.emit_indent("CLEAR_LAST_ERROR  ; clear error");
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _register_fd  ; track for auto-cleanup");
                 
@@ -2401,7 +2408,7 @@ impl CodeGenerator {
                 // Invalid fd is an error - make On error fire. `Read line`
                 // has always done this; `Read from` reported a silent 0-byte
                 // read on the identical handle (bug #48).
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit(&format!("{}:", done_label));
             }
 
@@ -2432,7 +2439,7 @@ impl CodeGenerator {
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
                 // Invalid fd is an error - make On error fire
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit(&format!("{}:", done_label));
             }
 
@@ -2459,10 +2466,10 @@ impl CodeGenerator {
                 self.emit_indent("test rax, rax");
                 self.emit_indent(&format!("jns {}", ok_label));
                 // Already set by _seek_fd_line, but ensure non-zero
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0");
+                self.emit_indent("CLEAR_LAST_ERROR");
                 self.emit(&format!("{}:", done_label));
             }
 
@@ -2486,10 +2493,10 @@ impl CodeGenerator {
                 let done_label = self.new_label("seek_byte_done");
                 self.emit_indent("test rax, rax");
                 self.emit_indent(&format!("jns {}", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("mov qword [rel _last_error], 0");
+                self.emit_indent("CLEAR_LAST_ERROR");
                 self.emit(&format!("{}:", done_label));
             }
             
@@ -2614,7 +2621,7 @@ impl CodeGenerator {
                 // is dead must be just as visible (bug #48).
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit(&format!("{}:", done_label));
             }
             
@@ -2633,7 +2640,7 @@ impl CodeGenerator {
                 self.emit_indent("FILE_WRITE_NEWLINE rdi");
                 self.emit_indent(&format!("jmp {}", done_label));
                 self.emit(&format!("{}:", skip_label));
-                self.emit_indent("mov qword [rel _last_error], 1");
+                self.emit_indent("SET_LAST_ERROR 1");
                 self.emit(&format!("{}:", done_label));
             }
             
@@ -2836,24 +2843,17 @@ impl CodeGenerator {
                 let slot_count = elements.len() + 2; // path + args + NULL terminator
                 let total_size = slot_count * 8;
 
-                // Allocate the argv array via mmap (same pattern as list
-                // literals elsewhere in this file), but WITHOUT the normal
-                // Vox-list header - execve needs a plain C-style array.
-                self.emit_indent("; Build argv array for execve");
-                self.emit_indent("mov rdi, 0  ; addr = NULL");
-                self.emit_indent(&format!("mov rsi, {}  ; size", total_size));
-                self.emit_indent("mov rdx, 3  ; PROT_READ | PROT_WRITE");
-                self.emit_indent("mov r10, 0x22  ; MAP_PRIVATE | MAP_ANONYMOUS");
-                self.emit_indent("mov r8, -1  ; fd = -1");
-                self.emit_indent("mov r9, 0  ; offset = 0");
-                self.emit_indent("mov rax, 9  ; sys_mmap");
-                self.emit_indent("syscall");
+                // Allocate the argv array via HEAP_ALLOC (same allocator as
+                // list literals elsewhere), but WITHOUT the normal Vox-list
+                // header - execve needs a plain C-style array. HEAP_ALLOC
+                // page-aligns, runs the -errno test, and tracks the block;
+                // returns the pointer in rax or 0 on failure.
+                self.emit_indent("; Build argv array for execve via HEAP_ALLOC");
                 let mmap_ok = self.new_label("execve_argv_mmap_ok");
-                self.emit_indent("cmp rax, -4096  ; raw mmap returns -errno in [-4095,-1]");
-                self.emit_indent(&format!("jbe {}", mmap_ok));
-                self.emit_indent("mov rdi, 1");
-                self.emit_indent("mov rax, 60");
-                self.emit_indent("syscall");
+                self.emit_indent(&format!("HEAP_ALLOC {}  ; size; returns ptr or 0", total_size));
+                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent(&format!("jnz {}", mmap_ok));
+                self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
                 self.emit_indent("push rax  ; save argv array pointer");
 
@@ -2967,7 +2967,7 @@ impl CodeGenerator {
                 }
                 
                 // Clear the error
-                self.emit_indent("mov qword [rel _last_error], 0");
+                self.emit_indent("CLEAR_LAST_ERROR");
                 
                 self.emit(&format!("{}:", skip_label));
             }
@@ -3266,13 +3266,11 @@ impl CodeGenerator {
                                                 ));
                                             }
                                             self.emit_indent("xor rax, rax");
-                                            self.emit_indent(&format!(
-                                                "cmp r11, {}  ; is nothing?", TAG_NOTHING
-                                            ));
-                                            self.emit_indent(
-                                                if equal { "sete al" } else { "setne al" },
-                                            );
-                                            self.emit_indent("movzx rax, al");
+                                            self.emit_indent(&if equal {
+                                                format!("TAG_EQ_IMM {}  ; is nothing?", TAG_NOTHING)
+                                            } else {
+                                                format!("TAG_NE_IMM {}  ; is not nothing?", TAG_NOTHING)
+                                            });
                                             self.emit_indent("test rax, rax");
                                             self.emit_indent(&format!("jz {}", false_label));
                                         }

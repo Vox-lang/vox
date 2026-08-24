@@ -64,6 +64,15 @@ section .bss
 
 section .text
 
+; MAP_LENGTH <ptr> — load the live-entry count into rax. The map header lays
+; capacity at offset 0 and length (live entries) at offset 8, so this reads
+; [ptr + MAP_LENGTH_OFFSET]. Mirrors list.asm's LIST_LENGTH for the map
+; property readers in codegen (a map's `size`, and the length half of its
+; `empty` test). Clobbers rax only.
+%macro MAP_LENGTH 1
+    mov rax, [%1 + MAP_LENGTH_OFFSET]
+%endmacro
+
 ; Helper: entries-base = map + 24 + hash_capacity*8.
 ;   %1 = map reg, %2 = dest reg (must differ from %1). Clobbers %2 only.
 %macro MAP_ENTRIES_BASE 2

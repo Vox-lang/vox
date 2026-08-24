@@ -151,8 +151,15 @@ pub const INSTALLED_LIB_DIR: &str = "/usr/include/vox";
 ///    with EC_CORE_PATH accepted as a deprecated alias (see below)
 /// 2. XDG config file (~/.config/vox/config; ~/.config/ec/config is a
 ///    deprecated alias — see `get_config_lib_path`)
-/// 3. System paths (/usr/local/share/vox, /usr/share/vox)
-/// 4. Executable-relative paths (for portable installs)
+/// 3. Executable-relative paths — the coreasm co-located with the binary
+///    being run. This is the coreasm matched to *this* binary, so it wins
+///    over a system install (which belongs to a different, possibly older,
+///    binary). Without this precedence a dev worktree's `target/release/vox`
+///    would silently assemble against a stale `/usr/share/vox/coreasm` left
+///    by a prior release, and any macro added to the worktree's coreasm
+///    since that release would fail with "instruction expected" — the
+///    binary and its coreasm disagree.
+/// 4. System paths (/usr/local/share/vox, /usr/share/vox)
 /// 5. Current working directory fallback (for development)
 /// 6. The copy embedded in this binary, written to a per-user cache on first
 ///    use (rescues `cargo install`, which ships only the binary)
@@ -196,7 +203,24 @@ fn find_coreasm_path() -> Option<PathBuf> {
         }
     }
     
-    // 3. System paths (Unix standard locations)
+    // 3. Executable-relative — the coreasm co-located with this binary wins
+    //    over any system install: it is the one matched to this binary, and a
+    //    system coreasm belongs to a different (often older) binary. A dev
+    //    worktree's `target/release/vox` finds `<worktree>/coreasm` here;
+    //    an installed `/usr/bin/vox` has no coreasm above it and falls
+    //    through to the system paths below.
+    if let Ok(exe) = env::current_exe() {
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            let candidate = d.join("coreasm");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+            dir = d.parent();
+        }
+    }
+
+    // 4. System paths (Unix standard locations)
     let system_paths = [
         "/usr/local/share/vox/coreasm",
         "/usr/share/vox/coreasm",
@@ -208,19 +232,7 @@ fn find_coreasm_path() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    
-    // 4. Executable-relative (walk up from exe to find coreasm/)
-    if let Ok(exe) = env::current_exe() {
-        let mut dir = exe.parent();
-        while let Some(d) = dir {
-            let candidate = d.join("coreasm");
-            if candidate.exists() {
-                return Some(candidate);
-            }
-            dir = d.parent();
-        }
-    }
-    
+
     // 5. Current working directory fallback
     let cwd_coreasm = PathBuf::from("coreasm");
     if cwd_coreasm.exists() {
@@ -229,10 +241,10 @@ fn find_coreasm_path() -> Option<PathBuf> {
 
     // 6. The copy carried inside this binary, written out on first use.
     //    Last on purpose: every path above describes a coreasm the user chose,
-    //    and one of them winning is how an RPM install, a dev tree, and
-    //    VOX_CORE_PATH keep behaving exactly as they did before this existed.
-    //    This step only rescues the case that used to fail outright — a
-    //    `cargo install` binary with no coreasm anywhere on the system.
+    //    and one of them winning is how an RPM install, a portable install,
+    //    and VOX_CORE_PATH keep behaving as expected. This step only rescues
+    //    the case that used to fail outright — a `cargo install` binary with
+    //    no coreasm anywhere on the system.
     materialised_embedded_coreasm()
 }
 

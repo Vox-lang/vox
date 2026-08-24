@@ -1831,6 +1831,10 @@ impl Analyzer {
                 // the environment (NULL would give the child an empty one) -
                 // this forces SAVE_ARGS to run and _envp to be captured.
                 self.deps.uses_args = true;
+                // The inline argv-array build path allocates via HEAP_ALLOC,
+                // so heap.asm must be included (the _list_to_argv path uses
+                // its own mmap, but over-including heap.asm is harmless).
+                self.deps.uses_heap = true;
             }
 
             Statement::SendSignal { signal, pid } => {

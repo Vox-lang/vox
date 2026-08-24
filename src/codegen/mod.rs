@@ -296,6 +296,15 @@ const TAG_NOTHING: u8 = 6;
 // Header data offsets. These are numerically equal today (all three headers
 // are 24 bytes), but each names a distinct struct so the offsets do not silently
 // diverge when one header gains a field.
+//
+// BUF_DATA_OFFSET is now a MIRROR of coreasm/x86_64/core.asm's
+// `%define BUF_DATA_OFFSET 24` (the BUFFER_HEADER block). core.asm is the
+// single source of truth for the dynamic-buffer layout; this Rust const is
+// kept only so codegen comments and any future Rust-side reference share the
+// same name. The codegen data-area sites emit `BUFFER_DATA_ADDR` (which
+// expands to `add <reg>, BUF_DATA_OFFSET` in core.asm) rather than this
+// const, so it is not read at runtime — hence the allow.
+#[allow(dead_code)]
 const BUF_DATA_OFFSET: i64 = 24;
 const LIST_DATA_OFFSET: i64 = 24;
 #[allow(dead_code)]

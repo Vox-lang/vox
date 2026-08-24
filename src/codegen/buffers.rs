@@ -485,16 +485,10 @@ impl CodeGenerator {
         self.emit_indent("mov rdi, rbx");
         self.emit_indent("call _buffer_length");
         self.emit_indent("mov rdx, rax  ; bytes to copy");
-        self.emit_indent(&format!(
-            "lea rsi, [rbx + {}]  ; source data area",
-            BUF_DATA_OFFSET
-        ));
+        self.emit_indent("BUFFER_DATA_ADDR_LEA rsi, rbx  ; source data area");
         self.emit_indent("mov rdi, r12");
         self.emit_indent("call _buffer_append_bytes  ; rax = destination");
-        self.emit_indent(&format!(
-            "add rax, {}  ; buffer data area -> NUL-terminated text",
-            BUF_DATA_OFFSET
-        ));
+        self.emit_indent("BUFFER_DATA_ADDR rax  ; buffer data area -> NUL-terminated text");
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", null_label));
         self.emit_indent("xor rax, rax");
@@ -566,11 +560,11 @@ impl CodeGenerator {
         self.emit_indent(&format!("jl {}", refuse_label));
         self.emit_indent(&format!("cmp rax, {}", MAX_BUFFER_SIZE));
         self.emit_indent(&format!("jg {}", refuse_label));
-        self.emit_indent("mov qword [rel _last_error], 0  ; size in bounds");
+        self.emit_indent("CLEAR_LAST_ERROR  ; size in bounds");
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", refuse_label));
         self.emit_indent("xor rax, rax  ; refused: a fixed buffer with no capacity");
-        self.emit_indent("mov qword [rel _last_error], 1  ; buffer overflow - nothing fits");
+        self.emit_indent("SET_LAST_ERROR 1  ; buffer overflow - nothing fits");
         self.emit(&format!("{}:", done_label));
     }
 

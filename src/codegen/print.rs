@@ -79,10 +79,7 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec: value is formatted as a number, so point
                                     // rdi at the data area so the formatter reads the string.
-                                    self.emit_indent(&format!(
-                                        "add rdi, {}  ; buffer data area (header is {} bytes)",
-                                        BUF_DATA_OFFSET, BUF_DATA_OFFSET
-                                    ));
+                                    self.emit_indent("BUFFER_DATA_ADDR rdi  ; buffer data area");
                                     self.emit_formatted_value(var_type, fmt_spec);
                                 }
                             } else if var_type == Some(VarType::List) {
@@ -171,7 +168,7 @@ impl CodeGenerator {
                                 } else {
                                     // Format spec present: adjust to data area for
                                     // the NUL-scanned formatter.
-                                    self.emit_indent(&format!("add rdi, {}  ; buffer data area", BUF_DATA_OFFSET));
+                                    self.emit_indent("BUFFER_DATA_ADDR rdi  ; buffer data area");
                                     self.emit_formatted_value(expr_type, fmt_spec);
                                 }
                             } else if expr_type == Some(VarType::List) {
