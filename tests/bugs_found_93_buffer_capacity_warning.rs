@@ -25,6 +25,7 @@ fn uninitialized_dynamic_buffer_warning_states_the_true_default_capacity() {
     let bin = work.join("prog");
 
     let compile = Command::new(env!("CARGO_BIN_EXE_vox"))
+        .env("VOX_CORE_PATH", concat!(env!("CARGO_MANIFEST_DIR"), "/coreasm"))
         .arg(&src_path)
         .arg("-o")
         .arg(&bin)

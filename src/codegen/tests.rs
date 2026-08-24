@@ -1949,19 +1949,21 @@ Otherwise, a number called s is 1, append s to out.\n";
     /// (read 1 byte into a stack slot + lseek(-1, SEEK_CUR) to put it back)
     /// must stay removed from the runtime. It lost a byte on unseekable fds
     /// (issue #8). Asserted at the source level because the probe is gone from
-    /// the assembled object iff it is gone from resource.asm.
+    /// the assembled object iff it is gone from the runtime: after the
+    /// coreasm module split the fd caches and the seekability-aware exact-fit
+    /// decision live in resource_buffer.asm, so that is the file read here.
     #[test]
     fn b4_exact_fill_probe_is_removed_from_runtime() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("coreasm").join("x86_64").join("resource.asm");
+            .join("coreasm").join("x86_64").join("resource_buffer.asm");
         let asm = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
         assert!(!asm.contains("Probe for additional data using a scratch byte"),
-            "the consuming one-byte probe comment must be removed from resource.asm");
+            "the consuming one-byte probe comment must be removed from resource_buffer.asm");
         assert!(!asm.contains("mov rsi, -1"),
-            "the probe's lseek(fd, -1, SEEK_CUR) put-back must be removed from resource.asm");
+            "the probe's lseek(fd, -1, SEEK_CUR) put-back must be removed from resource_buffer.asm");
         assert!(!asm.contains(".no_more_data"),
-            "the old probe's .no_more_data branch must be removed from resource.asm");
+            "the old probe's .no_more_data branch must be removed from resource_buffer.asm");
         assert!(asm.contains("fd_mode_table"), "fd_mode_table cache must be present");
         assert!(asm.contains("fd_size_table"), "fd_size_table cache must be present");
         assert!(asm.contains("S_IFREG"), "regular-file type check must be present");
@@ -2396,9 +2398,10 @@ Otherwise, a number called s is 1, append s to out.\n";
 
     /// A program that builds `{ratio:.2}` into a buffer and never prints
     /// has no other reason to include io.asm - but the render-sink writers
-    /// the redirect goes through live in resource.asm behind io.asm's own
-    /// guard, so the compiler has to ask for it. Without this the program
-    /// did not assemble at all: `symbol _render_bytes not defined`.
+    /// the redirect goes through live in resource_render.asm (after the
+    /// coreasm module split) behind io.asm's own guard, so the compiler
+    /// has to ask for it. Without this the program did not assemble at
+    /// all: `symbol _render_bytes not defined`.
     #[test]
     fn a_float_precision_in_a_buffer_asks_for_the_render_writers() {
         let asm = compile_to_asm(
@@ -2413,7 +2416,7 @@ Otherwise, a number called s is 1, append s to out.\n";
         );
         assert!(
             asm.contains("%include \"coreasm/x86_64/io.asm\"")
-                && asm.contains("%include \"coreasm/x86_64/resource.asm\""),
+                && asm.contains("%include \"coreasm/x86_64/resource_render.asm\""),
             "the redirect's writers must be included: {}",
             asm
         );

@@ -17,7 +17,8 @@
 ; Exit 0 = pass, 1 = fail.
 
 %include "coreasm/x86_64/core.asm"
-%include "coreasm/x86_64/resource.asm"
+%include "coreasm/x86_64/resource_fd.asm"
+%include "coreasm/x86_64/resource_buffer.asm"
 
 %define SYS_WRITE 1
 %define SYS_CLOSE 3

@@ -130,6 +130,23 @@ pub struct CodeGenerator {
     // analyzer computes from string literals/format strings and may miss
     // a pure variable-vs-variable comparison with no literal operand.
     uses_strings: bool,
+    // Set when codegen emits a process-control macro (MOUNT/UMOUNT/
+    // REBOOT_CMD/PIVOT_ROOT/EXECVE/FORK/REAP_CHILD/SEND_SIGNAL/MKNOD).
+    // Gates `%include "coreasm/<arch>/proc.asm"` so a program that only
+    // does filesystem I/O no longer pulls fork/reboot/mount symbols
+    // (audit rec 2). The process-control statements also set uses_files,
+    // so file.asm is still included before proc.asm.
+    uses_proc: bool,
+    // Set when codegen emits `call _read_line_into_buffer` (a `Read line`
+    // statement) or `call _seek_fd_line` (a `Seek line` statement, which
+    // scans newlines). Gates the line-reading half of the read-ahead
+    // module so a buffer/file program that never reads lines never pulls
+    // it (audit rec 1).
+    uses_readline: bool,
+    // Set when codegen emits `call _seek_fd_byte` (a `Seek byte`
+    // statement). Gates the byte-seek half of the read-ahead module
+    // alongside uses_readline (audit rec 1).
+    uses_seek: bool,
     // Declared return type of each user function, keyed by function name.
     // Populated by collect_function_signatures() before codegen so
     // infer_expr_type() can report a FunctionCall's real type instead of
@@ -524,6 +541,9 @@ impl CodeGenerator {
             uses_lists: false,
             uses_maps: false,
             uses_strings: false,
+            uses_proc: false,
+            uses_readline: false,
+            uses_seek: false,
             function_return_types: std::collections::HashMap::new(),
             function_param_types: std::collections::HashMap::new(),
             function_return_full_types: std::collections::HashMap::new(),

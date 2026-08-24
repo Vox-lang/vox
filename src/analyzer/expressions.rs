@@ -616,7 +616,11 @@ impl Analyzer {
     /// the fields straight out (plan 310 §7), while every other sink builds
     /// text and has nothing to build a thing's rendering into.
     pub(crate) fn analyze_format_parts(&mut self, parts: &[FormatPart], whole_things_render: bool) {
-        self.deps.uses_strings = true;
+        // format.asm builds text without calling any string.asm routine (it
+        // appends via its own _format_append_* helpers); a sub-expression that
+        // does call one (a string equality, a text->boolean) sets
+        // uses_strings at its own genuine site below. Do not set it here
+        // (audit rec 6).
         for part in parts {
             match part {
                 FormatPart::Expression { expr, format } => {
@@ -1055,7 +1059,8 @@ impl Analyzer {
             }
             
             Expr::StringLit(_) => {
-                self.deps.uses_strings = true;
+                // A bare text literal is a .data label, not a string.asm
+                // routine call - do not set uses_strings (audit rec 6).
             }
 
             // A field read (plan 310 §3). Never fails at runtime - the offset

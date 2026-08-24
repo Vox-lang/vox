@@ -110,8 +110,37 @@ impl CodeGenerator {
         if self.uses_files {
             result.push_str(&format!("%include \"coreasm/{}/file.asm\"\n", self.target_arch));
         }
+        // Process-control (fork/wait/kill/exec/mount/reboot/pivot_root/mknod)
+        // is its own module now: plain file I/O does not pull it. Gated on the
+        // flag set by the process-control statement/expr sites below.
+        if self.uses_proc {
+            result.push_str(&format!("%include \"coreasm/{}/proc.asm\"\n", self.target_arch));
+        }
+        // The old monolithic resource.asm is split into four focused modules.
+        // fd-tracking + buffer-lifecycle are co-included whenever any resource
+        // user is live: _cleanup_all (emitted on this same gate) calls
+        // _cleanup_buffers + _cleanup_fds, and _read_into_buffer reads the fd
+        // tables - so buffer and fd always travel together.
         if self.uses_buffers || self.uses_files || self.uses_floats {
-            result.push_str(&format!("%include \"coreasm/{}/resource.asm\"\n", self.target_arch));
+            result.push_str(&format!("%include \"coreasm/{}/resource_fd.asm\"\n", self.target_arch));
+            result.push_str(&format!("%include \"coreasm/{}/resource_buffer.asm\"\n", self.target_arch));
+        }
+        // Read-ahead / line-reading only when a program actually reads lines
+        // or seeks by line/byte. A buffer program that never calls _read_line
+        // does not pay for it.
+        if self.uses_readline || self.uses_seek {
+            result.push_str(&format!("%include \"coreasm/{}/resource_readahead.asm\"\n", self.target_arch));
+        }
+        // The format-buffer sink (_render_bytes/_render_cstr/_render_int) is
+        // pulled in only when a renderer that can target a non-stdout sink is
+        // live: that needs BOTH a resource user (the _render_sink pointer is
+        // only non-zero under resource) and a list/map/format renderer that
+        // expands RENDER_*. With no resource, RENDER_* falls back to PRINT_*
+        // and _render_bytes is never called.
+        if (self.uses_buffers || self.uses_files || self.uses_floats)
+            && (self.uses_lists || self.uses_maps || self.uses_format)
+        {
+            result.push_str(&format!("%include \"coreasm/{}/resource_render.asm\"\n", self.target_arch));
         }
         if self.uses_ints {
             result.push_str(&format!("%include \"coreasm/{}/int.asm\"\n", self.target_arch));
@@ -789,7 +818,8 @@ impl CodeGenerator {
                     self.emit_indent(&format!(
                         "lea rax, [rel {}]  ; empty text flag default", label));
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
-                    self.uses_strings = true;
+                    // Shared .data empty-text label, not a string.asm routine
+                    // (audit rec 6).
                 } else {
                     // boolean and number: zero is a meaningful default
                     // (false / 0), not a pointer.
@@ -2413,6 +2443,11 @@ impl CodeGenerator {
             }
 
             Statement::FileReadLine { source, buffer } => {
+                // _read_line_into_buffer lives in the read-ahead module, gated
+                // on uses_readline. The buffer it reads into is declared
+                // elsewhere (which sets uses_buffers and so pulls fd+buffer);
+                // we only need to pull read-ahead here.
+                self.uses_readline = true;
                 let source_fd = if source == "stdin" {
                     "0".to_string()
                 } else if let Some(offset) = self.get_var(source) {
@@ -2445,6 +2480,7 @@ impl CodeGenerator {
 
             Statement::FileSeekLine { file, line } => {
                 self.uses_files = true;
+                self.uses_readline = true;  // _seek_fd_line lives in read-ahead
 
                 let file_fd = if let Some(offset) = self.get_var(file) {
                     format!("[rbp-{}]", offset)
@@ -2475,6 +2511,7 @@ impl CodeGenerator {
 
             Statement::FileSeekByte { file, byte } => {
                 self.uses_files = true;
+                self.uses_seek = true;  // _seek_fd_byte lives in read-ahead
 
                 let file_fd = if let Some(offset) = self.get_var(file) {
                     format!("[rbp-{}]", offset)
@@ -2551,6 +2588,8 @@ impl CodeGenerator {
                         
                         if is_buffer {
                             // For buffers, we need different write macros for match vs no-match
+                            // This branch calls _str_len + _mem_eq (string.asm) - audit rec 6.
+                            self.uses_strings = true;
                             let skip_label = self.new_label("treating_skip");
                             let done_label = self.new_label("treating_done");
                             
@@ -2716,6 +2755,7 @@ impl CodeGenerator {
 
             Statement::Mount { source, target, fstype, options } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // MOUNT macro lives in proc.asm
 
                 // Detect the "move"/"bind" pseudo-mount pattern used for
                 // relocating already-mounted filesystems to a new root
@@ -2777,21 +2817,25 @@ impl CodeGenerator {
 
             Statement::Shutdown => {
                 self.uses_files = true;
+                self.uses_proc = true;  // REBOOT_CMD macro lives in proc.asm
                 self.emit_indent("REBOOT_CMD 0x4321FEDC  ; LINUX_REBOOT_CMD_POWER_OFF");
             }
 
             Statement::Reboot => {
                 self.uses_files = true;
+                self.uses_proc = true;  // REBOOT_CMD macro lives in proc.asm
                 self.emit_indent("REBOOT_CMD 0x01234567  ; LINUX_REBOOT_CMD_RESTART");
             }
 
             Statement::Halt => {
                 self.uses_files = true;
+                self.uses_proc = true;  // REBOOT_CMD macro lives in proc.asm
                 self.emit_indent("REBOOT_CMD 0xCDEF0123  ; LINUX_REBOOT_CMD_HALT");
             }
 
             Statement::Unmount { target, lazy } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // UMOUNT macro lives in proc.asm
                 self.generate_cstr_expr(target);
                 self.emit_indent("mov rdi, rax  ; mount target");
                 let flags = if *lazy { 2 } else { 0 }; // MNT_DETACH = 2
@@ -2805,12 +2849,14 @@ impl CodeGenerator {
 
             Statement::PivotRoot { new_root, put_old } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // PIVOT_ROOT macro lives in proc.asm
                 self.emit_syscall_args(&[(new_root, "rdi"), (put_old, "rsi")]);
                 self.emit_indent("PIVOT_ROOT");
             }
 
             Statement::Execute { path, args } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // EXECVE macro lives in proc.asm
 
                 // A list variable (or any non-literal list expression):
                 // argv is built at runtime by _list_to_argv, which sizes the
@@ -2900,6 +2946,7 @@ impl CodeGenerator {
 
             Statement::SendSignal { signal, pid } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // SEND_SIGNAL macro lives in proc.asm
                 // kill(2): rdi = pid, rsi = signal. Evaluate both operands
                 // through the stack-parking helper so a later expression
                 // (function call, format string) cannot clobber an earlier
@@ -2916,6 +2963,7 @@ impl CodeGenerator {
 
             Statement::Mknod { path, node_type, major, minor } => {
                 self.uses_files = true;
+                self.uses_proc = true;  // MKNOD macro lives in proc.asm
 
                 // Path -> rdi
                 match path {

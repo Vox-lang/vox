@@ -479,7 +479,10 @@ impl Analyzer {
                 // every other position still wants a single value.
                 match value {
                     Expr::FormatString { parts } => {
-                        self.deps.uses_strings = true;
+                        // analyze_format_parts no longer sets uses_strings
+                        // itself (audit rec 6): format.asm has no string.asm
+                        // calls, and any sub-expression that does sets the
+                        // flag at its own genuine site.
                         self.analyze_format_parts(parts, true);
                     }
                     _ => {
@@ -490,9 +493,9 @@ impl Analyzer {
                     }
                 }
 
-                if matches!(value, Expr::StringLit(_)) {
-                    self.deps.uses_strings = true;
-                }
+                // A bare `Print "literal"` writes a .data label directly - no
+                // string.asm routine is called, so uses_strings is not set
+                // (audit rec 6: this was the hello-world over-trigger).
             }
             
             Statement::VarDecl { name, var_type, value } => {
