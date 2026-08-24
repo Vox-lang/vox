@@ -350,6 +350,10 @@ Actively developed, free and open-source projects written in Vox:
 - **[vox-libs](https://github.com/Vox-lang/vox-libs)** — shared libraries
   for Vox, written in Vox. Not a standard library: the compiler builds and
   runs with none of them installed.
+- **[Duty-Scheduler](https://github.com/TheJostler/Duty-Scheduler)** — a
+  rotating duty scheduler for bi-weekly meetings, written in Vox: circular
+  rotation with availability and per-person assignment caps, from a
+  `names.txt` to a balanced, predictable plan.
 
 Building something in Vox? We'd like this list to point to real, actively
 maintained FOSS projects — email **info@vox-lang.dev** to have yours added.
