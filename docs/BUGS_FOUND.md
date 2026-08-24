@@ -11477,3 +11477,31 @@ never zero counts, and this entry is the correction, not a reversal),
 #85/#86 (the format-spec fault family both belong to), #61 (`WidthTooLarge`
 — the sibling fault for a count past what Vox can hold, on the same
 `read_format_spec` function).
+
+### 101. An over-precise float compares unequal to itself across the two parse routes — the literal route's rule was undocumented, and the headline oversold the text route
+
+**Status: NOT A COMPILER DEFECT — documentation gap, documented in
+0.4.12's successor (LANGUAGE.md commit a0370d2, PR #226).** Found by
+vox-fuzz campaign 90000 (seeds 90573 and 90611, `ASSERT VAL-09`), the
+first campaign with the dynamic-value leaf band live. Severity:
+specification clarity; the compiler is bit-exact on both routes.
+
+A decimal reaches a float by two documented routes: a source literal,
+or a text read at runtime. The manual's Type Casting paragraph led with
+"A float read from text is the same double as the literal" and only
+qualified afterwards that a decimal beyond eighteen significant digits
+is read as the nearest float those eighteen digits describe. What no
+sentence stated is the literal route's own rule: a source literal of
+any length parses to the nearest float of ALL its digits. Beyond
+eighteen digits the two routes can therefore land one unit in the last
+place apart, so a program that reads `"469046.3893743563967901442"`
+from text and compares it against the same digits written as a literal
+finds them unequal — correctly, per IEEE 754 and per each route's rule.
+
+Proven during verification: Python/IEEE check shows the compiler's
+literal route lands 0.0 ulps from the nearest double of all 25 digits
+and its text route 0.0 ulps from the nearest double of the 18-digit
+prefix, exactly one ulp apart. The fuzzer's own leaf asserted the two
+routes equal and convicted itself (vox-fuzz Defect 14); the manual now
+states the literal rule and the one-ulp divergence explicitly and says
+to compare an over-precise value within one route.
