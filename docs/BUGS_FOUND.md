@@ -11582,8 +11582,8 @@ type is `list` with `value: None`. The conditional-defaults path
 
 ### 103. A thing with a disallowed field type gets two errors, the first garbled — and the field-type surface itself is narrower than it should be
 
-**Status:** **Registered 2026-08-25** (GitHub #243). Open. Severity: **diagnostic
-bug + owner-declared design gap**. Verified on vox 0.4.13 (commit 873daf8)
+**Status:** Open — registered 2026-08-25 (GitHub #243). Severity: **diagnostic
+bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8)
 by the master, 2026-08-25.
 
 ```vox
@@ -11633,8 +11633,8 @@ per the owner's ruling.
 
 ### 104. `each ... from` over a non-list anchors the error at the variable's declaration, not the loop — and there is no byte-iteration sentence at all
 
-**Status:** **Registered 2026-08-25** (GitHub #244). Open. Severity:
-**diagnostic-placement** + owner a raised feature. Verified on vox 0.4.13
+**Status:** Open — registered 2026-08-25 (GitHub #244). Severity:
+**diagnostic-placement** + owner-raised feature. Verified on vox 0.4.13
 (873daf8) by the master, 2026-08-25.
 
 ```vox
@@ -11677,9 +11677,11 @@ site. (2) the owner's ask: add a byte/octet iteration form over a buffer to the
 `each ... from` expansion, so byte loops are a sentence rather than a scalar
 `For each N from 1 to size`.
 
+---
+
 ### 105. A call missing its `with` reports arity, not the missing preposition
 
-**Status:** **Registered 2026-08-25** (GitHub #245). Open. Severity:
+**Status:** Open — registered 2026-08-25 (GitHub #245). Severity:
 **diagnostic accuracy**. Verified on vox 0.4.13 (873daf8) by the master,
 2026-08-25.
 
@@ -11714,9 +11716,11 @@ could begin, name the missing preposition in the compiler's usual style:
 "'staged' follows the call with no preposition — arguments are introduced with
 `with`, `of`, `on`, or `to`." That one diagnostic removes the second error.
 
+---
+
 ### 106. `print`'s aliases are enforced unevenly: `show`/`display` reserved, `say`/`output` not
 
-**Status:** **Registered 2026-08-25** (GitHub #240). Open. Severity:
+**Status:** Open — registered 2026-08-25 (GitHub #240). Severity:
 **keyword-table inconsistency**. Verified on vox 0.4.13 (873daf8) by the
 master, 2026-08-25.
 
