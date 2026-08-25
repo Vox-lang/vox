@@ -11505,3 +11505,242 @@ prefix, exactly one ulp apart. The fuzzer's own leaf asserted the two
 routes equal and convicted itself (vox-fuzz Defect 14); the manual now
 states the literal rule and the one-ulp divergence explicitly and says
 to compare an over-precise value within one route.
+
+---
+
+### 102. `Create a list called X.` (and `a list called X.` / the list default on a branch-declared name) emits a bare `HEAP_ALLOC` with `heap.asm` never included, so the program fails to assemble
+
+**Status:** Open — awaiting approval. Severity: **wrong rejection** — a
+documented no-initializer `list` declaration compiles to invalid NASM.
+Regression tests: none yet (awaiting approval).
+
+```vox
+Create a list called items.
+Print "ok".
+```
+
+→ `NASM assembly failed` / `VAR-07.asm:44: error: instruction expected,
+found 'HEAP_ALLOC 96'`. The manual documents this exact construct —
+LANGUAGE.md:521-529:
+
+```
+Create a list called items.     (items is [])
+```
+
+and the `map` sibling (`Create a map called m.` → `m is {}`) compiles and
+runs. The `list` equivalent used to assemble too — the probe
+`vox-fuzz/docs/ledger/probes/variables/VAR-07.vox` was recorded green at
+ledger commit `e10c36e` and now fails the probe re-run.
+
+**Root cause.** A no-initializer declaration goes to codegen's
+`emit_type_default` (`src/codegen/vars.rs:503`), whose `Type::List` arm
+synthesizes an empty list literal:
+
+```rust
+Type::List(_) => {
+    self.emit_empty_value_for(VarType::List);
+    ...
+}
+```
+
+`emit_empty_value_for(List)` calls `generate_expr(&Expr::ListLit{..})`,
+and the empty-list literal codegen (`src/codegen/expr.rs:1015`) emits
+`HEAP_ALLOC 96` **directly in the program body**. But `%include
+"coreasm/x86_64/heap.asm"` is gated on `program.uses_heap`
+(`src/codegen/statements.rs:151`), and the analyzer sets `uses_heap`
+only when it walks a real `ListLit`/`MapLit` *expression*
+(`src/analyzer/expressions.rs:1014`). The no-initializer default path
+never walks one — so the macro the body calls is never defined.
+`Type::Map` is immune because its default goes through `_map_new`,
+which lives in `map.asm`, pulled in by `uses_maps`; the `list` default
+is the one direct `HEAP_ALLOC` in this path.
+
+Introduced in `fd5348a` (0.4.13, the coreasm macro-extraction sweep that
+turned the empty-list-literal's raw `mmap` into the `HEAP_ALLOC` macro).
+Before that the list default emitted the mmap syscall inline, needing no
+included macro, which is why the probe was green through 0.4.12. The
+sweep moved the allocation behind `HEAP_ALLOC` (defined in `heap.asm`)
+without wiring the default path to set `uses_heap`. The probe re-run on
+0.4.13 caught it within a day of the release.
+
+**Also hit by:** `a list called x.` (the bare no-initializer form,
+VAR-07's own second construct) and any `list` declared without an
+initializer inside a branch (`emit_conditional_decl_defaults` → the same
+`emit_type_default`), per bug #25's conditional-path defaults. The
+generator never emits a no-initializer `list` for a builtin value type
+(vox-fuzz `variables.md` VAR-12: "every emitted map carries a literal"),
+which is why the fuzzer has not caught it — only the ledger probe did.
+
+**Fix direction** (for the approved fixer): set `uses_heap` when a
+no-initializer `list` default is emitted, in `emit_type_default`'s
+`Type::List` arm (mirroring how the map path is safe via `uses_maps`), or
+teach the analyzer to record `uses_heap` for a `VarDecl` whose declared
+type is `list` with `value: None`. The conditional-defaults path
+(`emit_conditional_decl_defaults`) must set it too.
+
+---
+
+### 103. A thing with a disallowed field type gets two errors, the first garbled — and the field-type surface itself is narrower than it should be
+
+**Status:** **Registered 2026-08-25** (GitHub #243). Open. Severity: **diagnostic
+bug + owner-declared design gap**. Verified on vox 0.4.13 (commit 873daf8)
+by the master, 2026-08-25.
+
+```vox
+A thing called 'file report' has
+  a text called filename is "",
+  a number called lines is 0.
+```
+
+- **Observed — two errors, the first asserts a mismatch between two identical
+  things:**
+  ```
+  error: Field 'filename' of thing 'file report' is a text, but its default is a text
+    A field's default must be a literal of the field's own type; a whole number is accepted for a float.
+
+  error: Field 'filename' of thing 'file report' is a text, which a thing cannot hold yet
+    A field's type may be number, float, boolean, time, or any thing defined earlier (plan 310 §6).
+  ```
+
+**Root cause.** The default-type-mismatch template fires even when the field's
+type itself was already rejected as a field type. Both slots of "expected X,
+got Y" therefore render the same word, and the sentence asserts a contradiction
+between two identical things. The true error is the second one; the first is
+noise in front of it. Suppressing the default-type check when the field's type
+has already been rejected leaves the (excellent) single diagnostic.
+
+**Owner ruling (Josj, 2026-08-25).** The garbled message is the symptom, but the
+real defect is deeper: **every standard type should be a legal thing field, and
+text missing from that set is a delivery gap, not a design limit.** The
+deferral's stated rationale is unproven rather than false — plan 310 §6 keeps
+`text` out pending verification that copying a text handle cannot observe
+mutation (`docs/plans/310_user_defined_structures.md:214-217`), and keeps
+buffer/list/map/file/timer/value out because they carry references under value
+semantics (§5). If verification clears, text joins v1; the owner's direction is
+to do the verification and deliver the full standard-type field surface.
+
+**What the manual already said.** Field declarations and their literal defaults:
+`LANGUAGE.md:954-959`. Field-type rule and its rationale:
+`docs/plans/310_user_defined_structures.md:201-223`.
+
+**Fix direction.** (a) immediate: skip the default-type check when the field
+type is already rejected, leaving the single correct error. (b) the real work:
+settle the text-handle copy semantics (deep-copy-on-assignment would unblock
+text fields), then extend the allowed field-type set toward all standard types
+per the owner's ruling.
+
+---
+
+### 104. `each ... from` over a non-list anchors the error at the variable's declaration, not the loop — and there is no byte-iteration sentence at all
+
+**Status:** **Registered 2026-08-25** (GitHub #244). Open. Severity:
+**diagnostic-placement** + owner a raised feature. Verified on vox 0.4.13
+(873daf8) by the master, 2026-08-25.
+
+```vox
+Create a buffer called data.
+set byte 1 of data to 'A'.
+Print each octet from data.   (the offence is here, line 3)
+```
+
+**Observed** — the message and hint are right, the caret is on the wrong line:
+```
+error: Loop collection must be a list: data
+  --> probe.vox:1:24
+    |
+  1 | Create a buffer called data.
+    |                        ^--- here
+  hint: data is a buffer - `each ... from` walks a list, a range, or `arguments's all`
+```
+
+**Root cause.** The diagnostic reports the loop collection *variable* and emits
+its caret at the variable's declaration site, not at the `each ... from`
+expression that misuses it. Every other diagnostic anchors at the offending use
+site; in a large file the declaration can be hundreds of lines from the loop.
+
+**What the manual already said.** `each...from` is a universal loop expansion
+over a collection or range (`LANGUAGE.md:316`); the legal walks are a list, a
+range, or `arguments's all`.
+
+**Owner ruling (Josj, 2026-08-25).** The misplaced caret is a small bug, but
+the broader ask is: **looping over the bytes of a buffer should be expressible.
+There is no such sentence today.** Verified: `each byte of data`, `each octet
+of data`, and `each byte from data` are all rejected (`byte` is even a reserved
+keyword), leaving only a hand-written scalar loop
+(`For each number from 1 to data's size, print byte {the number} of data.`).
+A byte-iteration form — `For each byte of <buffer>` / `each octet from
+<buffer>` — would give the language the natural loop and make the misanchor
+case rare. Complements #249's bulk-primitive request (memchr for searches).
+
+**Fix direction.** (1) immediate: anchor the caret at the `each ... from` use
+site. (2) the owner's ask: add a byte/octet iteration form over a buffer to the
+`each ... from` expansion, so byte loops are a sentence rather than a scalar
+`For each N from 1 to size`.
+
+### 105. A call missing its `with` reports arity, not the missing preposition
+
+**Status:** **Registered 2026-08-25** (GitHub #245). Open. Severity:
+**diagnostic accuracy**. Verified on vox 0.4.13 (873daf8) by the master,
+2026-08-25.
+
+```vox
+To 'write a blank pair to' with a buffer called output.
+  set byte {output's size add 1} of output to ' '.
+
+Create a buffer called staged.
+'write a blank pair to' staged.
+```
+
+**Observed:**
+```
+error: Function 'write a blank pair to' expects 1 argument but was called with 0.
+
+error: Unknown function: staged
+```
+
+**Root cause.** The parser finds no introduced arguments because none follow a
+preposition, and reports arity 0 — the downstream symptom rather than the
+cause. The bare `staged` is then parsed as a standalone statement, producing a
+second, compounding error. "Called with 0" is confusing when the caller can see
+one argument on the line.
+
+**What the manual already said.** "In expressions, use the function name
+followed by `of`, `to`, `with`, or `on` and arguments" (`LANGUAGE.md:766`);
+"for calls with arguments, use `of`, `to`, `with`, or `on`"
+(`LANGUAGE.md:876`).
+
+**Fix direction.** When a call is followed by a bare identifier where arguments
+could begin, name the missing preposition in the compiler's usual style:
+"'staged' follows the call with no preposition — arguments are introduced with
+`with`, `of`, `on`, or `to`." That one diagnostic removes the second error.
+
+### 106. `print`'s aliases are enforced unevenly: `show`/`display` reserved, `say`/`output` not
+
+**Status:** **Registered 2026-08-25** (GitHub #240). Open. Severity:
+**keyword-table inconsistency**. Verified on vox 0.4.13 (873daf8) by the
+master, 2026-08-25.
+
+```vox
+a number called show    is 1.   (rejected: reserved keyword)
+a number called display is 1.   (rejected: reserved keyword)
+a number called say     is 1.   (compiles)
+a number called output  is 1.   (compiles)
+```
+
+**Root cause.** The live rejection path is `Token::as_keyword()`, fed by the
+lexer's alias fold at `src/lexer/scan.rs:367`:
+`"print" | "prints" | "display" | "show"`. `say` and `output` appear in the
+documentation-source table (`src/lexer/tokens.rs:96`, `string_is_keyword`) but
+are never folded by the lexer, so they lex as ordinary identifiers and are
+usable as names. The split is an accident of two tables disagreeing, not a
+deliberate design.
+
+**What the manual already said.** The Reserved Aliases table
+(`LANGUAGE.md:5002-5018`) lists only `ms`, `message`, `string` — it does not
+name `show`/`display`/`say`/`output` at all, so no reader can predict the
+split.
+
+**Fix direction.** Decide one way and enforce both tables from one source:
+either reserve all four print aliases or none; generate the reserved table from
+the lexer fold so docs and compiler cannot drift again (closes the sibling
+reports #238/#239).
