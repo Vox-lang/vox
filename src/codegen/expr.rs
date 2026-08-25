@@ -1010,6 +1010,12 @@ impl CodeGenerator {
                 let total_size = header_size + data_size + capacity;
                 
                 self.uses_lists = true;
+                // Every list allocation - a literal from source AND the
+                // synthesized empty list of the no-initializer default
+                // (`emit_type_default` -> `emit_empty_value_for`, bug #102) -
+                // flows through here and emits HEAP_ALLOC, so it sets the
+                // codegen heap flag the include gate ORs with the analyzer's.
+                self.uses_heap = true;
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
                 
                 // Allocate via HEAP_ALLOC (page-aligns the size, runs the

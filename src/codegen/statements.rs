@@ -148,7 +148,11 @@ impl CodeGenerator {
         if self.uses_floats {
             result.push_str(&format!("%include \"coreasm/{}/float.asm\"\n", self.target_arch));
         }
-        if program.uses_heap {
+        // program.uses_heap comes from the analyzer (literal expressions,
+        // Allocate/Free/BufferDecl, Exec, arglists); self.uses_heap covers
+        // HEAP_ALLOC codegen itself emits that the analyzer never saw - the
+        // synthesized empty list of a no-initializer declaration (bug #102).
+        if program.uses_heap || self.uses_heap {
             result.push_str(&format!("%include \"coreasm/{}/heap.asm\"\n", self.target_arch));
         }
         if program.uses_strings || self.uses_strings || self.uses_maps {
