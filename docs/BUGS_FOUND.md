@@ -295,8 +295,8 @@ needed — it reads like an internal parser failure, not a usage mistake.
 
 ### 11. That error's reported line can be badly misattributed
 
-**Status:** the `but if`/period shape is fixed in v0.3.6 along with #14, its
-underlying cause — `tests/butif_chain_period_shape_b_plain.vox` covers the
+**Status:** fixed in v0.3.6 — the `but if`/period shape, together with #14,
+its underlying cause. `tests/butif_chain_period_shape_b_plain.vox` covers the
 exact misattribution repro below and now compiles and runs cleanly (`did
 proc` / `did sysfs` / `done`, no spurious `Unknown variable: f` error). The
 original report below could not be reproduced from its own description, but
