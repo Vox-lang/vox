@@ -3,6 +3,10 @@ use std::str::Chars;
 
 mod tokens;
 pub use tokens::Token;
+// Only `#[cfg(test)]` code consumes this re-export today (BUGS_FOUND
+// #106's keyword-table tests), same as `string_is_keyword` itself.
+#[allow(unused_imports)]
+pub use tokens::RESERVED_ALIASES;
 mod scan;
 mod regions;
 pub use regions::{classify_lines, SourceRegion};

@@ -11762,9 +11762,14 @@ next token is an identifier, and none of those shapes put one there.
 
 ### 106. `print`'s aliases are enforced unevenly: `show`/`display` reserved, `say`/`output` not
 
-**Status:** Open — registered 2026-08-25 (GitHub #240). Severity:
-**keyword-table inconsistency**. Verified on vox 0.4.13 (873daf8) by the
-master, 2026-08-25.
+**Status:** fixed in v0.4.14. Regression tests:
+`tests/compile_fail/277_show_reserved_print_alias.vox` + `.err` (`show`
+rejected), `tests/compile_fail/278_display_reserved_print_alias.vox` +
+`.err` (`display` rejected), `tests/577_say_and_output_are_variable_names.vox`
+(`say`/`output` compile and print as ordinary variables), and three
+`cargo test` cases beside the existing `string_is_keyword` tests in
+`src/codegen/tests.rs`: `string_is_keyword_matches_the_live_lexer`,
+`print_aliases_reserved_evenly`, `reserved_aliases_doc_matches_the_const`.
 
 ```vox
 a number called show    is 1.   (rejected: reserved keyword)
@@ -11786,10 +11791,43 @@ deliberate design.
 name `show`/`display`/`say`/`output` at all, so no reader can predict the
 split.
 
-**Fix direction.** Decide one way and enforce both tables from one source:
-either reserve all four print aliases or none; generate the reserved table from
-the lexer fold so docs and compiler cannot drift again (closes the sibling
-reports #238/#239).
+**Fix.** `show`, `display`, and `prints` are live print aliases (the lexer
+folds them; `prints` was a second, previously unclaimed half of this same
+split) and stay reserved. `say` and `output` are not live aliases — the
+lexer never folds either — and stay ordinary variable names; no shipped
+program's behaviour changes (`output` names a variable in six files:
+`examples/greet.vox`, `examples/cat.vox`, `examples/args_and_env.vox`,
+`tests/060_flag_schema_default_text.vox`,
+`tests/428_forward_flag_read_in_a_function.vox`,
+`tools/migrate-identifiers/tests/all_positions.vox`). The alias fold now
+lives in exactly one place, a `RESERVED_ALIASES` const in
+`src/lexer/tokens.rs`; `string_is_keyword` is a lookup into it, and a
+`cargo test` fails the build if LANGUAGE.md's Reserved Aliases table (now
+85 rows, generated from and checked against the same const) ever drifts
+from it again, closing #238/#239 for good.
+
+Auditing every other row of the old `string_is_keyword` against the live
+lexer's fold turned up the identical bug throughout the table — words
+claimed reserved the lexer never folds, live aliases the table never
+claimed, and two rows attributing a real alias to the wrong canonical
+keyword. All fixed alongside `print`'s:
+- **Over-claimed** (dropped — not live aliases): `say`, `output`, `let`,
+  `put`, `declare`, `over`, `increase`, `decrease`, `execute` (no
+  `Token::Execute` exists at all — the whole row was spurious), `respond`,
+  `reply`, `end`, `halt`, `abort`, `using`, `given`, `taking`, `higher`,
+  `above`, `lower`, `below`, and the unreachable symbol spellings `==`,
+  `!`, `&&`, `||` (`scan.rs` never lexes any of those four characters, and
+  no identifier can spell one anyway).
+- **Omitted** (added — live aliases the table missed entirely): `prints`
+  (→ `print`), `store` (→ `set`), `returns` (→ `return`), `append`/`push`
+  (→ `append`), `copy`, `map`/`dictionary` (→ `map`), `keys`, `values`,
+  `element`, `without`, and the six `bit-and`/`bit-or`/`bit-xor`/`bit-not`/
+  `bit-shift-left`/`bit-shift-right` forms.
+- **Wrong canonical** (moved): `make` was claimed as a `set` alias but the
+  lexer folds it to `create`; `times` was claimed as a `multiply` alias
+  but the lexer treats it as its own keyword (the `Repeat N times` loop
+  word); `equals`/`equal` were claimed as `is` aliases but the lexer folds
+  them to their own `Equals` keyword.
 
 ---
 

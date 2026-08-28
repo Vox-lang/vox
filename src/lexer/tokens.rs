@@ -81,6 +81,184 @@ pub enum Token {
     Newline, ParagraphBreak, EOF,
 }
 
+/// The complete alias -> canonical-keyword table, one row per spelling the
+/// lexer's word fold (`Lexer::read_word` in `scan.rs`) reserves. This is the
+/// single source of truth `string_is_keyword` reads from below, the source
+/// `LANGUAGE.md`'s Reserved Aliases table is generated/checked against
+/// (`codegen::tests::reserved_aliases_doc_matches_the_const`), and the set
+/// every entry is checked against the *live* lexer for
+/// (`codegen::tests::string_is_keyword_matches_the_live_lexer`).
+///
+/// A canonical keyword with only one spelling still gets a row mapping to
+/// itself (`("if", "if")`), since `string_is_keyword` must answer for those
+/// too; the docs generator filters those out when it lists "alternate
+/// spellings" (a keyword aliasing itself isn't an alias).
+///
+/// This table does not include the contextual words `scan.rs` folds to
+/// `Token::Identifier` (`flags`, `it`, `all`, `size`, `length`, `capacity`,
+/// `first`, `last`, `version`, `count`, `raw`, `start`, `begin`, `stop`,
+/// `finish`, `second`) - those are deliberately *not* reserved, so they
+/// have no row here either. BUGS_FOUND #106: the live lexer wins every
+/// disagreement; nothing here reserves a spelling `scan.rs` does not fold,
+/// or omits one it does.
+pub const RESERVED_ALIASES: &[(&str, &str)] = &[
+    // Actions
+    ("print", "print"), ("prints", "print"), ("display", "print"), ("show", "print"),
+    ("set", "set"), ("store", "set"), ("assign", "set"),
+    ("create", "create"), ("make", "create"), ("define", "create"),
+    ("add", "add"), ("plus", "add"),
+    ("subtract", "subtract"), ("minus", "subtract"),
+    ("multiply", "multiply"),
+    ("divide", "divide"),
+    ("increment", "increment"),
+    ("decrement", "decrement"),
+    ("allocate", "allocate"),
+    ("free", "free"), ("release", "free"), ("deallocate", "free"),
+    ("append", "append"), ("push", "append"),
+    ("copy", "copy"),
+    ("clear", "clear"),
+    ("modulo", "modulo"), ("mod", "modulo"), ("remainder", "modulo"),
+    // Control flow
+    ("if", "if"),
+    ("when", "when"),
+    ("then", "then"),
+    ("else", "else"),
+    ("but", "but"),
+    ("otherwise", "otherwise"),
+    ("while", "while"),
+    ("for", "for"),
+    ("each", "each"),
+    ("repeat", "repeat"),
+    ("times", "times"),
+    ("break", "break"),
+    ("continue", "continue"), ("skip", "continue"),
+    ("return", "return"), ("returns", "return"), ("give", "return"),
+    ("exit", "exit"), ("quit", "exit"), ("terminate", "exit"),
+    // Functions
+    ("with", "with"),
+    ("called", "called"), ("named", "called"),
+    ("parse", "parse"),
+    ("flag", "flag"),
+    ("required", "required"),
+    ("default", "default"),
+    // Comparisons
+    ("is", "is"),
+    ("are", "are"),
+    ("equals", "equals"), ("equal", "equals"),
+    ("greater", "greater"), ("more", "greater"), ("bigger", "greater"), ("larger", "greater"),
+    ("less", "less"), ("fewer", "less"), ("smaller", "less"),
+    ("than", "than"),
+    ("not", "not"),
+    ("and", "and"),
+    ("or", "or"),
+    // Range/Collection
+    ("from", "from"), ("starting", "from"),
+    ("to", "to"), ("up", "to"),
+    ("between", "between"),
+    ("in", "in"), ("inside", "in"), ("within", "in"),
+    ("of", "of"),
+    ("on", "on"), ("at", "on"),
+    ("the", "the"),
+    ("a", "a"),
+    ("an", "an"),
+    ("treating", "treating"), ("treat", "treating"),
+    // Types
+    ("number", "number"), ("numbers", "number"),
+    ("float", "float"), ("decimal", "float"), ("real", "float"),
+    ("int", "int"), ("integer", "int"),
+    ("text", "text"), ("string", "text"), ("message", "text"),
+    ("boolean", "boolean"), ("bool", "boolean"),
+    ("list", "list"), ("array", "list"), ("collection", "list"),
+    ("map", "map"), ("dictionary", "map"),
+    ("true", "true"), ("yes", "true"),
+    ("false", "false"), ("no", "false"),
+    // File I/O
+    ("buffer", "buffer"),
+    ("file", "file"),
+    ("bytes", "bytes"),
+    ("byte", "byte"),
+    ("into", "into"),
+    ("reading", "reading"),
+    ("writing", "writing"),
+    ("appending", "appending"),
+    ("standard", "standard"),
+    ("input", "input"),
+    ("open", "open"), ("opened", "open"),
+    ("read", "read"),
+    ("write", "write"),
+    ("close", "close"), ("closed", "close"),
+    ("delete", "delete"), ("remove", "delete"),
+    ("exists", "exists"), ("exist", "exists"),
+    ("resize", "resize"), ("reallocate", "resize"), ("grow", "resize"), ("shrink", "resize"),
+    ("seek", "seek"),
+    // Properties
+    ("even", "even"),
+    ("odd", "odd"),
+    ("positive", "positive"),
+    ("negative", "negative"),
+    ("zero", "zero"),
+    ("empty", "empty"),
+    ("nothing", "nothing"), ("null", "nothing"), ("nil", "nothing"),
+    ("descriptor", "descriptor"), ("fd", "descriptor"),
+    ("modified", "modified"),
+    ("accessed", "accessed"),
+    ("permissions", "permissions"), ("perms", "permissions"),
+    ("readable", "readable"),
+    ("writable", "writable"),
+    ("full", "full"),
+    ("keys", "keys"),
+    ("values", "values"),
+    ("absolute", "absolute"), ("abs", "absolute"),
+    ("sign", "sign"),
+    ("element", "element"),
+    ("without", "without"),
+    // Error handling
+    ("error", "error"),
+    ("auto", "auto"), ("automatic", "auto"),
+    ("enable", "enable"), ("enabled", "enable"),
+    ("disable", "disable"), ("disabled", "disable"),
+    // Library
+    ("see", "see"), ("import", "see"), ("include", "see"), ("require", "see"),
+    ("library", "library"), ("lib", "library"),
+    // `version` itself is contextual (a header-sentence word), not
+    // reserved - only the `ver` alias is (Class C, deferred), and it keeps
+    // its own `Token::Version` mapping, so it is the row here.
+    ("ver", "version"),
+    // Arguments/Environment
+    ("argument", "argument"), ("arg", "argument"), ("param", "argument"), ("parameter", "argument"),
+    ("arguments", "arguments"), ("args", "arguments"), ("params", "arguments"), ("parameters", "arguments"),
+    ("environment", "environment"), ("env", "environment"),
+    ("variable", "variable"), ("var", "variable"),
+    // `count` and `raw` are contextual possessive properties, not reserved.
+    // Time and timers
+    ("wait", "wait"), ("pause", "wait"),
+    ("sleep", "sleep"), ("delay", "sleep"),
+    ("timer", "timer"), ("stopwatch", "timer"),
+    ("get", "get"), ("fetch", "get"), ("retrieve", "get"),
+    ("current", "current"),
+    ("time", "time"),
+    ("seconds", "seconds"),
+    ("millisecond", "millisecond"),
+    ("milliseconds", "milliseconds"), ("ms", "milliseconds"),
+    ("duration", "duration"),
+    ("elapsed", "elapsed"),
+    ("hour", "hour"), ("hours", "hour"),
+    ("minute", "minute"), ("minutes", "minute"),
+    ("day", "day"), ("days", "day"),
+    ("month", "month"), ("months", "month"),
+    ("year", "year"), ("years", "year"),
+    ("unix", "unix"), ("unixtime", "unix"), ("timestamp", "unix"),
+    ("running", "running"),
+    ("as", "as"),
+    // Bitwise operations (only bit-* forms, no standalone keywords)
+    ("bit-and", "bit-and"),
+    ("bit-or", "bit-or"),
+    ("bit-xor", "bit-xor"),
+    ("bit-not", "bit-not"),
+    ("bit-shift-left", "bit-shift-left"),
+    ("bit-shift-right", "bit-shift-right"),
+];
+
 impl Token {
     /// Check if a string matches any reserved keyword.
     /// Returns the canonical keyword name if it matches.
@@ -88,153 +266,17 @@ impl Token {
     /// After plan 270 a string literal is never a name, so the parser no
     /// longer consults this to reject `"flag"`-style names; it remains for
     /// tests and as a general lexical utility.
+    ///
+    /// Answers strictly from [`RESERVED_ALIASES`] (BUGS_FOUND #106): there
+    /// is no separate hand-maintained keyword list here to drift from the
+    /// lexer's own fold.
     #[allow(dead_code)]
     pub fn string_is_keyword(s: &str) -> Option<&'static str> {
         let lower = s.to_lowercase();
-        match lower.as_str() {
-            // Actions
-            "print" | "say" | "display" | "output" | "show" => Some("print"),
-            "set" | "assign" | "let" | "make" | "put" => Some("set"),
-            "create" | "declare" | "define" => Some("create"),
-            "add" | "plus" => Some("add"),
-            "subtract" | "minus" => Some("subtract"),
-            "multiply" | "times" => Some("multiply"),
-            "divide" | "over" => Some("divide"),
-            "increment" | "increase" => Some("increment"),
-            "decrement" | "decrease" => Some("decrement"),
-            "execute" => Some("execute"),
-            "allocate" => Some("allocate"),
-            "free" | "deallocate" | "release" => Some("free"),
-            "clear" => Some("clear"),
-            "modulo" | "mod" | "remainder" => Some("modulo"),
-            // Control flow
-            "if" => Some("if"),
-            "when" => Some("when"),
-            "then" => Some("then"),
-            "else" => Some("else"),
-            "but" => Some("but"),
-            "otherwise" => Some("otherwise"),
-            "while" => Some("while"),
-            "for" => Some("for"),
-            "each" => Some("each"),
-            "repeat" => Some("repeat"),
-            "break" => Some("break"),
-            "continue" | "skip" => Some("continue"),
-            "return" | "give" | "respond" | "reply" => Some("return"),
-            "exit" | "quit" | "terminate" | "end" | "halt" | "abort" => Some("exit"),
-            // Functions
-            "with" | "using" | "given" | "taking" => Some("with"),
-            "called" | "named" => Some("called"),
-            "parse" => Some("parse"),
-            "flag" => Some("flag"),
-            "required" => Some("required"),
-            "default" => Some("default"),
-            // Comparisons
-            "is" | "equals" | "equal" | "==" => Some("is"),
-            "are" => Some("are"),
-            "greater" | "more" | "larger" | "bigger" | "higher" | "above" => Some("greater"),
-            "less" | "smaller" | "lower" | "below" | "fewer" => Some("less"),
-            "than" => Some("than"),
-            "not" | "!" => Some("not"),
-            "and" | "&&" => Some("and"),
-            "or" | "||" => Some("or"),
-            // Range/Collection
-            "from" | "starting" => Some("from"),
-            "to" | "up" => Some("to"),
-            "between" => Some("between"),
-            "in" | "inside" | "within" => Some("in"),
-            "of" => Some("of"),
-            "on" | "at" => Some("on"),
-            "the" => Some("the"),
-            "a" => Some("a"),
-            "an" => Some("an"),
-            "treating" | "treat" => Some("treating"),
-            // Types
-            "number" | "numbers" => Some("number"),
-            "float" | "decimal" | "real" => Some("float"),
-            "int" | "integer" => Some("int"),
-            "text" | "string" | "message" => Some("text"),
-            "boolean" | "bool" => Some("boolean"),
-            "list" | "array" | "collection" => Some("list"),
-            "true" | "yes" => Some("true"),
-            "false" | "no" => Some("false"),
-            // File I/O
-            "buffer" => Some("buffer"),
-            "file" => Some("file"),
-            "bytes" => Some("bytes"),
-            "byte" => Some("byte"),
-            "into" => Some("into"),
-            "reading" => Some("reading"),
-            "writing" => Some("writing"),
-            "appending" => Some("appending"),
-            "standard" => Some("standard"),
-            "input" => Some("input"),
-            "open" | "opened" => Some("open"),
-            "read" => Some("read"),
-            "write" => Some("write"),
-            "close" | "closed" => Some("close"),
-            "delete" | "remove" => Some("delete"),
-            "exists" | "exist" => Some("exists"),
-            "resize" | "reallocate" | "grow" | "shrink" => Some("resize"),
-            "seek" => Some("seek"),
-            // Properties
-            "even" => Some("even"),
-            "odd" => Some("odd"),
-            "positive" => Some("positive"),
-            "negative" => Some("negative"),
-            "zero" => Some("zero"),
-            "empty" => Some("empty"),
-            "nothing" | "null" | "nil" => Some("nothing"),
-            "descriptor" | "fd" => Some("descriptor"),
-            "modified" => Some("modified"),
-            "accessed" => Some("accessed"),
-            "permissions" | "perms" => Some("permissions"),
-            "readable" => Some("readable"),
-            "writable" => Some("writable"),
-            "full" => Some("full"),
-            "absolute" | "abs" => Some("absolute"),
-            "sign" => Some("sign"),
-            // Error handling
-            "error" => Some("error"),
-            "auto" | "automatic" => Some("auto"),
-            "enable" | "enabled" => Some("enable"),
-            "disable" | "disabled" => Some("disable"),
-            // Library
-            "see" | "import" | "include" | "require" => Some("see"),
-            "library" | "lib" => Some("library"),
-            // `version` is contextual (a header-sentence word), not reserved.
-            // The `ver` alias stays reserved (Class C, deferred).
-            "ver" => Some("version"),
-            // Arguments/Environment
-            "argument" | "arg" | "param" | "parameter" => Some("argument"),
-            "arguments" | "args" | "params" | "parameters" => Some("arguments"),
-            "environment" | "env" => Some("environment"),
-            "variable" | "var" => Some("variable"),
-            // `count` is not reserved here: it is a contextual possessive
-            // property (`arguments's count`), not a banned variable name.
-            // `raw` is likewise contextual (`arguments's raw`).
-            // Time and timers
-            "wait" | "pause" => Some("wait"),
-            "sleep" | "delay" => Some("sleep"),
-            "timer" | "stopwatch" => Some("timer"),
-            "get" | "fetch" | "retrieve" => Some("get"),
-            "current" => Some("current"),
-            "time" => Some("time"),
-            "seconds" => Some("seconds"),
-            "millisecond" => Some("millisecond"),
-            "milliseconds" | "ms" => Some("milliseconds"),
-            "duration" => Some("duration"),
-            "elapsed" => Some("elapsed"),
-            "hour" | "hours" => Some("hour"),
-            "minute" | "minutes" => Some("minute"),
-            "day" | "days" => Some("day"),
-            "month" | "months" => Some("month"),
-            "year" | "years" => Some("year"),
-            "unix" | "unixtime" | "timestamp" => Some("unix"),
-            "running" => Some("running"),
-            "as" => Some("as"),
-            _ => None,
-        }
+        RESERVED_ALIASES
+            .iter()
+            .find(|(spelling, _)| *spelling == lower)
+            .map(|(_, canonical)| *canonical)
     }
     
     /// Returns the keyword name if this token is a reserved keyword.
