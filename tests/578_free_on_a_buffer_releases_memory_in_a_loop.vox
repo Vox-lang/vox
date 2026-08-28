@@ -1,0 +1,39 @@
+(docs/BUGS_FOUND.md #107, remedied by the `Free` statement: before this,
+ `Free` on a buffer was a silent no-op - the buffer is `mmap`'d directly
+ (`_alloc_buffer`) and never registered in the heap table `HEAP_FREE` walks,
+ so 40000 iterations of "declare a buffer, Free it" held roughly 160 MB
+ resident throughout. `Free` now calls `_free_buffer` (unregister-if-
+ tracked, always munmap), so memory stays flat regardless of how many
+ iterations run.
+
+ Reads /proc/self/statm itself, the same idiom the #108 fixer's tests
+ 564/565 use: field 2 is resident pages. Before the fix this printed a
+ five-figure page count at even half this iteration count; the threshold
+ is a wide margin under that, not a tight bound - it only needs to catch
+ the regression coming back, not chase the exact byte count.)
+
+a number called n is 0.
+While n is less than 20000, a buffer called piece is "x", Free piece, increment n.
+
+a buffer called statm is 256 bytes in size.
+open a file for reading called procfile at "/proc/self/statm".
+Read from procfile into statm.
+Close procfile.
+
+(Skip field 1 (total pages) up to the separating space.)
+a number called i is 1.
+While i is less than or equal to statm's size and byte i of statm is not 32, increment i.
+increment i.
+
+(Accumulate field 2 (resident pages) one digit at a time.)
+a number called resident is 0.
+a number called digit is 0.
+While i is less than or equal to statm's size and byte i of statm is not 32 and byte i of statm is not 10,
+    Set digit to byte i of statm,
+    Set resident to resident multiply 10 add digit subtract 48,
+    increment i.
+
+If resident is less than 5000
+    Print "ok".
+Otherwise
+    Print resident.

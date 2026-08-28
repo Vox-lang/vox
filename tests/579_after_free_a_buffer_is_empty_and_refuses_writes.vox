@@ -1,0 +1,22 @@
+(The after-`Free` contract: length 0, `as text` "", a byte read past length
+ sets the error flag `On error` catches, and every write - a byte read is
+ fine to attempt, an append or a copy is not - is refused and sets the flag
+ too, without ever touching the buffer again. Before this fix none of the
+ three flags fired: the buffer was never actually freed, so byte 1, append,
+ and copy all still landed on live memory.)
+
+a buffer called line is "hello".
+Free line.
+Print "length {line's length}".
+Print "text [{line as text}]".
+
+a number called b is byte 1 of line.
+On error Print "byte read flagged".
+
+append "z" to line.
+On error Print "append flagged".
+
+Copy "more words" to line.
+On error Print "copy flagged".
+
+Print "end".

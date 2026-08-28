@@ -3499,7 +3499,10 @@ a buffer called data.
 **Features:**
 - Start with 4096 bytes of capacity (size 0) and grow automatically as needed
 - No buffer overflows possible - memory expands dynamically
-- Automatically freed on program exit
+- Automatically freed on program exit - but a buffer declared inside a
+  function or loop body is allocated fresh on every entry, so a
+  long-running loop should [`Free`](#releasing-a-buffer) it each time
+  round, or declare it once outside the loop and `clear` it instead
 
 #### Fixed-Size Buffers
 
@@ -3611,6 +3614,64 @@ resize buf to 128.
 - New buffer is allocated and old buffer is freed
 - Texts already made from the buffer with `as text` are independent
   copies, so resizing never disturbs them
+
+#### Releasing a Buffer
+
+`Free <buffer>.` releases a buffer's memory immediately, rather than
+waiting for program exit. `Release <buffer>.` and `Deallocate <buffer>.`
+are the same statement; all three accept an optional `the`:
+
+```vox fragment
+Free data.
+Release the data.
+Deallocate data.
+```
+
+After `Free`, the buffer is **empty**: its length is 0, `as text` reads
+back `""`, and every read or write past that is refused with the error
+flag - the same "no-op, error flag set, execution continues" contract as
+[Truncation Behavior](#fixed-size-buffers) above, since a freed buffer
+behaves exactly like a fixed buffer of capacity 0. `On error` catches it:
+
+```
+a buffer called line is "hello".
+Free line.
+print line's length.        (prints 0)
+print "[{line as text}]".   (prints [])
+
+append "more" to line.
+On error print "refused: line is freed".
+```
+
+`Free`ing an already-freed buffer is a no-op that sets the error flag
+rather than releasing anything a second time:
+
+```vox fragment
+Free line.
+Free line.
+On error print "already freed".
+```
+
+A `buffer` function parameter *is* the caller's buffer (see
+[Parameter and Local Types](#parameter-and-local-types)), so `Free` on one
+releases the same block the caller sees, and the caller's own variable is
+left empty too, exactly as a resize inside the function is.
+
+**Per-iteration use.** Declaring a buffer inside a loop body and freeing
+it at the end of each iteration keeps memory flat no matter how long the
+loop runs:
+
+```vox fragment
+a number called n is 0.
+While n is less than total_lines,
+    a buffer called line is 4096 bytes in size,
+    Read line from source into line,
+    print line as text,
+    Free line,
+    increment n.
+```
+
+A list also accepts `Free`.
 
 #### Buffer Byte Access
 
@@ -4955,6 +5016,8 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Continue` | Skip to next iteration |
 | `Exit` | Terminate program with exit code |
 | `Append` | Add element to list |
+| `Free` | Release a buffer or list's memory immediately (see [Releasing a Buffer](#releasing-a-buffer)) |
+| `Allocate` | Reserve a raw block of heap memory, freed with `Free` |
 | `Create`, `Change`, `Remove`/`Delete` | Directories, device nodes, symlinks, chdir (see [Directories, Mounting, and Process Control](#directories-mounting-and-process-control)) |
 | `Mount`, `Unmount`/`Umount` | Mount/unmount filesystems |
 | `Pivot` | `pivot_root` - switch the root filesystem |

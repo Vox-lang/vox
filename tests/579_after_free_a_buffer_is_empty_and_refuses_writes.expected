@@ -1,0 +1,6 @@
+length 0
+text []
+byte read flagged
+append flagged
+copy flagged
+end

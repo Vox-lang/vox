@@ -1,0 +1,17 @@
+(`free`, `release`, and `deallocate` all fold to Token::Free in the lexer,
+ and each accepts an optional `the` - `Release the data.` used to be a
+ compile error because `parse_free` did not skip it the way
+ `parse_increment` does. All three spellings, with and without the article,
+ behave identically.)
+
+a buffer called first is "one".
+Release the first.
+Print "first len {first's length}".
+
+a buffer called second is "two".
+Deallocate second.
+Print "second len {second's length}".
+
+a buffer called third is "three".
+Free third.
+Print "third len {third's length}".

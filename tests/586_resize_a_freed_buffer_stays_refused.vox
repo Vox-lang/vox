@@ -1,0 +1,29 @@
+(Master's finding: the first cut of `Free` only taught `emit_free_buffer`
+ to recognise the shared released header - `Resize` (and anything else
+ that can hand a buffer pointer to `_realloc_buffer`/`_reallocate_buffer`)
+ did not know about it. `Resize`d, the released header fell into the
+ alloc+copy fallback, which attempted `munmap` on the header's own
+ `.data` address (harmless today only because 24 bytes there is not
+ page-aligned) and then silently resurrected the variable as a fresh,
+ live, writable buffer - `append` afterward really landed in memory, and
+ a second `Free` doubly-munmapped a real block without ever flagging.
+ The fix moved the shared header into coreasm as `_released_buffer_header`
+ and taught `_free_buffer`, `_realloc_buffer`, and `_reallocate_buffer`
+ to refuse it by address before touching memory, so every caller - not
+ just `Free`'s own codegen - is safe. `Resize` on a freed buffer must
+ refuse and flag, leave the buffer empty, and a later `append` and a
+ later `Free` must both still see it as freed.)
+
+a buffer called line is "hello".
+Free line.
+
+Resize line to 100.
+On error Print "resize flagged".
+print "length after resize {line's length}".
+
+append "abc" to line.
+On error Print "append flagged".
+print "text [{line as text}]".
+
+Free line.
+On error Print "second free flagged".

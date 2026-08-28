@@ -1,0 +1,19 @@
+(Item 3's decision: a `buffer` parameter IS the caller's buffer
+ (LANGUAGE.md:822), and growth already carries a reallocation back to the
+ caller's own cell through `buffer_param_cells` (docs/BUGS_FOUND.md #90).
+ `Free` on a parameter rides that exact mechanism - `emit_free_buffer` calls
+ `emit_store_back_after_realloc` exactly like `BufferClear`/`BufferResize`
+ do - so freeing through the parameter frees the block the caller sees, and
+ the caller's own variable ends up naming the shared empty header too.)
+
+a buffer called data is "hello".
+
+To 'release it' with a buffer called b.
+    Free b.
+
+'release it' with data.
+Print "caller len {data's length}".
+Print "caller text [{data as text}]".
+
+append "x" to data.
+Print "after append len {data's length}".

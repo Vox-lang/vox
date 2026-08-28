@@ -1,0 +1,11 @@
+(Before this fix a double `Free` was completely silent - `Free` on a buffer
+ did nothing at all, so there was no first release to repeat. Now the first
+ `Free` really releases the block, and a second `Free` on the same variable
+ - the slot already holds the shared empty header's own address - is a
+ no-op that only sets the error flag; it never munmaps a second time.)
+
+a buffer called data is "hello".
+Free data.
+Free data.
+On error Print "flagged once".
+Print "still running".

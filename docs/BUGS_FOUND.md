@@ -11909,6 +11909,9 @@ returned buffer or list escapes and is kept; things holding buffers need
 the same escape rule. (C) An explicit release verb. Master's
 recommendation: A now (docs only), B for 0.5.
 
+Remedied by the `Free` statement (v0.4.14): see LANGUAGE.md, Releasing a
+Buffer.
+
 ---
 
 ### 108. `Set <text> to "<format string>"` allocates a fresh string on every evaluation and never frees the one it replaces — building a text up in a loop is quadratic
