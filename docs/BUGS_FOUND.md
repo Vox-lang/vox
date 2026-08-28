@@ -11681,9 +11681,11 @@ site. (2) the owner's ask: add a byte/octet iteration form over a buffer to the
 
 ### 105. A call missing its `with` reports arity, not the missing preposition
 
-**Status:** Open — registered 2026-08-25 (GitHub #245). Severity:
-**diagnostic accuracy**. Verified on vox 0.4.13 (873daf8) by the master,
-2026-08-25.
+**Status:** fixed in v0.4.14. Regression tests:
+`tests/compile_fail/271_call_missing_preposition_bare_call.vox`,
+`tests/compile_fail/272_call_missing_preposition_two_args.vox`. Registered
+2026-08-25 (GitHub #245). Severity: **diagnostic accuracy**. Verified on
+vox 0.4.13 (873daf8) by the master, 2026-08-25.
 
 ```vox
 To 'write a blank pair to' with a buffer called output.
@@ -11715,6 +11717,22 @@ followed by `of`, `to`, `with`, or `on` and arguments" (`LANGUAGE.md:766`);
 could begin, name the missing preposition in the compiler's usual style:
 "'staged' follows the call with no preposition — arguments are introduced with
 `with`, `of`, `on`, or `to`." That one diagnostic removes the second error.
+
+**Fix.** `parse_identifier_statement` (`src/parser/statements.rs`) is where a
+call with no `of`/`to`/`with`/`on` connector used to fall straight through to
+`Statement::FunctionCall { args: vec![] }` — a genuine zero-argument call and
+a dropped preposition look identical at that point, and the parser picked the
+former unconditionally. It now checks one token further: if a bare or quoted
+identifier immediately follows with nothing between it and the callee, that
+is the dropped-preposition shape, and the parser raises one error naming it,
+anchored at that identifier, instead of returning the zero-arg call. Because
+the error is raised here rather than after the fact, the identifier is never
+handed to the statement-list loop as a leftover token, so it never gets a
+second, independent parse of its own — the "Unknown function" error is gone
+because nothing ever tries to parse `staged` as anything again. A true
+zero-argument call (`'greet'.`, one at the end of a comma-chained clause, one
+followed by a double period) is unaffected: the check only fires when the
+next token is an identifier, and none of those shapes put one there.
 
 ---
 

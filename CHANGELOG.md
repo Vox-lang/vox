@@ -4,6 +4,16 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **A call missing its preposition now names the missing preposition.**
+  A bare or quoted name written right after a callee with no `of`/`to`/
+  `with`/`on` used to be silently split into two statements — the call
+  reporting the wrong arity and the name a second, unrelated "Unknown
+  function" error. It is now one diagnostic, anchored at the name itself
+  (#105).
+
 ## [0.4.13] - 2026-08-24
 
 ### Changed

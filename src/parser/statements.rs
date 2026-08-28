@@ -580,6 +580,25 @@ impl Parser {
             return self.finish_grid(call_stmt, expansions);
         }
 
+        // A bare/quoted identifier immediately following the callee, with no
+        // preposition between them, is not a genuine zero-argument call
+        // (BUGS_FOUND #105): the writer meant to pass it as an argument and
+        // dropped `of`/`to`/`with`/`on`. Left alone, this identifier falls
+        // through to the statement-list loop, which finds no period where it
+        // expects one and reads the identifier as an unrelated statement of
+        // its own — the call then reports a wrong-arity error (0 seen) and
+        // the identifier a second, unrelated one ("Unknown function"), with
+        // neither naming the missing preposition. Caught here, at the token
+        // that would have been misread, one diagnostic names the real cause
+        // and the identifier is never parsed as anything else.
+        if let Token::Identifier(next) = self.current().clone() {
+            return Err(self.err(&format!(
+                "'{}' follows the call with no preposition — arguments are \
+                 introduced with 'of', 'to', 'with', or 'on'.",
+                next
+            )));
+        }
+
         // Zero-argument call: `name.`
         Ok(Statement::FunctionCall {
             name,

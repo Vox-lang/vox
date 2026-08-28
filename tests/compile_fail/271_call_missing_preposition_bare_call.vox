@@ -1,0 +1,11 @@
+(Compile-fail: BUGS_FOUND #105 - a call written with no preposition
+ before its argument used to be read as two statements: a zero-argument
+ call (wrong-arity error) and the bare name as an unrelated statement of
+ its own ("Unknown function"). The missing preposition is the real
+ cause, named once at the identifier that would have been misread.)
+
+To 'write a blank pair to' with a buffer called output.
+  set byte {output's size add 1} of output to ' '.
+
+Create a buffer called staged.
+'write a blank pair to' staged.
