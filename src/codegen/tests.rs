@@ -1533,6 +1533,161 @@ To run.\n  Print double of 21.\n";
         );
     }
 
+    // -----------------------------------------------------------------
+    // BUGS_FOUND #106 - `string_is_keyword` and the live lexer fold must
+    // never disagree, and neither may drift from LANGUAGE.md's Reserved
+    // Aliases table. All three now read from one source,
+    // `lexer::RESERVED_ALIASES`; these two tests are the gate that keeps
+    // them from splitting apart again the way `print`'s aliases did.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn string_is_keyword_matches_the_live_lexer() {
+        // For every (spelling, canonical) row in RESERVED_ALIASES: the
+        // spelling really does fold to a keyword token naming that
+        // canonical in the live lexer, and `string_is_keyword` (a lookup
+        // into the same table) agrees. A word the const claims reserved
+        // that the lexer does not fold - or vice versa - fails here.
+        use crate::lexer::{Lexer, Token, RESERVED_ALIASES};
+        for &(spelling, canonical) in RESERVED_ALIASES {
+            let toks = Lexer::new(spelling).tokenize();
+            let live = toks.iter().find_map(|ti| ti.token.as_keyword());
+            assert_eq!(
+                live,
+                Some(canonical),
+                "{:?} must fold to the '{}' keyword in the live lexer (scan.rs), \
+                 not {:?}",
+                spelling, canonical, live
+            );
+            assert_eq!(
+                Token::string_is_keyword(spelling),
+                Some(canonical),
+                "string_is_keyword({:?}) must agree with the live lexer",
+                spelling
+            );
+        }
+    }
+
+    #[test]
+    fn print_aliases_reserved_evenly() {
+        // BUGS_FOUND #106: `show`/`display`/`prints` fold to `print` and
+        // stay reserved; `say`/`output` do not fold at all and are
+        // ordinary variable names. Before the fix, `say`/`output` were
+        // wrongly claimed by `string_is_keyword` (though the live lexer,
+        // and so the actual compile, never reserved them) and `prints`
+        // was missed entirely.
+        use crate::lexer::Token;
+        for alias in ["show", "display", "prints"] {
+            assert_eq!(
+                Token::string_is_keyword(alias),
+                Some("print"),
+                "{:?} is a live print alias and must be reserved",
+                alias
+            );
+        }
+        for name in ["say", "output"] {
+            assert_eq!(
+                Token::string_is_keyword(name),
+                None,
+                "{:?} is not folded by the lexer and must not be reserved",
+                name
+            );
+        }
+
+        fn parse_snippet(src: &str) -> Result<(), String> {
+            // `.with_source` is what lets `check_not_keyword` recover the
+            // typed spelling via `current_lexeme()`; without it every
+            // reserved-keyword diagnostic falls back to naming the
+            // canonical keyword instead of what was actually typed.
+            let toks = crate::lexer::Lexer::new(src).tokenize();
+            match crate::parser::Parser::new(toks)
+                .with_source("print_aliases_reserved_evenly.vox", src)
+                .parse()
+            {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        for alias in ["show", "display"] {
+            let src = format!("a number called {} is 1.", alias);
+            let err = parse_snippet(&src).expect_err(&format!("{} must be rejected", alias));
+            assert!(
+                err.to_lowercase().contains("reserved keyword"),
+                "{}: expected a reserved-keyword diagnostic, got: {}",
+                alias, err
+            );
+            assert!(
+                err.contains("alternate spelling") && err.contains("'print'"),
+                "{}: diagnostic must name print as the canonical keyword, got: {}",
+                alias, err
+            );
+        }
+        for name in ["say", "output"] {
+            let src = format!("a number called {} is 1.", name);
+            assert!(
+                parse_snippet(&src).is_ok(),
+                "{} must be usable as a variable name",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_aliases_doc_matches_the_const() {
+        // The generator half of BUGS_FOUND #106: LANGUAGE.md's Reserved
+        // Aliases table must list exactly the (alias, canonical) pairs in
+        // RESERVED_ALIASES where the spelling differs from its own
+        // canonical (a keyword that is its own only spelling is not an
+        // "alias" of anything, so it is not a row in that table). This
+        // fails the build the moment the table and the const disagree,
+        // closing the drift class #238/#239 named.
+        use crate::lexer::RESERVED_ALIASES;
+        use std::collections::BTreeSet;
+
+        let language_md = include_str!("../../LANGUAGE.md");
+        let section_start = language_md
+            .find("### Reserved Aliases")
+            .expect("LANGUAGE.md must have a Reserved Aliases section");
+        let section_end = language_md[section_start..]
+            .find("\n### ")
+            .map(|i| section_start + i)
+            .unwrap_or(language_md.len());
+        let section = &language_md[section_start..section_end];
+
+        let mut doc_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+        for line in section.lines() {
+            let line = line.trim();
+            if !line.starts_with('|') || line.starts_with("|--") || line.starts_with("|-") {
+                continue;
+            }
+            let cells: Vec<&str> = line
+                .trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().trim_matches('`').trim())
+                .collect();
+            if cells.len() != 2 || cells[0] == "Alias" {
+                continue;
+            }
+            doc_pairs.insert((cells[0].to_string(), cells[1].to_string()));
+        }
+
+        let const_pairs: BTreeSet<(String, String)> = RESERVED_ALIASES
+            .iter()
+            .filter(|(spelling, canonical)| spelling != canonical)
+            .map(|(spelling, canonical)| (spelling.to_string(), canonical.to_string()))
+            .collect();
+
+        let missing_from_doc: Vec<_> = const_pairs.difference(&doc_pairs).collect();
+        let extra_in_doc: Vec<_> = doc_pairs.difference(&const_pairs).collect();
+        assert!(
+            missing_from_doc.is_empty() && extra_in_doc.is_empty(),
+            "LANGUAGE.md's Reserved Aliases table has drifted from \
+             RESERVED_ALIASES.\n  missing from LANGUAGE.md: {:?}\n  \
+             extra in LANGUAGE.md (not live aliases): {:?}",
+            missing_from_doc, extra_in_doc
+        );
+    }
+
     #[test]
     fn nothing_keyword_reserved() {
         // The three null spellings lex to Token::Nothing and reserve via

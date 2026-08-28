@@ -5004,15 +5004,97 @@ The word `and` has multiple context-dependent meanings:
 
 ### Reserved Aliases
 
-A few alternate spellings are also reserved because the compiler recognizes them as aliases for canonical keywords:
+A few alternate spellings are also reserved because the compiler recognizes them as aliases for canonical keywords. This table lists every alias the lexer folds onto a canonical keyword; a keyword with only one spelling is not repeated here (it is reserved too, but it is not an *alias* of anything):
 
-| Alias | Canonical keyword | Context |
-|-------|-------------------|---------|
-| `ms` | `milliseconds` | Time duration units (`Wait 500 ms.`) |
-| `message` | `text` | Type name (`a message called ...` is treated as `text`) |
-| `string` | `text` | Type name (already listed in the type synonyms) |
+| Alias | Canonical keyword |
+|-------|--------------------|
+| `abs` | `absolute` |
+| `plus` | `add` |
+| `push` | `append` |
+| `arg` | `argument` |
+| `param` | `argument` |
+| `parameter` | `argument` |
+| `args` | `arguments` |
+| `parameters` | `arguments` |
+| `params` | `arguments` |
+| `automatic` | `auto` |
+| `bool` | `boolean` |
+| `named` | `called` |
+| `closed` | `close` |
+| `skip` | `continue` |
+| `define` | `create` |
+| `make` | `create` |
+| `days` | `day` |
+| `remove` | `delete` |
+| `fd` | `descriptor` |
+| `disabled` | `disable` |
+| `enabled` | `enable` |
+| `env` | `environment` |
+| `equal` | `equals` |
+| `exist` | `exists` |
+| `quit` | `exit` |
+| `terminate` | `exit` |
+| `no` | `false` |
+| `decimal` | `float` |
+| `real` | `float` |
+| `deallocate` | `free` |
+| `release` | `free` |
+| `starting` | `from` |
+| `fetch` | `get` |
+| `retrieve` | `get` |
+| `bigger` | `greater` |
+| `larger` | `greater` |
+| `more` | `greater` |
+| `hours` | `hour` |
+| `inside` | `in` |
+| `within` | `in` |
+| `integer` | `int` |
+| `fewer` | `less` |
+| `smaller` | `less` |
+| `lib` | `library` |
+| `array` | `list` |
+| `collection` | `list` |
+| `dictionary` | `map` |
+| `ms` | `milliseconds` |
+| `minutes` | `minute` |
+| `mod` | `modulo` |
+| `remainder` | `modulo` |
+| `months` | `month` |
+| `nil` | `nothing` |
+| `null` | `nothing` |
+| `numbers` | `number` |
+| `at` | `on` |
+| `opened` | `open` |
+| `perms` | `permissions` |
+| `display` | `print` |
+| `prints` | `print` |
+| `show` | `print` |
+| `grow` | `resize` |
+| `reallocate` | `resize` |
+| `shrink` | `resize` |
+| `give` | `return` |
+| `returns` | `return` |
+| `import` | `see` |
+| `include` | `see` |
+| `require` | `see` |
+| `assign` | `set` |
+| `store` | `set` |
+| `delay` | `sleep` |
+| `minus` | `subtract` |
+| `message` | `text` |
+| `string` | `text` |
+| `stopwatch` | `timer` |
+| `up` | `to` |
+| `treat` | `treating` |
+| `yes` | `true` |
+| `timestamp` | `unix` |
+| `unixtime` | `unix` |
+| `var` | `variable` |
+| `ver` | `version` |
+| `pause` | `wait` |
+| `years` | `year` |
 
-These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases, so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name.
+These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases, so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name. `say` and `output` are *not* in this table: the lexer never folds them, so they are ordinary variable names (BUGS_FOUND #106) - only `show`, `display`, and `prints` are alternate spellings of `print`.
 
 Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name (`'flag'`, `'empty'`) if you genuinely need it.)
 

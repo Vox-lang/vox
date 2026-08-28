@@ -1,0 +1,8 @@
+(BUGS_FOUND #106: `say` and `output` are not print aliases - the lexer
+ never folds them, only `show`/`display`/`prints` do - so they stay
+ ordinary variable names.)
+
+a text called say is "hello".
+a text called output is "world".
+Print say.
+Print output.
