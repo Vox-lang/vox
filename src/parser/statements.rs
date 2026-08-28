@@ -451,7 +451,13 @@ impl Parser {
     pub(crate) fn parse_free(&mut self) -> Result<Statement, Box<CompileError>> {
         self.advance();
         self.skip_noise();
-        
+
+        // Skip optional "the": `Release the data.` (parse_increment's rule).
+        if *self.current() == Token::The {
+            self.advance();
+            self.skip_noise();
+        }
+
         let name = self.parse_name()?;
 
         Ok(Statement::Free { name })

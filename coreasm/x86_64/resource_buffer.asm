@@ -28,6 +28,19 @@
 %define SYS_MREMAP     25
 %define MREMAP_MAYMOVE 1
 
+section .data
+    ; The shared header `Free` points a released buffer's variable at
+    ; (docs/BUGS_FOUND.md #107, the `Free` statement): capacity 0, length
+    ; 0, BUF_FLAG_FIXED set, one reserved NUL-terminator byte - the same
+    ; shape `_alloc_buffer_sized(0)` produces (bug #78's size guard), just
+    ; static instead of mmap'd. `_free_buffer` and `_realloc_buffer`/
+    ; `_reallocate_buffer` below check a buffer pointer against this
+    ; label's own ADDRESS before touching memory, not against its shape -
+    ; a real buffer can legitimately reach capacity 0 + BUF_FLAG_FIXED too
+    ; (bug #78), and only THIS instance must never be mremap'd/munmap'd.
+    _released_buffer_header: dq 0, 0, 1
+                              db 0
+
 section .bss
     ; Buffer tracking table
     ; Each entry: 8 bytes (pointer to buffer struct, 0 = unused)
@@ -228,6 +241,17 @@ _unregister_buffer:
 ; keeps the exit sweep (_cleanup_buffers) from touching this struct again.
 global _free_buffer
 _free_buffer:
+    ; Refuse a pointer that IS the shared released header (a double
+    ; `Free`) before touching anything - identity check, checked first,
+    ; so a caller that skips its own check (codegen no longer keeps one;
+    ; see `emit_free_buffer`) is still safe.
+    lea rax, [rel _released_buffer_header]
+    cmp rdi, rax
+    jne .free_buf_live
+    SET_LAST_ERROR 1  ; already freed
+    ret
+
+.free_buf_live:
     push rbx
     push rcx
     push rsi
@@ -255,6 +279,7 @@ _free_buffer:
     add rsi, BUF_DATA           ; total size
     mov rax, 11                 ; SYS_MUNMAP
     syscall
+    CLEAR_LAST_ERROR  ; released
 
     pop rsi
     pop rcx
@@ -314,6 +339,18 @@ _cleanup_buffers:
 ; matching what _grow_buffer always produced.
 global _reallocate_buffer
 _reallocate_buffer:
+    ; Same guard as _free_buffer/_realloc_buffer, and for the same reason
+    ; (docs/BUGS_FOUND.md #107): every existing caller already filters a
+    ; BUF_FLAG_FIXED pointer out before reaching here (the released header
+    ; is always fixed), so this is a belt-and-suspenders check for any
+    ; future caller that does not.
+    lea rax, [rel _released_buffer_header]
+    cmp rdi, rax
+    jne .reallocate_buffer_live
+    SET_LAST_ERROR 1  ; refused: this buffer is freed
+    ret               ; rax already holds the header - unchanged
+
+.reallocate_buffer_live:
     push rbx
     push rcx
     push rdx
@@ -1305,6 +1342,19 @@ _buffer_clear:
 ; Note: For fixed buffers, this changes capacity. Data is preserved up to min(old_len, new_size)
 global _realloc_buffer
 _realloc_buffer:
+    ; Refuse the shared released header the same way _free_buffer does:
+    ; `Resize`d, it would fall through to the alloc+copy fallback below
+    ; and munmap this address - not page-aligned today so the syscall
+    ; happens to fail (EINVAL), but that is not a safety guarantee, and
+    ; the fallback would also hand back a freshly mmap'd buffer, silently
+    ; resurrecting a variable `Free` emptied (docs/BUGS_FOUND.md #107).
+    lea rax, [rel _released_buffer_header]
+    cmp rdi, rax
+    jne .realloc_buffer_live
+    SET_LAST_ERROR 1  ; refused: this buffer is freed
+    ret               ; rax already holds the header - unchanged
+
+.realloc_buffer_live:
     push rbx
     push r12
     push r13

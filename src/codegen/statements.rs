@@ -1169,7 +1169,16 @@ impl CodeGenerator {
             }
             
             Statement::Free { name } => {
-                if let Some(offset) = self.get_var(name) {
+                if self.variable_types.get(name.as_str()) == Some(&VarType::Buffer) {
+                    // A buffer never went through HEAP_ALLOC (it is `mmap`'d
+                    // by `_alloc_buffer`/`_alloc_buffer_sized`), so the
+                    // generic HEAP_FREE below is a no-op for it -
+                    // docs/BUGS_FOUND.md #107. `emit_free_buffer` releases it
+                    // now and points the slot at the shared empty header.
+                    self.emit_free_buffer(name);
+                } else if let Some(offset) = self.get_var(name) {
+                    // A list literal (HEAP_ALLOC'd, tracked in the heap
+                    // table) or an `Allocate`d raw block: unchanged.
                     self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                     self.emit_indent("HEAP_FREE rdi");
                 }

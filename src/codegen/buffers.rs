@@ -60,6 +60,47 @@ impl CodeGenerator {
         }
     }
 
+    /// `Free`/`Release`/`Deallocate` on a buffer-typed name: releases the
+    /// block now and points the variable's slot at the shared released
+    /// header `_released_buffer_header`
+    /// (coreasm/x86_64/resource_buffer.asm), so nothing dangles and every
+    /// later read/write sees an empty, refusing, fixed buffer (LANGUAGE.md
+    /// "Truncation Behavior").
+    ///
+    /// The already-freed check (docs/BUGS_FOUND.md #107) lives in the
+    /// runtime, not here: `_free_buffer` itself compares its argument
+    /// against `_released_buffer_header`'s own address before touching
+    /// memory and sets the error flag instead of double-munmapping, so this
+    /// call is unconditional and every OTHER caller of `_free_buffer` (and
+    /// `_realloc_buffer`/`_reallocate_buffer`, which guard the same way) is
+    /// safe without remembering to check first. Codegen only has to store
+    /// the header's address back afterward, which is correct either way:
+    /// a real free just released the old block, a refused double free left
+    /// the slot already pointing at the header.
+    ///
+    /// Resolves `name` and writes the result back through
+    /// `emit_load_named_var_addr`/`emit_store_back_after_realloc`, exactly
+    /// like `BufferClear`/`BufferResize` above - which already carry a
+    /// `buffer` PARAMETER's new pointer out to the caller's own cell
+    /// (docs/BUGS_FOUND.md #90). A buffer parameter "is the caller's
+    /// buffer" (LANGUAGE.md:822), so freeing through one frees the same
+    /// block the caller sees and empties the caller's variable too - the
+    /// same mechanism growth already rides, not a new one.
+    pub(crate) fn emit_free_buffer(&mut self, name: &str) {
+        self.uses_buffers = true;
+        if !self.emit_load_named_var_addr(name) {
+            return;
+        }
+        self.emit_indent("mov rdi, rax  ; buffer to free");
+        self.emit_indent(
+            "call _free_buffer  ; refuses a double free itself (docs/BUGS_FOUND.md #107)",
+        );
+        self.emit_indent(
+            "lea rax, [rel _released_buffer_header]  ; the buffer is now this empty header",
+        );
+        self.emit_store_back_after_realloc(name, "rax");
+    }
+
     pub(crate) fn emit_append_runtime_value_to_buffer_target(
         &mut self,
         target: &VarTarget,

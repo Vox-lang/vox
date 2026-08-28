@@ -1,0 +1,9 @@
+(A declaration that lands on an already-used slot names a fresh buffer, so
+ redeclaring `scratch` every iteration after freeing it the round before
+ gets a brand-new, working buffer each time - not the freed one's empty
+ header. Already true before this fix; pinned here alongside the rest of
+ the after-Free matrix.)
+
+a number called n is 0.
+While n is less than 3, a buffer called scratch is "round {n}", Print scratch as text, Free scratch, increment n.
+Print "done".

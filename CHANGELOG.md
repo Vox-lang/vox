@@ -30,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   one, so the natural accumulate idiom (`Set acc to "{acc}x"` in a loop)
   is no longer quadratic (#108).
 - **`print`'s aliases were reserved unevenly, and the keyword table that decides every other reserved word had drifted from the lexer throughout.** `show`, `display`, and `prints` are live aliases the lexer folds onto `print` and stay reserved; `say` and `output` are not folded at all and stay ordinary variable names — no shipped program's behaviour changes. The alias fold now lives in exactly one place, a `RESERVED_ALIASES` const in `src/lexer/tokens.rs`, which `string_is_keyword` reads from and LANGUAGE.md's Reserved Aliases table (now 85 rows, generated from and checked against the same const) is generated from, so the two tables cannot drift apart again the way they did here (#106; closes #238).
+### Added
+- `Free`/`Release`/`Deallocate <buffer>` releases a buffer's memory
+  immediately; the buffer is then empty and refuses writes with the error
+  flag (documented under Releasing a Buffer).
 
 ## [0.4.13] - 2026-08-24
 

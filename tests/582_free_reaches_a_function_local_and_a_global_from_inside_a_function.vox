@@ -1,0 +1,20 @@
+(Two cases codegen resolves differently: a function-local buffer lives in
+ that frame's own stack slot, and a global buffer read from inside a
+ function is reached through its BSS mirror (`self.variables` resets per
+ function, so `local` resolves via `get_var`; `shared` only resolves via
+ `global_var_label`). `Free` has to walk both paths, exactly like
+ `BufferClear`/`BufferResize` already do.)
+
+a buffer called shared is "outer".
+
+To 'scratch work'.
+    a buffer called local is "inner".
+    Free local.
+    Print "local len {local's length}".
+
+To 'discard shared'.
+    Free shared.
+
+'scratch work'.
+'discard shared'.
+Print "shared len {shared's length}".
