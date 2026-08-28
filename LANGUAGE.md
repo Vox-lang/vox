@@ -875,6 +875,7 @@ calculate with x and y
 - Function name is a bare single word (`calculate`) or a single-quoted multi-word name (`'add numbers'`)
 - For calls with arguments, use `of`, `to`, `with`, or `on`
 - Multiple arguments separated by `and`
+- Writing an argument right after the function name with none of these words is an error naming the missing preposition, not a call with that argument dropped
 
 Calls with no arguments can be written directly:
 

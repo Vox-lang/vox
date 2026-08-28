@@ -1,0 +1,12 @@
+(Compile-fail: BUGS_FOUND #105, second shape - a multi-argument call
+ also drops its preposition. Before the fix this failed differently and
+ later, at the `and` that joins the second would-be argument ("Expected
+ a statement, got And"), never naming the missing preposition; now it is
+ caught at the first bare argument, the token right after the callee.)
+
+To 'combine' of a number called first and a number called second.
+  Print first add second.
+
+a number called x is 2.
+a number called y is 3.
+'combine' x and y.
