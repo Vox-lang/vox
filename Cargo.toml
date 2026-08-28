@@ -1,6 +1,6 @@
 [package]
 name = "vox-lang"
-version = "0.4.13"
+version = "0.4.14"
 edition = "2021"
 rust-version = "1.71"
 description = "A systems level compiler for Vox (sentence based code)"
