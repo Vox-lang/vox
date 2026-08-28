@@ -1,0 +1,2 @@
+Field 'n' of thing 'file report' is a number, but its default is a text
+274_thing_field_supported_type_default_mismatch.vox:7:19

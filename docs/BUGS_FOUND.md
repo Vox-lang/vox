@@ -11582,7 +11582,9 @@ type is `list` with `value: None`. The conditional-defaults path
 
 ### 103. A thing with a disallowed field type gets two errors, the first garbled — and the field-type surface itself is narrower than it should be
 
-**Status:** Open — registered 2026-08-25 (GitHub #243). Severity: **diagnostic
+**Status:** Open — diagnostic fixed in v0.4.14 (regression tests
+`tests/compile_fail/273`–`274`); the field-type surface awaits the owner's
+ruling. Registered 2026-08-25 (GitHub #243). Severity: **diagnostic
 bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8)
 by the master, 2026-08-25.
 
@@ -11629,11 +11631,22 @@ settle the text-handle copy semantics (deep-copy-on-assignment would unblock
 text fields), then extend the allowed field-type set toward all standard types
 per the owner's ruling.
 
+**Fix.** `src/analyzer/things.rs:405-448` now checks `v1_field_type_supported`
+before the default-mismatch template; an unsupported field type reports only
+the "cannot hold yet" error and skips the default check entirely, instead of
+falling through into a template with no arm for its own type. A field whose
+type IS supported still gets the default-mismatch error when its literal
+default doesn't match (pinned by `tests/compile_fail/274`). Only the
+diagnostic ordering changed — the field-type surface itself is untouched, per
+scope.
+
 ---
 
 ### 104. `each ... from` over a non-list anchors the error at the variable's declaration, not the loop — and there is no byte-iteration sentence at all
 
-**Status:** Open — registered 2026-08-25 (GitHub #244). Severity:
+**Status:** Open — caret fixed in v0.4.14 (regression tests
+`tests/compile_fail/275`–`276`); the byte-iteration sentence awaits the
+owner's ruling. Registered 2026-08-25 (GitHub #244). Severity:
 **diagnostic-placement** + owner-raised feature. Verified on vox 0.4.13
 (873daf8) by the master, 2026-08-25.
 
@@ -11676,6 +11689,17 @@ case rare. Complements #249's bulk-primitive request (memchr for searches).
 site. (2) the owner's ask: add a byte/octet iteration form over a buffer to the
 `each ... from` expansion, so byte loops are a sentence rather than a scalar
 `For each N from 1 to size`.
+
+**Fix.** `src/analyzer/scope.rs`'s `check_loop_collection` now anchors on the
+`each ... from` clause's own use of the collection — `from {name}`, or
+`each {variable} from` when the collection has no name of its own — instead
+of the collection's textually-first mention. It builds that location with
+`find_bind_site_location` and reports through `push_error_with_hint_at`
+rather than the declaration-anchoring `push_error_with_hint`; every other
+caller of `push_error_with_hint` is untouched. Message and hint text are
+unchanged; pinned for both the buffer and map branches
+(`tests/compile_fail/275`-`276`). The byte-iteration sentence itself remains
+unbuilt, per scope.
 
 ---
 

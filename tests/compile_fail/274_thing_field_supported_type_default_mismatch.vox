@@ -1,0 +1,7 @@
+(BUGS_FOUND #103, the pin for the other half of the fix: a field whose
+ type IS supported must still get the default-mismatch error when its
+ literal default does not match. Only an already-rejected type skips the
+ default check; a legal type's mismatched default is still a real defect.)
+
+A thing called 'file report' has
+  a number called n is "x".

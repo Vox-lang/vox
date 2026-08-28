@@ -1,0 +1,11 @@
+(BUGS_FOUND #103: a field whose type is rejected by v1_field_type_supported
+ used to also fire the default-mismatch template, because that check has
+ no arm for an unsupported type and always answers "no match" - so both
+ slots of "expected X, got Y" rendered the same word ("is a text, but its
+ default is a text"). Support is decided first now; a rejected type
+ short-circuits before the default is even considered, leaving exactly one
+ error, the true one.)
+
+A thing called 'file report' has
+  a text called filename is "",
+  a number called lines is 0.

@@ -1,0 +1,3 @@
+Loop collection must be a list: scores
+276_foreach_over_map_anchors_at_use_site.vox:8:23
+iterate `scores's keys` or `scores's values`

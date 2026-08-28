@@ -13,6 +13,17 @@ adheres to [Semantic Versioning](https://semver.org/).
   reporting the wrong arity and the name a second, unrelated "Unknown
   function" error. It is now one diagnostic, anchored at the name itself
   (#105).
+- **A rejected thing field type no longer also fires a garbled
+  default-mismatch error.** The default-vs-type check ran before the
+  field-type-support check, and had no arm for an unsupported type, so
+  the two slots of "expected X, got Y" rendered the same word. Support
+  is decided first now; an unsupported type reports only the "cannot
+  hold yet" error (#103).
+- **`each ... from` over a non-list anchors its caret at the loop, not
+  the collection's declaration.** The diagnostic searched for the
+  collection's textually-first mention, which in a large file could be
+  hundreds of lines from the offending loop. It now anchors at the
+  `each ... from` clause's own use of the collection (#104).
 
 ## [0.4.13] - 2026-08-24
 

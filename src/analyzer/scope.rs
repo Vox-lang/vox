@@ -782,9 +782,28 @@ impl Analyzer {
             // here would say the same thing twice.
             (_, None) => "`each ... from` walks a list, a range, or `arguments's all`".to_string(),
         };
-        self.push_error_with_hint(
+        // Anchor at the loop clause's own use of the collection, not the
+        // collection's declaration: `push_error_with_hint`'s bare symbol
+        // search finds the textually FIRST mention of the name, which in a
+        // large file is the declaration, hundreds of lines above the loop
+        // that actually misuses it. `from {symbol}`/`in {symbol}` are this
+        // statement's own syntax - `each ... from ...` and the older `For
+        // each ... in ...,` both build this same AST node - so either lands
+        // on the offending line even when the bare name recurs elsewhere
+        // (docs/BUGS_FOUND.md #104). When the collection has no name of its
+        // own, the loop variable is searched instead, and it sits BEFORE
+        // `from`/`in`, not after.
+        let bind_patterns: Vec<String> = if name.is_some() {
+            vec![format!("from {}", symbol), format!("in {}", symbol)]
+        } else {
+            vec![format!("each {} from", symbol), format!("each {} in", symbol)]
+        };
+        let occurrence = *self.symbol_error_counts.get(&symbol).unwrap_or(&0);
+        let location = self.find_bind_site_location(&symbol, &bind_patterns, occurrence, true);
+        self.symbol_error_counts.insert(symbol.clone(), occurrence + 1);
+        self.push_error_with_hint_at(
             format!("Loop collection must be a list: {}", subject),
-            Some(&symbol),
+            location,
             Some(&hint),
         );
     }
