@@ -217,8 +217,15 @@ _unregister_buffer:
     pop rbx
     ret
 
-; Free a buffer and unregister it
+; Free a buffer and unregister it.
 ; Args: buffer pointer in rdi
+;
+; Always munmaps, whether or not the buffer is currently in buf_table - a
+; buffer allocated past MAX_BUFFERS live ones is never registered
+; (_register_buffer's .table_full silently skips it), so gating the munmap
+; on table presence left every such buffer mapped forever
+; (docs/BUGS_FOUND.md #108). Unregistering FIRST when it is found still
+; keeps the exit sweep (_cleanup_buffers) from touching this struct again.
 global _free_buffer
 _free_buffer:
     push rbx
@@ -226,11 +233,11 @@ _free_buffer:
     push rsi
 
     lea rbx, [rel buf_table]
-    ; Find and remove from table
+    ; Find and remove from table, if tracked
     xor rcx, rcx
 .find_buf:
     cmp rcx, MAX_BUFFERS
-    jge .not_found
+    jge .munmap_buf
 
     mov rax, [rbx + rcx*8]
     cmp rax, rdi
@@ -242,14 +249,13 @@ _free_buffer:
 .found_buf:
     mov qword [rbx + rcx*8], 0
     dec qword [rel buf_count]
-    
-    ; munmap the buffer
+
+.munmap_buf:
     mov rsi, [rdi + BUF_CAPACITY]
     add rsi, BUF_DATA           ; total size
     mov rax, 11                 ; SYS_MUNMAP
     syscall
-    
-.not_found:
+
     pop rsi
     pop rcx
     pop rbx

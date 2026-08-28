@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: `a value called v is orig.` is a
+ `value` assignment - design 2's own listed retaining position - since a
+ `value` copies whatever pointer `orig` currently holds and carries it by
+ runtime tag, not by a fresh allocation. `orig`'s later `Set` must not free
+ the string `v` still names.)
+
+a number called n is 5.
+a text called orig is "{n}".
+a value called v is orig.
+Set orig to "{n}".
+Print v.

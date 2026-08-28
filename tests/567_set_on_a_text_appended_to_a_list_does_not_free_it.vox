@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: `append orig to items` stores
+ orig's pointer as a list element - the list now names the same string.
+ `orig` must not be freed on its own later `Set`, or the list's element
+ would dangle. A buffer append (byte-consuming) is the different case a
+ sibling test in this pair (piece/sink in the cargo unit tests) checks.)
+
+a number called n is 5.
+a text called orig is "{n}".
+a list called items is [].
+append orig to items.
+Set orig to "changed".
+Print element 1 of items.

@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #108 aliasing probe, found in master review before this
+ fix shipped: `src as text` on an ALREADY-text `src` is a bare pointer
+ pass-through in codegen (`generate_expr`'s Cast/String branch leaves a
+ text source untouched, LANGUAGE.md's Basic Conversions table), so
+ `u`'s declaration takes `src`'s own pointer, not a fresh copy. `src`'s
+ later `Set` - inside a 50-iteration loop, so any orphaned intermediate
+ string would also be freed along the way - must never free the string
+ `u` still names, or this segfaults at the final Print instead of
+ printing it.)
+
+a number called n is 2.
+a text called src is "v{n}".
+a text called u is src as text.
+Set src to "z{n}".
+a number called i is 0.
+While i is less than 50, Set src to "q{i}", increment i.
+Print "u={u} src={src}".

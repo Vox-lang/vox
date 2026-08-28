@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: `orig` is a function argument -
+ a retaining position, since the callee's parameter is a copy of the same
+ pointer and can stash it anywhere reachable after the call returns (here,
+ a global). The caller's later `Set orig to ...` must not free the string
+ the callee is still holding onto through `kept`.)
+
+a text called kept is "".
+
+To 'keep' with a text called s.
+    Set kept to s.
+
+a number called n is 5.
+a text called orig is "{n}".
+'keep' with orig.
+Set orig to "changed".
+Print kept.

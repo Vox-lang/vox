@@ -28,6 +28,12 @@ impl CodeGenerator {
         // is generated (docs/BUGS_FOUND.md #66). Runs after the label pass,
         // which a `value` global's tag label is derived from.
         self.collect_global_var_types(&program.statements);
+        // docs/BUGS_FOUND.md #108: every text variable name a `Set`/
+        // declaration on it is provably safe to free the string it
+        // replaces for - whole-program and flow-insensitive, so it does
+        // not matter that a function generated below still needs it, or a
+        // global declared below is read from a function above.
+        self.freeable_texts = collect_freeable_texts(&program.statements);
 
         let explicit_parse_idx = program
             .statements
@@ -748,7 +754,21 @@ impl CodeGenerator {
                             None => self.variable_types.get(name).cloned(),
                         };
                         self.emit_empty_value_if_missed(val, slot_type);
-                        self.emit_store_rax_to_target(&target, &format!("{}", name));
+                        // docs/BUGS_FOUND.md #108: a global `freeable_texts`
+                        // text frees the string it replaces (see
+                        // `emit_owned_text_global_store`'s doc comment for
+                        // why this covers both the declaration itself and
+                        // every later `Set` on it, and why it is global-only).
+                        if is_text_target && self.freeable_texts.contains(name) {
+                            if let VarTarget::Global(label) = &target {
+                                let label = label.clone();
+                                self.emit_owned_text_global_store(name, &label, val);
+                            } else {
+                                self.emit_store_rax_to_target(&target, &format!("{}", name));
+                            }
+                        } else {
+                            self.emit_store_rax_to_target(&target, &format!("{}", name));
+                        }
                         // A declared `value` stores its runtime tag alongside
                         // the payload, in whichever storage (local shadow
                         // slot or global BSS mirror) the payload itself used.
@@ -959,10 +979,8 @@ impl CodeGenerator {
                     } else {
                         // The global mirror of the text-takes-a-copy rule
                         // above, `value` globals included (#51, #87).
-                        if matches!(
-                            self.variable_types.get(name),
-                            Some(&VarType::String) | Some(&VarType::Mixed)
-                        ) {
+                        let is_text_write = self.variable_types.get(name) == Some(&VarType::String);
+                        if is_text_write || self.variable_types.get(name) == Some(&VarType::Mixed) {
                             self.generate_expr_as_text(value);
                         } else {
                             self.generate_expr(value);
@@ -970,8 +988,16 @@ impl CodeGenerator {
                         // #91, the global mirror of the same guard.
                         self.emit_empty_value_if_missed(
                             value, self.variable_types.get(name).cloned());
-                        self.emit_indent(
-                            &format!("mov [rel {}], rax", label));
+                        // docs/BUGS_FOUND.md #108: see the declaration-site
+                        // comment above (`Statement::VarDecl`) - the same
+                        // free-on-`Set` applies here for the `the x is ...`
+                        // / bare `x is ...` spelling of a reassignment.
+                        if is_text_write && self.freeable_texts.contains(name) {
+                            self.emit_owned_text_global_store(name, &label, value);
+                        } else {
+                            self.emit_indent(
+                                &format!("mov [rel {}], rax", label));
+                        }
                         // A top-level `value` keeps its runtime tag paired
                         // with the payload in a parallel BSS byte, updated on
                         // every assignment exactly like the local `value`

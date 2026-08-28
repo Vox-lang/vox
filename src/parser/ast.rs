@@ -1416,6 +1416,367 @@ fn walk_widened_lists(stmts: &[Statement], out: &mut std::collections::HashSet<S
     }
 }
 
+/// Every text variable name whose `Set`/declaration codegen may free the
+/// string it replaces (docs/BUGS_FOUND.md #108): declared ONLY EVER as `a
+/// text called <name> is ...` anywhere in the program (never a buffer, a
+/// `value`, a function parameter, or a for-each/for-range loop variable -
+/// each of those poisons the name out, the same idea `collect_all_typed_decls`
+/// uses for a redeclared type), and never read anywhere in a position that
+/// could keep the string alive past this variable's next `Set` - the RHS of
+/// another variable's declaration or assignment, a function argument,
+/// `Return`, an append to a LIST (a buffer append merely copies bytes and is
+/// not collected), a map key or value, or a list/map literal element.
+///
+/// Deliberately name-keyed, whole-program, and flow-insensitive, in exactly
+/// `collect_widened_lists`'s sense and for the same reason: one retaining
+/// read anywhere disables freeing for that name EVERYWHERE, including at a
+/// `Set` that executes before the retaining read ever runs. The cost is a
+/// missed free; offering one anyway would risk a use-after-free, which is
+/// worse than the leak this fix exists to close (master's ruling,
+/// docs/BUGS_FOUND.md #108).
+///
+/// A read inside a format string's `{name}` interpolation is NOT collected -
+/// that read copies bytes into the format's own fresh buffer and never keeps
+/// `name`'s pointer beyond the interpolation, matching LANGUAGE.md's "each
+/// evaluation allocates a new string". A retaining construct found INSIDE an
+/// interpolated *expression* (`{expr}`) still counts, because whatever THAT
+/// sub-expression passes on can retain independently of the interpolation
+/// around it - see `find_nested_retains`'s `FormatString` arm.
+pub fn collect_freeable_texts(stmts: &[Statement]) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+
+    fn poison(candidates: &mut HashSet<String>, poisoned: &mut HashSet<String>, name: &str) {
+        candidates.remove(name);
+        poisoned.insert(name.to_string());
+    }
+
+    fn note_candidate(candidates: &mut HashSet<String>, poisoned: &mut HashSet<String>, name: &str) {
+        if !poisoned.contains(name) {
+            candidates.insert(name.to_string());
+        }
+    }
+
+    // A bare identifier read in a retaining slot stays retaining for good,
+    // whatever it turns out to name - a non-candidate name costs nothing
+    // extra in the final set difference. Also walks the expression for any
+    // retaining construct nested deeper inside it.
+    fn mark_retaining(expr: &Expr, retaining: &mut HashSet<String>) {
+        if let Expr::Identifier(n) = expr {
+            retaining.insert(n.clone());
+        }
+        find_nested_retains(expr, retaining);
+    }
+
+    // Recurse for a retaining use buried inside an otherwise consuming
+    // position - e.g. `Print 'keep' with a.` calls `'keep'` with `a` as
+    // its own (retaining) argument, even though `Print`'s own operand
+    // position is safe. `FormatString`'s `Variable` parts (plain `{name}`
+    // interpolation) are deliberately not visited at all: that read has no
+    // nested expression and never retains.
+    fn find_nested_retains(expr: &Expr, retaining: &mut HashSet<String>) {
+        match expr {
+            Expr::FunctionCall { args, .. } => {
+                for a in args {
+                    mark_retaining(a, retaining);
+                }
+            }
+            Expr::ListLit { elements } => {
+                for e in elements {
+                    mark_retaining(e, retaining);
+                }
+            }
+            Expr::MapLit { pairs } => {
+                for (k, v) in pairs {
+                    mark_retaining(k, retaining);
+                    mark_retaining(v, retaining);
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                find_nested_retains(left, retaining);
+                find_nested_retains(right, retaining);
+            }
+            Expr::UnaryOp { operand, .. } => find_nested_retains(operand, retaining),
+            Expr::Range { start, end, .. } => {
+                find_nested_retains(start, retaining);
+                find_nested_retains(end, retaining);
+            }
+            Expr::PropertyCheck { value, .. }
+            | Expr::TypeCheck { value, .. }
+            | Expr::DurationCast { value, .. }
+            | Expr::ArgumentHas { value }
+            | Expr::EnvironmentVariable { name: value }
+            | Expr::EnvironmentVariableAt { index: value }
+            | Expr::EnvironmentVariableExists { name: value }
+            | Expr::FileAvailable { path: value }
+            | Expr::ArgumentAt { index: value } => find_nested_retains(value, retaining),
+            // `<value> as text` on an ALREADY-text `value` is a bare pointer
+            // pass-through in codegen (`generate_expr`'s Cast/String branch
+            // leaves a text source untouched - see `text_write_is_owned`'s
+            // doc comment) - so the result can be `value`'s own pointer,
+            // unmodified, handed to whatever this Cast sits inside. Marking
+            // a non-text (number/float/boolean/buffer) operand costs
+            // nothing: those are never `freeable_texts` candidates, and a
+            // buffer source really does get copied fresh by
+            // `emit_buffer_to_text_copy`, so over-marking it is only ever
+            // conservative, never a missed catch. Found the hard way
+            // (docs/BUGS_FOUND.md #108's own review): a bare
+            // `find_nested_retains(value, ...)` here recursed but never
+            // inserted the bare-`Identifier` case into `retaining`, so
+            // `a text called u is src as text.` left `src` freeable and its
+            // next `Set` freed the string `u` still pointed at.
+            Expr::Cast { value, .. } => mark_retaining(value, retaining),
+            Expr::TreatingAs { value, match_value, replacement } => {
+                // `codegen/expr.rs`'s `Expr::TreatingAs` arm: the "no match"
+                // path pops and keeps `value`'s own computed pointer
+                // unchanged, and the "match" path evaluates and keeps
+                // `replacement`'s own pointer unchanged - neither is ever a
+                // fresh copy. `match_value` is only ever compared
+                // (`_str_eq`/`_mem_eq`/a register `cmp`) and never becomes
+                // part of the result, so it stays a consuming read.
+                mark_retaining(value, retaining);
+                find_nested_retains(match_value, retaining);
+                mark_retaining(replacement, retaining);
+            }
+            Expr::ByteAccess { buffer, index } => {
+                find_nested_retains(buffer, retaining);
+                find_nested_retains(index, retaining);
+            }
+            // `list` is type-constrained to a List, never a `freeable_texts`
+            // candidate itself, so `mark_retaining` over `find_nested_retains`
+            // costs nothing here either - defensive, in case that constraint
+            // is ever looser than assumed.
+            Expr::ElementAccess { list, index } | Expr::ListAccess { list, index } => {
+                mark_retaining(list, retaining);
+                find_nested_retains(index, retaining);
+            }
+            Expr::MapAccess { key, .. } => find_nested_retains(key, retaining),
+            Expr::ReapChild { pid: Some(pid), .. } => find_nested_retains(pid, retaining),
+            Expr::FormatString { parts } => {
+                for part in parts {
+                    if let FormatPart::Expression { expr, .. } = part {
+                        find_nested_retains(expr, retaining);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Any name ever declared or bound as a Buffer, whole-program - the one
+    // piece of type information this otherwise type-blind scan needs, to
+    // tell a byte-consuming `append <it> to <buffer>` from a retaining
+    // `append <it> to <list>` (both parse to the same `ListAppend`).
+    fn buffer_names(stmts: &[Statement], out: &mut HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, var_type: Some(Type::Buffer), .. } => {
+                    out.insert(name.clone());
+                }
+                Statement::BufferDecl { name, .. } => {
+                    out.insert(name.clone());
+                }
+                Statement::FunctionDef { params, body, .. } => {
+                    for (p, t) in params {
+                        if matches!(t, Type::Buffer) {
+                            out.insert(p.clone());
+                        }
+                    }
+                    buffer_names(body, out);
+                }
+                Statement::If { then_block, else_if_blocks, else_block, .. } => {
+                    buffer_names(then_block, out);
+                    for (_, b) in else_if_blocks {
+                        buffer_names(b, out);
+                    }
+                    if let Some(b) = else_block {
+                        buffer_names(b, out);
+                    }
+                }
+                Statement::While { body, .. }
+                | Statement::ForRange { body, .. }
+                | Statement::ForEach { body, .. }
+                | Statement::Repeat { body, .. } => buffer_names(body, out),
+                Statement::OnError { actions } => buffer_names(actions, out),
+                _ => {}
+            }
+        }
+    }
+
+    fn walk(
+        stmts: &[Statement],
+        candidates: &mut HashSet<String>,
+        poisoned: &mut HashSet<String>,
+        retaining: &mut HashSet<String>,
+        buffers: &HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, var_type, value } => {
+                    match var_type {
+                        Some(Type::String) => note_candidate(candidates, poisoned, name),
+                        Some(_) => poison(candidates, poisoned, name),
+                        // An untyped `Set`/`the ... is` landing here (no
+                        // local, no global mirror yet): its type was fixed
+                        // by whichever declaration brought it into being,
+                        // which this scan visits separately.
+                        None => {}
+                    }
+                    if let Some(v) = value {
+                        mark_retaining(v, retaining);
+                    }
+                }
+                Statement::BufferDecl { name, .. } => {
+                    poison(candidates, poisoned, name);
+                }
+                Statement::Assignment { value, .. } => {
+                    mark_retaining(value, retaining);
+                }
+                Statement::SetThingField { value, .. } => {
+                    mark_retaining(value, retaining);
+                }
+                Statement::ValueRetype { name, .. } => {
+                    poison(candidates, poisoned, name);
+                }
+                Statement::Return { value: Some(v), .. } => {
+                    mark_retaining(v, retaining);
+                }
+                Statement::FunctionCall { args, .. } => {
+                    for a in args {
+                        mark_retaining(a, retaining);
+                    }
+                }
+                Statement::ListAppend { list, value } => {
+                    if buffers.contains(list) {
+                        find_nested_retains(value, retaining);
+                    } else {
+                        mark_retaining(value, retaining);
+                    }
+                }
+                Statement::ElementSet { index, value, .. } => {
+                    find_nested_retains(index, retaining);
+                    mark_retaining(value, retaining);
+                }
+                Statement::MapSet { key, value, .. } => {
+                    mark_retaining(key, retaining);
+                    mark_retaining(value, retaining);
+                }
+                Statement::Allocate { name, size } => {
+                    poison(candidates, poisoned, name);
+                    find_nested_retains(size, retaining);
+                }
+                Statement::Free { name } => {
+                    poison(candidates, poisoned, name);
+                }
+                Statement::FlagSchemaDecl { name, default, .. } => {
+                    poison(candidates, poisoned, name);
+                    if let Some(d) = default {
+                        find_nested_retains(d, retaining);
+                    }
+                }
+                Statement::FunctionDef { params, body, .. } => {
+                    for (p, _) in params {
+                        poison(candidates, poisoned, p);
+                    }
+                    walk(body, candidates, poisoned, retaining, buffers);
+                }
+                Statement::ForRange { variable, range, body } => {
+                    poison(candidates, poisoned, variable);
+                    find_nested_retains(range, retaining);
+                    walk(body, candidates, poisoned, retaining, buffers);
+                }
+                Statement::ForEach { variable, collection, body } => {
+                    poison(candidates, poisoned, variable);
+                    find_nested_retains(collection, retaining);
+                    walk(body, candidates, poisoned, retaining, buffers);
+                }
+                Statement::If { condition, then_block, else_if_blocks, else_block } => {
+                    find_nested_retains(condition, retaining);
+                    walk(then_block, candidates, poisoned, retaining, buffers);
+                    for (c, b) in else_if_blocks {
+                        find_nested_retains(c, retaining);
+                        walk(b, candidates, poisoned, retaining, buffers);
+                    }
+                    if let Some(b) = else_block {
+                        walk(b, candidates, poisoned, retaining, buffers);
+                    }
+                }
+                Statement::While { condition, body } => {
+                    find_nested_retains(condition, retaining);
+                    walk(body, candidates, poisoned, retaining, buffers);
+                }
+                Statement::Repeat { count, body } => {
+                    find_nested_retains(count, retaining);
+                    walk(body, candidates, poisoned, retaining, buffers);
+                }
+                Statement::OnError { actions } => {
+                    walk(actions, candidates, poisoned, retaining, buffers);
+                }
+                Statement::Print { value, .. } => {
+                    find_nested_retains(value, retaining);
+                }
+                Statement::FileWrite { value, .. } => {
+                    find_nested_retains(value, retaining);
+                }
+                Statement::Execute { path, args } => {
+                    find_nested_retains(path, retaining);
+                    mark_retaining(args, retaining);
+                }
+                Statement::Exit { code } => find_nested_retains(code, retaining),
+                Statement::ByteSet { index, value, .. } => {
+                    find_nested_retains(index, retaining);
+                    find_nested_retains(value, retaining);
+                }
+                Statement::BufferCopy { source, .. } => find_nested_retains(source, retaining),
+                Statement::FileOpen { path, .. } => find_nested_retains(path, retaining),
+                Statement::FileSeekLine { line, .. } => find_nested_retains(line, retaining),
+                Statement::FileSeekByte { byte, .. } => find_nested_retains(byte, retaining),
+                Statement::FileDelete { path }
+                | Statement::Rmdir { path }
+                | Statement::Mkdir { path }
+                | Statement::Chdir { path } => find_nested_retains(path, retaining),
+                Statement::BufferResize { new_size, .. } => find_nested_retains(new_size, retaining),
+                Statement::Wait { duration, .. } => find_nested_retains(duration, retaining),
+                Statement::Symlink { target, linkpath } => {
+                    find_nested_retains(target, retaining);
+                    find_nested_retains(linkpath, retaining);
+                }
+                Statement::Mknod { path, major, minor, .. } => {
+                    find_nested_retains(path, retaining);
+                    find_nested_retains(major, retaining);
+                    find_nested_retains(minor, retaining);
+                }
+                Statement::Mount { source, target, fstype, options } => {
+                    find_nested_retains(source, retaining);
+                    find_nested_retains(target, retaining);
+                    find_nested_retains(fstype, retaining);
+                    if let Some(o) = options {
+                        find_nested_retains(o, retaining);
+                    }
+                }
+                Statement::Unmount { target, .. } => find_nested_retains(target, retaining),
+                Statement::PivotRoot { new_root, put_old } => {
+                    find_nested_retains(new_root, retaining);
+                    find_nested_retains(put_old, retaining);
+                }
+                Statement::SendSignal { signal, pid } => {
+                    find_nested_retains(signal, retaining);
+                    find_nested_retains(pid, retaining);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut candidates = HashSet::new();
+    let mut poisoned = HashSet::new();
+    let mut retaining = HashSet::new();
+    let mut buffers = HashSet::new();
+    buffer_names(stmts, &mut buffers);
+    walk(stmts, &mut candidates, &mut poisoned, &mut retaining, &buffers);
+
+    candidates.into_iter().filter(|n| !retaining.contains(n)).collect()
+}
+
 /// The bound a fixed buffer's size must satisfy: at least one byte, at most
 /// 1 GiB (LANGUAGE.md, "Fixed-Size Buffers").
 ///

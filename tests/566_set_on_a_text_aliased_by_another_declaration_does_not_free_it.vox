@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: `a text called b is orig.` copies
+ orig's POINTER, not its bytes (Set t to src is the same shape the bug
+ report measured flat) - two names for one string. `orig` is therefore
+ read in a retaining position and must never be freed on its own `Set`,
+ or `b` would be left pointing at freed memory. Before and after the fix
+ this must print "5" - freeing here would be a use-after-free, worse than
+ the leak #108 exists to close.)
+
+a number called n is 5.
+a text called orig is "{n}".
+a text called b is orig.
+Set orig to "{n}".
+Print b.

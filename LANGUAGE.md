@@ -3415,6 +3415,8 @@ Execute "/bin/echo" with arguments cmdargs.
 
 Each evaluation allocates a new string; the source buffer can be
 cleared and reused without affecting texts already created from it.
+A text variable reassigned from a format string releases the string
+it no longer holds.
 
 #### Format Strings Everywhere
 
