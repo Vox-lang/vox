@@ -1,0 +1,30 @@
+(docs/BUGS_FOUND.md #108: the constant-length shape, `Set t to "n={n}"` -
+ each evaluation is a fresh, similarly-sized buffer, so the leak here is
+ linear rather than quadratic, but still unbounded. Measured before the
+ fix: maxrss 160 MB at 40000 iterations. Same measurement technique as
+ 564 - see that test's header comment.)
+
+a text called t is "".
+a number called n is 0.
+While n is less than 40000, Set t to "n={n}", increment n.
+
+a buffer called statm is 256 bytes in size.
+open a file for reading called procfile at "/proc/self/statm".
+Read from procfile into statm.
+Close procfile.
+
+a number called i is 1.
+While i is less than or equal to statm's size and byte i of statm is not 32, increment i.
+increment i.
+
+a number called resident is 0.
+a number called digit is 0.
+While i is less than or equal to statm's size and byte i of statm is not 32 and byte i of statm is not 10,
+    Set digit to byte i of statm,
+    Set resident to resident multiply 10 add digit subtract 48,
+    increment i.
+
+If resident is less than 5000
+    Print "ok".
+Otherwise
+    Print resident.

@@ -244,6 +244,35 @@ pub struct CodeGenerator {
     /// around a function body like `declared_types`, so a function's own
     /// locals do not leak into what is generated after it.
     thing_vars: HashMap<String, String>,
+    /// Every text variable name `collect_freeable_texts` has proven, for the
+    /// WHOLE program, is (a) declared only ever as `a text` (never a buffer,
+    /// a `value`, a parameter, a for-each/for-range loop variable) and (b)
+    /// never read anywhere in a position that could keep its string alive
+    /// past a `Set`/declaration on it - the RHS of another declaration or
+    /// assignment, a function argument, `Return`, an append to a LIST, a map
+    /// key or value, or a list/map literal element (docs/BUGS_FOUND.md
+    /// #108). Only a name in this set is ever a candidate for the
+    /// free-on-`Set` machinery; computed once before codegen, name-keyed and
+    /// flow-insensitive like `collect_widened_lists`, for the same reason -
+    /// one retaining read anywhere disables freeing everywhere for that
+    /// name, which costs a missed free, never a use-after-free.
+    freeable_texts: std::collections::HashSet<String>,
+    /// BSS label holding the runtime ownership-flag byte for a top-level
+    /// `freeable_texts` global, keyed by the variable's name and lazily
+    /// allocated by `ensure_global_text_owned_label` - the same pairing
+    /// `global_value_tag_labels` uses for a `value` global's tag. 1 means
+    /// the string currently in the payload mirror was minted by a
+    /// format-string or `as text` evaluation landing straight in this slot
+    /// and is safe to free before the next `Set` overwrites it; 0 (the BSS
+    /// zero default, matching a fresh declaration) means it is not. Global
+    /// only: a local (stack) slot's flag would need to be initialised
+    /// before its first read, and a declaration that shares a compile-time
+    /// slot across sibling branches or a loop re-entering the same
+    /// `VarDecl` cannot prove that reliably, so a local freeable text is
+    /// left un-freed (REPORT-108.md) - the whole-program gate still keeps
+    /// it out of the *shared* set, but nothing ever reads a shadow flag
+    /// on its behalf.
+    global_text_owned_labels: HashMap<String, String>,
 }
 
 
@@ -321,14 +350,15 @@ const TAG_NOTHING: u8 = 6;
 // are 24 bytes), but each names a distinct struct so the offsets do not silently
 // diverge when one header gains a field.
 //
-// BUF_DATA_OFFSET is now a MIRROR of coreasm/x86_64/core.asm's
+// BUF_DATA_OFFSET is a MIRROR of coreasm/x86_64/core.asm's
 // `%define BUF_DATA_OFFSET 24` (the BUFFER_HEADER block). core.asm is the
 // single source of truth for the dynamic-buffer layout; this Rust const is
-// kept only so codegen comments and any future Rust-side reference share the
-// same name. The codegen data-area sites emit `BUFFER_DATA_ADDR` (which
-// expands to `add <reg>, BUF_DATA_OFFSET` in core.asm) rather than this
-// const, so it is not read at runtime — hence the allow.
-#[allow(dead_code)]
+// kept so codegen comments and any Rust-side reference share the same name.
+// Most data-area sites emit `BUFFER_DATA_ADDR` (which expands to `add <reg>,
+// BUF_DATA_OFFSET` in core.asm) instead of reading this constant, but the
+// #108 free-on-`Set` path (`emit_owned_text_global_store`) needs the REVERSE
+// step - text data pointer back to its buffer struct - and emits `sub rdi,
+// BUF_DATA_OFFSET` from this const directly.
 const BUF_DATA_OFFSET: i64 = 24;
 const LIST_DATA_OFFSET: i64 = 24;
 #[allow(dead_code)]
@@ -572,6 +602,8 @@ impl CodeGenerator {
             target_arch: "x86_64".to_string(),
             things: HashMap::new(),
             thing_vars: HashMap::new(),
+            freeable_texts: std::collections::HashSet::new(),
+            global_text_owned_labels: HashMap::new(),
         }
     }
 

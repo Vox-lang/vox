@@ -1,0 +1,18 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: `Return a text, orig.` is a
+ retaining read of the callee's `orig` (design 2: "Return"), and this scan
+ is flat/name-keyed, so the caller's own unrelated `orig` shares the same
+ poisoned name - a same-named local in one function must not let another
+ function's `Set` free out from under a value already handed back to a
+ caller. `r` keeps the callee's original text; the caller's own `orig` is
+ separately reassigned and printed to confirm nothing crashes or corrupts
+ either one.)
+
+To 'get text'.
+    a number called n is 5.
+    a text called orig is "{n}".
+    Return a text, orig.
+
+a text called r is 'get text'.
+a text called orig is "other".
+Set orig to "{orig}!".
+Print r.

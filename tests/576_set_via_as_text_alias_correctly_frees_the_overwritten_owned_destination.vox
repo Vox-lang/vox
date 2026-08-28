@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #108: the destination side of the 573/574 shape -
+ `u` already holds an OWNED string (from its own format-string
+ declaration) when `Set u to src as text.` overwrites it with an aliased,
+ non-owned pointer. The fix must still free `u`'s own prior string here
+ (nothing else names it) while correctly refusing to free `src`'s string
+ that `u` now shares - both halves of the free-on-`Set` decision in one
+ statement.)
+
+a number called n is 2.
+a text called src is "v{n}".
+a text called u is "{n}!".
+Set u to src as text.
+Set src to "z{n}".
+Print "u={u} src={src}".

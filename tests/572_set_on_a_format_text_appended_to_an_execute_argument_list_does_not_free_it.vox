@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: LANGUAGE.md's own Format Strings
+ as Values example carries a format-string text into an `Execute`
+ argument list through exactly this shape - `append tok to cmdargs` is a
+ retaining read (a list append), so `tok`'s later `Set` must not free the
+ string `cmdargs` still holds an element pointer to. `/bin/echo` prints
+ the untouched original value, proving the argv entry survived.)
+
+a number called n is 5.
+a text called tok is "{n}".
+a list called cmdargs is [].
+append tok to cmdargs.
+Set tok to "changed".
+Execute "/bin/echo" with arguments cmdargs.

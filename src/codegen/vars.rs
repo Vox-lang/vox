@@ -61,6 +61,99 @@ impl CodeGenerator {
         label
     }
 
+    /// Lazily allocate (or return the existing) BSS label for a
+    /// `freeable_texts` global's runtime ownership-flag byte, paired with
+    /// the payload label exactly as `ensure_global_value_tag_label` pairs a
+    /// `value`'s tag (docs/BUGS_FOUND.md #108). Zero-filled BSS means an
+    /// uninitialized flag defaults to "not owned", matching the payload's
+    /// own zero default (an uninitialised text global) and matching a fresh
+    /// declaration's initial value - see `emit_owned_text_global_store`.
+    pub(crate) fn ensure_global_text_owned_label(&mut self, name: &str) -> String {
+        if let Some(label) = self.global_text_owned_labels.get(name) {
+            return label.clone();
+        }
+        let payload_label = self
+            .global_var_label(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let label = format!("{}_owned", payload_label);
+        self.global_text_owned_labels
+            .insert(name.to_string(), label.clone());
+        self.bss_section.push_str(&format!("    {}: resb 1\n", label));
+        label
+    }
+
+    /// True if `source`, written into a text slot by `generate_expr_as_text`,
+    /// allocates a string this write EXCLUSIVELY owns: a format-string
+    /// evaluation, or an `as text`/bare conversion that copies a buffer's or
+    /// a scalar's bytes into a brand-new buffer (docs/BUGS_FOUND.md #108,
+    /// the runtime half of the ownership design). Every other source -
+    /// another text variable, a parameter, a literal, a list/map read, a
+    /// function result - hands back a pointer this write does not own, even
+    /// one that happens to answer `Some(VarType::Buffer)` by inferred type:
+    /// `generate_expr_as_text` copies EVERY buffer-typed source into a fresh
+    /// buffer before it reaches a text slot (`emit_buffer_to_text_copy`),
+    /// whatever expression shape produced it, so the inferred-type check
+    /// below is exactly as safe as checking the expression shape would be.
+    ///
+    /// A `Cast` to `Type::String` is the one shape that can go EITHER way:
+    /// `t2 as text` on an already-text `t2` is a bare pointer copy (not
+    /// owned, matching `generate_expr`'s Cast/String branch, which leaves a
+    /// text source untouched), while `n as text` on a number/float/boolean
+    /// or `b as text` on a buffer always allocates fresh (owned).
+    pub(crate) fn text_write_is_owned(&self, source: &Expr) -> bool {
+        match source {
+            Expr::FormatString { .. } => true,
+            Expr::Cast { target_type: Type::String, value, .. } => {
+                !matches!(self.infer_expr_type(value), Some(VarType::String))
+            }
+            _ => matches!(self.infer_expr_type(source), Some(VarType::Buffer)),
+        }
+    }
+
+    /// The write half of docs/BUGS_FOUND.md #108, for a GLOBAL (BSS-
+    /// resident) text variable the whole-program `freeable_texts` scan has
+    /// proven never shared. `rax` already holds the freshly computed
+    /// replacement value (from `generate_expr_as_text`); the OLD pointer is
+    /// still sitting in the payload mirror, untouched, when this is called.
+    ///
+    /// Sequence: save the new value (the accumulate idiom - `Set acc to
+    /// "{acc}x"` - reads the old string while building the new one, so the
+    /// old pointer must not move before that read finishes, and this runs
+    /// after it has); if the OWNED flag says the current pointer is this
+    /// variable's own, free it (struct = data pointer - `BUF_DATA_OFFSET`,
+    /// `_free_buffer` unregisters it from `buf_table` if present and always
+    /// munmaps, docs/BUGS_FOUND.md #108's coreasm half); store the new
+    /// value; set the flag from the new value's own provenance. A BSS flag
+    /// starts zero-filled ("not owned"), so the very first write to a given
+    /// global - the declaration itself - takes this exact path safely: the
+    /// flag check reads 0, the free is skipped, and only the flag write
+    /// happens.
+    ///
+    /// Global-only (see `global_text_owned_labels`'s doc comment): a LOCAL
+    /// freeable text keeps the plain, unconditional store it always had.
+    pub(crate) fn emit_owned_text_global_store(&mut self, name: &str, label: &str, source: &Expr) {
+        self.uses_buffers = true;
+        let flag_label = self.ensure_global_text_owned_label(name);
+        self.emit_indent(&format!(
+            "push rax  ; new value for {}, across its old one's free check", name));
+        let skip_label = self.new_label("text_not_owned");
+        self.emit_indent(&format!(
+            "cmp byte [rel {}], 0  ; was the current {} owned?", flag_label, name));
+        self.emit_indent(&format!("je {}", skip_label));
+        self.emit_indent(&format!(
+            "mov rdi, [rel {}]  ; the string {} no longer holds", label, name));
+        self.emit_indent(&format!(
+            "sub rdi, {}  ; text data pointer -> its buffer struct", BUF_DATA_OFFSET));
+        self.emit_indent("call _free_buffer  ; docs/BUGS_FOUND.md #108");
+        self.emit(&format!("{}:", skip_label));
+        self.emit_indent("pop rax  ; restore the new value");
+        self.emit_indent(&format!("mov [rel {}], rax", label));
+        let owned: u8 = if self.text_write_is_owned(source) { 1 } else { 0 };
+        self.emit_indent(&format!(
+            "mov byte [rel {}], {}  ; {} owned flag", flag_label, owned, name));
+    }
+
     /// Assign bss mirror labels to every definitely-declared main-line
     /// name (see collect_definite_decls): an `Open ... called 'output'`
     /// present in BOTH arms of an if/otherwise still executes in _start's

@@ -2860,3 +2860,229 @@ Otherwise, a number called s is 1, append s to out.\n";
             asm
         );
     }
+
+    /// docs/BUGS_FOUND.md #108: the freeable-set computation itself, pinned
+    /// independent of codegen/asm. `parse_statements` mirrors
+    /// `compile_to_asm`'s front half but stops before analysis - the scan
+    /// reads raw AST shapes and needs no type-checking pass.
+    fn parse_statements(source: &str) -> Vec<crate::parser::ast::Statement> {
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = crate::parser::Parser::new(tokens).with_source("unit_test.vox", source);
+        parser
+            .parse()
+            .expect("test snippet should parse cleanly")
+            .statements
+    }
+
+    /// The headline shape (`Set acc to "{acc}x"` inside a loop): `acc` is
+    /// declared only as `a text`, read only inside its own format-string
+    /// interpolation, and never handed to anything that could keep the old
+    /// string alive - exactly `collect_freeable_texts`'s candidate.
+    #[test]
+    fn a_never_shared_accumulate_text_is_freeable() {
+        let stmts = parse_statements(
+            r#"
+a text called acc is "".
+a number called n is 0.
+While n is less than 20000, Set acc to "{acc}x", increment n.
+Print acc.
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            freeable.contains("acc"),
+            "acc is never read in a retaining position, so it should be freeable"
+        );
+    }
+
+    /// `a text called kept is orig.` reads `orig` on the RHS of another
+    /// variable's declaration - a retaining read (design 2's "RHS of a
+    /// declaration"), so `orig` must be excluded even though its own `Set`
+    /// looks identical to the freeable case above.
+    #[test]
+    fn a_text_aliased_into_another_declaration_is_not_freeable() {
+        let stmts = parse_statements(
+            r#"
+a text called orig is "hello".
+a text called kept is orig.
+Set orig to "bye".
+Print kept.
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("orig"),
+            "orig's string is aliased into kept's declaration; freeing it would leave kept dangling"
+        );
+    }
+
+    /// `append tok to items` where `items` is a LIST retains `tok`'s pointer
+    /// inside the list's storage - `collect_freeable_texts` must tell this
+    /// apart from an append to a BUFFER (which only copies bytes and is not
+    /// retaining), by consulting the whole-program buffer-name scan.
+    #[test]
+    fn a_text_appended_to_a_list_is_not_freeable_but_appended_to_a_buffer_is() {
+        let stmts = parse_statements(
+            r#"
+a text called tok is "x".
+a list called items is [].
+append tok to items.
+Set tok to "y".
+
+a text called piece is "p".
+a buffer called sink is 64 bytes in size.
+append piece to sink.
+Set piece to "q".
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("tok"),
+            "tok is retained inside items's storage by the list append"
+        );
+        assert!(
+            freeable.contains("piece"),
+            "a buffer append only copies bytes, so piece is still freeable"
+        );
+    }
+
+    /// A function argument is a retaining position (design 2: "function
+    /// argument"), whether the call is a bare statement or nested inside
+    /// another expression - `'keep' with orig.` must exclude `orig`.
+    #[test]
+    fn a_text_passed_as_a_call_argument_is_not_freeable() {
+        let stmts = parse_statements(
+            r#"
+To 'keep' with a text called s.
+    Print s.
+
+a text called orig is "hi".
+'keep' with orig.
+Set orig to "bye".
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("orig"),
+            "orig is passed as a call argument, a retaining position"
+        );
+    }
+
+    /// A name ever used as a function parameter, or a for-each/for-range
+    /// loop variable, is poisoned out entirely - even a same-named,
+    /// otherwise-innocent top-level text must not share its ownership
+    /// machinery with a parameter binding (the flat, name-keyed namespace
+    /// this scan shares with `variable_types`/`mixed_tag_slots`).
+    #[test]
+    fn a_name_ever_used_as_a_parameter_is_poisoned_everywhere() {
+        let stmts = parse_statements(
+            r#"
+To 'identity' with a text called shared_name.
+    Return a text, shared_name.
+
+a text called shared_name is "top level".
+Set shared_name to "changed".
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("shared_name"),
+            "shared_name is used as a parameter name elsewhere in the program"
+        );
+    }
+
+    /// The use-after-free master review caught before this fix shipped:
+    /// `src as text` on an already-text `src` is a bare pointer
+    /// pass-through in codegen (`generate_expr`'s Cast/String branch
+    /// leaves a text source untouched), so `u`'s declaration takes `src`'s
+    /// own pointer. An earlier version of `find_nested_retains` only
+    /// recursed into a `Cast`'s `value` instead of calling
+    /// `mark_retaining` on it, so a bare `Expr::Identifier` operand fell
+    /// through `find_nested_retains`'s catch-all and was never inserted -
+    /// `src` stayed freeable and its next `Set` would have munmapped the
+    /// string `u` still named. Pinned here independent of the run tests
+    /// (573/574) that exercise the actual segfault end to end.
+    #[test]
+    fn a_text_read_via_as_text_into_a_declaration_is_not_freeable() {
+        let stmts = parse_statements(
+            r#"
+a text called src is "hello".
+a text called u is src as text.
+Set src to "bye".
+Print u.
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("src"),
+            "src as text on an already-text src is a pointer pass-through into u"
+        );
+    }
+
+    /// The same pass-through, reached through `Set u to src as text.`
+    /// (`Statement::Assignment`) instead of a declaration initializer.
+    #[test]
+    fn a_text_read_via_as_text_into_a_set_is_not_freeable() {
+        let stmts = parse_statements(
+            r#"
+a text called src is "hello".
+a text called u is "".
+Set u to src as text.
+Set src to "bye".
+Print u.
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("src"),
+            "src as text on an already-text src is a pointer pass-through into u"
+        );
+    }
+
+    /// `n as text` on a NUMBER always allocates a fresh buffer
+    /// (`generate_expr`'s Cast/String branch takes the numeric-format path
+    /// for a non-text, non-buffer source), so marking `n` retaining here
+    /// costs nothing - `n` was never a `freeable_texts` candidate (it is
+    /// not declared `a text`) - but the gate must not treat a Cast
+    /// wrapping a non-text operand any differently from one wrapping a
+    /// text operand; both go through the same conservative `mark_retaining`.
+    #[test]
+    fn a_number_cast_to_text_does_not_prevent_the_destination_from_being_freeable() {
+        let stmts = parse_statements(
+            r#"
+a number called n is 5.
+a text called t is n as text.
+Set t to "changed".
+Print t.
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            freeable.contains("t"),
+            "t's own source is a fresh numeric-format allocation every time, so t itself stays freeable"
+        );
+    }
+
+    /// `treating <match> as <replacement>` hands back `replacement`'s own
+    /// pointer unchanged when a match fires (`codegen/expr.rs`'s
+    /// `Expr::TreatingAs` arm evaluates and keeps it, never a fresh copy),
+    /// so a freeable text used as the replacement must be excluded exactly
+    /// like a bare aliasing declaration would exclude it.
+    #[test]
+    fn a_text_used_as_a_treating_replacement_is_not_freeable() {
+        let stmts = parse_statements(
+            r#"
+a text called fallback is "anon".
+a list called names is ["", "bob"].
+a list called cleaned is [].
+append each nm from names treating "" as fallback to cleaned.
+Set fallback to "changed".
+"#,
+        );
+        let freeable = crate::parser::ast::collect_freeable_texts(&stmts);
+        assert!(
+            !freeable.contains("fallback"),
+            "fallback's own pointer can be handed back verbatim as the treating replacement"
+        );
+    }

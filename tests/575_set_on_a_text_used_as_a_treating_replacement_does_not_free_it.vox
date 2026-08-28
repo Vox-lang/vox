@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #108 aliasing probe: in `treating <match> as
+ <replacement>`, codegen's `Expr::TreatingAs` arm hands back `replacement`'s
+ own computed pointer unchanged when a match fires (no fresh copy) - so
+ `append each nm from names treating "" as fallback to cleaned.` can store
+ `fallback`'s own pointer into `cleaned`. `fallback`'s later `Set` must not
+ free the string `cleaned`'s first element still names.)
+
+a text called fallback is "anon".
+a list called names is ["", "bob"].
+a list called cleaned is [].
+append each nm from names treating "" as fallback to cleaned.
+Set fallback to "changed".
+Print element 1 of cleaned.
+Print element 2 of cleaned.

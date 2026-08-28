@@ -24,6 +24,11 @@ adheres to [Semantic Versioning](https://semver.org/).
   collection's textually-first mention, which in a large file could be
   hundreds of lines from the offending loop. It now anchors at the
   `each ... from` clause's own use of the collection (#104).
+- **`Set <text> to "<format>"` frees the string it replaces instead of
+  leaking one buffer per evaluation.** A whole-program gate proves a
+  text variable's string is never shared before its `Set` frees the old
+  one, so the natural accumulate idiom (`Set acc to "{acc}x"` in a loop)
+  is no longer quadratic (#108).
 
 ## [0.4.13] - 2026-08-24
 

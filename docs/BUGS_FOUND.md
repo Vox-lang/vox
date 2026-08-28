@@ -11790,3 +11790,194 @@ split.
 either reserve all four print aliases or none; generate the reserved table from
 the lexer fold so docs and compiler cannot drift again (closes the sibling
 reports #238/#239).
+
+---
+
+### 107. A buffer, list, or format-string text declared inside a function or loop body is allocated on every entry and released only at program exit
+
+**Status:** Not a compiler defect — a limitation, ruled by Josj 2026-08-28
+("agreed with your verdict on #107; what we need is a new feature that
+allows a program to free a buffer manually"). The compiler keeps every
+promise LANGUAGE.md makes (see "What the manual already said"); the missing
+piece is a release verb, which is a language feature, not a fix. Recorded
+here because the growth is real: 4 KB per call or iteration, linear, never
+returned before exit. Verified on vox 0.4.13 (4c85e03) and on the installed
+0.4.13. The manual-free feature is tracked as design work (Q7, option C).
+
+```vox
+To 'make a piece' with a text called s.
+    a buffer called piece is "{s}".
+
+a number called n is 0.
+While n is less than 40000, 'make a piece' with "x", increment n.
+Print "done {n}".
+```
+
+→ prints `done 40000`, exit 0, **maxrss 160 MB** (`/usr/bin/time -f %M`);
+20 000 calls → 80 MB. One 4 KB page (the 1024-byte default buffer's mmap)
+per call, never returned. The same shape leaks identically for
+`a buffer called piece is 64 bytes in size.`, for `a list called items is
+[1, 2, 3].`, for `a text called t is "{s}{s}".`, and with the declaration
+placed in a top-level `While` body instead of a function. Flat controls
+(0.4 MB throughout): a `number` local, a text-literal local, a text
+parameter copied to a local — and one program-level buffer reused with
+`clear` + `append`, which is the composition the manual already offers.
+
+**What the manual already said.** Dynamic and fixed buffers are
+"Automatically freed on program exit" (LANGUAGE.md:3499, 3513); the
+safety table says "Forgot to free memory | Memory leak | Auto-freed on
+exit" (4089); README's Memory Safety Model says resources are "Explicitly
+released when possible" and "Automatically freed or closed on program
+exit, even if cleanup is omitted" (README.md:97–98). Every one of those
+promises is kept. `clear <buffer>` "reset[s] a buffer to empty while
+preserving capacity" (3017). Nothing in the manual says a variable
+declared in a function is freed when the function returns — and nothing
+says it is not; there is no release verb for memory at all.
+
+**Root cause.** The emitted assembly for the function above is
+`FUNC_PROLOGUE 16` → `mov rdi, 1024` / `call _alloc_buffer` (mmap, then
+registration in the 64-slot `buf_table` for the exit sweep) →
+`_buffer_append_cstr` → `FUNC_EPILOGUE`, with no release anywhere; the
+whole program contains zero `_free_buffer` / `HEAP_FREE` sites.
+`_free_buffer` exists (`coreasm/x86_64/resource_buffer.asm:222–250`,
+munmap + unregister) but codegen reaches it only through the resize path
+("New buffer is allocated and old buffer is freed", 3608 — verified flat),
+and `HEAP_FREE` is emitted at exactly one statement site
+(`src/codegen/statements.rs:1144`). No scope-exit or function-return
+release exists in codegen. Side note for the same mechanism:
+`MAX_BUFFERS` is 64 (`resource_buffer.asm:13`) and `_register_buffer`
+silently skips a 65th live buffer (`.table_full`), so past 64 the exit
+sweep cannot free them either.
+
+**How it was found.** The vox-fuzz day-0.4.13 stripes (2026-08-25): the
+fuzzer's own `'gen emit'` declared a buffer per emitted fragment, four
+campaigns reached 20/15/10 GB and the OOM killer took them at 13:57
+(kernel journal); every one of the 269 "compile exceeded 60 s" findings
+they saved recompiles in ≤ 2.4 s on an idle machine — artifacts of a
+starved box, not compiler bugs. The fuzzer side is vox-fuzz Defect 17.
+Evidence programs and the emitted `.asm`:
+`vox-notes/evidence/2026-08-28-scope-exit-free/`.
+
+**Resolution.** Ruled a limitation; the way forward is (C), a manual release
+verb — design work, not a fix. For the record, the shapes considered were:
+(A) Document the idiom —
+declare heap-backed variables once at program level and reuse them with
+`clear`; a declaration inside a function or loop body allocates on every
+entry and is released at exit — under Buffers, Lists and Functions. (B)
+Free function-local heap variables at return, exempting the returned
+value: a text made from a buffer is already an independent copy
+(LANGUAGE.md:2040), so a returned text never aliases a freed buffer; a
+returned buffer or list escapes and is kept; things holding buffers need
+the same escape rule. (C) An explicit release verb. Master's
+recommendation: A now (docs only), B for 0.5.
+
+---
+
+### 108. `Set <text> to "<format string>"` allocates a fresh string on every evaluation and never frees the one it replaces — building a text up in a loop is quadratic
+
+**Status:** fixed in v0.4.14. Regression tests: 564–576 (two memory
+regressions reading `/proc/self/statm`, eleven aliasing probes with exact
+expected output) and nine `collect_freeable_texts` unit tests in
+`src/codegen/tests.rs`. Severity was **unbounded memory growth** — 4 KB per
+evaluation for a short format, and O(n²) bytes for the natural accumulate
+idiom. Verified on vox 0.4.13 (4c85e03).
+
+```vox
+a text called acc is "".
+a number called n is 0.
+While n is less than 20000, Set acc to "{acc}x", increment n.
+Print "done {n}".
+```
+
+→ `done 20000`, exit 0, **maxrss 236 MB in 0.94 s**; 10 000 → 71 MB;
+5 000 → 23 MB — quadratic. A constant-length format (`Set t to "n={n}"`)
+leaks linearly: 40 000 evaluations → 160 MB. Flat controls (0.4 MB):
+`Set t to "hello"` (a literal) and `Set t to src` (text from text) at
+40 000, and the buffer spelling `append "x" to acc` at 20 000. Taking
+`acc as text` *inside* the loop is a fresh independent copy each time
+(2040) and is quadratic too (236 MB at 20 000); once after the loop, flat.
+
+**What the manual already said.** "Used as a value, a format string
+materializes into a fresh NUL-terminated string … Each evaluation
+allocates a new string; the source buffer can be cleared and reused
+without affecting texts already created from it" (LANGUAGE.md:3396–3416).
+That is exactly what happens. Nothing says the string the variable held
+before the `Set` is freed on reassignment — and nothing says it is not.
+The documented growable accumulator is the dynamic buffer (3489–3499)
+with `clear` (3017).
+
+**Root cause.** Each format-string evaluation allocates a new string; the
+`Set` overwrites the variable's pointer and the outgoing string is never
+freed before exit (measured: memory never returns). One design constraint
+for any fix, found while measuring: `Set t to src` (text from text)
+allocates nothing, so two text variables can share one string — a
+free-on-`Set` must know whether the outgoing string is shared (ownership
+flag or count) or it frees a string another variable still names.
+
+**How it was found.** The vox-fuzz Defect 17 worker (2026-08-28) hit it in
+`gen_files.vox`'s `'gen build input'` (`Set gen_input to
+"{gen_input}{c}"` per character); confirmed by the master's own
+measurements above. Evidence: `vox-notes/evidence/2026-08-28-scope-exit-free/`
+(`t_text_acc_*`, `u_*`, `v_*`, `w_*`, `x_*`, `y_*`).
+
+**Fix.** Two independent checks, both required, combined at every `Set`/
+declaration write of a top-level (global) text variable:
+
+1. A whole-program, flow-insensitive static gate
+   (`collect_freeable_texts`, `src/parser/ast.rs`) proves a text variable
+   name *freeable* only if it is declared solely as `a text` (never a
+   buffer, a `value`, a function parameter, a for-each/for-range loop
+   variable — any of those poisons the name everywhere, flat-namespace,
+   like a redeclared type already does for `collect_all_typed_decls`) and
+   is never read anywhere in a position that could keep its string alive
+   past a `Set` on it: the RHS of another declaration or assignment, a
+   function argument, `Return`, an append to a LIST (a buffer append only
+   copies bytes and does not count), a map key or value, a list/map
+   literal element, or the operand of an expression that can hand back
+   that operand's OWN pointer unchanged — `Cast` (`x as text` on an
+   already-text `x` is a bare pass-through, LANGUAGE.md's Basic
+   Conversions table) and `TreatingAs` (`treating` hands back `value`'s or
+   `replacement`'s own pointer, never a copy) both close over their
+   operand this way. One retaining read anywhere disables freeing for
+   that name everywhere, including at a `Set` that runs before the
+   retaining read ever does — the cost is a missed free, never a
+   use-after-free.
+2. A runtime ownership flag, one BSS byte per freeable global paired with
+   its payload mirror (`ensure_global_text_owned_label`, mirroring how a
+   `value` global's tag byte is paired). Set to 1 only when the value just
+   written is a format-string evaluation, or an `as text`/bare conversion
+   that copies a buffer's or a scalar's bytes into a brand-new buffer
+   (`text_write_is_owned`); 0 for everything else (a literal, another
+   variable, a buffer/scalar source that turned out to be a pass-through
+   cast). Zero-filled BSS means a fresh declaration's first write always
+   reads a 0, so declaration and every later `Set` share one code path
+   (`emit_owned_text_global_store`) with no separate initialisation case.
+
+At a `Set` on a freeable global: evaluate the new value first (the
+accumulate idiom reads the old string while building the new one), save
+it, free the OLD string if its flag says owned (struct pointer = data
+pointer − 24; `_free_buffer`, `coreasm/x86_64/resource_buffer.asm`, now
+always munmaps whether or not the struct is in `buf_table` — a buffer
+allocated past `MAX_BUFFERS` live ones is never registered and a free
+path that only munmapped the found case leaked it forever), then store
+the new value and set its own flag from its provenance.
+
+**Local-only limitation.** The free-on-`Set` path applies to top-level
+(BSS-resident) text variables only. A function-local text variable keeps
+the plain, unconditional store it always had — a local's ownership flag
+would need to be initialised before its first read, and a declaration
+that shares one compile-time stack slot across sibling `If`/`Otherwise`
+branches, or a loop re-entering the same `VarDecl`, cannot prove that
+reliably without risking a read of uninitialised stack memory as a
+pointer. Every headline evidence program and aliasing probe in this
+report is a top-level text, so this restriction costs a missed
+optimisation for function-local accumulation, never a correctness gap.
+
+**Caught in review.** An early version of the static gate recursed into a
+`Cast`'s or `TreatingAs`'s operand instead of marking it retaining, so a
+bare `Expr::Identifier` operand fell through the recursion's catch-all
+and was never excluded: `a text called u is src as text.` left `src`
+freeable, and `Set src to ...` afterward freed the string `u` still
+named — a real use-after-free, found by the master reviewing the first
+patch, before it shipped. Tests 573–576 and two `collect_freeable_texts`
+unit tests pin this shape specifically.

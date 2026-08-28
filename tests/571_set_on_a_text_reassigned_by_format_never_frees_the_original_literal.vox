@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #108: the runtime ownership flag in action, not the
+ static gate - `t`'s first value is a literal (rodata), so its owned flag
+ must be 0 and the first `Set` must skip freeing (freeing `.rodata` would
+ be its own memory-safety fault, worse than the leak this fix closes). The
+ SECOND `Set` reads a flag that IS 1 (the first Set's own format-string
+ result), so it frees that intermediate string - the actual fix exercised,
+ not just its safety rail.)
+
+a text called t is "hello".
+Set t to "{t}!".
+Set t to "{t}?".
+Print t.
