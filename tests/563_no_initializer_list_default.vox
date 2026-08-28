@@ -1,0 +1,23 @@
+(Bug #102: `Create a list called NAME.` - a no-initializer declaration -
+ gives NAME the type's default value []. The codegen default path
+ synthesizes an empty list literal, which emits HEAP_ALLOC; previously no
+ dependency was recorded, so heap.asm was never included and NASM failed
+ on the bare macro. This program's only heap use is those bare
+ declarations, so it reproduces the failure. The map default (allocated by
+ _map_new, not HEAP_ALLOC) and a list declared inside a branch body
+ (bug #25) must keep working.)
+
+Create a list called items.
+Create a map called lookup.
+Print items.
+Print lookup.
+
+a number called n is 0.
+While n is greater than 5,
+    a list called in_branch.
+Print in_branch.
+
+a list called bare.
+append 1 to bare.
+Print bare.
+Print bare's length.

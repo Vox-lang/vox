@@ -120,6 +120,13 @@ pub struct CodeGenerator {
     uses_time: bool,
     uses_funcs: bool,
     uses_lists: bool,
+    // Set when codegen itself emits HEAP_ALLOC (a list literal or a
+    // no-initializer list default). Distinct from program.uses_heap, which
+    // the analyzer computes from literal expressions and may miss when codegen
+    // synthesizes an empty list on the default path (bug #102) - a bare
+    // declaration `Create a list called X.` emits HEAP_ALLOC for the type's
+    // empty value without ever walking a ListLit.
+    uses_heap: bool,
     // Set when codegen emits any map runtime call (_map_new/_map_insert/
     // _map_lookup/_map_keys/_map_values/_map_print) or a map-tagged dispatch.
     // Gates `%include "coreasm/<arch>/map.asm"`. _map_keys/_map_values also
@@ -539,6 +546,7 @@ impl CodeGenerator {
             uses_time: false,
             uses_funcs: false,
             uses_lists: false,
+            uses_heap: false,
             uses_maps: false,
             uses_strings: false,
             uses_proc: false,

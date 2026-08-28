@@ -11510,9 +11510,9 @@ to compare an over-precise value within one route.
 
 ### 102. `Create a list called X.` (and `a list called X.` / the list default on a branch-declared name) emits a bare `HEAP_ALLOC` with `heap.asm` never included, so the program fails to assemble
 
-**Status:** Open — awaiting approval. Severity: **wrong rejection** — a
-documented no-initializer `list` declaration compiles to invalid NASM.
-Regression tests: none yet (awaiting approval).
+**Status:** fixed in v0.4.14. Regression test:
+`tests/563_no_initializer_list_default.vox`. Severity: **wrong rejection** — a
+documented no-initializer `list` declaration compiled to invalid NASM.
 
 ```vox
 Create a list called items.
