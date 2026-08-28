@@ -403,6 +403,32 @@ impl Analyzer {
             }
 
             for field in &def.fields {
+                // Support is decided before the default is even considered:
+                // `default_matches_field_type` has no arm for an unsupported
+                // type (it always answers false), so checking the default
+                // first on a rejected type renders "expected X, got X" - both
+                // slots the same word, since the field's own type name is
+                // also the mismatch template's "but its default is" word.
+                // The unsupported-type error is the only honest one there;
+                // once a type is rejected, its defaults are moot.
+                if !v1_field_type_supported(&field.field_type) {
+                    self.push_error(
+                        format!(
+                            "Field '{}' of thing '{}' is a {}, which a thing cannot hold yet\n  \
+                             A field's type may be number, float, boolean, time, or any thing \
+                             defined earlier (plan 310 §6).\n  \
+                             text is deferred until copying a text handle is verified not to \
+                             observe mutation; buffer, list, map, file, timer, and value carry \
+                             references, which value semantics (§5) deliberately keep out.",
+                            field.name,
+                            def.name,
+                            self.type_name(&field.field_type)
+                        ),
+                        Some(&field.name),
+                    );
+                    continue;
+                }
+
                 // A default is a literal (plan 310 §1), and it must be a
                 // literal of the field's own type: the field's declared type
                 // decides how its eight bytes are read, so a mismatch has no
@@ -427,24 +453,6 @@ impl Analyzer {
                         );
                     }
                 }
-
-                if v1_field_type_supported(&field.field_type) {
-                    continue;
-                }
-                self.push_error(
-                    format!(
-                        "Field '{}' of thing '{}' is a {}, which a thing cannot hold yet\n  \
-                         A field's type may be number, float, boolean, time, or any thing \
-                         defined earlier (plan 310 §6).\n  \
-                         text is deferred until copying a text handle is verified not to \
-                         observe mutation; buffer, list, map, file, timer, and value carry \
-                         references, which value semantics (§5) deliberately keep out.",
-                        field.name,
-                        def.name,
-                        self.type_name(&field.field_type)
-                    ),
-                    Some(&field.name),
-                );
             }
         }
     }

@@ -1,0 +1,8 @@
+(BUGS_FOUND #104, the map-hint pin: the same misanchor affected the map
+ branch of this diagnostic, whose hint names the `'s keys`/`'s values`
+ accessor. `scores` is declared on line 1; the caret for the offending
+ `each ... from` on line 3 must not fall back to the declaration line.)
+
+a map called scores is {"a": 1, "b": 2, "c": 3}.
+Print "warming up".
+print each entry from scores.
