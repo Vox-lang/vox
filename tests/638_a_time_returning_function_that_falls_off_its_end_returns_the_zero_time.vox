@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #112 — `time` was not in bug #43's original epilogue
+ match, so falling off the end left rax holding whatever it last
+ computed and the caller read it as a raw, meaningless timestamp. The
+ fixed epilogue hands back 0, the same zero an undefaulted `time` field
+ already reads (src/codegen/things.rs' `default_bits`) - the Unix epoch,
+ 1970-01-01 00:00:00 UTC.)
+
+To 'maybe' with a boolean called 'the choice'.
+    a time called moment is current time.
+    If 'the choice' then,
+        Return a time, moment.
+
+a time called r is 'maybe' of false.
+print r's unix.
+print r's year.
+print r's hour.

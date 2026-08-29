@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #112 — before the fix, falling off the end of a
+ buffer-returning function segfaulted on the caller's first read (`'s
+ size`) of whatever rax last held. The fixed epilogue allocates a real,
+ fresh, dynamic, zero-size buffer, exactly as `Create a buffer called x.`
+ does - never the shared `_released_buffer_header` (which refuses every
+ write), so it still grows on `append`.)
+
+To 'maybe' with a boolean called 'the choice'.
+    a buffer called made is "abc".
+    If 'the choice' then,
+        Return a buffer, made.
+
+a buffer called r is 'maybe' of false.
+print r's size.
+append "hi" to r.
+print r's size.
+print "[{r}]".

@@ -2847,8 +2847,10 @@ print score of "hello".    (prints: 99)
 The same is true of a conditional return of any declared type: `Return a
 text, "big".` inside a branch makes the function a text-returning one. If
 no branch fires and the function falls off its end, it hands back the
-empty value of its declared type: empty text, zero, or a `value` tagged
-as the number `0`.
+empty value of its declared type: empty text, zero (`0` / `0.0` /
+`false`, and the zero time for a `time` return), an empty list `[]`, an
+empty map `{}`, an empty buffer, the all-defaults instance for a thing,
+or a `value` tagged as the number `0`.
 
 **One limitation to know.** A function whose branches declare *different*
 types (`Return a text` in one and `Return a number` in the other) has no

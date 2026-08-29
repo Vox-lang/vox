@@ -1,0 +1,25 @@
+(docs/BUGS_FOUND.md #112 — a thing-returning function already handed the
+ caller back its OWN destination storage when it fell off the end (plan
+ 310 s5, predating this fix), so there was no wild pointer to
+ dereference; but nothing had ever WRITTEN that storage, so it read
+ whatever bytes were already on the caller's stack rather than the
+ all-defaults instance an unwritten thing gets everywhere else
+ (`generate_thing_decl`, a `.bss` global). The fixed epilogue writes the
+ same field-by-field defaults through the destination pointer, so a
+ fallen-off point reads its declared defaults (5, 7), not the caller's
+ leftover stack.)
+
+A thing called point has
+  a number called x is 5,
+  a number called y is 7.
+
+To 'maybe' with a boolean called 'the choice'.
+    a point called p.
+    Set p's x to 99.
+    Set p's y to 99.
+    If 'the choice' then,
+        Return a point, p.
+
+a point called r is 'maybe' of false.
+print r's x.
+print r's y.

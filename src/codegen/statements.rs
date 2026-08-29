@@ -1496,12 +1496,25 @@ impl CodeGenerator {
                 if !has_return {
                     // A thing-returning function that falls off its end still
                     // owes the caller the address it was given, or the caller
-                    // would copy out of whatever rax happened to hold.
+                    // would copy out of whatever rax happened to hold. That
+                    // address is the caller's own freshly carved stack slot,
+                    // never written (docs/BUGS_FOUND.md #112) - so it is
+                    // defaulted field by field through r10, the same way an
+                    // unwritten `.bss`/stack thing already is
+                    // (`generate_thing_decl`), rather than left as whatever
+                    // bytes happened to be there.
                     if let Some(slot) = self.current_thing_return_slot {
                         self.emit_indent(&format!(
-                            "mov rax, [rbp-{}]  ; the caller's destination",
+                            "mov r10, [rbp-{}]  ; the caller's destination",
                             slot
                         ));
+                        let thing = match &self.current_function_return_type {
+                            Some(Type::Thing(t)) => t.clone(),
+                            _ => unreachable!(
+                                "current_thing_return_slot is only set alongside a Thing return type"
+                            ),
+                        };
+                        self.emit_thing_defaults_through_r10(&thing);
                     } else {
                         // BUGS_FOUND #43: a function whose returns all sit
                         // inside branches now carries its declared return type
@@ -1513,6 +1526,14 @@ impl CodeGenerator {
                         // falling off the end is merely uninformative rather
                         // than unsafe. A `value` also needs its tag, because r11
                         // is just as stale as rax here.
+                        //
+                        // docs/BUGS_FOUND.md #112 widens this from
+                        // text/number/value to every declared type that has an
+                        // empty value: a collection or buffer falling through
+                        // here previously left rax holding whatever it last
+                        // computed, and the caller dereferenced that as a real
+                        // pointer - segfault (list, buffer) or a hang walking
+                        // a bogus header (map).
                         match self.current_function_return_type {
                             Some(Type::String) => {
                                 let empty = self.add_string("");
@@ -1528,12 +1549,42 @@ impl CodeGenerator {
                                     TAG_INTEGER
                                 ));
                             }
-                            Some(Type::Integer) | Some(Type::Float) | Some(Type::Boolean) => {
+                            Some(Type::Integer) | Some(Type::Float) | Some(Type::Boolean)
+                            | Some(Type::Time) => {
                                 self.emit_indent("xor rax, rax  ; fell off the end: zero");
                             }
-                            // A list, buffer or thing return has no cheap empty
-                            // to hand back, and a null would only move the
-                            // crash. Left as it was.
+                            Some(Type::List(_)) => {
+                                self.emit_indent(
+                                    "; fell off the end: a fresh empty list, exactly as `[]` allocates",
+                                );
+                                self.emit_empty_value_for(VarType::List);
+                            }
+                            Some(Type::Map(_)) => {
+                                self.emit_indent(
+                                    "; fell off the end: a fresh empty map, exactly as `{}` allocates",
+                                );
+                                self.emit_empty_value_for(VarType::Map);
+                            }
+                            Some(Type::Buffer) => {
+                                // Matches the dynamic branch of BufferDecl: a
+                                // fresh, growable, zero-size buffer - never
+                                // `_released_buffer_header`, which refuses
+                                // every write and would make `append` on the
+                                // fallen-off result a silent no-op.
+                                self.emit_indent(
+                                    "; fell off the end: a fresh empty buffer, exactly as `Create a buffer` allocates",
+                                );
+                                self.emit_indent("call _alloc_buffer");
+                                self.uses_buffers = true;
+                            }
+                            // `file` has no empty value LANGUAGE.md (or this
+                            // compiler) defines - a file variable can only ever
+                            // be declared from an initializing path
+                            // (src/parser/declarations.rs: "A file variable
+                            // must be initialized with a path"), so there is no
+                            // real, usable file to fabricate here. Left as it
+                            // was; docs/BUGS_FOUND.md #112 records this as a
+                            // known gap rather than working around it.
                             _ => {}
                         }
                     }

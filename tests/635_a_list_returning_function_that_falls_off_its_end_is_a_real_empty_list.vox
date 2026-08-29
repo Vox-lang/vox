@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #112 — before the fix, falling off the end of a
+ list-returning function left rax holding whatever it last computed, and
+ the caller's first read of the result (`'s empty`) dereferenced that as
+ a list header: segfault. The fixed epilogue allocates a real, fresh
+ empty list, exactly as the `[]` literal does - not a shared frozen
+ header - so it prints, reports its length, and still takes an `append`.)
+
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a list, [1, 2].
+
+a list called r is 'maybe' of false.
+print r's empty.
+print r's length.
+append 9 to r.
+print r's length.
+print r.

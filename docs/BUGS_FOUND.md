@@ -12632,3 +12632,114 @@ deferred per LANGUAGE.md 1891/2668, unrelated to this ruling landing -
 the Things chapter gained only the one clarifying sentence the brief
 asked for, since a thing cannot hold a collection field to demonstrate
 the point on yet.
+
+---
+
+### 112. A typed function that falls off its end hands back the empty value of every declared type — before this fix that was true for four of eleven, and the rest crashed
+
+**Status:** Fixed in v0.4.15 — memory safety, a valid program (written in the
+exact shape LANGUAGE.md itself shows) crashes. Registered 2026-08-29
+(verified by the master 2026-08-29 00:50, confirmed by the owner
+2026-08-29). Regression tests: 630–640 (one per declared type, plus the
+manual's own `score` example pinned verbatim). Evidence:
+`vox-notes/evidence/2026-08-29-fall-off-end/` (`j_list.vox`,
+`k_list_print_only.vox`, `j_map.vox`, `k_buffer.vox`, plus the four that
+already passed).
+
+```vox
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a list, [1, 2].
+
+a list called r is 'maybe' of false.
+print r's empty.
+```
+
+LANGUAGE.md:2826–2830 promises: "If no branch fires and the function falls
+off its end, it hands back the empty value of its declared type: empty
+text, zero, or a `value` tagged as the number `0`." On v0.4.14, that
+promise held for only four of the eleven expressible types
+(LANGUAGE.md:797, "Parameters may use any of the 11 expressible types"),
+plus `thing`, which was safe but not correct:
+
+| Declared return type | v0.4.14 | v0.4.15 |
+|---|---|---|
+| `number` | `0` ✓ | `0` ✓ (unchanged) |
+| `float` | `0.0` ✓ | `0.0` ✓ (unchanged) |
+| `boolean` | `0` ✓ | `0` ✓ (unchanged) |
+| `text` | `""` ✓ | `""` ✓ (unchanged) |
+| `value` | tagged `0` ✓ | tagged `0` ✓ (unchanged) |
+| `time` | raw garbage in rax, read as a timestamp | the zero time (Unix epoch) |
+| `list` | **segfault** on first use | a real, fresh empty list (`[]`), takes `append` |
+| `map` | **hang** walking a bogus header | a real, fresh empty map (`{}`), takes a key set |
+| `buffer` | **segfault** on first use | a real, fresh, dynamic, zero-size buffer, takes `append` |
+| `thing` | the caller's own destination storage, memory-safe but **never written** — reads whatever the caller's stack already held | the caller's destination storage, written with the thing's own all-defaults instance |
+| `file` | raw garbage in rax, read as a file handle | unchanged — see "Left for a human" below |
+
+**Cause.** Bug #43's fix (BUGS_FOUND ~2637–2645) added the implicit
+epilogue that runs when a typed function's only `Return`s are nested
+inside branches and none fired: `src/codegen/statements.rs` ~1485, "If no
+explicit return, add a default epilogue." Its `match
+self.current_function_return_type` only covered `Type::String`,
+`Type::Value`, and `Type::Integer | Type::Float | Type::Boolean` — every
+other declared type fell to a bare `_ => {}`, leaving rax (and, for
+`value`, r11) holding whatever the last real computation left there. The
+caller then read that stray value AS the declared type: a `list`/`buffer`
+dereferenced it as a heap pointer (segfault); a `map` walked it as a
+header with a garbage-sized bucket count (hang, or a crash on an unlucky
+size).
+
+`thing` was a half exception. Plan 310 §5 already made a thing-returning
+function's epilogue emit `mov rax, [rbp-{slot}]` — the caller's OWN
+destination address, passed in as a hidden first argument, so the
+returned pointer was always valid caller storage and never wild. But
+nothing had ever WRITTEN through that pointer on the fall-off path, so
+its bytes were whatever the caller's freshly-`sub rsp`'d stack frame
+already held — never the all-defaults instance every OTHER route to an
+unwritten thing gets (`generate_thing_decl`, a `.bss` global). Safe, but
+not what the manual promises ("a field without a default takes its
+type's zero value", LANGUAGE.md:960).
+
+**Fix.** `src/codegen/statements.rs`'s fall-off match gained arms for
+every remaining declared type:
+
+- `Type::Time` joins the existing `Integer | Float | Boolean` arm — a time
+  field's own undefaulted zero is a bare `0` (`src/codegen/things.rs`'s
+  `default_bits`), so `xor rax, rax` is already correct.
+- `Type::List(_)` / `Type::Map(_)` call the existing
+  `emit_empty_value_for(VarType::List | VarType::Map)`
+  (`src/codegen/vars.rs`), which generates a real `Expr::ListLit`/`MapLit`
+  with zero elements — the same fresh heap allocation the literal
+  `[]`/`{}` makes, not a shared frozen sentinel, so `append`/a key set
+  both work on the result.
+- `Type::Buffer` calls `_alloc_buffer` directly — the same dynamic,
+  zero-size, growable allocation `Create a buffer called x.` makes.
+  Deliberately NOT `_released_buffer_header`
+  (`coreasm/x86_64/resource_buffer.asm`): that shared header refuses
+  every write (LANGUAGE.md's Truncation Behavior), so a fallen-off buffer
+  built from it would make a later `append` a silent no-op.
+- The `Type::Thing(_)` branch now writes the thing's all-defaults
+  instance through the destination pointer before handing it back — a new
+  `emit_thing_defaults_through_r10` (`src/codegen/things.rs`), the same
+  `scalar_slots`/`default_bits` walk `generate_thing_decl` already uses
+  for an unwritten declaration, retargeted to write through a pointer (in
+  `r10`) instead of a named stack/`.bss` slot.
+
+**Left for a human: `file`.** A `file` has no empty value anywhere in the
+language — `src/parser/declarations.rs` refuses to even declare one
+without an initializing path ("A file variable must be initialized with a
+path"), and nothing in LANGUAGE.md's File I/O section describes a
+closed/null file. There is no cheap, real value to fabricate here. Left
+unchanged rather than worked around; a `file`-returning function that
+falls off its end still hands the caller whatever rax held. In practice
+this looks unreachable through every call-site shape this fix's own
+testing tried — `a file called r is <file-returning call>.`, and `Set r
+to <file-returning call>.` on a pre-declared `file`, both already fail to
+compile today ("Property 'size' requires a buffer, list, map, or file
+variable: r") independent of whether the callee falls off its end or
+returns unconditionally. That is a separate, pre-existing gap in
+`Return a file,`'s call-site support, not part of this fix, and is noted
+here only so it isn't mistaken for this bug's blast radius. `timer` has
+the same "no way to receive a call result" shape (`Create a timer called
+t.` is its own statement, not an initializer expression) and was not
+touched for the same reason.
