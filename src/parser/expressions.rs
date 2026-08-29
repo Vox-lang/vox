@@ -775,21 +775,41 @@ impl Parser {
                 result
             }
             Token::Byte => {
-                // byte N of buffer
+                // byte N of buffer — or, inside an `each byte from
+                // <buffer>` loop body, a bare reference to the loop
+                // variable named `byte` (docs/BUGS_FOUND.md #104:
+                // `byte` claimed the `each ... from` loop-variable
+                // position by lexeme; here it must read as that
+                // variable whenever it is not the start of `byte N of
+                // ...`). Try the byte-access reading first, and rewind
+                // to a plain identifier if the index/`of` don't
+                // materialize.
+                let saved = self.pos;
                 self.advance();
                 self.skip_noise();
-                let index = self.parse_primary_reserving(false, true)?;
-                self.skip_noise();
-                if *self.current() != Token::Of {
-                    return Err(self.err("Expected 'of' after byte index"));
+                match self.parse_primary_reserving(false, true) {
+                    Ok(index) => {
+                        self.skip_noise();
+                        if *self.current() == Token::Of {
+                            self.advance();
+                            self.skip_noise();
+                            let buffer = self.parse_primary()?;
+                            Ok(Expr::ByteAccess {
+                                buffer: Box::new(buffer),
+                                index: Box::new(index),
+                            })
+                        } else {
+                            self.pos = saved;
+                            self.advance();
+                            Ok(Expr::Identifier("byte".to_string()))
+                        }
+                    }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.advance();
+                        Ok(Expr::Identifier("byte".to_string()))
+                    }
                 }
-                self.advance();
-                self.skip_noise();
-                let buffer = self.parse_primary()?;
-                Ok(Expr::ByteAccess {
-                    buffer: Box::new(buffer),
-                    index: Box::new(index),
-                })
             }
             Token::Element => {
                 // element N of list

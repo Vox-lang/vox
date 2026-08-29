@@ -346,6 +346,11 @@ The action executes once per item in the collection or range, with the loop vari
 **Supported collections:**
 - **Ranges:** `1 to 10`, `start to end` - numeric sequences
 - **Lists:** `[1, 2, 3]`, any list variable
+- **A buffer's bytes:** any buffer variable - each iteration binds the
+  variable to one byte's value (0-255), in order 1..size, the same value
+  `byte N of <buffer>` yields (see [Buffer Byte
+  Access](#buffer-byte-access)). `byte` is itself a legal loop-variable
+  name here.
 - `arguments's all` - all command-line arguments (argv[1..])
 
 #### Chained `each` clauses: a grid
@@ -3717,6 +3722,12 @@ the current size extends `size` to that position, zero-filling any gap
 (`byte N of buf`) accepts positions from 1 up to the current *size* only -
 a byte that has never been written or appended is out of bounds even
 when the capacity has room for it. Position 0 is out of bounds for both.
+
+**Iterating bytes:** `each ... from` walks a buffer's bytes as numbers (0-255), in order 1..size - the same value `byte N of <buffer>` yields - and `byte` is itself a legal loop-variable name there:
+```
+a buffer called data is "AB".
+For each byte from data, print byte.
+```
 
 #### Buffer Append and Copy
 

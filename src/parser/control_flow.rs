@@ -422,6 +422,11 @@ impl Parser {
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
+            // `byte` is reserved (`byte N of <buffer>`), but as the loop
+            // variable of `For each ... from` it names the byte value
+            // bound each iteration — same contextual-keyword treatment
+            // as `Token::Number` above (docs/BUGS_FOUND.md #104).
+            Token::Byte => { self.advance(); "byte".to_string() }
             Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
             _ => {
                 // The variable is either genuinely absent or the user
@@ -820,6 +825,11 @@ impl Parser {
         let variable = match self.current().clone() {
             Token::Identifier(n) => { self.advance(); n }
             Token::Number => { self.advance(); "number".to_string() }
+            // `byte` is reserved (`byte N of <buffer>`), but as the loop
+            // variable of `each ... from` it names the byte value bound
+            // each iteration — same contextual-keyword treatment as
+            // `Token::Number` above (docs/BUGS_FOUND.md #104).
+            Token::Byte => { self.advance(); "byte".to_string() }
             Token::StringLiteral(s) => return Err(self.err_string_as_name(&s)),
             _ => {
                 // The variable is either genuinely absent or the user

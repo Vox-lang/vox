@@ -1,0 +1,5 @@
+(BUGS_FOUND #104: the manual's own "Iterating bytes" example, verbatim,
+ under Buffer Byte Access.)
+
+a buffer called data is "AB".
+For each byte from data, print byte.

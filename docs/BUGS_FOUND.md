@@ -3457,6 +3457,8 @@ parameter, a `value`, a function result or a property read, all of which
 iterate correctly today and all of which a whitelist would have broken. It
 refuses only a literal number/float/flag/text/map, or a name it has
 positively categorised as a number, float, flag, text, buffer or map.
+Superseded in v0.4.15 by #104: a buffer is now a legal `each ... from`
+collection walked byte by byte; `compile_fail/097` became run test 595.
 
 **Tests.** Compile-fail fixtures
 `tests/compile_fail/095_foreach_over_number.vox`,
@@ -11644,11 +11646,13 @@ scope.
 
 ### 104. `each ... from` over a non-list anchors the error at the variable's declaration, not the loop — and there is no byte-iteration sentence at all
 
-**Status:** Open — caret fixed in v0.4.14 (regression tests
-`tests/compile_fail/275`–`276`); the byte-iteration sentence awaits the
-owner's ruling. Registered 2026-08-25 (GitHub #244). Severity:
-**diagnostic-placement** + owner-raised feature. Verified on vox 0.4.13
-(873daf8) by the master, 2026-08-25.
+**Status:** Fixed in v0.4.15 — `each <name> from <buffer>` (and
+`For each <name> from <buffer>,`) now walks a buffer's bytes as numbers
+1..size, with `byte` itself legal as the loop-variable name; caret
+anchoring landed earlier in v0.4.14 (regression tests
+`tests/compile_fail/275`–`276`). Registered 2026-08-25 (GitHub #244).
+Severity: **diagnostic-placement** + owner-raised feature. Verified on
+vox 0.4.13 (873daf8) by the master, 2026-08-25.
 
 ```vox
 Create a buffer called data.
@@ -11698,8 +11702,31 @@ of the collection's textually-first mention. It builds that location with
 rather than the declaration-anchoring `push_error_with_hint`; every other
 caller of `push_error_with_hint` is untouched. Message and hint text are
 unchanged; pinned for both the buffer and map branches
-(`tests/compile_fail/275`-`276`). The byte-iteration sentence itself remains
-unbuilt, per scope.
+(`tests/compile_fail/275`-`276`, buffer's case since moved to a `number`
+collection once the byte-iteration form below made a buffer legal there).
+The byte-iteration sentence itself remained unbuilt, per that pass's scope.
+
+**Fix — the byte-iteration sentence (v0.4.15).** A buffer joins the list
+and the range as a legal `each ... from` collection: `non_collection_kind`
+(`src/analyzer/scope.rs`) no longer refuses a buffer identifier, and the
+refusal hint for every other kind now names the walk — "a list, a range, a
+buffer's bytes, or `arguments's all`". `byte` is claimed as the loop
+variable by lexeme at both binding sites — `try_parse_each_from` and
+`parse_for` (`src/parser/control_flow.rs`) — the same contextual-keyword
+treatment `Token::Number` already gets there; inside the loop body, a bare
+`byte` (not the start of `byte N of <buffer>`) is disambiguated back to an
+ordinary identifier in `parse_primary`'s `Token::Byte` arm
+(`src/parser/expressions.rs`) by trying the byte-access reading first and
+rewinding on failure. The analyzer types the loop variable `Type::Integer`
+over a buffer collection (`src/analyzer/statements.rs`). Codegen
+(`Statement::ForEach`, `src/codegen/statements.rs`) walks 1..size reading
+each byte through the same `BUFFER_LENGTH`/`BUFFER_DATA_ADDR` macros
+(`core.asm`) `byte N of <buffer>` and `Set byte N of <buffer> to ...`
+already use — no coreasm changes were needed. Fixed and dynamic buffers,
+buffer parameters, and a released buffer (`_released_buffer_header`, size
+0 — zero iterations) all take this same path. Tests: 587–594; compile_fail
+280 pins `each byte from <map>` still refused, so the new `byte`
+contextual-keyword parsing doesn't accidentally bypass the map refusal.
 
 ---
 

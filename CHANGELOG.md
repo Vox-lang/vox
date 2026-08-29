@@ -4,6 +4,12 @@ All notable changes to Vox are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `each <name> from <buffer>` walks a buffer's bytes as numbers, `byte`
+  allowed as the loop variable (closes the open half of #104).
+
 ## [0.4.14] - 2026-08-28
 
 Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two more (#103, #104); a `Free` statement that releases a buffer's memory immediately; the reserved-word tables now generated from one source. 33,000 fuzzer programs on 0.4.13 found no further compiler defects.

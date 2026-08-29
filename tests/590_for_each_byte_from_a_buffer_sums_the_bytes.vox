@@ -1,0 +1,10 @@
+(BUGS_FOUND #104: the `For each byte from <buffer>,` statement form,
+ with `byte` claimed as the loop variable - the manual's own
+ sum-the-bytes sentence.)
+
+Create a buffer called data.
+append "AB" to data.
+Create a number called total.
+Set total to 0.
+For each byte from data, Set total to total add byte.
+Print total.

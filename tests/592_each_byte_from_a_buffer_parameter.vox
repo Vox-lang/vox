@@ -1,0 +1,12 @@
+(BUGS_FOUND #104: a `buffer` function parameter walks the same way a
+ local buffer variable does.)
+
+To 'sum bytes' with a buffer called b.
+    Create a number called total.
+    Set total to 0.
+    For each byte from b, Set total to total add byte.
+    Return a number, total.
+
+Create a buffer called data.
+append "AB" to data.
+Print 'sum bytes' of data.

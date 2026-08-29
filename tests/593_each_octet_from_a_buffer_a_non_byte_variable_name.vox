@@ -1,0 +1,6 @@
+(BUGS_FOUND #104: any name works as the loop variable, not only
+ `byte` - `octet` was already legal before this fix and stays legal.)
+
+Create a buffer called data.
+append "AB" to data.
+print each octet from data.

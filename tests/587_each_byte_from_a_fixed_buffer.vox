@@ -1,0 +1,7 @@
+(BUGS_FOUND #104: the byte-iteration sentence over a fixed-size buffer.
+ `each byte from data` walks the buffer's bytes as numbers, in order
+ 1..size - the same value `byte N of data` yields.)
+
+Create a buffer called data with size 8.
+append "Hi!" to data.
+print each byte from data.

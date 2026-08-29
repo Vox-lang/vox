@@ -1759,7 +1759,63 @@ impl CodeGenerator {
                     self.emit(&format!("{}:", end_label));
                     return;
                 }
-                
+
+                // Buffer walk (docs/BUGS_FOUND.md #104): each iteration
+                // binds `variable` to one byte's value (0-255), 1-indexed
+                // 1..size — the same value `byte N of <buffer>`
+                // (`Expr::ByteAccess`) yields. Reuses that read path:
+                // `BUFFER_LENGTH`/`BUFFER_DATA_ADDR` (core.asm), the same
+                // macros `byte N of buf` and `Set byte N of buf to ...`
+                // already use. A released buffer's shared header reports
+                // length 0 (`_released_buffer_header`), so the loop below
+                // runs zero times, never faulting.
+                if self.is_buffer_expr(collection) {
+                    self.uses_buffers = true;
+                    self.generate_expr(collection);
+                    let buf_ptr = self.alloc_var(&format!("{}_buf", variable));
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer pointer", buf_ptr));
+
+                    self.emit_indent(&format!("mov rbx, [rbp-{}]  ; buffer pointer", buf_ptr));
+                    self.emit_indent("BUFFER_LENGTH rbx  ; buffer length -> rax");
+                    let buf_len = self.alloc_var(&format!("{}_len", variable));
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer length", buf_len));
+
+                    // 1-indexed, matching `byte N of <buffer>`.
+                    let index_var = self.alloc_var(&format!("{}_idx", variable));
+                    self.emit_indent(&format!("mov qword [rbp-{}], 1  ; index (1-indexed)", index_var));
+
+                    let elem_var = self.alloc_var(variable);
+                    self.variables.insert(variable.clone(), elem_var);
+                    self.variable_types.insert(variable.clone(), VarType::Integer);
+                    self.mixed_tag_slots.remove(variable);
+
+                    self.emit(&format!("{}:", start_label));
+
+                    self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
+                    self.emit_indent(&format!("cmp rax, [rbp-{}]  ; compare with length", buf_len));
+                    self.emit_indent(&format!("jg {}  ; past last byte", end_label));
+
+                    self.emit_indent(&format!("mov rbx, [rbp-{}]  ; buffer pointer", buf_ptr));
+                    self.emit_indent("dec rax  ; 1-indexed -> 0-indexed offset");
+                    self.emit_indent("BUFFER_DATA_ADDR rbx  ; skip to buffer data area");
+                    self.emit_indent("movzx eax, byte [rbx + rax]  ; byte value (0-255)");
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
+
+                    self.loop_stack.push((continue_label.clone(), end_label.clone()));
+                    for s in body {
+                        self.generate_statement(s);
+                    }
+                    self.loop_stack.pop();
+
+                    self.emit(&format!("{}:", continue_label));
+
+                    self.emit_indent(&format!("inc qword [rbp-{}]", index_var));
+                    self.emit_indent(&format!("jmp {}", start_label));
+
+                    self.emit(&format!("{}:", end_label));
+                    return;
+                }
+
                 // Determine element type from list
                 let elem_type = if let Expr::Identifier(list_name) = collection {
                     // A list parameter (or any list with no proven element type)
