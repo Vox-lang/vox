@@ -1176,9 +1176,19 @@ impl CodeGenerator {
                     // docs/BUGS_FOUND.md #107. `emit_free_buffer` releases it
                     // now and points the slot at the shared empty header.
                     self.emit_free_buffer(name);
+                } else if self.variable_types.get(name.as_str()) == Some(&VarType::List) {
+                    // A list's later blocks (every growth past the first)
+                    // come from a raw mmap `_list_append` never registers in
+                    // `heap.asm`'s alloc_table, so the generic HEAP_FREE
+                    // below would silently free nothing for a grown list -
+                    // docs/BUGS_FOUND.md #109. `emit_free_list` computes the
+                    // block's size from its own header instead (mirroring
+                    // `_free_buffer`) and points the slot at the shared
+                    // empty header.
+                    self.emit_free_list(name);
                 } else if let Some(offset) = self.get_var(name) {
-                    // A list literal (HEAP_ALLOC'd, tracked in the heap
-                    // table) or an `Allocate`d raw block: unchanged.
+                    // An `Allocate`d raw block (HEAP_ALLOC'd, tracked in the
+                    // heap table): unchanged.
                     self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
                     self.emit_indent("HEAP_FREE rdi");
                 }
@@ -1950,6 +1960,18 @@ impl CodeGenerator {
                 ));
                 self.emit_indent("add rbx, rax");
                 self.emit_indent("mov rax, [rbx]  ; get element");
+                // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): `For
+                // each` binding the loop variable to a nested collection
+                // yields a copy, so mutating the loop variable never
+                // reaches back into the collection being iterated. r11
+                // still carries this iteration's tag from the tag_slot
+                // block above (nothing between there and here touches it).
+                match &elem_type {
+                    VarType::List => self.emit_copy_if_collection_static(TAG_LIST),
+                    VarType::Map => self.emit_copy_if_collection_static(TAG_MAP),
+                    VarType::Mixed => self.emit_copy_if_collection_reg("r11d"),
+                    _ => {}
+                }
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; store in {}", elem_var, variable));
                 
                 // Generate body
@@ -2126,6 +2148,25 @@ impl CodeGenerator {
                 self.emit_indent("push rcx  ; save index");
                 // Get value
                 self.generate_expr(value);
+                // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
+                // collection written into an existing slot is copied in,
+                // not shared - the same rule the literal-fill and append
+                // sites already apply, extended here for consistency (not
+                // separately named by the brief, but the same principle:
+                // "a collection placed inside another collection is a
+                // copy").
+                let eset_tag = self.emit_time_expr_tag(value);
+                match eset_tag {
+                    Some(TAG_LIST) | Some(TAG_MAP) => {
+                        self.emit_copy_if_collection_static(eset_tag.unwrap());
+                    }
+                    None => {
+                        if let Some(loc) = self.mixed_element_tag_slot(value) {
+                            self.emit_copy_if_collection_mem(&loc.operand());
+                        }
+                    }
+                    _ => {}
+                }
                 self.emit_indent("mov r8, rax  ; value in r8");
                 self.emit_indent("pop rcx  ; index in rcx");
                 self.emit_indent("pop rbx  ; list pointer in rbx");
@@ -2189,9 +2230,27 @@ impl CodeGenerator {
                 self.emit_indent("push rax  ; save key pointer");
                 // value -> rdx
                 self.generate_expr(value);
+                // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
+                // collection stored as a map value is copied in, not
+                // shared. `map_value_tag` is computed once and reused below
+                // for the `_map_insert` type-tag argument.
+                let map_value_tag = self.emit_time_expr_tag(value);
+                match map_value_tag {
+                    Some(TAG_LIST) | Some(TAG_MAP) => {
+                        self.emit_copy_if_collection_static(map_value_tag.unwrap());
+                    }
+                    None => {
+                        if let Some(loc) = self.mixed_element_tag_slot(value) {
+                            self.emit_copy_if_collection_mem(&loc.operand());
+                        }
+                        // See the matching note in ListAppend: an r11-only
+                        // forwarded tag is not covered here.
+                    }
+                    _ => {}
+                }
                 self.emit_indent("mov rdx, rax  ; value");
                 // tag -> rcx (forward runtime tag for mixed sources)
-                match self.emit_time_expr_tag(value) {
+                match map_value_tag {
                     Some(tag) => {
                         self.emit_indent(&format!("mov ecx, {}  ; value type tag", tag));
                     }
@@ -2320,10 +2379,36 @@ impl CodeGenerator {
                         self.emit_indent("pop rbx");
                     }
 
+                    // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
+                    // collection appended to a list is copied in, not
+                    // shared. `append_tag` is computed once and reused below
+                    // for the `_list_append` type-tag argument, so the
+                    // static case costs nothing beyond the tag lookup that
+                    // was already needed.
+                    let append_tag = self.emit_time_expr_tag(value);
+                    match append_tag {
+                        Some(TAG_LIST) | Some(TAG_MAP) => {
+                            self.emit_copy_if_collection_static(append_tag.unwrap());
+                        }
+                        None => {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
+                                self.emit_copy_if_collection_mem(&loc.operand());
+                            }
+                            // A tag forwarded only through r11
+                            // (`expr_leaves_tag_in_r11`, below) is not
+                            // covered here: r11 does not survive the copy
+                            // call's own body, and re-reading it afterward
+                            // is not possible the way a shadow-slot memory
+                            // operand can be re-read. Documented as a known
+                            // gap in REPORT-109.md's Round 2 section.
+                        }
+                        _ => {}
+                    }
+
                     self.emit_indent("push rax  ; save value to append");
 
                     // rdi = list pointer, rsi = value to append, dl = type tag
-                    match self.emit_time_expr_tag(value) {
+                    match append_tag {
                         Some(tag) => {
                             self.emit_indent(&format!(
                                 "mov edx, {}  ; element type tag",

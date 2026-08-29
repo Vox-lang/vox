@@ -1,0 +1,15 @@
+(Was 584_free_on_a_list_is_unchanged_and_pins_its_after_state.vox: on 0.4.14
+ `Free` on a list only released the block's memory (the generic HEAP_FREE
+ path) without repointing the variable, so a read afterwards was undefined -
+ master-measured on 0.4.13/0.4.14 as "still prints the old contents" purely
+ because nothing had overwritten the freed page yet. Fixed by
+ docs/BUGS_FOUND.md #109: a list now gets the same released-buffer contract
+ buffers already have (LANGUAGE.md "Releasing a Buffer") - empty, refused
+ writes, the error flag on the refusal.)
+
+a list called items is [1, 2, 3].
+Free items.
+Print items.
+Print "len {items's length}".
+append 9 to items.
+On error print "append refused".

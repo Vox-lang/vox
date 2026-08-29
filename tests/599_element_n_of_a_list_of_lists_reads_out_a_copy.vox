@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #111. Reading a nested collection OUT - `element N of
+ <list>` - hands back a copy; the parent's own slot is untouched by a
+ later write to the copy.)
+
+a list called inner is [1, 2].
+a list called outer is [inner, 3].
+a list called got is element 1 of outer.
+Set element 1 of got to 555.
+print outer.
+print got.

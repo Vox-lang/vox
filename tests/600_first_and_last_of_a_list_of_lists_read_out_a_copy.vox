@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #111. `L's first` and `L's last` reading out a nested
+ collection hand back a copy, the same as `element N of L`.)
+
+a list called a1 is [1, 2].
+a list called a2 is [3, 4].
+a list called outer is [a1, a2].
+a list called first_got is outer's first.
+a list called last_got is outer's last.
+Set element 1 of first_got to 101.
+Set element 1 of last_got to 303.
+print outer.
+print first_got.
+print last_got.

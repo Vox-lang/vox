@@ -1,0 +1,15 @@
+(docs/BUGS_FOUND.md #109. On 0.4.14, `Statement::Free` for a list only
+ looked the name up in the local stack frame table, so a global - which
+ lives in a gvar_N BSS mirror - got no branch at all and Free was a silent
+ no-op. Fixed: the global mirror is reached the same way `Free` on a global
+ buffer already reaches it.)
+
+a list called nums is [1, 2, 3].
+Free nums.
+print nums's length.
+print nums's empty.
+print nums.
+append 9 to nums.
+On error print "append to freed list refused".
+print nums's length.
+print nums.

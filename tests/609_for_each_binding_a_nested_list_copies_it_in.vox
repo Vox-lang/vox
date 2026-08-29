@@ -1,0 +1,19 @@
+(docs/BUGS_FOUND.md #111. `For each x in outer` binding x to a nested
+ list yields a copy - one of the four forms the ruling names by name.
+ The analyzer does not (yet, independent of this brief) accept a for-each
+ loop variable as a direct `Set element N of`/`append ... to` target, so
+ this isolates the binding itself instead: aliasing x into `snapshot` via
+ a plain `Set` (untouched by #111 - plain variable assignment stays a
+ reference, only placement INSIDE a collection copies) and mutating
+ through that alias. If the loop variable had been bound to `a1`'s own
+ block, `a1` would show the mutation too.)
+
+a list called a1 is [1, 2].
+a list called outer is [a1].
+a list called snapshot is [].
+For each x in outer,
+    Set snapshot to x.
+Set element 1 of snapshot to 999.
+print outer.
+print a1.
+print snapshot.

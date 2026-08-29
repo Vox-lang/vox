@@ -5,6 +5,32 @@ section .data
     _err_list_bounds_msg: db "Error: List index out of bounds", 10, 0
     _err_list_bounds_len: equ 32
 
+    ; The shared header `Free` points a released list's variable at
+    ; (docs/BUGS_FOUND.md #109, the `Free` statement) - mirrors
+    ; `_released_buffer_header` (resource_buffer.asm): capacity 0, length 0,
+    ; element size 8, matching the real header layout above. Every list read
+    ; on it is naturally empty (length 0 fails every bounds check before any
+    ; data byte past this header is touched), and `_list_append` below
+    ; refuses it by comparing the pointer against this label's own ADDRESS,
+    ; not against the shape (a real list can legitimately reach capacity 0
+    ; too, mid-growth) - only THIS instance must never be grown or
+    ; double-freed.
+    _released_list_header: dq 0, 0, 8
+
+section .bss
+    ; Dedup table for deep free (docs/BUGS_FOUND.md #109): `Free` on a list
+    ; releases every nested list/map it holds, recursively, and the same
+    ; nested collection can be reachable through more than one slot in ONE
+    ; `Free` call tree - a list holding the same nested list twice, or two
+    ; parents that share one child. Freeing it a second time inside that
+    ; same tree would munmap already-unmapped memory. `_free_visit_or_skip`
+    ; records every pointer this tree has started freeing here; codegen
+    ; resets the count to 0 immediately before each top-level `Free` (see
+    ; `emit_free_list`), so a later, UNRELATED `Free` starts with a clean
+    ; table rather than remembering blocks a previous statement released.
+    _free_visited: resq 4096
+    _free_visited_count: resq 1
+
 section .text
 
 ; ============================================================================
@@ -392,11 +418,24 @@ section .text
 ; _list_append - Append an element to a list, growing if necessary
 ; Args: rdi = list pointer, rsi = value to append, dl = type tag
 ;       (LIST_TAG_* - callers appending to homogeneous lists pass 0)
-; Returns: rax = new list pointer (may differ if reallocated)
-; 
+; Returns: rax = new list pointer (may differ if reallocated), or the
+;          released header unchanged when refused (docs/BUGS_FOUND.md #109)
+;
 ; List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
 ;
 _list_append:
+    ; Refuse a pointer that IS the shared released header (append after
+    ; `Free`) before touching anything - identity check, so a list mid-growth
+    ; that has genuinely reached capacity 0 (never happens today, but shape
+    ; alone must not be trusted) is never confused with this one shared
+    ; instance. docs/BUGS_FOUND.md #109.
+    lea rax, [rel _released_list_header]
+    cmp rdi, rax
+    jne .list_append_live
+    SET_LAST_ERROR 1  ; refused: this list is freed
+    ret               ; rax already holds the header - unchanged
+
+.list_append_live:
     push rbx
     push rcx
     push rdx
@@ -404,7 +443,7 @@ _list_append:
     push r13
     push r14
     push r15
-    
+
     mov rbx, rdi                    ; rbx = list pointer
     mov r12, rsi                    ; r12 = value to append
     movzx r15, dl                   ; r15 = type tag
@@ -540,14 +579,292 @@ _list_append:
     inc qword [rdi + LIST_LENGTH_OFFSET]    ; increment length
     
     mov rax, rdi                            ; return new pointer
-    
+
 .done:
+    CLEAR_LAST_ERROR                        ; both paths above are success
     pop r15
     pop r14
     pop r13
     pop r12
     pop rdx
     pop rcx
+    pop rbx
+    ret
+
+; ============================================================================
+; LIST RELEASE
+; ============================================================================
+
+; _free_visit_or_skip - dedup guard for deep free (docs/BUGS_FOUND.md #109).
+; Args: rdi = pointer about to be freed
+; Returns: carry SET if this pointer is already recorded in `_free_visited`
+;          (the caller must skip freeing/walking it again - some other slot
+;          in this same `Free` call tree got to it first); carry CLEAR and
+;          the pointer newly appended otherwise. Clobbers rax, rcx, rdx.
+;          Preserves rdi.
+;
+; Past 4096 distinct collections touched by one `Free`, a not-yet-seen
+; pointer is treated as "already visited" too (skip it, don't free it) -
+; the same leak-over-crash trade `_list_append`'s own un-munmapped grown-out
+; blocks already make, and safer than the alternative of freeing something
+; this table lost track of.
+_free_visit_or_skip:
+    lea rax, [rel _free_visited]
+    mov rdx, [rel _free_visited_count]
+    xor rcx, rcx
+.fvos_scan:
+    cmp rcx, rdx
+    jge .fvos_record
+    cmp [rax + rcx*8], rdi
+    je .fvos_found
+    inc rcx
+    jmp .fvos_scan
+.fvos_found:
+    stc
+    ret
+.fvos_record:
+    cmp rdx, 4096
+    jge .fvos_full
+    mov [rax + rdx*8], rdi
+    inc rdx
+    mov [rel _free_visited_count], rdx
+    clc
+    ret
+.fvos_full:
+    stc
+    ret
+
+; _free_list - Release a list's memory immediately (docs/BUGS_FOUND.md #109),
+; and (owner ruling 2026-08-29: "Freeing a list should free every item
+; within the list as well") recursively every nested list/map it holds.
+; Args: rdi = list pointer
+; Returns: nothing meaningful in rax; sets/clears the error flag.
+;
+; Codegen (`emit_free_list`) resets `_free_visited_count` to 0 immediately
+; before the top-level call this makes for a `Free` statement, so the dedup
+; table above starts empty for each one and this function never has to know
+; whether it is the top of the tree or a recursive call within it.
+;
+; Only LIST- and MAP-tagged slots (element type tags 4 and 5) recurse: both
+; are unconditionally heap blocks, nothing else ever allocates that shape.
+; A STRING-tagged slot is deliberately left alone - a list literal's string
+; element is a pointer into `.rodata` (never freed), but `append <buffer> to
+; <list>` duplicates the buffer's bytes onto the heap first (statements.rs,
+; the `is_buffer_value` arm) and tags THAT the same TAG_STRING, and nothing
+; recorded per-slot distinguishes the two. Freeing a `.rodata` pointer risks
+; unmapping part of the program's own data segment; leaving a strdup'd
+; string unfreed is a leak. The leak is the strictly safer of those two
+; wrong answers, so this stops at LIST/MAP. docs/BUGS_FOUND.md #109's report
+; carries this as a named limitation, not a fixed one.
+;
+; Computes the block's total size from its OWN header fields (capacity,
+; element size, plus one tag byte per slot) rather than looking the pointer
+; up in `heap.asm`'s `alloc_table` (`HEAP_FREE`) - that table only ever
+; learns about a list's FIRST block, from the `HEAP_ALLOC` the literal/
+; default codegen emits; every block a growth reallocated it into
+; (`_list_append`'s `.need_realloc` path above) came from a raw `mmap` the
+; table never saw, so `HEAP_FREE` would silently fail to find it and free
+; nothing - the exact leak `_free_buffer` was already fixed to not have
+; (docs/BUGS_FOUND.md #108). Computing the size from the header, the way
+; `_free_buffer` computes it from `BUF_CAPACITY`, always munmaps the right
+; range: mmap and munmap both round to whole pages, and this size - being
+; exactly the size that was requested at whichever alloc produced this
+; block, page-rounded or not - always reaches into the mapping's last page.
+global _free_list
+_free_list:
+    ; Refuse a pointer that IS the shared released header (a double `Free`)
+    ; before touching anything - identity check, same shape as
+    ; `_free_buffer`/`_list_append` above.
+    lea rax, [rel _released_list_header]
+    cmp rdi, rax
+    jne .free_list_live
+    SET_LAST_ERROR 1  ; already freed
+    ret
+
+.free_list_live:
+    call _free_visit_or_skip
+    jnc .free_list_new_visit
+    ret                                         ; already freed earlier in this tree - leave it
+.free_list_new_visit:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                               ; r12 = this list (survives recursive calls)
+    mov r13, [r12 + LIST_LENGTH_OFFSET]        ; r13 = length
+    xor r14, r14                               ; r14 = 0-based index
+
+.free_list_walk:
+    cmp r14, r13
+    jge .free_list_walk_done
+    LIST_TAG_ADDR rbx, r12, r14                ; rbx = &tag byte
+    movzx r15d, byte [rbx]
+    cmp r15b, LIST_TAG_LIST
+    je .free_list_nested_list
+    cmp r15b, LIST_TAG_MAP
+    je .free_list_nested_map
+    jmp .free_list_walk_next
+
+.free_list_nested_list:
+    mov rax, [r12 + LIST_ELEMSIZE_OFFSET]
+    imul rax, r14
+    mov rdi, [r12 + rax + LIST_DATA_OFFSET]    ; rdi = nested list pointer
+    call _free_list
+    jmp .free_list_walk_next
+
+.free_list_nested_map:
+%ifdef __MAP_ASM_INCLUDED__
+    mov rax, [r12 + LIST_ELEMSIZE_OFFSET]
+    imul rax, r14
+    mov rdi, [r12 + rax + LIST_DATA_OFFSET]    ; rdi = nested map pointer
+    call _free_map
+%endif
+    ; jmp .free_list_walk_next falls through either way
+
+.free_list_walk_next:
+    inc r14
+    jmp .free_list_walk
+
+.free_list_walk_done:
+    mov rdx, [r12 + LIST_CAPACITY_OFFSET]      ; capacity
+    mov rsi, [r12 + LIST_ELEMSIZE_OFFSET]      ; element size
+    imul rsi, rdx                              ; data size = capacity * elem_size
+    add rsi, rdx                               ; + tag bytes (1 per slot)
+    add rsi, LIST_DATA_OFFSET                  ; + header
+    mov rdi, r12                               ; addr = this list's own block
+    mov rax, 11                                ; sys_munmap
+    syscall
+    CLEAR_LAST_ERROR                           ; released
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+; ============================================================================
+; LIST COPY
+; ============================================================================
+; _copy_list - deep-copy a list (docs/BUGS_FOUND.md #111, owner ruling
+; 2026-08-29, GitHub #34, Option 1: a collection placed inside another
+; collection is a copy, not a shared reference). Allocates a fresh block of
+; the SAME capacity/element_size/length (a raw `sys_mmap`, the same
+; allocation shape `_list_append`'s growth path already uses, so `_free_list`
+; can free the copy exactly like any other list), bulk-copies the data and
+; tag regions verbatim, then walks the LENGTH live slots and replaces any
+; LIST- or MAP-tagged one with a recursive copy of ITS OWN block - both are
+; unconditionally heap blocks, so no identity/shape check is needed to know
+; it is safe to recurse. A STRING-tagged slot is left exactly as `_free_list`
+; leaves it: a reference, not owned (a list never owns a string's memory -
+; #109's note), so copying the pointer verbatim is correct as-is; a nested
+; list/map is the only thing this ruling makes an owning collection own.
+; Args: rdi = source list pointer
+; Returns: rax = the new, independent list pointer
+_copy_list:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    push rbp
+
+    mov rbx, rdi                               ; rbx = source list ptr
+
+    mov r12, [rbx + LIST_CAPACITY_OFFSET]      ; r12 = capacity
+    mov r13, [rbx + LIST_ELEMSIZE_OFFSET]      ; r13 = element size
+    mov r14, [rbx + LIST_LENGTH_OFFSET]        ; r14 = length
+    mov rax, r12
+    imul rax, r13
+    add rax, r12                                ; + tag bytes (1 per slot)
+    add rax, LIST_DATA_OFFSET                   ; + header
+    mov rsi, rax                                ; size for mmap
+
+    mov rdi, 0
+    mov rdx, 3
+    mov r10, 0x22
+    mov r8, -1
+    mov r9, 0
+    mov rax, 9                                  ; sys_mmap
+    syscall
+    cmp rax, -4096
+    jbe .copy_list_mmap_ok
+    mov rdi, 1
+    mov rax, 60                                 ; sys_exit
+    syscall
+.copy_list_mmap_ok:
+    mov r15, rax                                ; r15 = new list ptr
+
+    mov [r15 + LIST_CAPACITY_OFFSET], r12
+    mov [r15 + LIST_LENGTH_OFFSET], r14
+    mov [r15 + LIST_ELEMSIZE_OFFSET], r13
+
+    ; bulk-copy data (length * elem_size bytes) verbatim - correct as-is for
+    ; every scalar and (unowned reference) STRING slot; a LIST/MAP slot is
+    ; patched below.
+    lea rdi, [r15 + LIST_DATA_OFFSET]
+    lea rsi, [rbx + LIST_DATA_OFFSET]
+    mov rcx, r14
+    imul rcx, r13
+    rep movsb
+
+    ; bulk-copy tags (length bytes) verbatim - same offset in both blocks,
+    ; since capacity/elem_size match.
+    mov rax, r12
+    imul rax, r13
+    lea rdi, [r15 + rax + LIST_DATA_OFFSET]
+    lea rsi, [rbx + rax + LIST_DATA_OFFSET]
+    mov rcx, r14
+    rep movsb
+
+    xor rbp, rbp                                ; 0-based index (source no
+                                                  ; longer needed past this
+                                                  ; point, so rbx is free too)
+.copy_list_walk:
+    cmp rbp, r14
+    jge .copy_list_walk_done
+    LIST_TAG_ADDR rax, r15, rbp                 ; rax = &tag byte (reads the
+                                                  ; NEW block's own header)
+    movzx r9d, byte [rax]
+    cmp r9b, LIST_TAG_LIST
+    je .copy_list_nested_list
+    cmp r9b, LIST_TAG_MAP
+    je .copy_list_nested_map
+    jmp .copy_list_walk_next
+
+.copy_list_nested_list:
+    mov rbx, [r15 + LIST_ELEMSIZE_OFFSET]
+    imul rbx, rbp
+    lea rbx, [r15 + rbx + LIST_DATA_OFFSET]     ; rbx = &slot (survives the call)
+    mov rdi, [rbx]
+    call _copy_list
+    mov [rbx], rax
+    jmp .copy_list_walk_next
+
+.copy_list_nested_map:
+%ifdef __MAP_ASM_INCLUDED__
+    mov rbx, [r15 + LIST_ELEMSIZE_OFFSET]
+    imul rbx, rbp
+    lea rbx, [r15 + rbx + LIST_DATA_OFFSET]
+    mov rdi, [rbx]
+    call _copy_map
+    mov [rbx], rax
+%endif
+    ; falls through to .copy_list_walk_next either way
+
+.copy_list_walk_next:
+    inc rbp
+    jmp .copy_list_walk
+
+.copy_list_walk_done:
+    mov rax, r15                                ; return the new list pointer
+    pop rbp
+    pop r15
+    pop r14
+    pop r13
+    pop r12
     pop rbx
     ret
 

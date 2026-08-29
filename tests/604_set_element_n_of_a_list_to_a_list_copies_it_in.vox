@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #111. `Set element N of L to <collection>.` was not
+ individually named by the ruling's own enumeration (literal, append, map
+ insert, read-out), but the same principle applies to any write into an
+ existing slot; extended here for consistency.)
+
+a list called inner is [1, 2].
+a list called outer is [0, 0].
+Set element 1 of outer to inner.
+Set element 1 of inner to 777.
+print outer.
+print inner.

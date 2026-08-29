@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #111. `append <list-or-map> to <list>` copies the
+ appended collection in, exactly like a literal slot does.)
+
+a list called inner is [1, 2].
+a list called outer is [99].
+append inner to outer.
+Set element 1 of inner to 777.
+print outer.
+print inner.

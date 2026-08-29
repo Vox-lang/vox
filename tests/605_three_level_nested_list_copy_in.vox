@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #111. Copy-in recurses: three levels deep, each level
+ independently mutable, none of the copies affecting another.)
+
+a list called leaf is [1, 2].
+a list called mid is [leaf, 3].
+a list called top is [mid, 4].
+Set element 1 of leaf to 111.
+Set element 1 of mid to 222.
+print top.
+print mid.
+print leaf.

@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #109. Mirrors buffer test 582's global-from-inside-a-
+ function half: `emit_free_list` resolves through
+ `emit_load_named_var_addr`/`emit_store_back_after_realloc`, which fall back
+ to the global BSS mirror exactly like every other global-list write-back.)
+
+a list called totals is [10, 20, 30].
+
+To 'clear totals'.
+    Free totals.
+
+'clear totals'.
+print totals's length.
+print totals.

@@ -1173,7 +1173,9 @@ Print moved's x.
 The three spellings of assignment (a declaration with an initialiser, a
 bare `is`, and `Set ... to`) are all assignment, so all three copy. A
 copy is deep by construction: a nested thing is just more bytes, so
-copying a letter carries its point along and neither half is shared:
+copying a letter carries its point along and neither half is shared -
+the same as a nested collection (a list or map placed inside another
+list or map is copied too, not shared; see [Nested Lists](#nested-lists)):
 
 ```
 A thing called point has
@@ -2486,27 +2488,37 @@ For each item in [1, [2, 3], "x"],
 (prints: s, L, s)
 ```
 
-Printing is recursive and **cycle-safe**: a list that contains itself
-(for example `a list called x is []. append x to x.`) would recurse
-forever, so printing is capped at a depth of 64. When the limit is hit
-the over-deep subtree prints as `...`, the error flag is set, and printing
-unwinds safely instead of overflowing the stack. Use `on error` to react:
+Printing is recursive: a nested list prints exactly as written, however
+deep.
+
+**A collection placed inside another collection is a copy**, not a
+shared reference (owner ruling, GitHub #34, 2026-08-29): the parent owns
+its contents. Building a list or map literal with a collection element,
+appending a collection to a list, setting a map value to a collection,
+and reading a nested collection back out (`element N of`, `first`/`last`,
+a map value, a `For each` binding) all copy - nothing written afterward
+through the original name, or through an extracted child, reaches back
+into the other:
 
 ```
-a list called x is [].
-append x to x.
-print x.
-on error print "cyclic".
-(prints: [[...]] then cyclic; abbreviated: 64 opening brackets, then
- `...`, then 64 closing brackets, then `cyclic`)
+a list called inner is [1, 2].
+a list called outer is [inner, 3].
+Set element 1 of inner to 777.
+print outer.                       (prints: [[1, 2], 3] - unaffected)
+print inner.                       (prints: [777, 2])
+
+a list called got is element 1 of outer.
+Set element 1 of got to 555.
+print outer.                       (still [[1, 2], 3] - got is its own copy)
 ```
 
-One limitation remains for this stage. Extracting a child with `element N
-of` yields a *reference* to the child list, not a copy: if the parent is
-later grown by appending enough elements to force a reallocation, a child
-extracted before that reallocation may point at freed memory. Extract a
-child after the parent has finished growing, or copy it element-by-element.
-See `docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+Because nesting always copies, a list can never truly contain itself:
+`a list called x is []. append x to x.` copies `x`'s state at the moment
+of the append (here, `[]`) and appends that copy, so `x` ends up `[[]]` -
+one level deep, not a cycle. Printing still caps recursion at a depth of
+64 as a defensive backstop (an over-deep subtree would print as `...` and
+set the error flag), but ordinary nesting never approaches it, since
+building one requires that many *separate*, explicitly-written levels.
 
 ### Maps
 
@@ -2574,10 +2586,13 @@ on error print "missing". (prints: missing)
 ```
 
 A map value may be a list or another map, and printing is recursive:
-`_map_print` renders `{"key": value, …}` and shares the same 64-deep
-`_print_depth` budget as `_list_print`, so a mixed map/list tree is
-cycle-safe. A self-referential map (`set m's "self" to m.`) prints 64
-levels deep, then `...`, sets the error flag, and unwinds safely.
+`_map_print` renders `{"key": value, …}`, sharing the same 64-deep
+`_print_depth` budget as `_list_print` as a defensive backstop. A map
+value that is itself a collection is copied in - the same [copy-in
+rule](#nested-lists) a list applies to its own elements - so `set m's
+"self" to m.` copies `m`'s state at the moment of the `set` (before
+"self" exists in it) rather than making `m` contain itself: `m` ends up
+one level deep, not a cycle.
 
 The `is a map` predicate recognises a map (runtime tag 5): it folds to
 true on a statically-typed map variable and compares the tag at run time
@@ -3677,7 +3692,16 @@ While n is less than total_lines,
     increment n.
 ```
 
-A list also accepts `Free`.
+A list also accepts `Free`, with the same after-state a buffer gets: it
+becomes **empty** (length 0, `empty` is true, prints `[]`), and every later
+write - `append`, `Set element N of ...` - is refused with the error flag;
+a second `Free` is the same no-op-that-flags, not a second release. Free
+releases the list and every collection it holds: a nested list or map
+element is freed too, recursively, before the list itself is. A `list`
+function parameter is the caller's list (see
+[A collection parameter is the caller's collection](#a-collection-parameter-is-the-callers-collection)),
+so freeing one empties the caller's own variable too, exactly as growth
+through a parameter already does.
 
 #### Buffer Byte Access
 

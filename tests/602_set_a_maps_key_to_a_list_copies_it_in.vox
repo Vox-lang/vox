@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #111. `Set <map>'s "<key>" to <collection>.` copies
+ the value in, matching the map literal.)
+
+a list called inner is [1, 2].
+a map called m is {"a": 0}.
+Set m's "a" to inner.
+Set element 1 of inner to 777.
+print m.
+print inner.

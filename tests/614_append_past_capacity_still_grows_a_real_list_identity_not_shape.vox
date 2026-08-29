@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #109. `_list_append`'s new refusal compares the list
+ POINTER against `_released_list_header`'s own address, not the list's
+ shape - a real list genuinely reaching `length == capacity` mid-growth
+ looks exactly like the released header at that instant (both have
+ length == capacity), and only an identity check tells them apart. A list
+ literal's capacity is always >= 8 (max(elements.len(), 8)), so this pushes
+ a real list through its first growth/realloc to prove the refusal did not
+ also catch real, legitimate growth.)
+
+a list called nums is [1, 2, 3, 4, 5, 6, 7, 8].
+print nums's length.
+append 9 to nums.
+append 10 to nums.
+On error print "should not refuse a real list".
+print nums's length.
+print nums.

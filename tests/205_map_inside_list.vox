@@ -1,9 +1,14 @@
 (Stage 1e2 review — the list printer's MAP branch. map.asm dispatches the
  LIST tag into _list_print, but list.asm had no matching MAP branch, so a
  map stored in a list slot fell through to the integer path and printed as
- a raw pointer. That also silently disabled the shared _print_depth budget
- for a mixed map/list cycle: the recursion stopped at the untagged slot
- instead of being bounded, so no error was flagged.)
+ a raw pointer.
+ Was also a mixed map/list cycle test (c1/c2 referencing each other across
+ types, hitting the shared depth budget and flagging an error).
+ docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34, Option 1): a
+ collection placed inside another collection is now a COPY, so `set c1's
+ "to_list" to c2` copies c2's state at that moment (empty), and the LATER
+ `append c1 to c2` only changes c2 - c1's own "to_list" copy, already
+ made, is untouched. No cycle forms and no error is set.)
 
 a map called inner is {}.
 set inner's "deep" to 5.

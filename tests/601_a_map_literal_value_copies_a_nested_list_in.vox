@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #111. A map literal's value copies a nested
+ collection in, at construction time - the map-side twin of test 597.)
+
+a list called inner is [1, 2].
+a map called m is {"a": inner}.
+Set element 1 of inner to 777.
+print m.
+print inner.

@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #111 closes the #109 report's "new, confirmed hazard":
+ under the old pointer-in nesting, `Free outer.` here deep-freed the SAME
+ block `inner` still named, and `print inner's length.` afterward
+ segfaulted (rc 139, reproduced on this branch before #111). Copy-in means
+ `outer` never held `inner`'s own block in the first place - it held an
+ independent copy from the moment `outer` was built - so freeing `outer`
+ leaves `inner` fully valid.)
+
+a list called inner is [1, 2, 3].
+a list called outer is [inner, "x"].
+Free outer.
+print inner's length.
+print inner.
