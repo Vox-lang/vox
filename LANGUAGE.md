@@ -489,6 +489,8 @@ substitution that fires hands the `<replacement>`'s own type out with it.
 | Timer | `timer` | Stopwatch for measuring durations |
 | Thing | `thing` *(contextual)* | User-defined composite value type: see [Things](#things) |
 
+`int` and `integer` are accepted spellings of `number`.
+
 ---
 
 ## Variables
@@ -5063,6 +5065,20 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Shutdown`/`Poweroff`, `Reboot`/`Restart`, `Halt` | `reboot(2)` - power off/restart/halt the machine |
 | `fork`, `reap` | Process control expressions - `fork(2)`/`wait4(2)` |
 | `Send signal` | `kill(2)` - send a signal to a process (`child` aliases `process`) |
+| `Read` | `Read from <file> into <buffer>.` / `Read line from <file> into <buffer>.` |
+| `Write` | `Write <value> to <file>.` |
+| `Open` | `open a file for reading/writing/appending called <name> at <path>.` |
+| `Close` | `Close <file>.` |
+| `Wait` | `Wait <n> seconds.` / `Wait <n> milliseconds.` |
+| `Sleep` | `Sleep for <n> seconds.` / `Sleep for <n> milliseconds.` |
+| `Get` | `Get current time into <name>.` |
+| `Clear` | Set a buffer's length to 0, keeping its capacity (`clear <buffer>.`) |
+| `Copy` | Replace a buffer's contents with another's bytes (`copy <source> to <destination>.`) |
+| `Resize` | Change a buffer's capacity, preserving data up to the smaller of the two lengths (`resize <buffer> to <n> bytes.`) |
+| `Seek` | Move a file's read/write position (`Seek <file> to line <n>.` / `Seek <file> to byte <n>.`) |
+| `Repeat` | Loop a fixed number of times (`Repeat <n> times, <statements>.`, see [Repeat](#repeat)) |
+| `See` | Include another Vox source file, or consume a shared library's `.lib` interface (see [The `see` Keyword](#the-see-keyword)) |
+| `Library` | Declare a shared library's name and version at the top of a `.vox` file (see [Shared libraries](#shared-libraries)) |
 
 ### Flag Schema
 
@@ -5086,6 +5102,14 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `then` | After condition |
 | `otherwise`, `else` | Alternative branch |
 | `from`, `to` | Range bounds |
+| `between` | Range bound, inclusive of both ends (see [Ranges](#ranges)) |
+| `in` | Collection/range membership (`For each x in <list>`) and unit casting (`<timer>'s duration in seconds`) |
+| `into` | Destination of `Read from <file> into <buffer>.` and `Get current time into <name>.` |
+| `each` | Universal loop expansion: turns any action into a loop (`<action> each <var> from <collection>`, see [Loop Expansion](#loop-expansion)) |
+| `without` | Suppresses the trailing newline (`Print <x> without newline.`); also the `without waiting` reap suffix |
+| `as` | Type-cast target (`as a number`) and substitution replacement (`treating X as Y`) |
+| `treating` | Inline value substitution (`treating <match> as <replacement>`, see [Inline Substitution with `treating`](#inline-substitution-with-treating)) |
+| `times` | Loop-count unit in `Repeat <n> times, <statements>.` |
 
 ### The `and` Keyword
 
@@ -5103,6 +5127,39 @@ The word `and` has multiple context-dependent meanings:
 - When `and` appears between two conditions (no comma), it's a logical operator
 - When `and` follows `with`/`of`/`to`/`on`, it separates arguments
 
+### Types
+
+The type keywords, reserved as variable names for the same reason a
+statement starter is (see [Types](#types) for what each one holds):
+
+| Keyword | Purpose |
+|---------|---------|
+| `number` | Integer type |
+| `int` | Alternate spelling of `number` (its alias `integer` is in the Reserved Aliases table below) |
+| `float` | Floating-point type |
+| `text` | String type |
+| `boolean` | Boolean type |
+| `true`, `false` | The two boolean literal values |
+| `list` | Collection type (see [Lists and Collections](#lists-and-collections)) |
+| `map` | Key/value collection type (see [Maps](#maps)) |
+| `buffer` | Memory-block type for I/O (see [Buffers](#buffers)) |
+| `file` | File descriptor handle type (see [File I/O](#file-io)) |
+| `time` | Date/time value type (see [Time and Timers](#time-and-timers)) |
+| `timer` | Stopwatch type for measuring durations (see [Timers](#timers)) |
+| `nothing` | The absent value literal (see [Nothing (the absent value)](#nothing-the-absent-value)) |
+
+### Operators
+
+The operator keywords, fully defined in [Operators](#operators):
+
+| Keyword | Purpose |
+|---------|---------|
+| `add`, `subtract`, `multiply`, `divide`, `modulo` | Arithmetic operators (`x add 5`, see [Arithmetic](#arithmetic)) |
+| `is`, `are`, `equals`, `greater`, `less`, `than` | Comparison operators (`x is greater than 5`, see [Comparisons](#comparisons)) |
+| `not` | Logical negation (see [Logical Operators](#logical-operators)) |
+| `even`, `odd`, `positive`, `negative`, `zero`, `empty` | Property-check predicates (`the x is even`, see [Property Checks](#property-checks)) |
+| `bit-and`, `bit-or`, `bit-xor`, `bit-not`, `bit-shift-left`, `bit-shift-right` | Bitwise operators (see [Bitwise Operators](#bitwise-operators)) |
+
 ### Reserved Aliases
 
 A few alternate spellings are also reserved because the compiler recognizes them as aliases for canonical keywords. This table lists every alias the lexer folds onto a canonical keyword; a keyword with only one spelling is not repeated here (it is reserved too, but it is not an *alias* of anything):
@@ -5118,7 +5175,6 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `args` | `arguments` |
 | `parameters` | `arguments` |
 | `params` | `arguments` |
-| `automatic` | `auto` |
 | `bool` | `boolean` |
 | `named` | `called` |
 | `closed` | `close` |
@@ -5128,8 +5184,6 @@ A few alternate spellings are also reserved because the compiler recognizes them
 | `days` | `day` |
 | `remove` | `delete` |
 | `fd` | `descriptor` |
-| `disabled` | `disable` |
-| `enabled` | `enable` |
 | `env` | `environment` |
 | `equal` | `equals` |
 | `exist` | `exists` |
@@ -5198,6 +5252,40 @@ A few alternate spellings are also reserved because the compiler recognizes them
 These cannot be used as variable names. The diagnostic names the spelling you wrote and notes which canonical keyword it aliases, so `a number called ms is ...` reports `'ms'` as an alternate spelling of `'milliseconds'`, not the internal canonical name. `say` and `output` are *not* in this table: the lexer never folds them, so they are ordinary variable names (BUGS_FOUND #106) - only `show`, `display`, and `prints` are alternate spellings of `print`.
 
 Every keyword listed in the tables above is likewise reserved as a variable name. Two that are easy to hit by accident are worth calling out: the flag-schema keyword **`flag`** (`a flag called ...`) and the property keyword **`empty`** (`x's empty`). Writing `a number called flag is 1.` or `a number called empty is 1.` is rejected with the same "reserved keyword" diagnostic. (As with any reserved word, you can still quote the name (`'flag'`, `'empty'`) if you genuinely need it.)
+
+### Reserved Nouns and Properties
+
+Words reserved as the head of a built-in noun phrase, rather than as a
+statement starter, operator, type name, or connector:
+
+| Keyword | Purpose |
+|---------|---------|
+| `arguments` | Command-line arguments, accessed via `'s` (`arguments's count`, `arguments's first`, ...) — see [Command-Line Arguments](#command-line-arguments) |
+| `argument` | Indexed argument access (`the argument at <i>`) and the `the argument count` phrase — see [Dynamic Index Access](#dynamic-index-access) |
+| `environment` | Environment variables, accessed via `'s` (`environment's "HOME"`, `environment's count`, ...) — see [Environment Variables](#environment-variables) |
+| `variable` | Optional noun in `the environment variable "<NAME>"` / `the environment variable count` |
+| `input`, `standard` | `standard input` - the process's stdin (`Read from standard input into <buffer>.`) |
+| `byte` | Single-byte access by position (`byte <n> of <buffer>`, `Set byte <n> of <buffer> to <value>.`) — see [Buffer Byte Access](#buffer-byte-access) |
+| `elapsed` | A running timer's elapsed duration (`the '<timer>''s elapsed in seconds`) — see [Timer Properties](#timer-properties) |
+| `error` | The `On error <action>.` handler that runs after a failed operation — see [Error Handling](#error-handling) |
+| `exists` | Predicate on a named environment variable (`the environment variable "<NAME>" exists`) — see [Checking if Variable Exists](#checking-if-variable-exists) |
+
+### File, Buffer, List, and Time Properties
+
+Property words claimed by the `'s` syntax, or by their own access phrase,
+across buffers, files, lists, maps, numbers, and time values:
+
+| Keyword | Purpose |
+|---------|---------|
+| `descriptor`, `modified`, `accessed`, `permissions`, `readable`, `writable`, `full` | File properties, accessed via `'s` (`<file>'s descriptor`, `<file>'s modified`, ...) — see [File Properties](#file-properties) |
+| `reading`, `writing`, `appending` | File-open modes (`open a file for reading/writing/appending ...`) — see [Opening Files](#opening-files) |
+| `keys`, `values` | Map properties, each yielding a fresh list (`<map>'s keys`, `<map>'s values`) — see [Maps](#maps) |
+| `absolute`, `sign` | Number properties (`<n>'s absolute`, `<n>'s sign`) — see [Number Properties](#number-properties) |
+| `element` | List element access by position (`element <n> of <list>`) — see [List Element Access](#list-element-access-object-properties) |
+| `bytes` | Buffer size unit (`<n> bytes in size`) and seek target (`Seek <file> to bytes <n>.`) — see [Buffers](#buffers) / [Seeking](#seeking) |
+| `current`, `hour`, `minute`, `day`, `month`, `year`, `unix` | Current time and its properties (`current time`, `<time>'s hour`, ...) — see [Time and Timers](#time-and-timers) |
+| `duration`, `running` | Timer properties (`<timer>'s duration`, `<timer>'s running`) — see [Timer Properties](#timer-properties) |
+| `millisecond`, `milliseconds`, `seconds` | Duration units (`Wait <n> seconds.`, `Sleep for <n> milliseconds.`) — see [Time and Timers](#time-and-timers) |
 
 ### Two classes of special word
 

@@ -11856,6 +11856,27 @@ keyword. All fixed alongside `print`'s:
   word); `equals`/`equal` were claimed as `is` aliases but the lexer folds
   them to their own `Equals` keyword.
 
+**Second half (v0.4.15):** GitHub #239's other half - fourteen reserved
+words absent from every table in the Keywords chapter (vox-fuzz
+`docs/ledger/keywords.md`, Discrepancy 4) - is closed too. The five
+statement-starter gaps (`read`, `write`, `open`, `close`, `wait`) are now
+rows in the Statement Starters table; the remaining nine (`input`,
+`standard`, `byte`, `each`, `without`, `elapsed`, `error`, `arguments`,
+`environment`) went into Connectors and a new Reserved Nouns and
+Properties table. Auditing the *whole* lexer against the chapter's tables,
+rather than trusting the ledger's list of fourteen, turned up 87 more
+reserved words with no table entry anywhere in the chapter - every type
+name, every arithmetic/comparison/bitwise operator, and most of the File
+I/O, Time and Timers, and Object Properties nouns. Three more tables
+(`### Types`, `### Operators`, `### File, Buffer, List, and Time
+Properties`) were added to cover them, each pointing its rows at the
+chapter that already defines the word rather than re-deriving its
+grammar. A new `cargo test`,
+`codegen::tests::every_reserved_word_appears_in_a_keywords_chapter_table`,
+parses every `| Keyword |`/`| Alias |` table in the chapter and fails the
+build if a reserved spelling from `RESERVED_ALIASES` is ever missing from
+all of them again.
+
 ---
 
 ### 107. A buffer, list, or format-string text declared inside a function or loop body is allocated on every entry and released only at program exit

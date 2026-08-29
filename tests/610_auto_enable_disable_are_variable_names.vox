@@ -1,0 +1,17 @@
+(Owner ruling Q11, 2026-08-29: `auto`/`automatic`, `enable`/`enabled`,
+ `disable`/`disabled` are no longer reserved - the parser's "auto error
+ catching" stubs were removed, so all six spellings are ordinary
+ variable names.)
+
+a number called auto is 1.
+a number called automatic is 2.
+a number called enable is 3.
+a number called enabled is 4.
+a number called disable is 5.
+a number called disabled is 6.
+Print auto.
+Print automatic.
+Print enable.
+Print enabled.
+Print disable.
+Print disabled.

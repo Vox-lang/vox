@@ -10,6 +10,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `each <name> from <buffer>` walks a buffer's bytes as numbers, `byte`
   allowed as the loop variable (closes the open half of #104).
 
+### Changed
+- auto/enable/disable (and their -matic/-d spellings) are no longer
+  reserved words — the unimplemented auto-error-catching paths are
+  removed (owner ruling).
+
 ### Fixed
 - **A single-quoted one-word name now resolves inside a `{...}` format-string
   slot, exactly as it already did everywhere else.** `Print "{'tally'}"` used
@@ -49,6 +54,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   end exactly as the manual already promised for every other type: a
   real empty `[]`/`{}`/buffer that still takes `append`/a key set, the
   zero time, or the thing's all-defaults instance (#112).
+- Keywords chapter lists every reserved word, checked by a new
+  drift-guard test (#106 second half, GitHub #239).
 
 ## [0.4.14] - 2026-08-28
 

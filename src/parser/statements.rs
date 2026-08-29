@@ -198,9 +198,6 @@ impl Parser {
             }
             Token::Seek => self.parse_file_seek(),
             Token::On => self.parse_on_error(),
-            Token::Auto => self.parse_auto_error(),
-            Token::Enable => self.parse_enable(),
-            Token::Disable => self.parse_disable(),
             Token::Resize => self.parse_resize(),
             Token::Append => self.parse_append(),
             Token::Copy => self.parse_copy(),

@@ -1689,6 +1689,107 @@ To run.\n  Print double of 21.\n";
     }
 
     #[test]
+    fn every_reserved_word_appears_in_a_keywords_chapter_table() {
+        // BUGS_FOUND #106, second half (GitHub #239): the Keywords chapter
+        // says its tables are where a programmer looks up what they may
+        // not name a variable, so a reserved spelling that appears in none
+        // of them is a trap. This scans every `| Keyword | ... |` /
+        // `| Alias | ... |` table between the `## Keywords` heading and the
+        // next `## ` heading, collects every backtick-quoted word in each
+        // table's first column, and asserts that set covers every spelling
+        // RESERVED_ALIASES reserves (which is everything `string_is_keyword`
+        // answers for - both a canonical keyword's own row and every alias
+        // row).
+        //
+        // Contextual words (`start`/`begin`/`stop`/`finish`, `send`,
+        // `capacity`, `waiting`, `available`, `name`, `count`, `raw`,
+        // `all`, `first`, `last`, `second`, `size`/`length`, `version`, and
+        // the Things words `thing`/`has`/`do`) are deliberately absent from
+        // RESERVED_ALIASES (see the comment on that const) because
+        // `scan.rs` never reserves them - they are ordinary identifiers
+        // outside their one fixed grammatical position. They therefore
+        // never appear in the set this test checks, and need no exclusion
+        // here even though they are documented only in their own sections
+        // (Contextual Keywords (Things), Timers, etc.) rather than in a
+        // `| Keyword |` table.
+        use crate::lexer::RESERVED_ALIASES;
+        use std::collections::BTreeSet;
+
+        let language_md = include_str!("../../LANGUAGE.md");
+        let chapter_start = language_md
+            .find("## Keywords")
+            .expect("LANGUAGE.md must have a ## Keywords chapter");
+        let after_heading = chapter_start + "## Keywords".len();
+        let chapter_end = language_md[after_heading..]
+            .find("\n## ")
+            .map(|i| after_heading + i)
+            .unwrap_or(language_md.len());
+        let chapter = &language_md[chapter_start..chapter_end];
+
+        let mut documented: BTreeSet<String> = BTreeSet::new();
+        let lines: Vec<&str> = chapter.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let header = lines[i].trim();
+            if header.starts_with('|') {
+                let header_cells: Vec<&str> = header
+                    .trim_matches('|')
+                    .split('|')
+                    .map(|c| c.trim())
+                    .collect();
+                let is_separator_next = lines
+                    .get(i + 1)
+                    .map(|l| {
+                        let l = l.trim();
+                        l.starts_with('|') && l.trim_matches(|c| c == '|' || c == '-' || c == ' ').is_empty()
+                    })
+                    .unwrap_or(false);
+                if is_separator_next
+                    && matches!(header_cells.first(), Some(&"Keyword") | Some(&"Alias"))
+                {
+                    let mut j = i + 2;
+                    while j < lines.len() && lines[j].trim().starts_with('|') {
+                        let row = lines[j].trim();
+                        let first_cell = row.trim_matches('|').split('|').next().unwrap_or("");
+                        let mut in_backtick = false;
+                        let mut span = String::new();
+                        for ch in first_cell.chars() {
+                            if ch == '`' {
+                                if in_backtick {
+                                    for word in span.to_lowercase().split_whitespace() {
+                                        documented.insert(word.to_string());
+                                    }
+                                    span.clear();
+                                }
+                                in_backtick = !in_backtick;
+                            } else if in_backtick {
+                                span.push(ch);
+                            }
+                        }
+                        j += 1;
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+
+        let reserved: BTreeSet<&str> = RESERVED_ALIASES.iter().map(|(spelling, _)| *spelling).collect();
+        let missing: Vec<&&str> = reserved
+            .iter()
+            .filter(|spelling| !documented.contains(**spelling))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "these reserved words appear in no `| Keyword |` / `| Alias |` \
+             table in LANGUAGE.md's Keywords chapter: {:?}",
+            missing
+        );
+    }
+
+    #[test]
     fn nothing_keyword_reserved() {
         // The three null spellings lex to Token::Nothing and reserve via
         // as_keyword / string_is_keyword; `empty` stays its own keyword
