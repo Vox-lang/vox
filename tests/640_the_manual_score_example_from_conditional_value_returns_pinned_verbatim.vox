@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #112 / LANGUAGE.md 2811-2820, "Conditional `value`
+ returns work" - the exact example the manual gives, pinned verbatim.
+ Every branch fires here (v is a number in one call, not in the other),
+ so this does not itself exercise the fall-off path - #634 covers that -
+ but it is the manual's own worked example for this whole paragraph and
+ belongs pinned alongside the fall-off cases it introduces.)
+
+To score with a value called v.
+  If v is a number, return a value, v.
+  Otherwise, return a value, 99.
+
+print score of 7.
+print score of "hello".

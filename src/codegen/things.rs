@@ -131,6 +131,32 @@ impl CodeGenerator {
         }
     }
 
+    /// `docs/BUGS_FOUND.md #112`: a thing-returning function that falls off
+    /// its end already hands the caller back its OWN destination address
+    /// (the fix above this call site, plan 310 §5) rather than a stray
+    /// register value, but that storage is the caller's freshly carved
+    /// stack slot - never written, never zeroed (`FUNC_PROLOGUE` only moves
+    /// `rsp`). Reading it as a point returns whatever bytes were already at
+    /// that address, not the all-defaults instance every other route to an
+    /// unwritten thing (`generate_thing_decl` above, a `.bss` global) gives.
+    /// Write those same defaults slot by slot through the pointer, which
+    /// this call expects already sitting in `r10`, and leave that pointer in
+    /// `rax` for the caller exactly as the un-defaulted version did.
+    pub(crate) fn emit_thing_defaults_through_r10(&mut self, thing: &str) {
+        for (offset, field) in scalar_slots(&self.things, thing) {
+            let (bits, rendered) = default_bits(&field);
+            self.emit_indent(&format!("mov rax, {}", bits));
+            self.emit_indent(&format!(
+                "mov qword [r10+{}], rax  ; fell off the end: {}'s default is {}",
+                offset, field.name, rendered
+            ));
+            if matches!(field.field_type, Type::Float) {
+                self.uses_floats = true;
+            }
+        }
+        self.emit_indent("mov rax, r10  ; the caller's destination, now defaulted");
+    }
+
     /// `moved is origin.` - copy a whole thing into a thing variable's own
     /// storage (plan 310 §5).
     pub(crate) fn generate_thing_assignment(&mut self, name: &str, thing: &str, source: &Expr) {

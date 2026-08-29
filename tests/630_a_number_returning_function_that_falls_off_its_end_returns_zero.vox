@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #112 — LANGUAGE.md's "The same is true of a conditional
+ return of any declared type" paragraph: no branch fires, the function
+ falls off its end, and it hands back its declared type's empty value.
+ For `number` this was already correct before #112 (bug #43's fix); pinned
+ here alongside every other type so the whole family is proven together.)
+
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a number, 7.
+
+a number called r is 'maybe' of false.
+print r.

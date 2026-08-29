@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #112 — before the fix, falling off the end of a
+ map-returning function left the caller reading a bogus map header off
+ whatever rax last held, which walked as an unbounded (or garbage-sized)
+ map and hung on `'s length`. The fixed epilogue allocates a real, fresh
+ empty map, exactly as `{}` does, so it reports its length and still
+ takes a key set.)
+
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a map, {"k": 1}.
+
+a map called r is 'maybe' of false.
+print r's length.
+Set r's "z" to 9.
+print r's length.
+print r.

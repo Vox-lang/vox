@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #112. Already correct before this fix (bug #43);
+ pinned alongside the rest of the type family.)
+
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a boolean, true.
+
+a boolean called r is 'maybe' of false.
+print r.

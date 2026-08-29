@@ -36,6 +36,19 @@ adheres to [Semantic Versioning](https://semver.org/).
   back the SAME pointer, so mutating one side reached the other, and
   freeing the outer one could dangle a separately-named variable. Every
   one of those sites now copies (GitHub #34, Option 1) (#111).
+- **A typed function that falls off its end now hands back a real, usable
+  empty value for every declared type, not just four of them.** A
+  conditional `Return` nested in a branch that never fires used to leave
+  the implicit epilogue holding whatever the last computation left in
+  `rax` — safe only for `number`/`float`/`boolean`/`text`/`value`. A
+  `list` or `buffer` return dereferenced that stray value and segfaulted;
+  a `map` return walked it as a bogus header and hung; a `thing` return
+  handed back real, valid storage that was never actually written, so it
+  read the caller's leftover stack instead of the type's declared
+  defaults. `list`, `map`, `buffer`, `time`, and `thing` now fall off the
+  end exactly as the manual already promised for every other type: a
+  real empty `[]`/`{}`/buffer that still takes `append`/a key set, the
+  zero time, or the thing's all-defaults instance (#112).
 
 ## [0.4.14] - 2026-08-28
 

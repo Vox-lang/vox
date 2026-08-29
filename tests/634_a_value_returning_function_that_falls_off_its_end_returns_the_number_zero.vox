@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #112. Already correct before this fix (bug #43);
+ pinned alongside the rest of the type family. LANGUAGE.md 2828-2830: "a
+ `value` tagged as the number `0`" - so it must both print as 0 and
+ report its type as a number, not fall through to whatever tag r11 last
+ held.)
+
+To 'maybe' with a boolean called 'the choice'.
+    If 'the choice' then,
+        Return a value, "something".
+
+a value called r is 'maybe' of false.
+print r.
+print r's type.
