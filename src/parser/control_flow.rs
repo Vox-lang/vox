@@ -1196,30 +1196,6 @@ impl Parser {
         Ok(Statement::OnError { actions })
     }
 
-    pub(crate) fn parse_auto_error(&mut self) -> Result<Statement, Box<CompileError>> {
-        // Feature deferred - auto error catching not yet implemented
-        Err(self.err(
-            "'auto error catching' is not yet implemented.\n  \
-             Use 'on error <action>.' for manual error handling instead."
-        ))
-    }
-
-    pub(crate) fn parse_enable(&mut self) -> Result<Statement, Box<CompileError>> {
-        // Feature deferred - enable error catching not yet implemented
-        Err(self.err(
-            "'enable error catching' is not yet implemented.\n  \
-             Use 'on error <action>.' for manual error handling instead."
-        ))
-    }
-
-    pub(crate) fn parse_disable(&mut self) -> Result<Statement, Box<CompileError>> {
-        // Feature deferred - disable error catching not yet implemented
-        Err(self.err(
-            "'disable error catching' is not yet implemented.\n  \
-             Use 'on error <action>.' for manual error handling instead."
-        ))
-    }
-
     /// Parse the body of an `If`/`otherwise if` branch.
     ///
     /// A branch body is a comma-separated sequence of statements. Each statement

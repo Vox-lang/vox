@@ -41,7 +41,7 @@ pub enum Token {
     Readable, Writable, Full, Keys, Values, Absolute, Sign,
     
     // Error Handling
-    Error, Auto, Enable, Disable,
+    Error,
     
     // Library System
     See, Library, Version,
@@ -214,9 +214,6 @@ pub const RESERVED_ALIASES: &[(&str, &str)] = &[
     ("without", "without"),
     // Error handling
     ("error", "error"),
-    ("auto", "auto"), ("automatic", "auto"),
-    ("enable", "enable"), ("enabled", "enable"),
-    ("disable", "disable"), ("disabled", "disable"),
     // Library
     ("see", "see"), ("import", "see"), ("include", "see"), ("require", "see"),
     ("library", "library"), ("lib", "library"),
@@ -396,9 +393,6 @@ impl Token {
             Token::Sign => Some("sign"),
             // Error Handling
             Token::Error => Some("error"),
-            Token::Auto => Some("auto"),
-            Token::Enable => Some("enable"),
-            Token::Disable => Some("disable"),
             // Library System
             Token::See => Some("see"),
             Token::Library => Some("library"),
