@@ -50,3 +50,4 @@ release.sh
 # Local Claude Code session state (permissions, scheduler locks) - not project
 # files, and specific to whichever machine/session generated them.
 .claude/
+REPORT-*.md
