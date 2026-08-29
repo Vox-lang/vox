@@ -1,9 +1,9 @@
 (BUGS_FOUND #104: `each ... from` over a non-list used to anchor its
  caret at the collection's declaration - the textually first mention of
- its name - rather than at the loop that actually misuses it. `data` is
+ its name - rather than at the loop that actually misuses it. `count` is
  declared on line 1 and written on line 2 so the offending `each ... from`
  sits well past both; the caret must land on line 3, not line 1.)
 
-Create a buffer called data.
-set byte 1 of data to 'A'.
-Print each octet from data.
+Create a number called count.
+Set count to 5.
+Print each octet from count.

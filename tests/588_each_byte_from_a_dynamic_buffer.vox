@@ -1,0 +1,7 @@
+(BUGS_FOUND #104: the byte-iteration sentence over a dynamic (growable)
+ buffer - the same walk as a fixed buffer, just no size cap.)
+
+Create a buffer called data.
+append "AB" to data.
+append "C" to data.
+print each byte from data.

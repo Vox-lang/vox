@@ -1,0 +1,3 @@
+Loop collection must be a list: count
+275_foreach_over_number_anchors_at_use_site.vox:9:23
+count is a number - `each ... from` walks a list, a range, a buffer's bytes, or `arguments's all`

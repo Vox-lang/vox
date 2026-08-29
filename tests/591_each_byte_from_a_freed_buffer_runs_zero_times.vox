@@ -1,0 +1,9 @@
+(BUGS_FOUND #104: a buffer released with `Free` reads as empty - its
+ shared header reports size 0 - so the byte walk runs zero times, never
+ a fault.)
+
+Create a buffer called data.
+append "AB" to data.
+Free data.
+print each byte from data.
+Print "after".

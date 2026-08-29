@@ -1,0 +1,12 @@
+(BUGS_FOUND #49/#104: `append each part from sink to out.` used to be
+ refused - a buffer walked as a list misread its own header as a list's
+ (bug #49), so the walk was rejected outright (formerly pinned by
+ compile_fail/097). The byte-iteration sentence (#104) gives the walk a
+ real meaning instead: `append each ... from <buffer> to <list>` reads
+ each byte's value, so `out` ends up holding the byte values, not the
+ old silently-misread header.)
+
+a buffer called sink is "abc".
+a list called out is [].
+append each part from sink to out.
+print out.

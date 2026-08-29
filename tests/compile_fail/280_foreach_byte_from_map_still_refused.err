@@ -1,0 +1,3 @@
+Loop collection must be a list: scores
+280_foreach_byte_from_map_still_refused.vox:8:22
+scores is a map - iterate `scores's keys` or `scores's values`

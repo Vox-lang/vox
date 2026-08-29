@@ -1,0 +1,8 @@
+(BUGS_FOUND #104: `byte` is claimed as the `each ... from` loop variable
+ by lexeme, not by widening what collections are legal - `each byte
+ from <map>` must still be refused exactly like `each octet from <map>`
+ (test 276), the same message and hint, just with `byte` as the loop
+ variable this time.)
+
+a map called scores is {"a": 1, "b": 2}.
+print each byte from scores.

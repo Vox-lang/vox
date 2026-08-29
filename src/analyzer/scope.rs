@@ -686,20 +686,23 @@ impl Analyzer {
     }
 
     /// The English name of a `for each` collection's kind when the analyzer
-    /// can PROVE that kind cannot be walked as a list, `None` otherwise.
+    /// can PROVE that kind cannot be walked as a list, a range, or a
+    /// buffer's bytes; `None` otherwise.
     ///
-    /// A loop expansion lowers to a list-header read - codegen takes the
-    /// collection's value as a pointer and loads `[ptr + 8]` as the element
-    /// count. Hand it a number and the number itself is dereferenced
-    /// (segfault); hand it a map or a buffer and that object's own header is
+    /// A loop expansion over anything but a buffer lowers to a list-header
+    /// read - codegen takes the collection's value as a pointer and loads
+    /// `[ptr + 8]` as the element count. Hand it a number and the number
+    /// itself is dereferenced (segfault); hand it a map and its header is
     /// misread as a list's, so the loop runs a garbage number of iterations
-    /// over garbage elements, silently (bug #49).
+    /// over garbage elements, silently (bug #49). A buffer is walked through
+    /// its own byte-read path instead (docs/BUGS_FOUND.md #104), so it is no
+    /// longer one of the kinds this rejects.
     ///
     /// This is deliberately a known-scalar rejection and NOT a
     /// list-whitelist: Vox is dynamically typed and this pass cannot see the
     /// shape of an untyped parameter, a `value`, a function result or a
     /// property read, all of which iterate correctly today. Only a name this
-    /// pass has positively categorised as a scalar/map/buffer - or a literal
+    /// pass has positively categorised as a scalar/map - or a literal
     /// scalar written straight into the clause - is refused.
     pub(crate) fn non_collection_kind(&self, collection: &Expr) -> Option<&'static str> {
         match collection {
@@ -721,8 +724,11 @@ impl Analyzer {
                 if !self.is_variable_available(name) {
                     return None;
                 }
+                // A buffer is walked byte-by-byte (docs/BUGS_FOUND.md
+                // #104), the same standing a list or a range has here -
+                // so it is never one of the refused kinds.
                 if self.is_buffer_variable(name) {
-                    return Some("buffer");
+                    return None;
                 }
                 if self.is_map_variable(name) {
                     return Some("map");
@@ -775,12 +781,12 @@ impl Analyzer {
             ),
             ("map", None) => "a map is iterated through its `'s keys` or `'s values`".to_string(),
             (_, Some(_)) => format!(
-                "{} is {} - `each ... from` walks a list, a range, or `arguments's all`",
+                "{} is {} - `each ... from` walks a list, a range, a buffer's bytes, or `arguments's all`",
                 subject, phrase
             ),
             // The message already named the literal's kind; repeating it
             // here would say the same thing twice.
-            (_, None) => "`each ... from` walks a list, a range, or `arguments's all`".to_string(),
+            (_, None) => "`each ... from` walks a list, a range, a buffer's bytes, or `arguments's all`".to_string(),
         };
         // Anchor at the loop clause's own use of the collection, not the
         // collection's declaration: `push_error_with_hint`'s bare symbol

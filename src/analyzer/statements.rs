@@ -1054,6 +1054,28 @@ impl Analyzer {
                 // list - must not linger and falsely reject arithmetic on the
                 // loop variable inside the body.
                 self.scalar_types.remove(variable);
+
+                // A buffer walk (docs/BUGS_FOUND.md #104) binds the loop
+                // variable to one byte's value every iteration - the same
+                // type `byte N of <buffer>` yields (Type::Integer) - never a
+                // list element, so it skips the mixed/element-type
+                // machinery below entirely.
+                let collection_is_buffer = match collection {
+                    Expr::Identifier(n) => self.is_buffer_variable(n),
+                    _ => false,
+                };
+                if collection_is_buffer {
+                    self.value_typed_names.remove(variable.as_str());
+                    self.scalar_types.insert(variable.clone(), Type::Integer);
+                    self.analyze_expr(collection);
+                    self.loop_depth += 1;
+                    for s in body {
+                        self.analyze_statement(s);
+                    }
+                    self.loop_depth -= 1;
+                    return;
+                }
+
                 // Plan 294 finding 18: over a list PROVEN heterogeneous (see
                 // `list_mixed`/`list_literal_is_mixed`), the loop variable
                 // genuinely holds a different type each iteration - no

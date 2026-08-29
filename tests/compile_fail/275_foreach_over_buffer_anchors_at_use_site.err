@@ -1,3 +1,0 @@
-Loop collection must be a list: data
-275_foreach_over_buffer_anchors_at_use_site.vox:9:23
-data is a buffer - `each ... from` walks a list, a range, or `arguments's all`

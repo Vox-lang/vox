@@ -1,0 +1,6 @@
+(BUGS_FOUND #104: an empty buffer runs the loop body zero times, no
+ error, and the statement after the loop still runs.)
+
+Create a buffer called data.
+print each byte from data.
+Print "after".
