@@ -1,0 +1,19 @@
+(docs/BUGS_FOUND.md #109. On 0.4.14, `Free` on a function-local list emitted
+ `HEAP_FREE rdi` and left the slot pointing at the now-unmapped block, so
+ the next length/print/append segfaulted (rc 139) - master-reproduced with
+ `local_list_free.vox`. Fixed: the slot now points at the shared
+ `_released_list_header` after the free, exactly like a buffer.)
+
+To 'try it'.
+    a list called 'the local numbers' is [1, 2, 3].
+    Free 'the local numbers'.
+    print "freed".
+    print 'the local numbers''s length.
+    print 'the local numbers''s empty.
+    print 'the local numbers'.
+    append 9 to 'the local numbers'.
+    On error print "append refused".
+    print 'the local numbers'.
+
+'try it'.
+print "back at top".

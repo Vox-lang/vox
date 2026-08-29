@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #109. Mirrors buffer test 581: `Free`, `Release` and
+ `Deallocate` are the same statement (the lexer folds the spelling before
+ the parser ever sees it), so this exercises the list contract through the
+ other two spellings.)
+
+a list called first is [1, 2].
+a list called second is [3, 4].
+Release first.
+Deallocate second.
+print first's length.
+print second's length.
+print first.
+print second.

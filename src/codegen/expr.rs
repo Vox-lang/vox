@@ -1044,9 +1044,26 @@ impl CodeGenerator {
                     self.emit_indent("pop rbx  ; get list pointer");
                     self.emit_indent("push rbx ; save it back");
                     self.generate_expr(elem);
+                    // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
+                    // collection placed inside a list literal is copied in,
+                    // not shared. `tag` is computed once here and reused for
+                    // the LIST_SET_TAG write below, so this costs nothing
+                    // extra for the static case beyond the check already
+                    // needed for the tag itself.
+                    let tag = self.emit_time_expr_tag(elem);
+                    match tag {
+                        Some(TAG_LIST) | Some(TAG_MAP) => {
+                            self.emit_copy_if_collection_static(tag.unwrap());
+                        }
+                        _ => {
+                            if let Some(loc) = self.mixed_element_tag_slot(elem) {
+                                self.emit_copy_if_collection_mem(&loc.operand());
+                            }
+                        }
+                    }
                     self.emit_indent("pop rbx  ; get list pointer");
                     self.emit_indent(&format!("LIST_SET_ELEM [rbx + {}], rax", header_size + i * 8));
-                    match self.emit_time_expr_tag(elem) {
+                    match tag {
                         Some(tag) => {
                             if tag != TAG_INTEGER {
                                 self.emit_indent(&format!(
@@ -1106,9 +1123,24 @@ impl CodeGenerator {
                     self.emit_indent("push rax  ; save key pointer");
                     // value -> rdx
                     self.generate_expr(value);
+                    // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
+                    // collection stored as a map-literal value is copied
+                    // in, not shared - mirrors MapSet's own copy-in.
+                    let maplit_value_tag = self.emit_time_expr_tag(value);
+                    match maplit_value_tag {
+                        Some(TAG_LIST) | Some(TAG_MAP) => {
+                            self.emit_copy_if_collection_static(maplit_value_tag.unwrap());
+                        }
+                        None => {
+                            if let Some(loc) = self.mixed_element_tag_slot(value) {
+                                self.emit_copy_if_collection_mem(&loc.operand());
+                            }
+                        }
+                        _ => {}
+                    }
                     self.emit_indent("mov rdx, rax  ; value");
                     // tag -> rcx (forward runtime tag for mixed sources)
-                    match self.emit_time_expr_tag(value) {
+                    match maplit_value_tag {
                         Some(tag) => {
                             self.emit_indent(&format!(
                                 "mov ecx, {}  ; value type tag",
@@ -1378,6 +1410,16 @@ impl CodeGenerator {
                                 "mov rax, [rax + {}]  ; first element (data at offset {})",
                                 LIST_DATA_OFFSET, LIST_DATA_OFFSET
                             ));
+                            // docs/BUGS_FOUND.md #111 (owner ruling, GitHub
+                            // #34): `L's first` reading out a nested
+                            // collection yields a copy.
+                            if is_mixed {
+                                self.emit_copy_if_collection_reg("r11d");
+                            } else if self.list_element_types.get(object) == Some(&VarType::List) {
+                                self.emit_copy_if_collection_static(TAG_LIST);
+                            } else if self.list_element_types.get(object) == Some(&VarType::Map) {
+                                self.emit_copy_if_collection_static(TAG_MAP);
+                            }
                             self.emit(&format!("{}:", done_label));
                         }
                         ObjectProperty::Last => {
@@ -1416,6 +1458,16 @@ impl CodeGenerator {
                             self.emit_indent(&format!("add rbx, {}         ; + header offset", LIST_DATA_OFFSET));
                             self.emit_indent("add rax, rbx        ; offset to last");
                             self.emit_indent("mov rax, [rax]      ; last element");
+                            // docs/BUGS_FOUND.md #111 (owner ruling, GitHub
+                            // #34): `L's last` reading out a nested
+                            // collection yields a copy.
+                            if is_mixed {
+                                self.emit_copy_if_collection_reg("r11d");
+                            } else if self.list_element_types.get(object) == Some(&VarType::List) {
+                                self.emit_copy_if_collection_static(TAG_LIST);
+                            } else if self.list_element_types.get(object) == Some(&VarType::Map) {
+                                self.emit_copy_if_collection_static(TAG_MAP);
+                            }
                             self.emit(&format!("{}:", done_label));
                         }
 
@@ -2388,7 +2440,22 @@ impl CodeGenerator {
                 ));
                 self.emit_indent("add rax, rbx");
                 self.emit_indent("mov rax, [rax]  ; get element");
-                
+                // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34):
+                // reading a nested collection OUT of a list yields a copy,
+                // not the list's own block. On the mixed path r11 already
+                // carries the just-read element's runtime tag; on the
+                // static path a proven list-of-lists/list-of-maps element
+                // type means every read here is unconditionally one.
+                if is_mixed {
+                    self.emit_copy_if_collection_reg("r11d");
+                } else if let Some(elem_ty) = self.static_list_element_type(list) {
+                    match elem_ty {
+                        VarType::List => self.emit_copy_if_collection_static(TAG_LIST),
+                        VarType::Map => self.emit_copy_if_collection_static(TAG_MAP),
+                        _ => {}
+                    }
+                }
+
                 self.emit(&format!("{}:", done_label));
             }
 
@@ -2409,6 +2476,12 @@ impl CodeGenerator {
                 self.emit_indent("call _map_lookup");
                 // rax = value, r11 = tag (set by _map_lookup); on miss
                 // _map_lookup sets _last_error=1, rax=0, r11=0.
+                // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34):
+                // reading a map value OUT yields a copy when it is a
+                // collection. Safe on a miss too - r11=0 is TAG_INTEGER,
+                // matching neither branch, so rax=0 is never handed to
+                // `_copy_list`/`_copy_map`.
+                self.emit_copy_if_collection_reg("r11d");
             }
 
             // Format string in expression context (e.g. a text initializer

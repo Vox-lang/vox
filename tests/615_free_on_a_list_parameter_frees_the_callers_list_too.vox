@@ -1,0 +1,19 @@
+(docs/BUGS_FOUND.md #109 rule 4. A `list` parameter travels as the address
+ of the caller's own storage (docs/BUGS_FOUND.md #75,
+ `emit_collection_argument_address`/`collection_backing_slots`), and
+ `emit_free_list` writes its result back through `emit_store_back_after_
+ realloc` exactly like a realloc does - so this is the SAME mechanism #75
+ already proved for growth, not a new one, and Free through a list
+ parameter must not leave the caller dangling (LANGUAGE.md 838: "A `list`
+ or `map` parameter names the caller's collection, not a copy of it").)
+
+To 'free it' with a list called items.
+    Free items.
+
+a list called xs is [1, 2, 3].
+'free it' of xs.
+print xs's length.
+print xs's empty.
+append 9 to xs.
+On error print "append to freed list via param refused".
+print xs.

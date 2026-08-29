@@ -12052,6 +12052,273 @@ unit tests pin this shape specifically.
 
 ---
 
+### 109. `Free` on a list was a silent no-op for a global and a dangling-pointer segfault for a function-local — the buffer half of the released-buffer contract never reached lists
+
+**Status:** Fixed in v0.4.15 — a list now gets the same released-buffer
+contract a buffer already has (LANGUAGE.md, Releasing a Buffer), plus,
+by owner ruling, a deep free that recursively releases every nested
+list/map the list holds. Registered 2026-08-29 (verified by the master,
+confirmed by the owner 2026-08-29). Severity: **memory safety** (dangling
+pointer after `Free` on a function-local list) + silent no-op on a global
+list.
+
+```vox
+(D4.vox - global, no-op)
+a list called nums is [1, 2, 3].
+Free nums.
+print nums's length.
+print nums's empty.
+print nums.
+append 9 to nums.
+On error print "append to freed list refused".
+print nums's length.
+print nums.
+```
+
+→ on 0.4.14: `3` / `0` / `[1, 2, 3]` / (no "refused" line - the append
+went through) / `4` / `[1, 2, 3, 9]`. `Free` compiled and ran but had no
+observable effect at all.
+
+```vox
+(local_list_free.vox - function-local, segfault)
+To 'try it'.
+    a list called 'the local numbers' is [1, 2, 3].
+    Free 'the local numbers'.
+    print "freed".
+    print 'the local numbers''s length.
+    append 9 to 'the local numbers'.
+    On error print "append refused".
+    print 'the local numbers'.
+
+'try it'.
+print "back at top".
+```
+
+→ on 0.4.14: `freed`, then **segfault (rc 139)** at the very next read.
+
+**Root cause.** `Statement::Free` (`src/codegen/statements.rs`, was
+~1171–1185) handled a `list` no differently from an `Allocate`d raw block:
+`else if let Some(offset) = self.get_var(name) { HEAP_FREE rdi }`.
+`get_var` only looks in the current function frame's stack-slot table, so
+a global - which lives in a `gvar_N` BSS mirror - matched neither this
+arm nor the buffer arm above it and fell through with nothing emitted:
+a silent no-op, unlike `Increment`/`Decrement` on the same statement,
+which already fall back to `global_var_label`. For a function-local list,
+`get_var` DID find the slot, so `HEAP_FREE` genuinely ran and released the
+block - but nothing then repointed the slot, so it was left holding the
+address of memory the kernel had already unmapped; the next `length`,
+`print`, or `append` dereferenced it and segfaulted.
+
+**Fix - mirrors the buffer contract (LANGUAGE.md, Releasing a Buffer;
+`src/codegen/buffers.rs`'s `emit_free_buffer`) exactly.**
+
+1. A shared static `_released_list_header: dq 0, 0, 8` in `list.asm`'s
+   `.data` (capacity 0, length 0, element size 8), matching
+   `_released_buffer_header`. Every list read on it is naturally empty:
+   `LIST_GET_SAFE` and every property reader key off `length`
+   (offset 8), which is 0, so `length` reads 0, `empty` reads true,
+   `_list_print` takes its `length == 0` branch and prints `[]`, and an
+   element read is refused by the SAME bounds check a real empty list
+   already gets (LANGUAGE.md's Bounds Checking) - no new behaviour
+   invented for reads.
+2. **Refused by identity, not by shape.** `_list_append` - the only
+   runtime growth path codegen ever calls (`LIST_APPEND`, the macro named
+   in the original brief, is defined in `list.asm` but never invoked by
+   codegen anywhere; left untouched, noted here rather than silently
+   ignored) - now opens with an identity check: `cmp rdi, [rel
+   _released_list_header address]`, and refuses with `SET_LAST_ERROR 1`
+   before touching anything if it matches. This has to be identity, not
+   shape: the released header's capacity 0/length 0 is exactly what a
+   REAL list looks like the instant `_list_append` decides it needs to
+   grow (`length == capacity`), so a shape check would have silently
+   resurrected a freed list into a brand-new block instead of refusing
+   it. Test 614 pins that a real list crossing that exact boundary still
+   grows. `Set element N of L to value` (`Statement::ElementSet`,
+   `src/codegen/statements.rs`) needed no change: contrary to the
+   original brief's `LIST_SET_ELEM` guess, that statement was never
+   generated through the `LIST_SET_ELEM` macro (only list-literal/argv
+   fill loops use it) - it has always been an inline, LENGTH-bounded
+   write (`index <= length` or refuse), and a released list's length is
+   always 0, so every write to it was already refused before this fix,
+   by the ordinary bounds check. No identity check was added there
+   because none was needed; see "Where the brief was wrong" below.
+3. `_free_list` (new, `list.asm`) replaces the generic `HEAP_FREE` for a
+   list. It computes the block's total size from the list's OWN header
+   (capacity, element size, +1 tag byte per slot) and unconditionally
+   munmaps, rather than looking the pointer up in `heap.asm`'s
+   `alloc_table` - that table only ever learns about a list's FIRST
+   block (from the `HEAP_ALLOC` the literal/default codegen emits);
+   every block a growth reallocated into came from a raw, untracked
+   `mmap` in `_list_append`'s `.need_realloc` path, so `HEAP_FREE` would
+   silently free nothing for any list that had ever grown - the exact
+   leak class `_free_buffer` was already fixed to not have (#108's
+   neighbour, bug #108 note above; the actual precedent is `_free_buffer`
+   always munmapping "whether or not the buffer is currently in
+   buf_table"). `_free_list` also carries its own identity check
+   (refuses a second `Free`, `SET_LAST_ERROR 1`, unmaps nothing) and
+   `CLEAR_LAST_ERROR` on every success path of both itself and
+   `_list_append` - list.asm had never touched `_last_error` before this
+   fix.
+4. **Codegen.** `Statement::Free` gained a `VarType::List` arm
+   (`emit_free_list`, `src/codegen/collections.rs`) parallel to the
+   existing `VarType::Buffer` arm, resolving the name through
+   `emit_load_named_var_addr` (local frame, THEN global mirror - the
+   missing branch) and writing the result back through
+   `emit_store_back_after_realloc`. The `Allocate`d-raw-block arm is
+   unchanged (an `Allocate`d block never carries `VarType::List`, so it
+   still falls through to the old, untouched `HEAP_FREE` path) and the
+   buffer arm is untouched.
+5. **List parameters (brief rule 4) - already had the mechanism, no
+   compile error needed.** The brief flagged this as possibly requiring
+   a compile-error fallback ("if lists have the same write-back cell
+   mechanism ... follow the buffer precedent [...] if they do not, make
+   `Free` on a list parameter a compile error"). Investigated first:
+   #75 already gave `list`/`map` parameters an address-of-caller's-slot
+   argument word (`collection_backing_slots`, a `{name}_backptr` shadow
+   slot - the same shape a buffer parameter's `{name}_cell` has for
+   #90) and `emit_store_back_after_realloc` ALREADY writes through both
+   `buffer_param_cells` and `collection_backing_slots` unconditionally,
+   in the one shared function. `emit_free_list` calling that function is
+   the entire mechanism - zero new code was needed for the parameter
+   case beyond what rules 1-4 already required. Test 615 proves the
+   caller's own variable is empty and refuses after a callee frees its
+   list parameter.
+
+**Where the brief was wrong (as invited: "the spec/this brief may be
+wrong ... say so").** Two things, both above: `LIST_SET_ELEM` is not
+`Set element N of L to ...`'s path (nothing needed changing there), and
+list parameters do NOT need the compile-error fallback (they already had
+an equivalent write-back mechanism, just under a different name).
+
+---
+
+**Scope addition, owner ruling 2026-08-29 09:18: "Freeing a list should
+free every item within the list as well — agreed."**
+
+**Nested collections: copy-in or pointer-in?** Established first, as
+asked, before building anything on it. Probed on this branch (0.4.14):
+
+```vox
+a list called inner is [1, 2].
+a list called outer is [inner, 3].
+Set element 1 of inner to 777.
+print outer.
+print inner.
+```
+→ `[[777, 2], 3]` / `[777, 2]` - mutating `inner` through its own name is
+visible through `outer`. The emitted assembly confirms it directly: the
+list-literal fill for `outer` does `mov rax, [rel gvar_0]` (loads
+`inner`'s own pointer) then `LIST_SET_ELEM [rbx+24], rax` - `outer`'s
+slot stores `inner`'s POINTER, tagged `LIST_TAG_LIST`, not a copy.
+**(b) pointer-in.** Deep free was built anyway, per the ruling above -
+this is the "build it anyway" branch the brief's own template
+anticipated for this answer.
+
+**What deep free does.** `_free_list` walks its own slots by their
+per-element type tag before releasing itself: a `LIST_TAG_LIST` (4) or
+`LIST_TAG_MAP` (5) slot is freed recursively (`_free_list`/the new
+`_free_map`, `coreasm/x86_64/map.asm`), because both are unconditionally
+heap blocks - nothing else ever allocates that shape, so no identity or
+shape check is needed to know it is safe to recurse into one. A
+`LIST_TAG_STRING` (1) slot is deliberately left alone and NOT freed - see
+"Left out, on purpose: string/buffer elements" below. `_free_map` mirrors
+`_free_list`: same recursion into LIST/MAP-tagged VALUES, same
+size-from-header unconditional munmap, but carries none of `_free_list`'s
+user-facing contract (no released header, no identity check for a
+second `Free` of ITS OWN pointer) - a bare `Free <map>` statement is not
+and remains not a supported language surface; `_free_map` is reachable
+only from inside `_free_list`'s walk. Map KEYS are never freed at any
+depth: `map.asm`'s own header comment states a key is always "a stable
+C-string pointer (a string literal in .rodata) ... no strdup" - never
+heap-owned, by this stage's own design, so there is nothing to free.
+
+**Dedup, within one `Free` call tree.** Pointer-in aliasing means the
+SAME nested block can be reachable through more than one slot inside one
+`Free` - the same nested list appearing twice in one list's own literal,
+or two different parents sharing one child. Freeing it twice in that one
+walk would be a read of already-unmapped memory. `_free_visit_or_skip`
+(`list.asm`) records every pointer a `Free` call tree has started
+freeing in a 4096-entry table (`_free_visited`/`_free_visited_count`,
+`.bss`); codegen (`emit_free_list`) zeroes the count immediately before
+each TOP-LEVEL `Free`, so the table starts clean per statement and stays
+populated across every recursive call that ONE statement's walk makes.
+Past 4096 distinct collections touched by one `Free`, a new pointer is
+conservatively treated as "already visited" (skipped, leaked) rather than
+freed - the same leak-over-crash trade `_list_append`'s own
+never-reclaimed grown-out blocks already make. Test 596 proves a list
+holding the same nested list through two of its own slots does not
+crash.
+
+**Left out, on purpose: string/buffer elements — a real, load-bearing
+limitation, not an oversight.** The scope addition named "buffers" and
+"heap-allocated texts" as things deep free should reach. Investigated:
+there is no `TAG_BUFFER` anywhere in the tag scheme (0=integer, 1=string,
+2=float, 3=boolean, 4=list, 5=map, 6=nothing) - a `buffer` VALUE cannot be
+stored as a list/map element at all; the only way "buffer" content ever
+enters a list is `append <buffer> to <list>`, which duplicates the
+buffer's bytes onto the heap via `_strdup_bounded`
+(`src/codegen/statements.rs`, the `is_buffer_value` arm) and tags the
+result `TAG_STRING` - indistinguishable, at the tag level, from a plain
+string LITERAL element, which is a pointer into `.rodata` and must never
+be freed. Nothing recorded per-slot (or per-map-entry) marks which is
+which. Freeing a `.rodata` pointer risks unmapping part of the program's
+own data segment (mmap/munmap both operate in whole pages, and `.rodata`
+pages are real mappings); leaving a `_strdup`'d string unfreed is a leak.
+The leak is the strictly safer of the two wrong answers, so `_free_list`/
+`_free_map` stop at LIST/MAP and never touch a STRING-tagged slot. This
+is a genuine, currently-unfixed leak for any list/map holding text or
+buffer-derived string elements when it is `Free`d - distinguishing the
+two would need a new per-slot ownership bit (the same shape #108's fix
+added for top-level text globals) threaded through every place a string
+element gets written, which is out of this brief's scope (lists only).
+
+**A new, confirmed hazard: freeing a nested collection leaves ANY other
+variable that still names it dangling.** Because nesting is pointer-in,
+a variable that separately names the same block a deep free just
+released is left holding a dead pointer - reading it segfaults exactly
+like the original #109 defect did, just reached a new way:
+
+```vox
+a list called inner is [1, 2, 3].
+a list called outer is [inner, "x"].
+Free outer.
+print inner's length.   (segfault, rc 139 - reproduced on this branch)
+```
+
+**Closed by #111, same day.** Carried to "Questions for the master" in
+REPORT-109.md as the #34 ruling question; the owner ruled (A) copy-by-
+default the same day (GitHub #34, Option 1) and #111 (this branch,
+Round 2) implements it: a collection placed inside another collection is
+now a copy, so `outer` above never held `inner`'s own block in the first
+place - `Free outer.` deep-frees `outer`'s independent copy, and `inner`
+stays fully valid. The repro above is kept as the historical record of
+why the ruling was needed, not as current behaviour - see #111 below.
+
+**Tests.** 584, 596, 611–619 (`tests/`; 587–595 collided with #104's
+byte-iteration tests staked out the same day and were renumbered —
+611–619 below): global list Free contract (611, mirrors
+D4), function-local Free no longer segfaults (612, mirrors
+local_list_free), a second Free flags (613), a real list still grows past
+its literal capacity - identity not shape (614), Free through a list
+parameter frees the caller (615), `Release`/`Deallocate` are the same
+statement for a list (616), Free reaches a global from inside a function
+(617), deep free reaches a nested list AND a nested map in one outer
+Free (618), a second Free after a deep free flags and does not
+double-unmap (619), deep free dedups a list holding the same nested list
+twice (596). Test 584 (previously "free on a list is unchanged and pins
+its after-state", written for #107/buffer-Free's original, list-untouched
+scope) is rewritten in place to pin the NEW, fixed after-state instead of
+the old undefined-read one it used to document.
+
+**Not attempted.** A list-of-things: LANGUAGE.md 1891/2668 already state
+"a `list` or `map` of user things ... is deferred" in 0.4.14, so this
+shape does not exist yet and has no test. Reference-counting or a visited
+set spanning SEPARATE `Free` statements (only the alias-dangling hazard
+above, not the same-tree dedup, which IS handled): out of scope, and
+likely the shape of the #34 ruling itself.
+
+---
+
 ### 110. A single-quoted ONE-WORD name never resolved inside a `{...}` format-string slot — every type, quotes and all read back as the "variable"
 
 **Status:** Fixed in v0.4.15 — `try_parse_expression`
@@ -12148,3 +12415,220 @@ code to handle the one-word shape too — the lexer's existing
 `is_char_literal`/`is_single_quoted_identifier` split is the single source
 of truth for the name-vs-character-literal question, in a slot exactly as
 in statement position.
+
+---
+
+### 111. Nested collections were shared by pointer, not copied — a list or map placed inside another one aliased the SAME block, so mutating either side reached the other, and freeing the outer one dangled the original name
+
+**Status:** Fixed in v0.4.15. Registered 2026-08-29, owner ruling
+GitHub #34, Option 1 ("A" - copy by default), same day as #109. Severity:
+**memory safety** (the #109 report's own "new, confirmed hazard": freeing
+an outer collection deep-freed a nested block a separately-named variable
+still pointed at, segfaulting on the next read) plus a silent
+correctness surprise (mutating an extracted child, or the source of a
+literal/append, reached back into the other side).
+
+```vox
+a list called inner is [1, 2].
+a list called outer is [inner, 3].
+Set element 1 of inner to 777.
+print outer.
+print inner.
+```
+→ on 0.4.14 (before this fix): `[[777, 2], 3]` then `[777, 2]` -
+mutating `inner` through its own name changed `outer` too. Master-probed
+directly on this branch before building anything: the emitted assembly
+for `outer`'s literal fill loads `inner`'s own pointer (`mov rax, [rel
+gvar_0]`) and stores THAT into `outer`'s slot (`LIST_SET_ELEM [rbx+24],
+rax`), tagged `LIST_TAG_LIST` - not a copy.
+
+```vox
+a list called inner is [1, 2, 3].
+a list called outer is [inner, "x"].
+Free outer.
+print inner's length.
+```
+→ on 0.4.14: **segfault (rc 139)** - #109's deep free (`Free` now
+recursively releases every collection a list holds) released `inner`'s
+own block, since `outer`'s slot held `inner`'s own pointer, not a copy.
+
+**Root cause.** Every write site that places a collection VALUE into a
+list slot or a map value stored the pointer the source expression
+evaluated to, unchanged: the list-literal fill loop (`src/codegen/
+expr.rs`, `Expr::ListLit`), the map-literal fill loop (`Expr::MapLit`),
+`append <collection> to <list>` (`Statement::Append`, `src/codegen/
+statements.rs`) via `_list_append`, and `Set <map>'s "key" to <collection>`
+(`Statement::MapSet`) via `_map_insert` all forwarded the source's raw
+pointer. Every read-out site did the same in reverse: `element N of L`
+(`Expr::ElementAccess`), `L's first`/`last` (`ObjectProperty::First`/
+`Last`), a map value read (`Expr::MapAccess`), and a `For each` loop
+variable bound to a nested collection (`Statement::ForEach`) all handed
+back the SAME pointer the parent's slot held. A collection is nothing but
+a heap pointer (LANGUAGE.md: "a collection is nothing but one" - the same
+sentence that makes a `list`/`map` parameter "the caller's collection"),
+so every one of these sites was, correctly for the shape asked of it
+before this ruling, sharing that one reference.
+
+**Fix - "a collection placed inside another collection is a copy, not a
+shared reference" (owner ruling, GitHub #34, Option 1), everywhere a
+collection can be placed or read out.**
+
+1. **Runtime.** `_copy_list` (new, `coreasm/x86_64/list.asm`) and
+   `_copy_map` (new, `coreasm/x86_64/map.asm`): each allocates a fresh
+   block of the source's own capacity/element_size (or hash_capacity/
+   element_size for a map) via a raw `mmap` - the same allocation shape
+   `_list_append`'s growth path already uses, so `_free_list`/`_free_map`
+   (#109) can free the copy like any other block - bulk-copies the data/
+   tag (or hash-table/entries) region verbatim, then walks the live slots
+   and replaces any LIST- or MAP-tagged one with a RECURSIVE copy of its
+   own block. Both are unconditionally heap blocks, so no identity/shape
+   check is needed to know it is safe to recurse (mirrors #109's own
+   deep-free walk). A STRING-tagged slot is left as a reference, matching
+   #109's own decision not to own string/buffer-derived elements (no
+   marker distinguishes a `.rodata` literal from a heap-owned string); a
+   map KEY is never copied - `map.asm`'s own header comment already
+   states a key is always a stable `.rodata` pointer, never heap-owned.
+2. **Codegen write sites.** `emit_copy_if_collection_static`/
+   `emit_copy_if_collection_reg`/`emit_copy_if_collection_mem`
+   (`src/codegen/collections.rs`) copy the value already in `rax` when
+   its tag - known at compile time (`emit_time_expr_tag`, the STATIC
+   case) or only at runtime (a mixed source's shadow-slot/`r11` tag) -
+   says LIST or MAP; every other tag passes through untouched, so a
+   scalar/string/nothing element costs nothing extra. Wired into the
+   list-literal fill, the map-literal fill, `Statement::Append`,
+   `Statement::MapSet`, and `Statement::ElementSet` (`Set element N of L
+   to <collection>` - not individually named by the ruling's own
+   enumeration, extended for the same principle: any write INTO an
+   existing slot, not only construction/append/map-insert).
+3. **Codegen read-out sites.** `Expr::ElementAccess`, `ObjectProperty::
+   First`/`Last`, `Expr::MapAccess`, and the `For each` loop-variable
+   binding all copy the value on their success path before handing it
+   to the caller, using the same static-tag-or-runtime-tag dispatch. A
+   fallible read's MISS value (0, never a real pointer) is never handed
+   to the copy: a miss's tag is TAG_INTEGER, which the runtime check
+   never matches, and a proven-scalar static type never reaches the
+   check at all.
+4. **A real bug found and fixed mid-implementation: `r11` did not survive
+   the copy call.** The x86-64 `syscall` instruction architecturally
+   clobbers `rcx`/`r11` to hold the return RIP/RFLAGS - `_copy_list`/
+   `_copy_map`'s own `mmap` therefore destroys `r11` regardless of
+   anything codegen does, and `r11` is exactly where a read site's
+   runtime tag lives for the NEXT consumer (a format-hole/print
+   dispatcher, a declaration's own shadow-tag write) to read. The first
+   pass broke eight otherwise-unrelated existing tests (mixed-value
+   rendering, a buffer-and-map-through-a-parameter test, a for-each type-
+   tag test) by silently misdispatching a copied list/map as a raw
+   address once `r11` came back holding syscall debris instead of the
+   tag. Fix: `emit_copy_if_collection_reg` restores the register it was
+   given (TAG_LIST/TAG_MAP, whichever branch ran) immediately after the
+   copy call returns, before any other code can observe the clobbered
+   value. Caught by the regression suite, not by design - recorded here
+   as the one place this brief shipped a real defect internally before
+   the gate caught it.
+5. **`uses_maps` set defensively inside the copy-in helpers themselves,**
+   not just at the analyzer's own detection sites: codegen is single-pass
+   (statements are walked once, in source order, and the prologue's
+   `%include map.asm` decision reads `self.uses_maps`'s FINAL value only
+   after every statement has been generated), but a MIXED source's
+   runtime tag could turn out to be TAG_MAP even in a program where
+   nothing generated so far has proven a map exists. The first pass hit
+   this directly: a purely list-only program with a mixed nested-list
+   read emitted a `call _copy_map` with `map.asm` never included -
+   `symbol '_copy_map' not defined`. Both `emit_copy_if_collection_
+   static`'s map branch and `emit_copy_if_collection_reg` now set
+   `self.uses_maps = true` unconditionally before emitting anything, so
+   the flag's FINAL value (read once, at prologue time) is always
+   correct regardless of where in program order the branch fired.
+
+**Nested collections: copy-in or pointer-in? - answered, then acted on.**
+Established as instructed, before building anything: probed directly
+(the `outer`/`inner` repro above) and confirmed from the emitted assembly
+that 0.4.14 was pointer-in. Per the ruling, the answer is now copy-in,
+unconditionally, everywhere a collection value can be placed into or read
+out of a list/map slot.
+
+**The dedup table (#109) - kept, now belt-and-braces, not load-bearing.**
+#109's `_free_visit_or_skip` dedup table existed because pointer-in
+nesting let the SAME block be reachable through two slots in one `Free`
+call tree. Under copy-in, every "placed inside" event mints a fresh
+block, so `[inner, inner]` (test 607) now produces TWO independent
+copies, not one pointer twice - the table's original trigger no longer
+occurs on the ordinary construction paths. It is kept anyway: it is
+cheap (a linear scan of a `.bss` table, already implemented), and it
+remains a genuine backstop against any future write site that reintroduces
+sharing (a bug in a NEW copy-in call site, a future feature that shares
+deliberately) turning into a crash instead of a caught duplicate. Removing
+it would save nothing observable and would remove a safety net for free;
+recommend keeping it.
+
+**Performance.** A 1,000-element list of 1,000 single-element lists,
+wrapped one level (`a list called outer is [big].`, forcing 1,000
+recursive per-element copies) plus one read-out copy, completed in
+`time`-measured 30 ms wall clock (`user 0.010s`, `sys 0.020s`) - one
+allocation and a `rep movsb` per level, no observable cost at this scale.
+1,000 iterations of re-wrapping a flat 1,000-integer list (1,000,000
+total scalar element-copies, no recursion needed per element) completed
+in 28 ms. Neither measurement suggests copy-in's extra allocation is a
+practical concern at the sizes the fuzzer/test suite exercise; a
+pathologically deep or wide structure would cost proportionally more
+(one `mmap` per nested collection touched), which is the expected,
+documented trade of copy semantics over reference semantics.
+
+**Tests.** 597–609 (`tests/`): a list literal's nested-list element
+copies in (597, the headline repro), append copies a nested list in
+(598), `element N of` reads out a copy (599), `'s first`/`'s last` read
+out copies (600), a map literal's value copies a nested list in (601),
+`Set <map>'s "key" to <list>` copies in (602), a map value read-out
+copies (603), `Set element N of L to <list>` copies in (604, the
+consistency extension beyond the ruling's own named enumeration), three-
+level nesting stays independent at every level (605), freeing the outer
+list after copy-in leaves the ORIGINAL nested variable fully readable -
+closing the #109 hazard directly (606), a list holding the same nested
+list through two slots gets two independent copies, not one pointer
+twice (607), a comprehensive deep-free-after-copy-in scenario with every
+original name (list and map) still readable and writable afterward
+(608), a `For each` loop variable bound to a nested list is independently
+copied - isolated via a plain-assignment alias, since the analyzer does
+not (independent of this brief) accept a loop variable as a direct
+`Set element N of`/`append ... to` target (609).
+
+Four PRE-EXISTING tests were rewritten in place, at the same numbers,
+because their entire premise - that a list or map could be made to
+contain itself - is no longer true: **171** (`append x to x` was a
+literal self-cycle, truncated by `_list_print`'s depth guard; now `x`
+becomes `[[]]`, a copy of its own prior empty state, no truncation, no
+error), **186** (`set m's "self" to m.` was a self-cycle; now `m` gains a
+"self" key holding a copy of its prior state, one level deep), **204**
+(a mutual two-list cycle via `append aa to bb` then `append bb to aa`;
+now `aa` ends up three levels deep - a copy of `bb`, holding a copy of
+`aa`'s original empty state - not infinite), and **205** (a mixed map/
+list mutual reference; `c1`'s "to_list" copies `c2`'s state at the moment
+of the `set`, so the LATER `append c1 to c2` only changes `c2` and `c1`
+stays a plain `{"to_list": []}`). All four's outputs were verified by
+running the actual program before the `.expected` files were rewritten,
+not derived by inspection.
+
+**A pre-existing, unrelated bug found while writing the performance
+test, NOT fixed here.** `print element N of L's length.` - the property
+access chained directly onto an inline `element N of` expression,
+without an intermediate variable - segfaults on 0.4.14 REGARDLESS of
+this brief: reproduced with a plain list of strings, no nesting, no
+copy-in involved at all (`a list called names is ["hi", "there",
+"world"]. print element 1 of names's length.` → segfault, rc 139). The
+emitted assembly shows the statement compiled as a bare `element 1 of
+names` followed immediately by `PRINT_INT` - the `'s length` half is
+lost somewhere in parsing, and the raw list pointer is read as though it
+were the integer to print. Assigning to a variable first (`a list called
+g is element 1 of names. print g's length.`) works correctly and was
+used throughout this report's own tests instead. Narrow (#109/#111 are
+lists-only and copy-in-only respectively): flagged here for the master
+to verify and register separately, not registered or fixed on this
+branch.
+
+**Not attempted.** Reference-counting or any other sharing model:
+Option 1 (copy by default) was the ruling; this entry implements it, not
+an alternative. Making list/map fields legal inside a `thing`: still
+deferred per LANGUAGE.md 1891/2668, unrelated to this ruling landing -
+the Things chapter gained only the one clarifying sentence the brief
+asked for, since a thing cannot hold a collection field to demonstrate
+the point on yet.

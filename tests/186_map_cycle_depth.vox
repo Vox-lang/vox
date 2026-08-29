@@ -1,8 +1,10 @@
-(Stage 1e2 - cycle/depth safety. Inserting a map into itself makes a
- cycle; printing it recurses to the shared 64-deep _print_depth budget,
- prints a "..." truncation marker, sets the error flag, and unwinds
- safely (no stack overflow). The `on error` handler observes the flag.
- Acceptance: 64 nested levels, then ..., then truncated.)
+(Was: stage 1e2 cycle/depth safety, pinning `set m's "self" to m` as a
+ genuine self-referential cycle truncated by the shared 64-deep
+ `_print_depth` budget. docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34,
+ Option 1): a collection placed inside another collection is now a COPY,
+ so this copies m's state at the moment of the `set` (here, `{"a": 1}`,
+ no "self" key yet) and stores that copy under "self" - it can no longer
+ construct a real cycle. `m` ends up one level deep, not infinite.)
 
 a map called m is {"a": 1}.
 set m's "self" to m.

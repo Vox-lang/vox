@@ -1,8 +1,11 @@
-(Cyclic list structure is depth-bounded, not stack-overflowing - plan
- 040 stage 1e1 acceptance 5. Self-append creates a cycle; printing it
- recurses to the depth limit (64), prints a "..." truncation marker,
- sets the error flag, and unwinds safely. The `on error` block observes
- the flag.)
+(Was: cyclic list structure is depth-bounded, not stack-overflowing - plan
+ 040 stage 1e1 acceptance 5, pinning `append x to x` as a genuine
+ self-referential cycle, truncated by `_list_print`'s 64-deep guard.
+ docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34, Option 1): a
+ collection placed inside another collection is now a COPY, so `append x
+ to x` copies x's state at the moment of the append (here, `[]`) and
+ appends that copy - it can no longer construct a real cycle. `x` ends up
+ holding one element, an empty list, not itself.)
 
 a list called x is [].
 append x to x.

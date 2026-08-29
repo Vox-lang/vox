@@ -1,0 +1,18 @@
+(docs/BUGS_FOUND.md #109. Nested collections are pointer-in (see
+ REPORT-109.md), so a list holding the SAME nested list through two slots
+ would have the walk try to free that nested block twice in one `Free` call
+ - the second attempt would be a read of already-unmapped memory. The
+ `_free_visit_or_skip` dedup table (list.asm), reset fresh by codegen
+ before each top-level `Free`, records a pointer the first time this call
+ tree frees it and skips it on any later slot that names the same pointer.
+ This test only proves the crash does not happen; it does not distinguish
+ that from the OTHER, deliberately out-of-scope aliasing hazard (a
+ separate named variable still pointing at a freed nested block) - see the
+ report.)
+
+a list called inner is [1, 2].
+a list called outer is [inner, inner, 99].
+print outer's length.
+Free outer.
+print "no crash".
+print outer's length.

@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #109. A second `Free` after a deep free must behave
+ exactly like a second `Free` on a plain list (test 613): the outer block
+ is already the shared `_released_list_header`, so the identity check
+ refuses it before touching anything - the nested list/map it used to hold
+ are not revisited or double-freed either, since the walk never runs a
+ second time on the released header (its own length is 0).)
+
+a list called inner is [1, 2, 3].
+a list called outer is [inner, "x"].
+Free outer.
+Free outer.
+On error print "already freed".
+print outer's length.
+print outer.

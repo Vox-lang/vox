@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #109. Mirrors buffer test 580: the already-freed check
+ lives in the runtime (`_free_list`'s identity check against
+ `_released_list_header`'s own address), not in codegen, so a second `Free`
+ sets the error flag and unmaps nothing rather than double-freeing.)
+
+a list called nums is [1, 2, 3].
+Free nums.
+Free nums.
+On error print "already freed".
+print nums's length.

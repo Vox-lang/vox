@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #111. Reading a map value OUT that happens to be a
+ collection - `m's "key"` - hands back a copy, mirroring an element read
+ from a list.)
+
+a list called inner is [1, 2].
+a map called m is {"a": inner}.
+a list called got is m's "a".
+Set element 1 of got to 555.
+print m.
+print got.

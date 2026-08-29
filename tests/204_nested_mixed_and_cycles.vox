@@ -1,8 +1,14 @@
-(Stage 1e1 review — nesting combined with the other tags, and a MUTUAL
- cycle rather than the self-cycle of test 171. A nested list holding a
- float exercises PRINT_FLOAT inside the recursive frame; a two-list cycle
- must hit the same depth bound and set the error flag; an empty child must
- render as [] rather than being skipped.)
+(Stage 1e1 review — nesting combined with the other tags. A nested list
+ holding a float exercises PRINT_FLOAT inside the recursive frame; an
+ empty child must render as [] rather than being skipped.
+ Was also a MUTUAL-cycle test (aa/bb appending each other, hitting the
+ depth bound and flagging an error). docs/BUGS_FOUND.md #111 (owner
+ ruling, GitHub #34, Option 1): a collection placed inside another
+ collection is now a COPY, so `append aa to bb` then `append bb to aa`
+ copies each list's state at the moment of ITS OWN append rather than
+ sharing a pointer - no cycle can form. `aa` ends up three levels deep
+ (a copy of bb, which holds a copy of aa's original empty state), not
+ infinite, and no error is set.)
 
 a list called inner is [1.5, "s", yes].
 a list called outer is [].

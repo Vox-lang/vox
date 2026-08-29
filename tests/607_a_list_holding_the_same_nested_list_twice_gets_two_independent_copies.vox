@@ -1,0 +1,13 @@
+(docs/BUGS_FOUND.md #111. Each element of a list literal is copied
+ independently, so `[inner, inner]` produces TWO separate copies, not one
+ shared pointer duplicated - reading each slot out and mutating one must
+ not affect the other or the original.)
+
+a list called inner is [1, 2].
+a list called outer is [inner, inner].
+a list called first_elem is element 1 of outer.
+a list called second_elem is element 2 of outer.
+Set element 1 of first_elem to 999.
+print first_elem.
+print second_elem.
+print inner.

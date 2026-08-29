@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #111, owner ruling 2026-08-29, GitHub #34, Option 1:
+ a collection placed inside another collection is a copy, not a shared
+ reference. `outer`'s literal slot copies `inner`'s block at construction
+ time, so mutating `inner` afterward never reaches `outer`. Master-probed
+ on 0.4.14 before this fix: `outer` showed `[[777, 2], 3]` - the
+ pointer-in behaviour this closes.)
+
+a list called inner is [1, 2].
+a list called outer is [inner, 3].
+Set element 1 of inner to 777.
+print outer.
+print inner.

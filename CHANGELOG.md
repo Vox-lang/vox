@@ -20,6 +20,22 @@ adheres to [Semantic Versioning](https://semver.org/).
   name (`{'the toolbox'}`) already worked, since both contain a space and
   were already routed through the real lexer; the fix routes the one-word
   case through the same lexer instead of special-casing it (#110).
+- **`Free` on a list now actually releases it, everywhere.** A global list
+  was a silent no-op (the codegen branch only looked in the local stack
+  frame, never the global mirror); a function-local list's block was
+  genuinely released but the variable was left pointing at it, so the
+  next read segfaulted. A list now gets the same released-buffer contract
+  a buffer already has — empty, every write refused with the error flag,
+  a second `Free` a no-op that flags — and, freeing a list also
+  recursively frees every nested list or map it holds (#109).
+- **A list or map placed inside another list or map is now copied, not
+  shared.** A nested collection previously aliased the same block: a
+  list-literal element, an `append`ed collection, a map value, and every
+  way of reading a nested collection back out (`element N of`, `'s
+  first`/`last`, a map value, a `For each` loop variable) all handed
+  back the SAME pointer, so mutating one side reached the other, and
+  freeing the outer one could dangle a separately-named variable. Every
+  one of those sites now copies (GitHub #34, Option 1) (#111).
 
 ## [0.4.14] - 2026-08-28
 

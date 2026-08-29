@@ -522,6 +522,205 @@ _map_lookup:
     ret
 
 ; ============================================================================
+; _free_map - release a map's memory, recursively, as part of a list's deep
+; `Free` (docs/BUGS_FOUND.md #109: "Free releases the list and every
+; collection it holds"). Reachable only from `_free_list`'s walk (list.asm) -
+; a bare `Free <map>` statement is not a supported language surface and this
+; carries none of `_free_list`'s user-facing contract (no shared released
+; header, no identity check for a double free of ITS OWN pointer): the only
+; double-free this guards against is the same nested map being reachable
+; through two slots in one `Free` call tree, via the shared
+; `_free_visit_or_skip` dedup table list.asm owns and codegen resets per
+; top-level `Free` statement.
+; Args: rdi = map pointer
+;
+; Recurses into a LIST- or MAP-tagged VALUE (tags 4/5) the same way
+; `_free_list` does, for the same reason: both are unconditionally heap
+; blocks. A STRING-tagged VALUE is left alone for `_free_list`'s reason
+; (indistinguishable from a `.rodata` literal). Keys are NEVER freed: this
+; file's own header comment states keys are always "a stable C-string
+; pointer (a string literal in .rodata)... no strdup" - never heap-owned.
+_free_map:
+    call _free_visit_or_skip
+    jnc .free_map_new_visit
+    ret                                         ; already freed earlier in this tree - leave it
+.free_map_new_visit:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                               ; r12 = this map (survives recursive calls)
+    mov r13, [r12 + MAP_LENGTH_OFFSET]         ; r13 = length
+    test r13, r13
+    jz .free_map_walk_done
+    MAP_ENTRIES_BASE r12, r14                  ; r14 = entries base
+    xor rbx, rbx                               ; rbx = 0-based index
+
+.free_map_walk:
+    cmp rbx, r13
+    jge .free_map_walk_done
+    mov rax, rbx
+    imul rax, MAP_ENTRY_SIZE
+    lea rax, [r14 + rax]                       ; rax = &entry
+    movzx r15d, byte [rax + MAP_ENTRY_TAG]
+    cmp r15b, MAP_TAG_LIST
+    je .free_map_nested_list
+    cmp r15b, MAP_TAG_MAP
+    je .free_map_nested_map
+    jmp .free_map_walk_next
+
+.free_map_nested_list:
+    mov rdi, [rax + MAP_ENTRY_VALUE]           ; rdi = nested list pointer
+    call _free_list
+    jmp .free_map_walk_next
+
+.free_map_nested_map:
+    mov rdi, [rax + MAP_ENTRY_VALUE]           ; rdi = nested map pointer
+    call _free_map
+
+.free_map_walk_next:
+    inc rbx
+    jmp .free_map_walk
+
+.free_map_walk_done:
+    mov rdx, [r12 + MAP_HASHCAP_OFFSET]
+    shl rdx, 3                                 ; hash table bytes
+    add rdx, MAP_HEADER_SIZE
+    mov rax, [r12 + MAP_CAPACITY_OFFSET]
+    imul rax, MAP_ENTRY_SIZE
+    add rdx, rax                               ; + entries array bytes
+    mov rsi, rdx                               ; length for munmap
+    mov rdi, r12                               ; addr = this map's own block
+    mov rax, 11                                ; sys_munmap
+    syscall
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+; ============================================================================
+; _copy_map - deep-copy a map (docs/BUGS_FOUND.md #111, owner ruling
+; 2026-08-29, GitHub #34, Option 1). Allocates a fresh block of the same
+; capacity/hash_capacity/length, bulk-copies the hash table (bucket
+; contents are entry INDICES, position-independent - correct verbatim) and
+; the entries array (key_ptr/value/tag triples) verbatim, then walks the
+; LENGTH live entries and replaces any LIST- or MAP-tagged VALUE with a
+; recursive copy. A key is never copied - map.asm's own header comment
+; states a key is always a stable `.rodata` literal pointer, never
+; heap-owned, so copying the pointer verbatim (which the bulk copy already
+; does) is correct as-is.
+; Args: rdi = source map pointer
+; Returns: rax = the new, independent map pointer
+_copy_map:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    push rbp
+
+    mov rbx, rdi                               ; rbx = source map ptr
+    mov r12, [rbx + MAP_CAPACITY_OFFSET]       ; r12 = capacity
+    mov r13, [rbx + MAP_HASHCAP_OFFSET]        ; r13 = hash capacity
+    mov r14, [rbx + MAP_LENGTH_OFFSET]         ; r14 = length
+
+    ; total size = header + hash_capacity*8 + capacity*MAP_ENTRY_SIZE
+    mov rax, r13
+    shl rax, 3
+    add rax, MAP_HEADER_SIZE
+    mov rdx, r12
+    imul rdx, MAP_ENTRY_SIZE
+    add rax, rdx
+    mov rsi, rax                                ; size for mmap
+
+    mov rdi, 0
+    mov rdx, 3
+    mov r10, 0x22
+    mov r8, -1
+    mov r9, 0
+    mov rax, 9                                  ; sys_mmap
+    syscall
+    cmp rax, -4096
+    jbe .copy_map_mmap_ok
+    mov rdi, 1
+    mov rax, 60                                 ; sys_exit
+    syscall
+.copy_map_mmap_ok:
+    mov r15, rax                                ; r15 = new map ptr
+
+    mov [r15 + MAP_CAPACITY_OFFSET], r12
+    mov [r15 + MAP_LENGTH_OFFSET], r14
+    mov [r15 + MAP_HASHCAP_OFFSET], r13
+
+    ; bulk-copy the hash table verbatim (hash_capacity * 8 bytes) - entry
+    ; INDICES, unaffected by the block's own address.
+    lea rdi, [r15 + MAP_HEADER_SIZE]
+    lea rsi, [rbx + MAP_HEADER_SIZE]
+    mov rcx, r13
+    shl rcx, 3
+    rep movsb
+
+    ; bulk-copy the entries array verbatim (length * MAP_ENTRY_SIZE bytes) -
+    ; copies key pointers (always static - correct as-is) and values
+    ; (patched below for LIST/MAP-tagged ones) in one pass.
+    MAP_ENTRIES_BASE r15, rdi
+    MAP_ENTRIES_BASE rbx, rsi
+    mov rcx, r14
+    imul rcx, MAP_ENTRY_SIZE
+    rep movsb
+
+    ; entries base in the NEW block never changes (capacity/hash_capacity
+    ; are fixed), so r12 (no longer needed for size math) holds it for the
+    ; whole walk.
+    MAP_ENTRIES_BASE r15, r12
+
+    xor rbp, rbp                                ; 0-based entry index
+.copy_map_walk:
+    cmp rbp, r14
+    jge .copy_map_walk_done
+    mov rax, rbp
+    imul rax, MAP_ENTRY_SIZE
+    add rax, r12                                ; rax = &entry
+    movzx r9d, byte [rax + MAP_ENTRY_TAG]
+    cmp r9b, MAP_TAG_LIST
+    je .copy_map_nested_list
+    cmp r9b, MAP_TAG_MAP
+    je .copy_map_nested_map
+    jmp .copy_map_walk_next
+
+.copy_map_nested_list:
+    mov rbx, rax                                ; rbx = &entry (survives the call)
+    mov rdi, [rbx + MAP_ENTRY_VALUE]
+    call _copy_list
+    mov [rbx + MAP_ENTRY_VALUE], rax
+    jmp .copy_map_walk_next
+
+.copy_map_nested_map:
+    mov rbx, rax
+    mov rdi, [rbx + MAP_ENTRY_VALUE]
+    call _copy_map
+    mov [rbx + MAP_ENTRY_VALUE], rax
+
+.copy_map_walk_next:
+    inc rbp
+    jmp .copy_map_walk
+
+.copy_map_walk_done:
+    mov rax, r15                                ; return the new map pointer
+    pop rbp
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+; ============================================================================
 ; _map_keys - build a fresh list of the map's keys (insertion order).
 ; Args: rdi = map. Returns: rax = list of key string pointers (tag STRING).
 ; List layout matches list.asm. Forces uses_lists at the codegen call site.

@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #111. Combines #109's deep free with #111's copy-in:
+ `outer` holds independent copies of `inner_list` and `inner_map`, so
+ `Free outer.` (which deep-frees everything OUTER's own slots hold) never
+ touches the blocks `inner_list`/`inner_map` still name. Every original
+ name stays fully readable afterward - the scenario #109's report flagged
+ as an open hazard, now closed by construction rather than worked around.)
+
+a list called inner_list is [1, 2, 3].
+a map called inner_map is {"k": 9}.
+a list called outer is [inner_list, inner_map].
+Free outer.
+print outer's length.
+print inner_list.
+print inner_map.
+append 4 to inner_list.
+On error print "should not be refused: inner_list was never freed".
+print inner_list.

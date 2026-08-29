@@ -549,6 +549,154 @@ impl CodeGenerator {
         }
     }
 
+    /// `Free`/`Release`/`Deallocate` on a list-typed name: releases the
+    /// block now and points the variable's slot at the shared released
+    /// header `_released_list_header` (coreasm/x86_64/list.asm), so nothing
+    /// dangles and every later read sees an empty list while every write is
+    /// refused (docs/BUGS_FOUND.md #109) - the same contract `emit_free_buffer`
+    /// already gives a buffer. `_free_list` also frees, recursively, every
+    /// nested list/map the list holds (owner ruling 2026-08-29).
+    ///
+    /// The already-freed check lives in the runtime (`_free_list`'s own
+    /// identity check), not here, so this call is unconditional and correct
+    /// either way: a real free just released the old block, a refused
+    /// double free left the slot already pointing at the header.
+    ///
+    /// `_free_visited_count` resets to 0 first: it is `_free_list`'s dedup
+    /// table for ONE deep-free call tree (the same nested collection reached
+    /// through two slots must not be freed twice), shared across every
+    /// recursive call the walk makes, so it must start empty for THIS
+    /// statement rather than carry over blocks an earlier, unrelated `Free`
+    /// already recorded and released.
+    ///
+    /// Resolves `name` and writes the result back through
+    /// `emit_load_named_var_addr`/`emit_store_back_after_realloc`, which
+    /// already carries a `list`/`map` PARAMETER's new pointer out to the
+    /// caller's own backing slot (docs/BUGS_FOUND.md #75) - a list parameter
+    /// "is the caller's list" (LANGUAGE.md:838), so freeing through one
+    /// frees the same block the caller sees and empties the caller's
+    /// variable too, the same mechanism growth already rides.
+    pub(crate) fn emit_free_list(&mut self, name: &str) {
+        self.uses_lists = true;
+        if !self.emit_load_named_var_addr(name) {
+            return;
+        }
+        self.emit_indent("mov rdi, rax  ; list to free");
+        self.emit_indent(
+            "mov qword [rel _free_visited_count], 0  ; fresh dedup table for this Free",
+        );
+        self.emit_indent(
+            "call _free_list  ; refuses a double free itself (docs/BUGS_FOUND.md #109)",
+        );
+        self.emit_indent(
+            "lea rax, [rel _released_list_header]  ; the list is now this empty header",
+        );
+        self.emit_store_back_after_realloc(name, "rax");
+    }
+
+    /// Copy the value in `rax` if `tag` is TAG_LIST or TAG_MAP, in place
+    /// (`rax` in, `rax` out) - docs/BUGS_FOUND.md #111 (owner ruling
+    /// 2026-08-29, GitHub #34, Option 1): a collection placed inside
+    /// another collection is a copy, not a shared reference. `tag` known
+    /// at compile time (from `emit_time_expr_tag` or a statically-proven
+    /// list/map element type), so this never emits a branch for the
+    /// overwhelmingly common case - a scalar/string/nothing element costs
+    /// nothing.
+    pub(crate) fn emit_copy_if_collection_static(&mut self, tag: u8) {
+        if tag == TAG_LIST {
+            self.emit_indent("mov rdi, rax  ; copy-in (#111): value is a list");
+            self.emit_indent("call _copy_list");
+        } else if tag == TAG_MAP {
+            // A statically-proven TAG_MAP call site is only reachable once
+            // something upstream already proved a map exists, so
+            // `uses_maps` should already be true - set it again anyway,
+            // defensively, for the same reason the runtime path below must
+            // (map.asm, and `_copy_map` with it, is gated on this flag).
+            self.uses_maps = true;
+            self.emit_indent("mov rdi, rax  ; copy-in (#111): value is a map");
+            self.emit_indent("call _copy_map");
+        }
+    }
+
+    /// Copy the value in `rax` if the runtime tag already loaded into
+    /// `tag_reg` (a 32-bit register or operand, e.g. `"r11d"`) is TAG_LIST
+    /// or TAG_MAP; otherwise leave `rax` unchanged - docs/BUGS_FOUND.md
+    /// #111. For the mixed/unprovable case, where the tag is not known
+    /// until runtime (a heterogeneous list's per-slot tag, a map value's
+    /// tag from `_map_lookup`). Safe to call on a fallible read's MISS
+    /// value too: a miss's tag is TAG_INTEGER (0), which matches neither
+    /// branch, so `rax`'s miss value (0, never a real pointer) is never
+    /// passed to `_copy_list`/`_copy_map`.
+    ///
+    /// The map branch sets `self.uses_maps = true` unconditionally, before
+    /// emitting anything: a MIXED source's runtime tag could be TAG_MAP
+    /// even when nothing else in the statements generated SO FAR has
+    /// proven a map exists (codegen is single-pass, so `self.uses_maps`
+    /// might still read false here even though some later statement will
+    /// turn it true before the prologue's `%include map.asm` gate is
+    /// decided) - the map branch itself, once emitted, must not be able to
+    /// reference an undefined `_copy_map` in a program map.asm ends up
+    /// excluded from.
+    ///
+    /// Clobbers rdi and whatever `_copy_list`/`_copy_map` clobber
+    /// (rax/rcx/rdx/rsi/r8/r9/r10/r11 - the `syscall` their `mmap` makes is
+    /// itself the reason r11 is not just an implementation detail here:
+    /// the x86-64 `syscall` instruction architecturally clobbers rcx/r11 to
+    /// hold the return RIP/RFLAGS, so a copy call always destroys r11
+    /// regardless of anything this codegen does); preserves rbx/r12-r15/
+    /// rbp, so it is safe to call with a list/map pointer or a loop index
+    /// parked in any of those.
+    ///
+    /// `tag_reg` is restored to the tag it already held (TAG_LIST/TAG_MAP)
+    /// after a copy runs, when it names a register: every call site reads
+    /// this same tag again afterward - the format-hole/print dispatcher, a
+    /// declaration's shadow-tag write, another `emit_copy_if_collection_*`
+    /// call downstream - and `_copy_list`/`_copy_map`'s `syscall` would
+    /// otherwise have silently overwritten it with the return RIP's low
+    /// bits, misdispatching a list/map value as a raw address. Cheap
+    /// (`_copy_list`/`_copy_map` already know their own tag) and correct
+    /// whether the caller reads it again or not.
+    pub(crate) fn emit_copy_if_collection_reg(&mut self, tag_reg: &str) {
+        self.uses_maps = true;
+        let is_list = self.new_label("copyin_is_list");
+        let is_map = self.new_label("copyin_is_map");
+        let done = self.new_label("copyin_done");
+        self.emit_indent(&format!("cmp {}, {}  ; copy-in check (#111)", tag_reg, TAG_LIST));
+        self.emit_indent(&format!("je {}", is_list));
+        self.emit_indent(&format!("cmp {}, {}", tag_reg, TAG_MAP));
+        self.emit_indent(&format!("je {}", is_map));
+        self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", is_list));
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("call _copy_list");
+        self.emit_indent(&format!(
+            "mov {}, {}  ; restore the tag `_copy_list`'s syscall clobbered",
+            tag_reg, TAG_LIST
+        ));
+        self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", is_map));
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("call _copy_map");
+        self.emit_indent(&format!(
+            "mov {}, {}  ; restore the tag `_copy_map`'s syscall clobbered",
+            tag_reg, TAG_MAP
+        ));
+        self.emit(&format!("{}:", done));
+    }
+
+    /// `emit_copy_if_collection_reg`, reading the runtime tag out of a
+    /// `byte`-sized memory operand first (a mixed shadow-tag slot, e.g.
+    /// `"[rbp-24]"`) - docs/BUGS_FOUND.md #111. Uses r9d as the scratch
+    /// register for the loaded tag, which nothing at any of this brief's
+    /// call sites depends on afterward.
+    pub(crate) fn emit_copy_if_collection_mem(&mut self, tag_operand: &str) {
+        self.emit_indent(&format!(
+            "movzx r9d, byte {}  ; runtime tag for copy-in check (#111)",
+            tag_operand
+        ));
+        self.emit_copy_if_collection_reg("r9d");
+    }
+
 }
 
 /// `docs/BUGS_FOUND.md #91`: the type a **tagless** consumer will read a
