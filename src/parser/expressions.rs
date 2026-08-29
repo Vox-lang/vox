@@ -645,9 +645,21 @@ impl Parser {
     }
 
     pub(crate) fn try_parse_expression(&self, content: &str) -> Option<Expr> {
-        // Simple heuristic: if it contains spaces, it might be an expression
-        // Single identifiers are likely just variable names
-        if !content.contains(' ') || content.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        // A bare word with no quotes and no spaces is definitely just a
+        // variable name (`{tally}`) - skip the parser round-trip for that
+        // common case. Everything else, including a lone single-quoted
+        // token with no space (`{'tally'}`), must go through the lexer
+        // below: it is the only place that already knows how to tell a
+        // quoted identifier (LANGUAGE.md:711 rule 4 - two or more
+        // characters, lexes identically to the bare form) from a character
+        // literal (LANGUAGE.md:691 rule 3 - exactly one character, "no
+        // context-sensitivity", so `'x'` stays a value everywhere, slots
+        // included). Bug #110: this guard used to return None for
+        // `'tally'` purely because it has no space, so the caller fell
+        // back to using the raw quoted text - quote marks and all - as a
+        // literal variable name, which never matched the `tally` the rest
+        // of the compiler declared it under.
+        if !content.contains(' ') && !content.contains('\'') {
             return None;
         }
         

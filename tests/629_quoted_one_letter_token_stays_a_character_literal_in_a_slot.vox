@@ -1,0 +1,16 @@
+(Bug #110's disambiguation question: LANGUAGE.md:691 rule 3 says a
+ single-quoted token holding exactly one character is a character literal
+ "no context-sensitivity" - `'A'` never becomes a name, in a slot or
+ anywhere else, and a one-letter quoted NAME does not exist ("Write x, not
+ 'x'"). So `Set byte N of <buffer> to 'A'` (byte position) must go on
+ emitting a character literal untouched, and `{'A'}` (slot position) must
+ ALSO read `'A'` as the character literal 65, exactly like bare `Print
+ 'A'.` does outside any slot - not as an attempt to resolve a variable
+ named A.)
+
+a buffer called buf is "Hello".
+Set byte 1 of buf to 'J'.
+Print buf.
+
+Print 'A'.
+Print "{'A'}".

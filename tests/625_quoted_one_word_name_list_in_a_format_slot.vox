@@ -1,0 +1,5 @@
+(Bug #110, list.)
+
+a list called 'nums' is [1, 2, 3].
+Print "{nums}".
+Print "{'nums'}".

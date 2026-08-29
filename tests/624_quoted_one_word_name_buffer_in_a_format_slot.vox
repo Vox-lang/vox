@@ -1,0 +1,11 @@
+(Bug #110, buffer. The manual's own repro: `'toolbox's size` - a quoted
+ name followed by a property - always worked, because the placeholder
+ content then contains a space and was already routed through the full
+ expression parser; only the bare `'toolbox'` alone, with no property and
+ no space, hit the broken no-space guard.)
+
+a buffer called 'toolbox' is 8 bytes in size.
+append "AB" to 'toolbox'.
+Print "{toolbox}".
+Print "{'toolbox'}".
+Print "{'toolbox's size}".

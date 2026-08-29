@@ -1,0 +1,10 @@
+(Bug #110: a quoted one-word name followed by a possessive property in the
+ SAME slot - `'nums's length` - already worked before the fix, because the
+ placeholder content then contains a space and was routed through the full
+ expression parser rather than the broken no-space fast path. This test
+ pins that this still works after the fix, alongside the bare-name form on
+ the same list, for a type other than the manual's own buffer example.)
+
+a list called 'nums' is [1, 2, 3, 4].
+Print "{nums's length}".
+Print "{'nums's length}".

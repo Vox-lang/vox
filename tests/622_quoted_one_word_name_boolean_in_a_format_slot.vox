@@ -1,0 +1,9 @@
+(Bug #110, boolean. The slot must resolve `'flagged'` and render it exactly
+ as the bare `{flagged}` form does - whatever that rendering is - since a
+ single-word quoted identifier is the same token as its bare form
+ (LANGUAGE.md:711 rule 4), not a different one that happens to print
+ differently.)
+
+a boolean called 'flagged' is yes.
+Print "{flagged}".
+Print "{'flagged'}".
