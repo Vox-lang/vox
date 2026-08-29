@@ -12049,3 +12049,102 @@ freeable, and `Set src to ...` afterward freed the string `u` still
 named — a real use-after-free, found by the master reviewing the first
 patch, before it shipped. Tests 573–576 and two `collect_freeable_texts`
 unit tests pin this shape specifically.
+
+---
+
+### 110. A single-quoted ONE-WORD name never resolved inside a `{...}` format-string slot — every type, quotes and all read back as the "variable"
+
+**Status:** Fixed in v0.4.15 — `try_parse_expression`
+(`src/parser/expressions.rs`) now routes a lone single-quoted slot token
+through the same lexer/parser every other placeholder shape already used,
+instead of returning early on it. Regression tests: 620–629.
+
+Registered 2026-08-29 (verified by the master 2026-08-29; the owner ruled
+the quoted one-word spelling legal the same day).
+
+```vox
+a number called 'tally' is 7.
+Print 'tally'.              (prints 7)
+Print "{'tally'}".          (error: Unknown variable: 'tally')
+
+a text called 'label' is "AB".
+Print "{'label'}".          (same error — every type)
+
+a buffer called 'toolbox' is 8 bytes in size.
+append "AB" to 'toolbox'.
+Print "{'toolbox's size}".  (worked — a quoted name followed by a property resolves)
+Print "{toolbox}".          (worked — bare)
+Print "{'the toolbox'}".    (worked — multi-word quoted)
+```
+
+LANGUAGE.md:711 rule 4 says a single-word quoted identifier (`'tally'`)
+"lexes identically to the bare form" — everywhere a name is legal, `'tally'`
+and `tally` name the same thing. That held in statement position and in
+every quoted shape that happened to contain a space; it silently stopped
+holding the instant the same token sat alone inside a `{...}` slot.
+
+**Root cause.** `parse_format_string` (`src/parser/expressions.rs`) splits
+each `{...}` slot's content on the first unquoted `:` and hands the
+variable/expression half to `try_parse_expression`, which decided whether
+to run the content through the real lexer+parser or just use it verbatim
+as a `FormatPart::Variable` name:
+
+```rust
+if !content.contains(' ') || content.chars().all(|c| c.is_alphanumeric() || c == '_') {
+    return None;
+}
+```
+
+The guard's only real test (the alphanumeric check can never fire once the
+space check has not already returned — any string containing a space
+already fails `.all(alphanumeric)`) was "does this contain a space". For
+`'tally's size` and `'the toolbox'` that's true — both contain a space —
+so they fell through to the lexer, which correctly reads the leading `'`
+as the start of a quoted identifier and produces the right token stream.
+For a bare quoted one-word token, `'tally'`, there is no space anywhere in
+it, so the guard returned `None` before the lexer ever saw it. The caller's
+fallback then built `FormatPart::Variable { name: "'tally'", .. }` — using
+the placeholder's raw text, quote characters included, as the variable
+name. Every later lookup (`is_variable_available`, `resolve_format_variable`
+in codegen, which the file documents as "THE single name-resolution path
+shared by every format-string sink") keys off that exact string, and no
+variable is ever registered under a name with literal `'` characters in
+it — hence "Unknown variable: 'tally'", the quotes baked into the message
+because they were baked into the (wrong) name.
+
+**Disambiguation chosen.** The brief that opened this bug guessed a slot
+default of "a quoted token is always a name, never a character" for the
+one-letter case (`'x'`). That is not what LANGUAGE.md rules; :691 rule 3 is
+explicit and declared "no context-sensitivity": a single-quoted token
+holding exactly one character is a **character literal** in every
+position, slots included — "single-character quoted identifiers do not
+exist. Write `x`, not `'x'`." Confirmed directly against the shipped
+0.4.14 binary before writing the fix: `a number called 'x' is 5.` is
+already a compile error ("Expected a name, got IntegerLiteral(120)"), and
+bare `Print 'x'.` already prints `120`, not a variable read. So the fix
+does not special-case slot position at all — it defers entirely to the
+same lexer the rest of the language already uses, which was already
+correctly distinguishing `'x'` (`is_char_literal`, exactly one character)
+from `'tally'` (`is_single_quoted_identifier`, two or more) — the bug was
+that the slot's fast path skipped the lexer altogether for anything
+without a space, `'x'` included. Post-fix, `{'x'}` renders `120`, matching
+`Print 'x'.` exactly, and `Set byte N of <buffer> to 'A'` — the manual's
+own character-literal position — is untouched (test 629 pins both in one
+program).
+
+**Fix.** Narrowed the guard to only bypass the lexer for a genuinely bare
+word — no quotes, no spaces:
+
+```rust
+if !content.contains(' ') && !content.contains('\'') {
+    return None;
+}
+```
+
+Anything else, a lone quoted token included, now falls through to the
+existing lex-and-parse path (unchanged), which already handled the
+multi-word and possessive-property shapes correctly and needed no new
+code to handle the one-word shape too — the lexer's existing
+`is_char_literal`/`is_single_quoted_identifier` split is the single source
+of truth for the name-vs-character-literal question, in a slot exactly as
+in statement position.

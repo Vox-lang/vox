@@ -1,0 +1,7 @@
+(Bug #110, text: the same slot fix, for a text variable. `'label'` declares
+ and prints fine bare; only the `{...}` slot fell back to the raw quoted
+ text as a variable name and reported "Unknown variable: 'label'".)
+
+a text called 'label' is "AB".
+Print 'label'.
+Print "{'label'}".

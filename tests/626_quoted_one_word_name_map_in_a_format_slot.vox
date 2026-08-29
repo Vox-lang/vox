@@ -1,0 +1,5 @@
+(Bug #110, map.)
+
+a map called 'scores' is {"a": 1, "b": 2}.
+Print "{scores}".
+Print "{'scores'}".

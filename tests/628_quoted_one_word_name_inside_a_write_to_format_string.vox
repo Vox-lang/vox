@@ -1,0 +1,18 @@
+(Bug #110: `Write "{...}" to <sink>` shares the exact same slot parser as
+ `Print` - `resolve_format_variable` is documented in
+ src/codegen/format.rs as "THE single name-resolution path shared by every
+ format-string sink" - so a quoted one-word name in a `Write` format
+ string was broken the same way, and is fixed the same way.)
+
+a text called 'label' is "AB".
+a text called 'path' is "/tmp/vox_test_628_write.txt".
+open a file for writing called 'report' at 'path'.
+Write "{'label'}" to 'report'.
+close 'report'.
+
+a buffer called 'readback' is 4 bytes in size.
+open a file for reading called 'saved' at 'path'.
+read from 'saved' into 'readback'.
+close 'saved'.
+Print 'readback'.
+Delete the file 'path'.

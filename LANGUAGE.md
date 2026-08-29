@@ -753,9 +753,9 @@ To 'check divisibility' of a number called divisor and a number called dividend.
 ```
 
 **Rules:**
-- Function name is a bare single word (`add`) or a single-quoted multi-word name (`'add numbers'`)
+- Function name is a bare word, or any name in single quotes (a single word may be quoted too) (`add`, `'add numbers'`)
 - Parameters are optional. If present, introduce them with `with` or `of` (both work identically)
-- Parameters use `a <type> called <name>` syntax (bare if single-word, `'single-quoted'` if it contains spaces)
+- Parameters use `a <type> called <name>` syntax: a bare word, or any name in single quotes (a single word may be quoted too)
 - Multiple parameters joined with `and`
 - Return type follows `Return a <type>,`
 
@@ -877,7 +877,7 @@ calculate with x and y
 ```
 
 **Rules:**
-- Function name is a bare single word (`calculate`) or a single-quoted multi-word name (`'add numbers'`)
+- Function name is a bare word, or any name in single quotes (a single word may be quoted too) (`calculate`, `'add numbers'`)
 - For calls with arguments, use `of`, `to`, `with`, or `on`
 - Multiple arguments separated by `and`
 - Writing an argument right after the function name with none of these words is an error naming the missing preposition, not a call with that argument dropped
@@ -975,8 +975,9 @@ a number called thing is 42.
 Print thing.
 ```
 
-A thing name may be a bare word (`point`) or a quoted multi-word name
-(`'bounding box'`), the same forms any identifier takes:
+A thing name may be a bare word, or any name in single quotes (a single
+word may be quoted too) (`point`, `'bounding box'`), the same forms any
+identifier takes:
 
 ```
 A thing called 'bounding box' has

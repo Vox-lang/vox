@@ -1,0 +1,5 @@
+(Bug #110, float.)
+
+a float called 'ratio' is 2.5.
+Print "{ratio}".
+Print "{'ratio'}".

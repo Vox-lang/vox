@@ -1,0 +1,14 @@
+(Bug #110: a single-quoted ONE-WORD name must resolve inside a `{...}`
+ format-string slot exactly as it does everywhere else - LANGUAGE.md:711
+ rule 4, a single-word quoted identifier "lexes identically to the bare
+ form". Before the fix, `try_parse_expression`'s no-space guard (it only
+ looked for a space to decide whether content might be an expression)
+ treated `'tally'` as plain unparsed text, and the slot parser stored the
+ raw quoted string - quote marks included - as the variable name, so it
+ never matched the `tally` the rest of the compiler declared it under:
+ `Print "{'tally'}".` failed with "Unknown variable: 'tally'" even though
+ `Print 'tally'.` printed 7 just fine.)
+
+a number called 'tally' is 7.
+Print 'tally'.
+Print "{'tally'}".

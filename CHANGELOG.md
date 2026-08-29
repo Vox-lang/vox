@@ -10,6 +10,17 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `each <name> from <buffer>` walks a buffer's bytes as numbers, `byte`
   allowed as the loop variable (closes the open half of #104).
 
+### Fixed
+- **A single-quoted one-word name now resolves inside a `{...}` format-string
+  slot, exactly as it already did everywhere else.** `Print "{'tally'}"` used
+  to fail with "Unknown variable: 'tally'" for every variable type — the slot
+  parser fell back to using the placeholder's raw text, quote marks included,
+  as the variable name whenever the quoted name had no space in it. A quoted
+  name followed by a property (`{'toolbox's size}`) or a multi-word quoted
+  name (`{'the toolbox'}`) already worked, since both contain a space and
+  were already routed through the real lexer; the fix routes the one-word
+  case through the same lexer instead of special-casing it (#110).
+
 ## [0.4.14] - 2026-08-28
 
 Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two more (#103, #104); a `Free` statement that releases a buffer's memory immediately; the reserved-word tables now generated from one source. 33,000 fuzzer programs on 0.4.13 found no further compiler defects.
