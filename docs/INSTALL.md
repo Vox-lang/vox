@@ -79,7 +79,16 @@ exactly as before.
 
 ## How `vox` finds `coreasm`
 
-The compiler searches for `coreasm` using the following resolution order:
+At assembly time, nasm resolves each `%include` first against the directory
+`vox` was invoked from — before it consults anything else. This is
+deliberate: a checkout under test (a unit test suite, an integration run,
+CI building a bleeding-edge `coreasm/`) must assemble its OWN tree's macros
+even when `VOX_CORE_PATH` or another setting points somewhere else, or the
+suite would silently exercise the wrong runtime instead of the one it is
+meant to be testing. If the invoking directory has no matching
+`coreasm/<arch>/*.asm` file for what a program needs, resolution falls
+through to the directory chosen by the order below, which the compiler
+passes to nasm as an `-I` search path:
 
 1. `VOX_CORE_PATH` environment variable (`EC_CORE_PATH` is read as a deprecated alias; `VOX_CORE_PATH` wins when both are set)
 2. XDG config file: `~/.config/vox/config` (`core_path=...`; `~/.config/ec/config` is read as a deprecated alias, with the `vox` file winning when both exist)
