@@ -577,6 +577,90 @@ impl CodeGenerator {
         self.emit(&format!("{}:", done_label));
     }
 
+    /// docs/BUGS_FOUND.md #114 (owner ruling 2026-08-30). A map key read
+    /// (`_map_lookup`) carries a runtime type tag because a dynamically-built
+    /// map's value types are not known statically (`infer_expr_type` answers
+    /// `None` for `Expr::MapAccess`, same as an untyped mixed-list element).
+    /// Reading such a value into a scalar-typed destination whose declared
+    /// type does not match the payload's actual runtime type used to hand
+    /// the raw bits straight into the slot - a `547` landing in a `text`
+    /// slot is then dereferenced as a `char*` on first string use and
+    /// segfaults. A LITERAL map catches this mismatch statically
+    /// (`check_declared_read_type`); a dynamically-built one cannot, so the
+    /// answer has to be a runtime one, exactly like #91's miss handling.
+    ///
+    /// The owner's ruling: this is not an error, it is an implicit cast to
+    /// the destination's declared type, exactly what an explicit `<value>
+    /// as a <type>` already does for a `value` variable
+    /// (`emit_scalar_cast_from_runtime_tag`, shared with this). Call with
+    /// the read's result already in `rax` (r11 need not be loaded yet - this
+    /// loads it itself, immediately after the `rax` miss check, so no
+    /// intervening call may clobber either register).
+    ///
+    /// A miss (`rax == 0`) is deliberately left untouched here and falls
+    /// through to `emit_empty_value_if_missed`, called right after this at
+    /// every one of this function's call sites: a miss's tag is always
+    /// `TAG_INTEGER` with payload 0, indistinguishable from a genuinely
+    /// stored integer 0, and casting that through this switch would turn
+    /// "absent key into a text" into the text `"0"` instead of #91's empty
+    /// text. Only a non-zero (or non-numeric) hit reaches the cast.
+    pub(crate) fn emit_map_value_cast_if_needed(&mut self, expr: &Expr, slot: Option<VarType>) {
+        if !matches!(expr, Expr::MapAccess { .. }) {
+            return;
+        }
+        let target_type = match slot {
+            Some(VarType::Integer) => Type::Integer,
+            Some(VarType::Float) => Type::Float,
+            Some(VarType::String) => Type::String,
+            Some(VarType::Boolean) => Type::Boolean,
+            _ => return,
+        };
+        let done_label = self.new_label("map_cast_done");
+        self.emit_indent("; #114: a present dynamic map value is cast to its destination's type");
+        self.emit_indent("test rax, rax");
+        self.emit_indent(&format!("jz {}  ; a miss: #91 gives the destination's empty value next", done_label));
+        self.emit_load_value_tag(expr);
+        self.emit_scalar_cast_from_runtime_tag(&target_type);
+        self.emit(&format!("{}:", done_label));
+    }
+
+    /// docs/BUGS_FOUND.md #114, the collection half of the same ruling
+    /// (master's assumption, flagged for the owner). `<number> as a list`
+    /// has no defined meaning - unlike the four scalar casts above, there is
+    /// no existing lowering to reuse - so a map value whose runtime tag is
+    /// not the destination collection's own tag raises the error flag and
+    /// yields that destination's empty value (`emit_empty_value_for`,
+    /// shared with #91's miss handling) rather than storing a scalar
+    /// payload where every later list/map op expects a heap pointer.
+    ///
+    /// A genuine miss (`rax == 0`) is left to `emit_empty_value_if_missed`,
+    /// called right after this at every call site, for the same
+    /// indistinguishable-from-a-real-zero reason `emit_map_value_cast_if_needed`
+    /// documents; this only guards the non-zero, wrong-tag case that miss
+    /// handling does not reach (`_map_lookup`'s `emit_copy_if_collection_reg`
+    /// already copies a correctly-tagged list/map value, so the matching-tag
+    /// path here is a no-op).
+    pub(crate) fn emit_map_value_collection_guard(&mut self, expr: &Expr, slot: Option<VarType>) {
+        if !matches!(expr, Expr::MapAccess { .. }) {
+            return;
+        }
+        let (slot, expect_tag) = match slot {
+            Some(VarType::List) => (VarType::List, TAG_LIST),
+            Some(VarType::Map) => (VarType::Map, TAG_MAP),
+            _ => return,
+        };
+        let done_label = self.new_label("map_cast_collection_done");
+        self.emit_indent("; #114: a map value with no defined cast into this collection slot");
+        self.emit_indent("test rax, rax");
+        self.emit_indent(&format!("jz {}  ; a miss: #91 handles it next", done_label));
+        self.emit_load_value_tag(expr);
+        self.emit_indent(&format!("cmp r11, {}", expect_tag));
+        self.emit_indent(&format!("je {}", done_label));
+        self.emit_indent("SET_LAST_ERROR 1");
+        self.emit_empty_value_for(slot);
+        self.emit(&format!("{}:", done_label));
+    }
+
     pub(crate) fn add_float(&mut self, f: f64) -> String {
         let label = format!("float_{}", self.float_counter);
         self.float_counter += 1;

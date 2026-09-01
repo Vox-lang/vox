@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #114, the float cast direction: a number value stored
+ under a dynamically-set key, read into a `float` slot, converts exactly
+ as `7 as a float` would - not the integer's raw bits reinterpreted as an
+ IEEE-754 double.)
+
+a map called bank is {}.
+Set bank's "count" to 7.
+a float called f is bank's "count".
+Print "{f}".

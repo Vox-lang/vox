@@ -12764,3 +12764,186 @@ here only so it isn't mistaken for this bug's blast radius. `timer` has
 the same "no way to receive a call result" shape (`Create a timer called
 t.` is its own statement, not an initializer expression) and was not
 touched for the same reason.
+
+---
+
+### 114. Reading a number-valued map key into a `text` variable compiles clean and segfaults on first string use; the type check that fires for a literal map is absent for a dynamically-built one
+
+**Status:** Fixed in v0.4.15. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room by the master; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
+
+**Symptom.** Four lines:
+```vox
+a map called 'the store' is {}.
+Set 'the store's "leftover" to 547.
+a text called 'the reading' is 'the store's "leftover".
+Print "{'the reading'}".
+```
+The declaration and the read alone run fine (a program that stops before using `'the reading'` exits 0). The crash is on **use**: the number `547`'s raw bits sit in the text slot, and the format slot `{'the reading'}` dereferences them as a `char*`, reading 547 as an address walks off into unmapped memory → SIGSEGV. Any string use (print, join, slot) triggers it.
+
+**Why it is a real bug, not a mistyped program.** The language already treats this read as an error, but only statically. With a **literal** map the compiler catches it: `a map called s is {}. a text called t is s's "absent".` → compile error *"cannot initialise 't', which is a text, with a number read out of map 's'."* With a **dynamically-built** map (`{}` then `Set key to <number>`) the compiler cannot see the value's type through `Set`, emits no error, and the runtime copies the raw i64 into the text slot without consulting the value's runtime type tag.
+
+**Root cause.** A dynamic map value carries a runtime type tag; the read of a map value into a typed variable never checks it against the destination type when that type is not known statically. The exact check that fires for the literal case is missing for the dynamic case.
+
+**Fix (owner ruling 2026-08-30).** On a map-value read into a typed variable whose value type is not statically known, the value is CAST to the destination type, exactly as an explicit `... as a text` would, never the raw bits copied through. `a text called t is s's "k"` where `"k"` holds `547` yields `t = "547"`.
+
+The cast reuses the exact runtime-tag dispatch `<value> as a <type>` already lowers to for a `value` (Mixed) variable, `emit_value_retype`, `src/codegen/tags.rs`, factored out of it as `emit_scalar_cast_from_runtime_tag`: given a payload in `rax` and its runtime tag in `r11` (both of which `_map_lookup` already leaves set), it dispatches on the source tag and converts to the target scalar type, exactly the sixteen `number`/`float`/`text`/`boolean` ↔ `number`/`float`/`text`/`boolean` conversions `Expr::Cast` defines. `emit_value_retype` now calls it and stores the result back into the `value`'s payload/tag slots, unchanged behavior.
+
+Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `MapAccess` value lands in a destination (`Statement::VarDecl`, covers both a declaration and the `Set` spelling, local and global; `Statement::Assignment`, local and global; `Statement::Return`; and a function-call argument in `src/codegen/functions.rs`), right before the existing `emit_empty_value_if_missed` (#91) at each of those sites:
+
+- `emit_map_value_cast_if_needed`, for a scalar (`number`/`float`/`text`/`boolean`) destination: on a **hit** (`rax != 0`), loads the tag and calls `emit_scalar_cast_from_runtime_tag`. On a **miss** (`rax == 0`) it does nothing and falls through to #91's existing handling, a miss's tag is always `TAG_INTEGER` with payload 0, indistinguishable from a genuinely stored integer `0`, so casting it through this switch would turn "absent key into a text" into the text `"0"` instead of #91's empty text. This is a pre-existing ambiguity #91 already accepted (a real `0`/`false`/`0.0` map value read into a `text` destination is indistinguishable from a miss and answers the same empty text either way); this fix does not touch it.
+- `emit_map_value_collection_guard`, the master's assumption for the fallback the owner flagged: a `list`/`map` destination whose value's runtime tag does **not** match (a number or text where a list/map is expected, `<number> as a list` has no defined meaning, unlike the four scalar casts) sets the error flag and gives the destination its own empty value (`emit_empty_value_for`, shared with #91), rather than storing a scalar payload where every later list/map operation expects a heap pointer. A matching tag is a no-op, `_map_lookup`'s existing `emit_copy_if_collection_reg` has already deep-copied the value correctly.
+
+**Per-type table** (a map built with `Set`, one call per row, `a <type> called t is m's "k".`):
+
+| destination | source value | before | after |
+|---|---|---|---|
+| `text` | `number` 547 | SIGSEGV | `"547"` |
+| `number` | `text` "42" | SIGSEGV | `42` |
+| `float` | `number` 7 | wrong (integer bits read as a double) | `7.0` |
+| `text` | `boolean` true | SIGSEGV | `"true"` |
+| `number` | `boolean` true | (already worked, 0/1 IS the representation) | unchanged |
+| `text` | `float` 3.14 | SIGSEGV | `"3.14"` |
+| `list` | `number` 547 | SIGSEGV (raw bits as a list pointer) | `[]`, error flag set |
+| `text` | absent key (unprovable miss) | (already worked, #91) | unchanged: empty text, error flag set |
+| `list` | a real list value | (already worked) | unchanged |
+
+**This also closes a related, previously out-of-scope gap:** a *heterogeneous literal* map (`{"k": 42, "j": "text"}`) reached the identical runtime path, `check_declared_read_type`/`check_type_lock` can prove a homogeneous literal's value type but not a per-key one, and crashed the same way; `tests/p294_type_lock.rs`'s `heterogeneous_map_value_read_still_crashes_a_known_gap` pinned this as an explicitly out-of-scope known limitation. Because the fix keys off the read's runtime tag rather than whether the map is literal or `Set`-grown, that case now casts too, and the test is renamed `heterogeneous_map_value_read_now_casts_instead_of_crashing` and re-pinned to the new behavior.
+
+**Undefined-cast fallback, still open for the owner (master's assumption, unchanged by this fix):** should a `number`/`text`/`boolean` read into a `list`/`map` destination (or the reverse) later be ruled to convert to something (e.g. `[547]` or a one-key map) rather than error? Left as the error-flag fallback per the brief; a follow-up if the owner rules otherwise.
+
+**Tests.** `tests/641`–`646` (each scalar cast direction, the exact four-line repro, the undefined-cast fallback, and the unprovable-miss regression pin); `tests/p294_type_lock.rs`'s renamed test above.
+
+**Provenance (precise chain).** The fuzz produced a **wrong-value** divergence, not a crash: the 1,280-line generated program (`--budget 40 --layout random`, seed 70296130) ran to `exit 91` because a type-mismatched read off a dynamic map failed to raise the error flag; the classifier flagged wrong-value. Reducing that program clean-room, the same construct **segfaulted** on string use, the two faces of one hole. Evidence: `vox-notes/evidence/2026-08-30-segv-map-text/` (4-line repro + literal/dynamic pair) and `vox-notes/evidence/2026-08-30-hunt/lst49-70296130/` (the fuzzer program). Artefact for confirmation: the master's bug page.
+
+---
+
+### 115. A dynamically-typed value read into a statically-typed variable copies the bits with no runtime tag check, at every landing site except map access: a memory-safety class
+
+**Status:** Open, reported 2026-08-30 (found by the vox-fuzz chaos generator, list-element site; the sibling sites found by master hand-probing; master-verified on both compilers). Severity: memory safety. Generalises #114, whose fix reached only `MapAccess`.
+
+Reading a value whose runtime type is only known dynamically into a fixed-type variable copies the raw bits into the destination slot without checking the runtime tag against the destination type. Using the result as the wrong type dereferences a non-pointer, so a pointer prints where a value belongs, or the program segfaults on use. Landing sites, master-verified on the installed 0.4.14 AND the 0.4.15 #114-fixed compiler:
+```vox
+a value called v is 42.  a text called t is v.  Print "{t}".            (SIGSEGV, still crashes under the #114 fix)
+a text called t is element 1 of [1, "two", 3].                          (SIGSEGV, still crashes under the #114 fix)
+To 'give' with a number x. Return a value, x. a text called t is 'give' of 7.  (SIGSEGV, still crashes)
+a number called n is element 2 of [1, "two", 3].                        (prints 4198536, a raw pointer)
+```
+The map-value site (`Set m's "k" to 99. a text called t is m's "k".`) is #114, fixed in v0.4.15. Fix: apply #114's runtime-tag cast (cast to the destination type, or raise the error flag; never copy the bits) at the general "dynamic value read into a typed variable" point so all sites are covered at once. See vox-notes/VERIFIED-DYNAMIC-VALUE-TYPED-READ-CLASS.md.
+
+---
+
+### 116. An untyped `Set` that retypes a name it created prints a raw address instead of the value
+
+**Status:** Open, reported 2026-08-30 (master-verified). Severity: memory safety (address leak); plus an open design question on what an untyped `Set` should mean.
+
+`Set zoo to 5.` then `Set zoo to "text now".` then `Print zoo.` prints `4198488` (an address). A proper declaration (`a number called zoo is 5.`) gives the correct `cannot assign text to 'zoo', which is a number` on the second `Set`. An untyped `Set NAME to VALUE.` on a name never declared is not in the manual. The address print is a defect under any reading; what an untyped `Set` on a fresh name should do is the owner's call: (a) compile error, (b) declares and type-locks the name, (c) declares a `value`. Register + ruling, then fix.
+
+---
+
+### 117. A text appended into a caller's list through a parameter prints an address
+
+**Status:** Open, reported 2026-08-30 (master-verified). Severity: memory safety (address leak).
+
+```vox
+To 'note' with a list called noted and a text called label.
+    append label to noted.
+a list called noted is [].
+'note' of noted and "hi".
+Print "last: {noted's last}".
+```
+prints `last: 4198536` instead of `hi`. Manual 2337 to 2343 (appends respect each element's actual type; unprovable types widen the list). Tied to the open Q7 ruling (does the caller widen the list, or is the callee refused); decide Q7, then fix.
+
+---
+
+### 118. `Set <global> to ...` refuses a list/map/buffer global that a function reads, with the caret on the declaration
+
+**Status:** Open, reported 2026-08-30 (master-verified).
+
+```vox
+a list called xs is [].
+To 'how many'. Return a number, xs's length.
+Set xs to ["a"].
+Print 'how many'.
+```
+gives `error: Unknown variable: xs` with the caret on line 1. The byte-equivalent `the xs is ["a"].` and bare `xs is ["a"].` both print `1`. No manual rule gives `Set` different rules for globals. Two faults: the refusal, and the wrong caret. Fix both.
+
+---
+
+### 119. A file handle (or plain variable) declared inside a branch is treated as undeclared after the branch
+
+**Status:** Open, reported 2026-08-30 (master-verified 2026-08-29; independently re-confirmed by the phase-C chaos generator, which restricts its variable pool to top-level declarations to avoid it).
+
+A declaration inside an `If`/branch body is not seen at a later use even though the branch ran; the use reports `Unknown variable`. See vox-notes/VERIFIED-DECLARATIONS-IN-BRANCHES.md. Fixing it also enriches the chaos generator's pool.
+
+---
+
+### 120. A possessive member call stops parsing at a line break before its preposition
+
+**Status:** Open, reported 2026-08-30 (master-verified 2026-08-29).
+
+`origin's 'scaled'` then a newline then `of 2.` is refused, though a free call with the same line break compiles, and the manual gives no meaning to a line break inside a sentence. A ledger leaf was held out of a merge because of it. See vox-notes/VERIFIED-NEWLINE-BEFORE-PREPOSITION.md.
+
+---
+
+### 121. A removed directory still answers `available`
+
+**Status:** Open, reported 2026-08-30 (master-verified, both compilers).
+
+After a successful `Remove the directory`, the path answers `available` = true, though the filesystem confirms it is gone. Deterministic, self-contained repro (harness seed 13). Composition-sensitive to reduce, so seed-13's generated program is the canonical repro. See vox-notes/CANDIDATE-PRC08-STATUS.md.
+
+---
+
+### 122. A `To` inside an open `If`/loop body is swallowed into the body
+
+**Status:** Open, reported 2026-08-30 (master-verified; the owner ruled 2026-08-30 that function declarations are not nestable and this should be a compile error).
+
+A function defined inside a loop body is absorbed into the loop and re-run per iteration, and can silently shadow an import with no warning. The ruling is in hand; the fix is a guard plus one manual sentence stating the rule.
+
+---
+
+### 123. Redeclaring a name as another kind reports "Unknown variable" at the read, not the conflict
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+```vox
+a list called kept is [].
+(a function reading kept)
+a buffer called kept is 16 bytes in size.
+```
+reports `Unknown variable: kept` at the function's read. The refusal is correct (two declarations genuinely disagree); the message is wrong, because nothing is unknown. The diagnostic should name the conflict and both declaration sites.
+
+---
+
+### 124. A user-facing error cites LANGUAGE.md by a now-stale line number
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+`src/analyzer/void_results.rs` embeds `(LANGUAGE.md:4963-4965)` and `(LANGUAGE.md:4990)` in an error a user sees when reading the result of a `.lib` entry with no `, returning`; those lines now point at unrelated sections. Every other user-facing diagnostic cites its section by name. Fix: cite by name. Worth bundling with the buffer-capacity doc correction the owner already ruled on (manual says zero capacity; the runtime gives 4096).
+
+---
+
+### 125. `Set message to "x".` blames `to` instead of the reserved word the author typed
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+`Set message to "x".` gives `Cannot use 'to' as a variable name`, caret on `to`. The declaration path gets it right: `'message' is an alternate spelling of the reserved keyword 'text'`. The message should name what the author actually did, matching the sibling path.
+
+---
+
+### 126. An unrecognised format specifier is silently discarded
+
+**Status:** Open, reported 2026-08-30 (master-verified).
+
+```vox
+a number called n is 255.
+Print "{n:q}|{n:#x}|{n:zzz}|".
+```
+renders `255|255|255|`; `{n:#x}` is the obvious hex typo and silently prints decimal. The format section's stated principle (3289, 3280 to 3282) is that a bad specifier is a compile error naming the valid forms, never a silent no-op. Fix: one manual sentence plus a compile error for any specifier outside the table. See #127 for the sibling malformed-precision corner.
+
+---
+
+### 127. A malformed precision `{n:.z}` is silently ignored
+
+**Status:** Open, reported 2026-08-30 (master-verified). Sibling of #126.
+
+`{n:.z}` renders as a bare `{n}` with no diagnostic: the leading-dot precision branch returns before #126's catch-all. Same principle as #126; fold into that fix.

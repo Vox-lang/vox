@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #114, the undefined-cast fallback: `<number> as a
+ list` has no meaning, unlike the four scalar<->scalar casts above. A
+ number value read into a `list` slot raises the error flag and takes the
+ destination's own empty value - the same answer #91 already gives a
+ missed read - rather than storing the number's raw bits as a list
+ pointer and segfaulting on first use.)
+
+a map called m is {}.
+Set m's "k" to 547.
+a list called xs is m's "k".
+On error Print "error flag set".
+Print "list: {xs}".
+Append "z" to xs.
+Print "after append: {xs}".

@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #114's cast must not swallow #91's miss handling: an
+ absent key a `Set` could still insert - so the compiler cannot prove it
+ missing - yields the destination's own empty value and sets the error
+ flag, exactly as before this fix. Casting the miss's untyped 0 through
+ the new text<-number cast would have printed "0" instead of the empty
+ text #91 promises.)
+
+a map called found is {"a": "apple"}.
+Set found's "b" to "banana".
+a text called t is found's "zebra".
+On error Print "the error flag was set".
+Print "[{t}]".
