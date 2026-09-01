@@ -56,6 +56,15 @@ adheres to [Semantic Versioning](https://semver.org/).
   zero time, or the thing's all-defaults instance (#112).
 - Keywords chapter lists every reserved word, checked by a new
   drift-guard test (#106 second half, GitHub #239).
+- **Reading a dynamic map value into a typed variable now casts it to that
+  type instead of crashing.** A map built with `Set` (or a literal map
+  holding more than one value type) carries a runtime type tag the
+  compiler cannot see statically; a `text called t is m's "k".` where
+  `"k"` held a number used to copy the number's raw bits into the text
+  slot, which segfaulted on first use. It is now cast to the destination
+  type exactly as an explicit `... as a text` would (owner ruling); a cast
+  the language does not define (a number into a `list`/`map`, or the
+  reverse) raises the error flag instead of crashing (#114).
 
 ## [0.4.14] - 2026-08-28
 

@@ -12764,3 +12764,53 @@ here only so it isn't mistaken for this bug's blast radius. `timer` has
 the same "no way to receive a call result" shape (`Create a timer called
 t.` is its own statement, not an initializer expression) and was not
 touched for the same reason.
+
+---
+
+### 114. Reading a number-valued map key into a `text` variable compiles clean and segfaults on first string use; the type check that fires for a literal map is absent for a dynamically-built one
+
+**Status:** Fixed in v0.4.16. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room by the master; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
+
+**Symptom.** Four lines:
+```vox
+a map called 'the store' is {}.
+Set 'the store's "leftover" to 547.
+a text called 'the reading' is 'the store's "leftover".
+Print "{'the reading'}".
+```
+The declaration and the read alone run fine (a program that stops before using `'the reading'` exits 0). The crash is on **use**: the number `547`'s raw bits sit in the text slot, and the format slot `{'the reading'}` dereferences them as a `char*`, reading 547 as an address walks off into unmapped memory → SIGSEGV. Any string use (print, join, slot) triggers it.
+
+**Why it is a real bug, not a mistyped program.** The language already treats this read as an error, but only statically. With a **literal** map the compiler catches it: `a map called s is {}. a text called t is s's "absent".` → compile error *"cannot initialise 't', which is a text, with a number read out of map 's'."* With a **dynamically-built** map (`{}` then `Set key to <number>`) the compiler cannot see the value's type through `Set`, emits no error, and the runtime copies the raw i64 into the text slot without consulting the value's runtime type tag.
+
+**Root cause.** A dynamic map value carries a runtime type tag; the read of a map value into a typed variable never checks it against the destination type when that type is not known statically. The exact check that fires for the literal case is missing for the dynamic case.
+
+**Fix (owner ruling 2026-08-30).** On a map-value read into a typed variable whose value type is not statically known, the value is CAST to the destination type, exactly as an explicit `... as a text` would, never the raw bits copied through. `a text called t is s's "k"` where `"k"` holds `547` yields `t = "547"`.
+
+The cast reuses the exact runtime-tag dispatch `<value> as a <type>` already lowers to for a `value` (Mixed) variable, `emit_value_retype`, `src/codegen/tags.rs`, factored out of it as `emit_scalar_cast_from_runtime_tag`: given a payload in `rax` and its runtime tag in `r11` (both of which `_map_lookup` already leaves set), it dispatches on the source tag and converts to the target scalar type, exactly the sixteen `number`/`float`/`text`/`boolean` ↔ `number`/`float`/`text`/`boolean` conversions `Expr::Cast` defines. `emit_value_retype` now calls it and stores the result back into the `value`'s payload/tag slots, unchanged behavior.
+
+Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `MapAccess` value lands in a destination (`Statement::VarDecl`, covers both a declaration and the `Set` spelling, local and global; `Statement::Assignment`, local and global; `Statement::Return`; and a function-call argument in `src/codegen/functions.rs`), right before the existing `emit_empty_value_if_missed` (#91) at each of those sites:
+
+- `emit_map_value_cast_if_needed`, for a scalar (`number`/`float`/`text`/`boolean`) destination: on a **hit** (`rax != 0`), loads the tag and calls `emit_scalar_cast_from_runtime_tag`. On a **miss** (`rax == 0`) it does nothing and falls through to #91's existing handling, a miss's tag is always `TAG_INTEGER` with payload 0, indistinguishable from a genuinely stored integer `0`, so casting it through this switch would turn "absent key into a text" into the text `"0"` instead of #91's empty text. This is a pre-existing ambiguity #91 already accepted (a real `0`/`false`/`0.0` map value read into a `text` destination is indistinguishable from a miss and answers the same empty text either way); this fix does not touch it.
+- `emit_map_value_collection_guard`, the master's assumption for the fallback the owner flagged: a `list`/`map` destination whose value's runtime tag does **not** match (a number or text where a list/map is expected, `<number> as a list` has no defined meaning, unlike the four scalar casts) sets the error flag and gives the destination its own empty value (`emit_empty_value_for`, shared with #91), rather than storing a scalar payload where every later list/map operation expects a heap pointer. A matching tag is a no-op, `_map_lookup`'s existing `emit_copy_if_collection_reg` has already deep-copied the value correctly.
+
+**Per-type table** (a map built with `Set`, one call per row, `a <type> called t is m's "k".`):
+
+| destination | source value | before | after |
+|---|---|---|---|
+| `text` | `number` 547 | SIGSEGV | `"547"` |
+| `number` | `text` "42" | SIGSEGV | `42` |
+| `float` | `number` 7 | wrong (integer bits read as a double) | `7.0` |
+| `text` | `boolean` true | SIGSEGV | `"true"` |
+| `number` | `boolean` true | (already worked, 0/1 IS the representation) | unchanged |
+| `text` | `float` 3.14 | SIGSEGV | `"3.14"` |
+| `list` | `number` 547 | SIGSEGV (raw bits as a list pointer) | `[]`, error flag set |
+| `text` | absent key (unprovable miss) | (already worked, #91) | unchanged: empty text, error flag set |
+| `list` | a real list value | (already worked) | unchanged |
+
+**This also closes a related, previously out-of-scope gap:** a *heterogeneous literal* map (`{"k": 42, "j": "text"}`) reached the identical runtime path, `check_declared_read_type`/`check_type_lock` can prove a homogeneous literal's value type but not a per-key one, and crashed the same way; `tests/p294_type_lock.rs`'s `heterogeneous_map_value_read_still_crashes_a_known_gap` pinned this as an explicitly out-of-scope known limitation. Because the fix keys off the read's runtime tag rather than whether the map is literal or `Set`-grown, that case now casts too, and the test is renamed `heterogeneous_map_value_read_now_casts_instead_of_crashing` and re-pinned to the new behavior.
+
+**Undefined-cast fallback, still open for the owner (master's assumption, unchanged by this fix):** should a `number`/`text`/`boolean` read into a `list`/`map` destination (or the reverse) later be ruled to convert to something (e.g. `[547]` or a one-key map) rather than error? Left as the error-flag fallback per the brief; a follow-up if the owner rules otherwise.
+
+**Tests.** `tests/641`–`646` (each scalar cast direction, the exact four-line repro, the undefined-cast fallback, and the unprovable-miss regression pin); `tests/p294_type_lock.rs`'s renamed test above.
+
+**Provenance (precise chain).** The fuzz produced a **wrong-value** divergence, not a crash: the 1,280-line generated program (`--budget 40 --layout random`, seed 70296130) ran to `exit 91` because a type-mismatched read off a dynamic map failed to raise the error flag; the classifier flagged wrong-value. Reducing that program clean-room, the same construct **segfaulted** on string use, the two faces of one hole. Evidence: `vox-notes/evidence/2026-08-30-segv-map-text/` (4-line repro + literal/dynamic pair) and `vox-notes/evidence/2026-08-30-hunt/lst49-70296130/` (the fuzzer program). Artefact for confirmation: the master's bug page.

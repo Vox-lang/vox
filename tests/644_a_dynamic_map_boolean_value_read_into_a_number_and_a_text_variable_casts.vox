@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #114, the boolean cast direction: a boolean value
+ stored under a dynamically-set key, read into a `number` slot (0/1, the
+ language's own representation) and into a `text` slot ("true"/"false"),
+ exactly as an explicit `as a number` / `as a text` would.)
+
+a map called flags is {}.
+Set flags's "on" to true.
+a number called n is flags's "on".
+Print "{n}".
+a text called t is flags's "on".
+Print "{t}".

@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #114 — the exact four-line repro that segfaulted. A
+ LITERAL map catches a text<-number mismatch statically; a map built by
+ `Set` cannot be proven at compile time, so the read carries a runtime
+ type tag instead and the fix casts it, exactly as `... as a text` would,
+ rather than copying the number's raw bits into the text slot.)
+
+a map called 'the store' is {}.
+Set 'the store's "leftover" to 547.
+a text called 'the reading' is 'the store's "leftover".
+Print "{'the reading'}".

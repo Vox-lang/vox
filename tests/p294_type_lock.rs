@@ -12,7 +12,6 @@
 // here rather than only as a silent behavior change.
 
 use std::fs;
-use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
 fn work_dir(tag: &str) -> std::path::PathBuf {
@@ -243,20 +242,22 @@ fn homogeneous_map_value_read_and_cast_still_work() {
 }
 
 /// A map literal with mixed value types (or a non-literal initializer) is
-/// NOT proven, so a read from it is unaffected by findings 4/14's fix - for
-/// better AND worse. This test pins the "worse": reading a key whose OWN
-/// value is a number, from a map that merely CONTAINS some other,
-/// differently-typed key too, into an already-declared text variable,
-/// still compiles and then SEGFAULTS - identical to finding 4's own
-/// mechanism, just reached through a map my single-pass, whole-map
-/// classifier can't prove homogeneous even though this specific key is
-/// perfectly consistent every time it's read. Confirmed unaffected by this
-/// track (same crash before and after `map_value_type` existed) - a real,
-/// known, and explicitly out-of-scope gap: closing it needs PER-KEY value
-/// tracking, not just per-map, which map_literal_value_type deliberately
-/// does not attempt (see its doc comment).
+/// NOT proven, so a read from it is unaffected by findings 4/14's fix - the
+/// static `check_declared_read_type`/`check_type_lock` checks still cannot
+/// see a per-key type here, only per-map. Before docs/BUGS_FOUND.md #114,
+/// that meant this exact case SEGFAULTED: reading a key whose own value is
+/// a number, out of a map that merely CONTAINS some other, differently-typed
+/// key too, into an already-declared text variable, stored 42's raw bits in
+/// the text slot. #114's fix reuses the map read's own runtime type tag
+/// (`_map_lookup` always sets it, literal or dynamically-built map alike)
+/// to CAST the value to the destination's type instead of copying its bits
+/// - so this now runs to completion and prints "42", the same answer
+/// `homogeneous_map_value_read_and_cast_still_work`'s explicit `as text`
+/// gives above. The remaining, still out-of-scope gap is a *compile-time*
+/// per-key proof (so a mismatch here could be refused up front like the
+/// homogeneous case is) - #114 only closes the runtime crash.
 #[test]
-fn heterogeneous_map_value_read_still_crashes_a_known_gap() {
+fn heterogeneous_map_value_read_now_casts_instead_of_crashing() {
     let work = work_dir("map-heterogeneous");
     let vox = env!("CARGO_BIN_EXE_vox");
     fs::write(
@@ -278,13 +279,16 @@ fn heterogeneous_map_value_read_still_crashes_a_known_gap() {
         .stdin(Stdio::null())
         .output()
         .expect("run compiled binary");
-    assert_eq!(
-        run_output.status.signal(),
-        Some(11), // SIGSEGV
-        "expected the pre-existing SIGSEGV this track does not close for a mixed-value map; \
-         got status {:?} - if this now passes, map value inference has grown per-key tracking and \
-         this test (and its documented limitation) should be updated, not just loosened",
+    assert!(
+        run_output.status.success(),
+        "docs/BUGS_FOUND.md #114: expected the read to cast 42 to text and run to completion, \
+         got status {:?}",
         run_output.status
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout),
+        "[42]\n",
+        "expected the number to be cast to text, not its raw bits copied through"
     );
 }
 

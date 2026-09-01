@@ -225,9 +225,18 @@ impl CodeGenerator {
                 } else {
                     self.generate_expr(&args[i]); // rax = payload
                 }
+                // #114, before #91: a parameter slot is a destination like
+                // any other - a present dynamic map value argument is cast
+                // to the declared parameter type. Resolved separately from
+                // `param_slot` below, which only names #91's pointer types
+                // (String/List/Map) - the cast also covers a scalar
+                // Integer/Float/Boolean parameter.
+                let cast_param_slot = param_types.get(i).map(vartype_of_declared_type);
+                self.emit_map_value_cast_if_needed(&args[i], cast_param_slot.clone());
+                self.emit_map_value_collection_guard(&args[i], cast_param_slot);
+                let param_slot = param_types.get(i).and_then(declared_slot_vartype);
                 // #91: a parameter slot is a destination like any other -
                 // a text/list/map parameter must not receive a missed read's 0.
-                let param_slot = param_types.get(i).and_then(declared_slot_vartype);
                 self.emit_empty_value_if_missed(&args[i], param_slot);
                 if is_value_param(i) {
                     self.emit_load_value_tag(&args[i]); // r11 = tag (rax preserved)

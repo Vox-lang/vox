@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #114, the reverse direction: a text value stored under
+ a dynamically-set key, read into a `number` slot, parses the digits
+ exactly as `"42" as a number` would.)
+
+a map called bank is {}.
+Set bank's "count" to "42".
+a number called n is bank's "count".
+Print "{n}".

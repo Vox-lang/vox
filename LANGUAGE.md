@@ -2545,6 +2545,29 @@ print person's "name".   (prints: Ada)
 print person's "age".    (prints: 36)
 ```
 
+Reading a value into an already-typed destination whose type differs from
+the value's own casts it to the destination's type, exactly as an
+explicit `... as a <type>` would - never the value's raw bits copied
+through. This applies whenever the value's own type cannot be proven at
+compile time (a dynamic key, or a map an `Append`, `Set`, alias or call
+can reach - the same reach `Set` gives the missing-key case below), using
+whichever of the four scalar casts (`number`, `text`, `float`, `boolean`)
+the destination names:
+
+```
+a map called bank is {}.
+set bank's "leftover" to 547.
+a text called amount is bank's "leftover".
+print amount.             (prints: 547)
+```
+
+A cast the language does not define - a number or text into a `list` or
+`map`, or a `list`/`map` into a scalar - has no conversion to fall back
+on, so it is refused the same way a missing key is: the error flag is
+set and the destination takes its own empty value, rather than
+reinterpreting a collection's pointer as a number or a number as a
+pointer.
+
 Insert or replace an entry with `Set map's "key" to value` (mirroring
 `Set element N of list to …`). The map may reallocate on growth, so the
 returned pointer is stored back into the variable automatically - including

@@ -496,17 +496,11 @@ impl CodeGenerator {
     /// On an unconvertible source tag or a failed text-to-number/float parse,
     /// set `_last_error` and leave the payload at 0.
     pub(crate) fn emit_value_retype(&mut self, name: &str, target_type: &Type) {
-        let target_tag = match target_type {
-            Type::Integer => TAG_INTEGER,
-            Type::Float => TAG_FLOAT,
-            Type::String => TAG_STRING,
-            Type::Boolean => TAG_BOOLEAN,
-            _ => {
-                self.emit_indent("; value retype to non-scalar target is unsupported");
-                self.emit_indent("SET_LAST_ERROR 1");
-                return;
-            }
-        };
+        if !matches!(target_type, Type::Integer | Type::Float | Type::String | Type::Boolean) {
+            self.emit_indent("; value retype to non-scalar target is unsupported");
+            self.emit_indent("SET_LAST_ERROR 1");
+            return;
+        }
 
         // Locate the payload and tag slots.
         let payload_op = if let Some(offset) = self.get_var(name) {
@@ -527,8 +521,6 @@ impl CodeGenerator {
             }
         };
 
-        let is_text_target = target_tag == TAG_STRING;
-
         self.emit_indent(&format!(
             "; in-place retype of '{}' to {}",
             name,
@@ -538,6 +530,39 @@ impl CodeGenerator {
         // Load payload and tag.
         self.emit_indent(&format!("mov rax, {}  ; value payload", payload_op));
         self.emit_load_value_tag(&Expr::Identifier(name.to_string()));
+        self.emit_scalar_cast_from_runtime_tag(target_type);
+
+        // Store result back.
+        self.emit_indent(&format!("mov {}, rax  ; updated payload", payload_op));
+        self.emit_indent(&format!(
+            "mov byte {}, r11b  ; updated tag",
+            tag_loc.operand()
+        ));
+    }
+
+    /// The runtime-tagged half of `<value> as a <type>` (BUGS_FOUND #114
+    /// reuses it for a dynamic map value read too): `rax` holds a payload
+    /// and `r11` its source tag, both already loaded by the caller: dispatch
+    /// on the tag to the scalar<->scalar conversion `Expr::Cast` already
+    /// defines for that pair, leaving the converted payload in `rax` and the
+    /// destination tag in `r11b`. A source tag with no defined cast to a
+    /// scalar (list, map, nothing) sets `_last_error` and yields the empty
+    /// text or plain 0 rather than reinterpreting a collection pointer as a
+    /// scalar.
+    pub(crate) fn emit_scalar_cast_from_runtime_tag(&mut self, target_type: &Type) {
+        let target_tag = match target_type {
+            Type::Integer => TAG_INTEGER,
+            Type::Float => TAG_FLOAT,
+            Type::String => TAG_STRING,
+            Type::Boolean => TAG_BOOLEAN,
+            _ => {
+                self.emit_indent("; scalar cast to non-scalar target is unsupported");
+                self.emit_indent("SET_LAST_ERROR 1");
+                return;
+            }
+        };
+
+        let is_text_target = target_tag == TAG_STRING;
 
         let l_int = self.new_label("vr_int");
         let l_flt = self.new_label("vr_flt");
@@ -709,7 +734,7 @@ impl CodeGenerator {
 
         // ---- failure (list/map/nothing or future unsupported) ----
         self.emit(&format!("{}:", l_fail));
-        self.emit_indent("; unsupported source tag for retype");
+        self.emit_indent("; unsupported source tag for cast");
         if is_text_target {
             let empty_label = self.add_string("");
             self.emit_indent(&format!("lea rax, [rel {}]  ; empty text on failure", empty_label));
@@ -719,13 +744,7 @@ impl CodeGenerator {
         self.emit_indent("SET_LAST_ERROR 1");
         self.emit_indent(&format!("mov r11b, {}  ; new tag", target_tag));
 
-        // ---- store result back ----
         self.emit(&format!("{}:", l_done));
-        self.emit_indent(&format!("mov {}, rax  ; updated payload", payload_op));
-        self.emit_indent(&format!(
-            "mov byte {}, r11b  ; updated tag",
-            tag_loc.operand()
-        ));
     }
 
     /// Whether `generate_expr(expr)` leaves the value's runtime tag in r11, so a
