@@ -12769,7 +12769,7 @@ touched for the same reason.
 
 ### 114. Reading a number-valued map key into a `text` variable compiles clean and segfaults on first string use; the type check that fires for a literal map is absent for a dynamically-built one
 
-**Status:** Fixed in v0.4.16. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room by the master; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
+**Status:** Fixed in v0.4.15. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room by the master; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
 
 **Symptom.** Four lines:
 ```vox
@@ -12814,3 +12814,136 @@ Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `Ma
 **Tests.** `tests/641`–`646` (each scalar cast direction, the exact four-line repro, the undefined-cast fallback, and the unprovable-miss regression pin); `tests/p294_type_lock.rs`'s renamed test above.
 
 **Provenance (precise chain).** The fuzz produced a **wrong-value** divergence, not a crash: the 1,280-line generated program (`--budget 40 --layout random`, seed 70296130) ran to `exit 91` because a type-mismatched read off a dynamic map failed to raise the error flag; the classifier flagged wrong-value. Reducing that program clean-room, the same construct **segfaulted** on string use, the two faces of one hole. Evidence: `vox-notes/evidence/2026-08-30-segv-map-text/` (4-line repro + literal/dynamic pair) and `vox-notes/evidence/2026-08-30-hunt/lst49-70296130/` (the fuzzer program). Artefact for confirmation: the master's bug page.
+
+---
+
+### 115. A dynamically-typed value read into a statically-typed variable copies the bits with no runtime tag check, at every landing site except map access: a memory-safety class
+
+**Status:** Open, reported 2026-08-30 (found by the vox-fuzz chaos generator, list-element site; the sibling sites found by master hand-probing; master-verified on both compilers). Severity: memory safety. Generalises #114, whose fix reached only `MapAccess`.
+
+Reading a value whose runtime type is only known dynamically into a fixed-type variable copies the raw bits into the destination slot without checking the runtime tag against the destination type. Using the result as the wrong type dereferences a non-pointer, so a pointer prints where a value belongs, or the program segfaults on use. Landing sites, master-verified on the installed 0.4.14 AND the 0.4.15 #114-fixed compiler:
+```vox
+a value called v is 42.  a text called t is v.  Print "{t}".            (SIGSEGV, still crashes under the #114 fix)
+a text called t is element 1 of [1, "two", 3].                          (SIGSEGV, still crashes under the #114 fix)
+To 'give' with a number x. Return a value, x. a text called t is 'give' of 7.  (SIGSEGV, still crashes)
+a number called n is element 2 of [1, "two", 3].                        (prints 4198536, a raw pointer)
+```
+The map-value site (`Set m's "k" to 99. a text called t is m's "k".`) is #114, fixed in v0.4.15. Fix: apply #114's runtime-tag cast (cast to the destination type, or raise the error flag; never copy the bits) at the general "dynamic value read into a typed variable" point so all sites are covered at once. See vox-notes/VERIFIED-DYNAMIC-VALUE-TYPED-READ-CLASS.md.
+
+---
+
+### 116. An untyped `Set` that retypes a name it created prints a raw address instead of the value
+
+**Status:** Open, reported 2026-08-30 (master-verified). Severity: memory safety (address leak); plus an open design question on what an untyped `Set` should mean.
+
+`Set zoo to 5.` then `Set zoo to "text now".` then `Print zoo.` prints `4198488` (an address). A proper declaration (`a number called zoo is 5.`) gives the correct `cannot assign text to 'zoo', which is a number` on the second `Set`. An untyped `Set NAME to VALUE.` on a name never declared is not in the manual. The address print is a defect under any reading; what an untyped `Set` on a fresh name should do is the owner's call: (a) compile error, (b) declares and type-locks the name, (c) declares a `value`. Register + ruling, then fix.
+
+---
+
+### 117. A text appended into a caller's list through a parameter prints an address
+
+**Status:** Open, reported 2026-08-30 (master-verified). Severity: memory safety (address leak).
+
+```vox
+To 'note' with a list called noted and a text called label.
+    append label to noted.
+a list called noted is [].
+'note' of noted and "hi".
+Print "last: {noted's last}".
+```
+prints `last: 4198536` instead of `hi`. Manual 2337 to 2343 (appends respect each element's actual type; unprovable types widen the list). Tied to the open Q7 ruling (does the caller widen the list, or is the callee refused); decide Q7, then fix.
+
+---
+
+### 118. `Set <global> to ...` refuses a list/map/buffer global that a function reads, with the caret on the declaration
+
+**Status:** Open, reported 2026-08-30 (master-verified).
+
+```vox
+a list called xs is [].
+To 'how many'. Return a number, xs's length.
+Set xs to ["a"].
+Print 'how many'.
+```
+gives `error: Unknown variable: xs` with the caret on line 1. The byte-equivalent `the xs is ["a"].` and bare `xs is ["a"].` both print `1`. No manual rule gives `Set` different rules for globals. Two faults: the refusal, and the wrong caret. Fix both.
+
+---
+
+### 119. A file handle (or plain variable) declared inside a branch is treated as undeclared after the branch
+
+**Status:** Open, reported 2026-08-30 (master-verified 2026-08-29; independently re-confirmed by the phase-C chaos generator, which restricts its variable pool to top-level declarations to avoid it).
+
+A declaration inside an `If`/branch body is not seen at a later use even though the branch ran; the use reports `Unknown variable`. See vox-notes/VERIFIED-DECLARATIONS-IN-BRANCHES.md. Fixing it also enriches the chaos generator's pool.
+
+---
+
+### 120. A possessive member call stops parsing at a line break before its preposition
+
+**Status:** Open, reported 2026-08-30 (master-verified 2026-08-29).
+
+`origin's 'scaled'` then a newline then `of 2.` is refused, though a free call with the same line break compiles, and the manual gives no meaning to a line break inside a sentence. A ledger leaf was held out of a merge because of it. See vox-notes/VERIFIED-NEWLINE-BEFORE-PREPOSITION.md.
+
+---
+
+### 121. A removed directory still answers `available`
+
+**Status:** Open, reported 2026-08-30 (master-verified, both compilers).
+
+After a successful `Remove the directory`, the path answers `available` = true, though the filesystem confirms it is gone. Deterministic, self-contained repro (harness seed 13). Composition-sensitive to reduce, so seed-13's generated program is the canonical repro. See vox-notes/CANDIDATE-PRC08-STATUS.md.
+
+---
+
+### 122. A `To` inside an open `If`/loop body is swallowed into the body
+
+**Status:** Open, reported 2026-08-30 (master-verified; the owner ruled 2026-08-30 that function declarations are not nestable and this should be a compile error).
+
+A function defined inside a loop body is absorbed into the loop and re-run per iteration, and can silently shadow an import with no warning. The ruling is in hand; the fix is a guard plus one manual sentence stating the rule.
+
+---
+
+### 123. Redeclaring a name as another kind reports "Unknown variable" at the read, not the conflict
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+```vox
+a list called kept is [].
+(a function reading kept)
+a buffer called kept is 16 bytes in size.
+```
+reports `Unknown variable: kept` at the function's read. The refusal is correct (two declarations genuinely disagree); the message is wrong, because nothing is unknown. The diagnostic should name the conflict and both declaration sites.
+
+---
+
+### 124. A user-facing error cites LANGUAGE.md by a now-stale line number
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+`src/analyzer/void_results.rs` embeds `(LANGUAGE.md:4963-4965)` and `(LANGUAGE.md:4990)` in an error a user sees when reading the result of a `.lib` entry with no `, returning`; those lines now point at unrelated sections. Every other user-facing diagnostic cites its section by name. Fix: cite by name. Worth bundling with the buffer-capacity doc correction the owner already ruled on (manual says zero capacity; the runtime gives 4096).
+
+---
+
+### 125. `Set message to "x".` blames `to` instead of the reserved word the author typed
+
+**Status:** Open, reported 2026-08-30 (master-verified). Diagnostic quality.
+
+`Set message to "x".` gives `Cannot use 'to' as a variable name`, caret on `to`. The declaration path gets it right: `'message' is an alternate spelling of the reserved keyword 'text'`. The message should name what the author actually did, matching the sibling path.
+
+---
+
+### 126. An unrecognised format specifier is silently discarded
+
+**Status:** Open, reported 2026-08-30 (master-verified).
+
+```vox
+a number called n is 255.
+Print "{n:q}|{n:#x}|{n:zzz}|".
+```
+renders `255|255|255|`; `{n:#x}` is the obvious hex typo and silently prints decimal. The format section's stated principle (3289, 3280 to 3282) is that a bad specifier is a compile error naming the valid forms, never a silent no-op. Fix: one manual sentence plus a compile error for any specifier outside the table. See #127 for the sibling malformed-precision corner.
+
+---
+
+### 127. A malformed precision `{n:.z}` is silently ignored
+
+**Status:** Open, reported 2026-08-30 (master-verified). Sibling of #126.
+
+`{n:.z}` renders as a bare `{n}` with no diagnostic: the leading-dot precision branch returns before #126's catch-all. Same principle as #126; fold into that fix.
