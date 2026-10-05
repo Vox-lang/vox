@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #103: a text field always holds a text, the same as
+ a text variable; `nothing` is refused at the write and the empty text
+ is named instead.)
+
+A thing called note has
+  a text called body is "".
+a note called saved.
+Set saved's body to nothing.

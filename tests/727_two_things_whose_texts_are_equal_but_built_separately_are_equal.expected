@@ -1,0 +1,3 @@
+equal across two allocations
+one more byte differs
+two empty texts are equal

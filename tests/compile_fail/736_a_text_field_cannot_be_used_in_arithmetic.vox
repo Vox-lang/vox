@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #103: a text field holds text, so arithmetic on it is
+ refused exactly as it is for a text variable, and `increment` on it,
+ which is arithmetic, gets that message, naming the field.)
+
+A thing called note has
+  a text called body is "1".
+a note called saved.
+increment saved's body.

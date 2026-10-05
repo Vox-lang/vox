@@ -18,9 +18,9 @@ use super::*;
 pub(crate) type ThingRegistry = HashMap<String, ThingDef>;
 
 /// A scalar field occupies one fixed 8-byte slot, matching every other Vox
-/// value: a number, a float's IEEE-754 bits, a boolean's 0/1, and a time's
-/// epoch seconds all fit exactly, so no field needs padding or alignment
-/// beyond what this gives it.
+/// value: a number, a float's IEEE-754 bits, a boolean's 0/1, a time's
+/// epoch seconds, and a text's pointer all fit exactly, so no field needs
+/// padding or alignment beyond what this gives it.
 pub(crate) const SLOT_BYTES: u64 = 8;
 
 /// Where a resolved field path lands: its byte offset from the base thing's
@@ -256,20 +256,33 @@ pub(crate) fn find_cycle(defs: &ThingRegistry, name: &str) -> Option<Vec<String>
     walk(defs, name, &mut Vec::new())
 }
 
-/// Whether a field type is in the v1 set (plan 310 §6): number, float,
-/// boolean, time, and any previously defined thing.
+/// Whether a field type is one a thing can hold (plan 310 §6): number,
+/// float, boolean, time, text, and any previously defined thing.
 ///
-/// The excluded types are deferred by §6, not forgotten: `text` waits on the
-/// handle-copy verification §6 asks for, and buffer/list/map (plus the
-/// file/timer/value handles, which are the same reference-carrying shape)
-/// reopen the aliasing question §5's value semantics deliberately avoid. A
-/// field of one of those types would need eight bytes holding a pointer this
-/// task cannot copy, print, or compare correctly, so a definition using one
-/// is rejected rather than silently declared and read as garbage.
+/// A text field is one slot holding the text's pointer, like a text
+/// variable. Copying the slot shares the bytes, and that sharing cannot be
+/// observed: no sentence writes into a text's bytes (every byte write,
+/// append, clear, copy, read and resize takes a buffer), so changing a text
+/// is always pointing its slot at another one. The one place a text's
+/// string is ever freed is a global text's own `Set` (docs/BUGS_FOUND.md
+/// #108), and `collect_freeable_texts` counts a field write as a retaining
+/// read, so a string a field holds is never one of those.
+///
+/// The excluded types are deferred by §6, not forgotten: buffer/list/map
+/// (plus the file/timer/value handles, which are the same
+/// reference-carrying shape) can be changed in place, so sharing one
+/// between two copies would be visible and reopens the aliasing question
+/// §5's value semantics deliberately avoid. A definition using one is
+/// rejected rather than silently declared and read as garbage.
 pub(crate) fn v1_field_type_supported(field_type: &Type) -> bool {
     matches!(
         field_type,
-        Type::Integer | Type::Float | Type::Boolean | Type::Time | Type::Thing(_)
+        Type::Integer
+            | Type::Float
+            | Type::Boolean
+            | Type::Time
+            | Type::String
+            | Type::Thing(_)
     )
 }
 
@@ -415,11 +428,10 @@ impl Analyzer {
                     self.push_error(
                         format!(
                             "Field '{}' of thing '{}' is a {}, which a thing cannot hold yet\n  \
-                             A field's type may be number, float, boolean, time, or any thing \
-                             defined earlier (plan 310 §6).\n  \
-                             text is deferred until copying a text handle is verified not to \
-                             observe mutation; buffer, list, map, file, timer, and value carry \
-                             references, which value semantics (§5) deliberately keep out.",
+                             A field's type may be number, float, boolean, time, text, or any \
+                             thing defined earlier (plan 310 §6).\n  \
+                             buffer, list, map, file, timer, and value carry references, which \
+                             value semantics (§5) deliberately keep out.",
                             field.name,
                             def.name,
                             self.type_name(&field.field_type)
@@ -673,6 +685,79 @@ impl Analyzer {
         }
     }
 
+    /// The type a field chain stores, asked without analyzing or reporting
+    /// anything; None for anything that is not a resolvable chain.
+    pub(crate) fn field_value_type(&self, value: &Expr) -> Option<Type> {
+        let Expr::ThingField { base, path } = value else {
+            return None;
+        };
+        let thing = self.thing_of_variable(base)?;
+        resolve_field_path(&self.things, &thing, path)
+            .ok()
+            .map(|field| field.field_type)
+    }
+
+    /// `Set note's body to <value>.` on a text field: the slot is read back
+    /// as a pointer to text, so a number, a float or a boolean stored there
+    /// would be dereferenced by the next read. The same rule a text
+    /// variable's own write follows (LANGUAGE.md "Type Immutability"),
+    /// including its exemptions: a buffer is copied into fresh text, and a
+    /// value whose type cannot be proven is let through.
+    pub(crate) fn check_text_field_write(&mut self, base: &str, path: &[String], value: &Expr) {
+        let target = render_chain(base, path);
+        let message = if matches!(value, Expr::NothingLit) {
+            format!(
+                "cannot assign nothing to '{}', which is a text\n  \
+                 A text field always holds a text; \"\" is the empty one.",
+                target
+            )
+        } else {
+            let Some(actual) = self
+                .field_value_type(value)
+                .or_else(|| self.provable_value_type(value))
+            else {
+                return;
+            };
+            if matches!(
+                actual,
+                Type::String | Type::Buffer | Type::Value | Type::Void | Type::Unknown
+            ) {
+                return;
+            }
+            // The cast is only offered where the manual documents one into
+            // text, and only when the value can be written back as source.
+            let hint = self.render_value_hint(value);
+            let cast = if matches!(actual, Type::Integer | Type::Float | Type::Boolean)
+                && !hint.contains("<value>")
+            {
+                format!("\n  convert it explicitly:  Set {} to {} as text.", target, hint)
+            } else {
+                String::new()
+            };
+            format!(
+                "cannot assign {} to '{}', which is a text{}",
+                self.typed_phrase(&actual),
+                target,
+                cast
+            )
+        };
+        // The caret goes on the sentence that writes the field, in each of
+        // the spellings that write one, not on the thing's declaration.
+        let occurrence = *self.symbol_error_counts.get(base).unwrap_or(&0);
+        let chain = path.join("'s ");
+        let patterns = [
+            format!("Set {}'s {} to ", base, chain),
+            format!("the {}'s {} is ", base, chain),
+            format!("{}'s {} is ", base, chain),
+        ];
+        let mut err = CompileError::new(&message);
+        if let Some(loc) = self.find_bind_site_location(base, &patterns, occurrence, true) {
+            err = err.with_location(loc);
+        }
+        self.symbol_error_counts.insert(base.to_string(), occurrence + 1);
+        self.errors.push(err);
+    }
+
     /// Analyze an expression in a position that accepts a whole thing: a
     /// print, or an interpolation inside one (plan 310 §7). A whole thing is
     /// validated as a thing, so the "not a value" rule that governs every
@@ -914,6 +999,7 @@ fn default_matches_field_type(default: &Expr, field_type: &Type) -> bool {
         (Expr::IntegerLit(_), Type::Integer | Type::Float | Type::Time)
             | (Expr::FloatLit(_), Type::Float)
             | (Expr::BoolLit(_), Type::Boolean)
+            | (Expr::StringLit(_), Type::String)
     )
 }
 
@@ -1178,12 +1264,12 @@ mod tests {
             Type::Float,
             Type::Boolean,
             Type::Time,
+            Type::String,
             Type::Thing("point".into()),
         ] {
             assert!(v1_field_type_supported(&ok), "{:?} is a v1 field", ok);
         }
         for deferred in [
-            Type::String,
             Type::Buffer,
             Type::List(Box::new(Type::Unknown)),
             Type::Map(Box::new(Type::Unknown)),

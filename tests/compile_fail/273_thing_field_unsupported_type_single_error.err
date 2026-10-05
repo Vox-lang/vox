@@ -1,2 +1,2 @@
-Field 'filename' of thing 'file report' is a text, which a thing cannot hold yet
-273_thing_field_unsupported_type_single_error.vox:10:17
+Field 'filename' of thing 'file report' is a buffer, which a thing cannot hold yet
+273_thing_field_unsupported_type_single_error.vox:12:19

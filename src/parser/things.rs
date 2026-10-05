@@ -658,7 +658,13 @@ impl Parser {
             Token::IntegerLiteral(n) => Some(Expr::IntegerLit(if negated { -n } else { n })),
             Token::IntegerLiteralOverflow(_) => Some(Expr::IntegerLit(i64::MIN)),
             Token::FloatLiteral(f) => Some(Expr::FloatLit(if negated { -f } else { f })),
-            Token::StringLiteral(s) if !negated => Some(Expr::StringLit(s)),
+            // The same reading every other quoted literal gets, so `{{` is
+            // one brace here too; a `{name}` makes it a format string, which
+            // is computed, not a literal.
+            Token::StringLiteral(s) if !negated => match self.string_value_expr(s) {
+                text @ Expr::StringLit(_) => Some(text),
+                _ => None,
+            },
             Token::True if !negated => Some(Expr::BoolLit(true)),
             Token::False if !negated => Some(Expr::BoolLit(false)),
             Token::Nothing if !negated => Some(Expr::NothingLit),

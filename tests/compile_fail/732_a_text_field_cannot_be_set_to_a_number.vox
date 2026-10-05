@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #103: a text field is read back as text, so a number
+ written into one would be read as a pointer. Refused at the write, with
+ the cast that converts it.)
+
+A thing called note has
+  a text called body is "".
+a note called saved.
+Set saved's body to 5.

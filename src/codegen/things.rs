@@ -119,16 +119,34 @@ impl CodeGenerator {
             let Some(operand) = self.thing_field_operand_at(name, offset) else {
                 continue;
             };
-            let (bits, rendered) = default_bits(&field);
-            self.emit_indent(&format!("mov rax, {}", bits));
+            let rendered = self.emit_field_default(&field);
             self.emit_indent(&format!(
                 "mov qword {}, rax  ; {}'s {} is {}",
                 operand, name, field.name, rendered
             ));
-            if matches!(field.field_type, Type::Float) {
-                self.uses_floats = true;
-            }
         }
+    }
+
+    /// Leave a field's declared default in rax, and say how to spell it in
+    /// the emitted comment. A text default is the address of its string
+    /// constant; a text field with no default holds the empty text, never a
+    /// null pointer, because every read of it is a read of text.
+    fn emit_field_default(&mut self, field: &FieldDef) -> String {
+        if matches!(field.field_type, Type::String) {
+            let text = match &field.default {
+                Some(Expr::StringLit(text)) => text.clone(),
+                _ => String::new(),
+            };
+            let label = self.add_string(&text);
+            self.emit_indent(&format!("lea rax, [rel {}]", label));
+            return format!("{:?}", text);
+        }
+        let (bits, rendered) = default_bits(field);
+        self.emit_indent(&format!("mov rax, {}", bits));
+        if matches!(field.field_type, Type::Float) {
+            self.uses_floats = true;
+        }
+        rendered
     }
 
     /// `docs/BUGS_FOUND.md #112`: a thing-returning function that falls off
@@ -144,15 +162,11 @@ impl CodeGenerator {
     /// `rax` for the caller exactly as the un-defaulted version did.
     pub(crate) fn emit_thing_defaults_through_r10(&mut self, thing: &str) {
         for (offset, field) in scalar_slots(&self.things, thing) {
-            let (bits, rendered) = default_bits(&field);
-            self.emit_indent(&format!("mov rax, {}", bits));
+            let rendered = self.emit_field_default(&field);
             self.emit_indent(&format!(
                 "mov qword [r10+{}], rax  ; fell off the end: {}'s default is {}",
                 offset, field.name, rendered
             ));
-            if matches!(field.field_type, Type::Float) {
-                self.uses_floats = true;
-            }
         }
         self.emit_indent("mov rax, r10  ; the caller's destination, now defaulted");
     }
@@ -326,12 +340,22 @@ impl CodeGenerator {
                     at += thing_size(&self.things, inner);
                 }
                 field_type => {
+                    // A text prints in double quotes, the way a list or a
+                    // map prints the texts it holds. The opening quote is
+                    // written before the field is loaded: writing it uses
+                    // rdi.
+                    if matches!(field_type, Type::String) {
+                        self.emit_print_literal("\"");
+                    }
                     let operand = place.operand(at);
                     self.emit_indent(&format!(
                         "mov rdi, qword {}  ; {}'s {}",
                         operand, thing, field.name
                     ));
-                    if matches!(field_type, Type::Float) {
+                    if matches!(field_type, Type::String) {
+                        self.emit_indent("PRINT_CSTR rdi");
+                        self.emit_print_literal("\"");
+                    } else if matches!(field_type, Type::Float) {
                         self.emit_indent("movq xmm0, rdi");
                         self.emit_indent("PRINT_FLOAT");
                         self.uses_floats = true;
@@ -368,6 +392,17 @@ impl CodeGenerator {
         for (offset, field) in scalar_slots(&self.things, &thing) {
             let left_operand = left_place.operand(offset);
             let right_operand = right_place.operand(offset);
+            if matches!(field.field_type, Type::String) {
+                // Two texts are equal when their bytes are, wherever each
+                // copy's bytes happen to live.
+                self.uses_strings = true;
+                self.emit_indent(&format!("mov rdi, qword {}  ; {}", left_operand, field.name));
+                self.emit_indent(&format!("mov rsi, qword {}", right_operand));
+                self.emit_indent("call _str_eq");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", differs));
+                continue;
+            }
             self.emit_indent(&format!("mov rax, qword {}  ; {}", left_operand, field.name));
             if matches!(field.field_type, Type::Float) {
                 self.uses_floats = true;
@@ -454,7 +489,14 @@ impl CodeGenerator {
             self.emit_thing_copy_into(&destination, &inner, value, &what);
             return;
         }
-        self.generate_expr(value);
+        // A text field takes what a text variable takes: a buffer arrives as
+        // a fresh copy of its bytes, never as the buffer itself, so writing
+        // the buffer later cannot reach the field.
+        if matches!(self.thing_field_type(base, path), Some(Type::String)) {
+            self.generate_expr_as_text(value);
+        } else {
+            self.generate_expr(value);
+        }
         if let Some(operand) = self.thing_field_operand(base, path) {
             if matches!(self.thing_field_type(base, path), Some(Type::Float)) {
                 self.uses_floats = true;

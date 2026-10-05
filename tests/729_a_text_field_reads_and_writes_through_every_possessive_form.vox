@@ -1,0 +1,40 @@
+(docs/BUGS_FOUND.md #103: a text field is an ordinary expression and
+ lvalue. Through a quoted name, a bare `is`, a member maker, a text
+ parameter, a list append (which keeps the value it was given), a
+ comparison with a literal, interpolation, and a text variable that
+ outlives the field's next write.)
+
+A thing called note has
+  a function called 'signed by',
+  a text called body is "hello",
+  a text called title.
+
+To do the note's 'signed by', with a text called author.
+  a note called signed.
+  Set signed's title to author.
+  Return a note, signed.
+
+To shouted with a text called word.
+  Return a text, "{word}!".
+
+To 'title of' with a note called given.
+  Return a text, given's title.
+
+Create a note called 'the first'.
+'the first''s title is "set with a bare is".
+Print 'the first''s title.
+If 'the first''s body is "hello" then,
+  Print "the body is hello".
+Print shouted of 'the first''s body.
+a list called kept is [].
+append 'the first''s title to kept.
+Set 'the first''s title to "changed after the append".
+Print kept.
+a text called local is 'the first''s body.
+Set 'the first''s body to "".
+Print local.
+Print "body [{'the first''s body}], title [{'the first''s title}]".
+The made is a note's 'signed by' with "Grace".
+Print made.
+Print 'title of' of made.
+Print 'the first''s 'title of'.

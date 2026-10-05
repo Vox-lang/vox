@@ -1,0 +1,9 @@
+set with a bare is
+the body is hello
+hello!
+["set with a bare is"]
+hello
+body [], title [changed after the append]
+{body: "hello", title: "Grace"}
+Grace
+changed after the append

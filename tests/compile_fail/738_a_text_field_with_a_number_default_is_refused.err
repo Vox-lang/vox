@@ -1,0 +1,2 @@
+Field 'body' of thing 'note' is a text, but its default is a number
+738_a_text_field_with_a_number_default_is_refused.vox:5:17
