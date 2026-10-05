@@ -122,8 +122,8 @@ Suggests:       vox-libs
 Provides:       bundled(crate(proc-macro2)) = 1.0.107
 Provides:       bundled(crate(quote)) = 1.0.47
 Provides:       bundled(crate(syn)) = 3.0.3
-Provides:       bundled(crate(thiserror)) = 2.0.20
-Provides:       bundled(crate(thiserror-impl)) = 2.0.20
+Provides:       bundled(crate(thiserror)) = 2.0.21
+Provides:       bundled(crate(thiserror-impl)) = 2.0.21
 Provides:       bundled(crate(unicode-ident)) = 1.0.24
 
 # Debuginfo is skipped on THIS path only, and the guidelines want the reason
