@@ -200,6 +200,15 @@ impl CodeGenerator {
             result.push('\n');
         }
 
+        // Vox code never runs from the stack, so every object says so. NASM,
+        // unlike a C compiler, writes no `.note.GNU-stack` section unless the
+        // source declares one, and `ld` reads an object without it as one that
+        // may need an executable stack: the output then carries no GNU_STACK
+        // header, and the loader gives the process an executable stack (or,
+        // for a library, refuses to `dlopen` it). Declaring the empty note
+        // here makes the executable and the shared library both RW, not RWE.
+        result.push_str("section .note.GNU-stack noalloc noexec nowrite progbits\n\n");
+
         result.push_str("section .data\n");
         result.push_str(&self.data_section);
         result.push('\n');

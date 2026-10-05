@@ -3637,3 +3637,14 @@ Set fallback to "changed".
         let literal = compile_to_asm("Exit 3.\n");
         assert!(!literal.contains("cmp rax, 255"), "a proved code needs no check: {}", literal);
     }
+
+    #[test]
+    fn executables_and_libraries_both_declare_a_stack_that_is_not_executable() {
+        let note = "section .note.GNU-stack noalloc noexec nowrite progbits\n";
+        let program = compile_to_asm("Print \"hello\".\n");
+        assert_eq!(program.matches(note).count(), 1, "{}", program);
+        let library = compile_to_asm_shared(
+            "Library 'stack check' version \"1.0\".\nTo greet.\n  Print \"hi\".\n",
+        );
+        assert_eq!(library.matches(note).count(), 1, "{}", library);
+    }

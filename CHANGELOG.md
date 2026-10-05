@@ -30,6 +30,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   one. A text literal that is not a number is a compile error, and a text
   read at run time that is not a number raises the error flag and leaves
   the destination as it was. (#129, #130)
+- **Every library and executable Vox builds marks its stack as not
+  executable, so any host can load a Vox library.** The generated
+  assembly declares the `.note.GNU-stack` section, so `ld` writes a
+  GNU_STACK header with `RW` flags. A `--shared` library used to carry no
+  such header: glibc 2.43 refused to `dlopen` it, and a C program linked
+  against it ran with an executable stack. (#146)
 
 ### Changed
 - **The compiler now builds with no third-party crates.** The unused
