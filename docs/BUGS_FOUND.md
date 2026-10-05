@@ -12975,7 +12975,7 @@ renders `255|255|255|`; `{n:#x}` is the obvious hex typo and silently prints dec
 
 ### 128. `Free` through one name of an assigned list, then a read through the other name, segfaults
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
 
 ```vox
 a list called xs is ["a"].
@@ -12991,19 +12991,19 @@ Segmentation fault         (core dumped)
 
 **Observed:** the program dies on a signal at the read of `ys`.
 
-**Expected:** `0`. `ys` names the same list as `xs`, so after `Free xs.` it is empty too. Never a signal.
+**Expected:** `1`. Naming copies: `a list called ys is xs.` gives `ys` its own list, so `Free xs.` leaves `ys` holding `["a"]`. Sharing one list under two names is written `xs is also called ys.`, and then `Free xs.` empties it for both names. Never a signal.
 
-**The manual:** LANGUAGE.md "Releasing a Buffer": "A list also accepts `Free`, with the same after-state a buffer gets: it becomes **empty** (length 0, `empty` is true, prints `[]`), and every later write - `append`, `Set element N of ...` - is refused with the error flag; a second `Free` is the same no-op-that-flags, not a second release. Free releases the list and every collection it holds: a nested list or map element is freed too, recursively, before the list itself is." The manual has no sentence on what `a list called ys is xs.` means; the owner's expectation below settles it for this entry.
+**The manual:** LANGUAGE.md "Releasing a Buffer": "A list also accepts `Free`, with the same after-state a buffer gets: it becomes **empty** (length 0, `empty` is true, prints `[]`), and every later write - `append`, `Set element N of ...` - is refused with the error flag; a second `Free` is the same no-op-that-flags, not a second release. Free releases the list and every collection it holds: a nested list or map element is freed too, recursively, before the list itself is." The manual has no sentence on what `a list called ys is xs.` means; the rule below settles it for this entry.
 
 **Root cause:** not yet investigated. `ys` appears to hold the old block pointer, which `Free xs.` releases without updating the second name.
 
-**Fix direction:** TheJostler, 2026-10-05: "seg fault - automatically a YES. I would expect ys to be freed as well... the memory tracker we already use ... needs to check for children on a free call and free the children too." After `Free xs.`, every name for that list reads it as empty, and `Free` releases the children it holds.
+**Fix direction:** TheJostler ruled on 2026-10-05 that a segmentation fault here is a bug. A name copies what it is given, so each name owns its list and `Free` on one name never leaves another holding a released block. Where two names are written as one list (`xs is also called ys.`), `Free xs.` empties the list for both. `Free` releases the children a list holds, tracked by the allocation tracker Vox already uses.
 
 ---
 
 ### 129. A number field used to initialise a text variable segfaults
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
 
 ```vox
 A thing called point has
@@ -13020,7 +13020,7 @@ Segmentation fault         (core dumped)
 
 **Observed:** compiles clean, then dies on a signal at `Print label.`
 
-**Expected:** a compile error, the same one a number variable gets. The variable form is refused today:
+**Expected:** a compile error, the same one a number variable gets: a field read is checked like a variable read, at compile time. The variable form is refused today:
 ```text
 error: cannot initialise 'label', which is text, with a number
   --> p1.vox:2:15
@@ -13033,13 +13033,13 @@ error: cannot initialise 'label', which is text, with a number
 
 **Root cause:** not yet investigated. A first reading: the declaration's initialiser check learns nothing from a field read (the provable-type lookup has no arm for a field), so the number's bits are stored as a text pointer.
 
-**Fix direction:** TheJostler, 2026-10-05: "label is origin's x should check: is origin's x a text, if yes proceed, if not compiler error; if impossible to check at compile time, maybe an assembly macro which dynamically casts... Does this already exist? Check before designing and get my go-ahead on the design first." **A DESIGN go-ahead from TheJostler is required before any fix starts.** The first step is to check whether a run-time cast already exists for this (the #114/#115 run-time tag cast is the obvious candidate) and bring the design to the owner.
+**Fix direction:** TheJostler ruled on 2026-10-05 that a field read is checked like a variable read, at compile time. `a text called label is origin's x.` is accepted when `origin's x` is a text and is a compile error otherwise, with no run-time cast. The check is one arm in the analyzer's type lookup (`src/analyzer/types.rs`), and it ships together with #130.
 
 ---
 
 ### 130. A text written into a number field is stored as its address
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
 
 ```vox
 A thing called point has
@@ -13069,7 +13069,7 @@ error: cannot assign text to 'plain', which is a number
 
 **Root cause:** the analyzer's `Statement::SetThingField` arm (`src/analyzer/statements.rs`) type-checks only a field that holds a whole thing; for a scalar field it falls through to `analyze_expr(value)`, which checks nothing against the field's declared type.
 
-**Fix direction:** TheJostler's rule, 2026-10-05: a text written into a number field is refused unless cast. "casting a text to a number runs atoi on the string... 'hello' is not a valid number so it should throw a compile error; if it's not known at compile time what the text will be, set on error and no-op." So: `Set origin's x to "hello".` is a compile error; `Set origin's x to "hello" as a number.` is a compile error too, because the literal is not a number; a text cast whose content is only known at run time sets the error flag and leaves the field unchanged. For reference, `a number called n is "hello" as a number.` compiles today and prints `0`; the cast half of the rule changes that.
+**Fix direction:** TheJostler ruled on 2026-10-05 that a text written into a number field is refused unless cast, and that a text or buffer cast to a number must be, as a whole, a number literal Vox source accepts: an optional leading -, decimal digits with an optional fractional part, or a 0x, 0b or 0o prefixed integer. "hello" and "12 apples" are not numbers. So: `Set origin's x to "hello".` is a compile error; `Set origin's x to "hello" as a number.` is a compile error too, because the literal is not a number; a text cast whose content is only known at run time sets the error flag and leaves the field unchanged. The fix ships together with #129. For reference, `a number called n is "hello" as a number.` compiles today and prints `0`; the cast half of the rule changes that.
 
 ---
 
@@ -13196,7 +13196,7 @@ With the `see` moved to the top level, the same program compiles and prints `7`.
 
 **Root cause:** the parser (`parse_see`, src/parser/functions.rs) reads a seen `.vox` file into the program only when the `see` stands at the top level; anywhere deeper it returned a bare `See` statement inside the enclosing body. Nothing downstream reads that statement there: the analyzer and code generation treat a `See` as already handled (codegen emits only an assembly comment), and `.lib` imports are resolved by a scan of the top-level statements alone (`resolve_program_imports`, src/lib_file.rs). So the file never arrived and nothing said so. Inside a thing definition a `see` was refused, but only by the generic "Expected 'a' or 'an'" entry error.
 
-**Fix direction:** superseded by the owner's ruling of 2026-10-05: "See's should only work globally, not inside loops, functions, ifs or types." A `see` is legal only at the top level of a file. Anywhere else (an `If` or `Otherwise` branch, any loop, an `On error` handler, a function or member function body, a thing definition) it is a compile error that names the rule and the block, with the caret on the `see`. LANGUAGE.md "The `see` Keyword" states the rule. Regression tests: tests/compile_fail/760 to 768 (one per position) and tests/769 (a top-level `see` after other code still brings its file in).
+**Fix direction:** TheJostler ruled on 2026-10-05 that a `see` stands at the top level of a file. Anywhere else (an `If` or `Otherwise` branch, any loop, an `On error` handler, a function or member function body, a thing definition) it is a compile error that names the rule and the block, with the caret on the `see`. LANGUAGE.md "The `see` Keyword" states the rule. Regression tests: tests/compile_fail/760 to 768 (one per position) and tests/769 (a top-level `see` after other code still brings its file in).
 
 ---
 
@@ -13225,7 +13225,7 @@ refused
 
 **Root cause:** `src/codegen/statements.rs` builds the device number as `(major << 8) | minor`, and `coreasm/x86_64/proc.asm` documents the same layout. That is the legacy 16-bit encoding, so the minor's bits above 8 land in the major field and the kernel decodes them away.
 
-**Fix direction:** TheJostler, 2026-10-05: "Fix this everywhere, hunt and fix please." Encode with the Linux layout, as glibc's `gnu_dev_makedev` does (`((major & 0xfffff000) << 32) | ((major & 0xfff) << 8) | ((minor & 0xffffff00) << 12) | (minor & 0xff)`), and hunt every other place that builds or documents a device number the old way. A fixer is on it.
+**Fix direction:** TheJostler ruled on 2026-10-05 that this is fixed everywhere it occurs. Encode with the Linux layout, as glibc's `gnu_dev_makedev` does (`((major & 0xfffff000) << 32) | ((major & 0xfff) << 8) | ((minor & 0xffffff00) << 12) | (minor & 0xff)`), and every other place that builds or documents a device number the old way is corrected the same way.
 
 ---
 
@@ -13292,7 +13292,7 @@ carried on
 
 **Root cause:** `src/codegen/statements.rs` loads the 64-bit Vox numbers straight into `rdi` and `rsi` for `SEND_SIGNAL`, and the kernel reads only their low 32 bits. Nothing checks either number's range, and nothing separates one process from the kernel's group meanings of 0 and negative pids.
 
-**Fix direction:** TheJostler, 2026-10-05: "confirmed that is a bug". Signal numbers are 0 to 64; a provable out-of-range number is a compile error, and one known only at run time sets the error flag (EINVAL) and sends nothing. `to process` / `to child` means exactly one process, pid 1 to 2147483647, with the same compile-time / run-time split. The kernel's group meanings get their own plain-English forms in the same release ("We want to be Linux friendly"): `to process group <g>` (kill(-g)), `to my process group` (kill(0)), `to every process` (kill(-1)).
+**Fix direction:** TheJostler confirmed on 2026-10-05 that this is a bug. Signal numbers are 0 to 64; a provable out-of-range number is a compile error, and one known only at run time sets the error flag (EINVAL) and sends nothing. `to process` / `to child` means exactly one process, pid 1 to 2147483647, with the same compile-time / run-time split. The kernel's group meanings get their own plain-English forms in the same release, so nothing Linux can do is taken away: `to process group <g>` (kill(-g)), `to my process group` (kill(0)), `to every process` (kill(-1)).
 
 ---
 
