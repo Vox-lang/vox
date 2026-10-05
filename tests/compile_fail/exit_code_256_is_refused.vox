@@ -1,0 +1,4 @@
+(Compile-fail: bug #136. The kernel keeps the low 8 bits of an exit
+ code, so 256 would report success. Exit codes are 0 to 255.)
+
+Exit 256.

@@ -1,0 +1,37 @@
+(Bug #131: a call with no arguments, written directly, in conditions,
+ loops, arithmetic, casts and type checks.)
+
+To seven.
+    Return a number, 7.
+
+To truth.
+    Return a boolean, true.
+
+To greeting.
+    Return a text, "hello".
+
+To 'some numbers'.
+    Return a list, [1, 2, 3].
+
+If seven is 7 then, Print "equal".
+If truth then, Print "true".
+If greeting is "hello" then, Print "text matches".
+If greeting is a text then, Print "is a text".
+If seven is odd then, Print "odd".
+
+a number called count is 0.
+While count is less than seven,
+    increment count.
+Print count.
+
+Repeat seven times, Print "r".
+For each n from 5 to seven,
+    Print n.
+For each n in 'some numbers',
+    Print n.
+
+Print seven add 1.
+Print 1 add seven.
+Print seven multiply seven.
+Print seven as text.
+Print "4" as a number add seven.

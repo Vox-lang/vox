@@ -1,0 +1,4 @@
+(Compile-fail: bug #135. kill(2) reads the signal as a 32-bit int, so
+ 4294967305 would arrive as 9, SIGKILL. It is refused, not narrowed.)
+
+Send signal 4294967305 to process 1234.

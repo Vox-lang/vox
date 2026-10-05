@@ -1,0 +1,7 @@
+(A `see` stands at the top level of a file, so a thing definition refuses
+ one in place of an entry.)
+A thing called point has
+  see "./no-such-file.vox",
+  a number called x is 0.
+
+Print "after".

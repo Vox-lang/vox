@@ -1,0 +1,33 @@
+(docs/BUGS_FOUND.md #135: `to process` names exactly one process, 1 to
+ 2147483647. A pid only the running program knows that is 0, negative,
+ or wider than kill(2)'s 32-bit int sets the error flag and sends
+ nothing. Signal 0 only: kill(0, 0), kill(-1, 0) and kill(pid, 0) all
+ succeed when they reach the kernel, so each refused line proves the
+ statement stopped before the syscall. The live child is reached by its
+ own pid with no error.)
+
+a number called nobody is 1.
+Set nobody to 0.
+Send signal 0 to process nobody.
+On error print "process 0 refused".
+Set nobody to -1.
+Send signal 0 to process nobody.
+On error print "process -1 refused".
+Set nobody to 2147483648.
+Send signal 0 to process nobody.
+On error print "process 2147483648 refused".
+
+a number called wide is 0.
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Set wide to pid plus 4294967296.
+    Send signal 0 to child wide.
+    On error print "the child's pid plus 2 to the 32 refused".
+    Send signal 0 to child pid.
+    On error print "unexpected error on the live child".
+    Send signal 9 to process pid.
+    Set reaped to reap process pid.
+    If reaped is pid then,
+        Print "the child is stopped and reaped".

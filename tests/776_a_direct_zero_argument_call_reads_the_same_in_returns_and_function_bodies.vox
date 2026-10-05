@@ -1,0 +1,33 @@
+(Bug #131: a call with no arguments, written directly, inside a function
+ body and as what a function returns, and its result stored in a thing's
+ field and in an exit code.)
+
+A thing called point has
+  a number called x is 3.
+
+To seven.
+    Return a number, 7.
+
+To greeting.
+    Return a text, "hello".
+
+To relay.
+    Return a number, seven.
+
+To 'relay text'.
+    Return a text, greeting.
+
+To report.
+    a number called got is seven.
+    Print got.
+    Print "{greeting} from a body".
+
+Print relay.
+Print 'relay text'.
+report.
+
+a point called spot.
+Set spot's x to seven.
+Print spot.
+
+Exit seven.

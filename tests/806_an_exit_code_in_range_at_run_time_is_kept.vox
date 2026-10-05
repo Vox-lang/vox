@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #136: the run-time range check passes every code from
+ 0 to 255 through unchanged; 255 itself is the top of the range.)
+
+a number called code is 0.
+Set code to 254.
+Increment code.
+Terminate code.

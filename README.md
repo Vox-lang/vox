@@ -227,6 +227,8 @@ sudo dnf install nasm rust make
 cargo build --release
 ```
 
+The compiler has no dependencies beyond the Rust standard library.
+
 ---
 
 ## Installing

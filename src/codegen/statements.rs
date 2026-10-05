@@ -1269,6 +1269,16 @@ impl CodeGenerator {
             Statement::Exit { code } => {
                 self.emit_indent("; exit program");
                 self.generate_expr(code);
+                // The kernel keeps only the low 8 bits of the status, so 256
+                // would report success. The analyzer refuses every code it can
+                // prove out of range; a computed one exits with 255.
+                if constant_integer(code).is_none() {
+                    let in_range = self.new_label("exit_code_in_range");
+                    self.emit_indent(&format!("cmp rax, {}  ; exit code 0..{}, unsigned so negatives fail too", MAX_EXIT_CODE, MAX_EXIT_CODE));
+                    self.emit_indent(&format!("jbe {}", in_range));
+                    self.emit_indent(&format!("mov eax, {}  ; out of range: exit with 255", MAX_EXIT_CODE));
+                    self.emit(&format!("{}:", in_range));
+                }
                 self.emit_indent("mov rdi, rax  ; exit code");
                 if self.uses_files || self.uses_buffers {
                     self.emit_indent("push rdi      ; save exit code");
@@ -3064,6 +3074,26 @@ impl CodeGenerator {
                 };
                 let suppress_fstype_and_data = is_none_fstype && (move_flag || bind_flag);
 
+                // A text variable or buffer (format-built included) may hold
+                // the same pattern, which only the running program can see:
+                // unless a literal on either side already rules it out, the
+                // MOUNT_RECOGNISING_MOVE_OR_BIND macro compares the texts at
+                // run time and makes the same MS_MOVE/MS_BIND call.
+                let pattern_known_at_compile_time = matches!(fstype, Expr::StringLit(_))
+                    && matches!(options, None | Some(Expr::StringLit(_)));
+                let fstype_could_be_none = match fstype {
+                    Expr::StringLit(s) => s == "none",
+                    _ => true,
+                };
+                let options_could_be_move_or_bind = match options {
+                    None => false,
+                    Some(Expr::StringLit(s)) => s == "move" || s == "bind",
+                    Some(_) => true,
+                };
+                let recognise_at_run_time = !pattern_known_at_compile_time
+                    && fstype_could_be_none
+                    && options_could_be_move_or_bind;
+
                 // Park each evaluated argument on the stack so later
                 // expressions (function calls, format strings) cannot
                 // clobber earlier results, then pop into the syscall
@@ -3102,7 +3132,11 @@ impl CodeGenerator {
                 self.emit_indent("pop rsi  ; target");
                 self.emit_indent("pop rdi  ; source");
                 self.emit_indent(&format!("mov r10, {}  ; mount flags", flags));
-                self.emit_indent("MOUNT");
+                if recognise_at_run_time {
+                    self.emit_indent("MOUNT_RECOGNISING_MOVE_OR_BIND");
+                } else {
+                    self.emit_indent("MOUNT");
+                }
             }
 
             Statement::Shutdown => {
@@ -3234,15 +3268,60 @@ impl CodeGenerator {
                 self.emit_indent("EXECVE");
             }
 
-            Statement::SendSignal { signal, pid } => {
+            Statement::SendSignal { signal, target } => {
                 self.uses_files = true;
                 self.uses_proc = true;  // SEND_SIGNAL macro lives in proc.asm
+                self.emit_indent("; send a signal (kill(2))");
                 // kill(2): rdi = pid, rsi = signal. Evaluate both operands
                 // through the stack-parking helper so a later expression
                 // (function call, format string) cannot clobber an earlier
                 // result while the syscall registers are being loaded.
-                self.emit_syscall_args(&[(pid, "rdi"), (signal, "rsi")]);
+                match target {
+                    SignalTarget::Process(pid) | SignalTarget::ProcessGroup(pid) => {
+                        self.emit_syscall_args(&[(pid, "rdi"), (signal, "rsi")]);
+                    }
+                    SignalTarget::MyProcessGroup | SignalTarget::EveryProcess => {
+                        self.emit_syscall_args(&[(signal, "rsi")]);
+                    }
+                }
+                // kill(2) reads both as a 32-bit int, so a wider number would
+                // reach it as a different one. Out of range sends nothing and
+                // sets the flag (EINVAL); the analyzer has already refused
+                // every value it could prove, so only unproved ones are checked.
+                let refused = self.new_label("signal_refused");
+                let done = self.new_label("signal_done");
+                let signal_proved = constant_integer(signal).is_some();
+                if !signal_proved {
+                    self.emit_indent(&format!("cmp rsi, {}  ; signal 0..{}, unsigned so negatives fail too", MAX_SIGNAL_NUMBER, MAX_SIGNAL_NUMBER));
+                    self.emit_indent(&format!("ja {}", refused));
+                }
+                let mut checked = !signal_proved;
+                match target {
+                    SignalTarget::Process(pid) | SignalTarget::ProcessGroup(pid) => {
+                        if constant_integer(pid).is_none() {
+                            self.emit_indent("lea rax, [rdi-1]");
+                            self.emit_indent(&format!("cmp rax, {}  ; pid 1..{}, unsigned so 0 and negatives fail too", MAX_PROCESS_ID - 1, MAX_PROCESS_ID));
+                            self.emit_indent(&format!("ja {}", refused));
+                            checked = true;
+                        }
+                        if matches!(target, SignalTarget::ProcessGroup(_)) {
+                            self.emit_indent("neg rdi  ; kill(-group): every process in that group");
+                        }
+                    }
+                    SignalTarget::MyProcessGroup => {
+                        self.emit_indent("xor edi, edi  ; kill(0): every process in the caller's group");
+                    }
+                    SignalTarget::EveryProcess => {
+                        self.emit_indent("mov rdi, -1  ; kill(-1): every process the caller may signal");
+                    }
+                }
                 self.emit_indent("SEND_SIGNAL");
+                if checked {
+                    self.emit_indent(&format!("jmp {}", done));
+                    self.emit(&format!("{}:", refused));
+                    self.emit_indent("SET_LAST_ERROR 22  ; EINVAL: nothing sent");
+                    self.emit(&format!("{}:", done));
+                }
             }
 
             Statement::Symlink { target, linkpath } => {
@@ -3277,19 +3356,52 @@ impl CodeGenerator {
                     DeviceNodeType::Fifo => 4096 + 438,
                 };
 
-                // dev = (major << 8) | minor -> rdx
-                self.generate_expr(major);
-                self.emit_indent("push rax  ; save major");
-                self.generate_expr(minor);
-                self.emit_indent("mov rcx, rax  ; minor");
-                self.emit_indent("pop rax  ; major");
-                self.emit_indent("shl rax, 8");
-                self.emit_indent("or rax, rcx");
-                self.emit_indent("mov rdx, rax  ; dev = (major << 8) | minor");
+                // dev -> rdx, in Linux's device-number layout (glibc's
+                // makedev, as mknod(2) decodes it): minor bits 0-7, major
+                // bits 8-19, minor bits 8-19 at 20-31. mknod(2) takes a
+                // 32-bit dev, so a major above 4095 or a minor above
+                // 1048575 (or a negative one) names no Linux device: it
+                // sets the error flag (EINVAL) instead of reaching the
+                // kernel as some other device.
+                let out_of_range = self.new_label("mknod_out_of_range");
+                let done = self.new_label("mknod_done");
+                if let (Expr::IntegerLit(major), Expr::IntegerLit(minor)) = (major, minor) {
+                    match linux_device_number(*major, *minor) {
+                        Some(dev) => self.emit_indent(&format!(
+                            "mov rdx, {}  ; dev = makedev({}, {})", dev, major, minor
+                        )),
+                        None => self.emit_indent(&format!(
+                            "jmp {}  ; makedev({}, {}) names no Linux device", out_of_range, major, minor
+                        )),
+                    }
+                } else {
+                    self.generate_expr(major);
+                    self.emit_indent("push rax  ; save major");
+                    self.generate_expr(minor);
+                    self.emit_indent("mov rcx, rax  ; minor");
+                    self.emit_indent("pop rax  ; major");
+                    self.emit_indent("cmp rax, 0xfff  ; major fits in 12 bits (unsigned: negative fails too)");
+                    self.emit_indent(&format!("ja {}", out_of_range));
+                    self.emit_indent("cmp rcx, 0xfffff  ; minor fits in 20 bits");
+                    self.emit_indent(&format!("ja {}", out_of_range));
+                    self.emit_indent("shl rax, 8  ; major -> bits 8-19");
+                    self.emit_indent("mov rdx, rcx");
+                    self.emit_indent("and rdx, 0xff  ; minor bits 0-7 stay put");
+                    self.emit_indent("or rax, rdx");
+                    self.emit_indent("and rcx, 0xfff00");
+                    self.emit_indent("shl rcx, 12  ; minor bits 8-19 -> bits 20-31");
+                    self.emit_indent("or rax, rcx");
+                    self.emit_indent("mov rdx, rax  ; dev = makedev(major, minor)");
+                }
 
                 self.emit_indent(&format!("mov rsi, {}  ; mode", mode));
                 self.emit_indent("pop rdi  ; restore path pointer");
                 self.emit_indent("MKNOD");
+                self.emit_indent(&format!("jmp {}", done));
+                self.emit(&format!("{}:", out_of_range));
+                self.emit_indent("pop rdi  ; discard path pointer");
+                self.emit_indent("SET_LAST_ERROR 22  ; EINVAL");
+                self.emit(&format!("{}:", done));
             }
 
             Statement::OnError { actions } => {
@@ -3731,6 +3843,17 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// Linux's device number for `major`/`minor`, laid out as glibc's makedev
+/// and the kernel's mknod(2) agree for a 32-bit dev: minor bits 0-7, major
+/// bits 8-19, minor bits 8-19 at 20-31. `None` when either number is out of
+/// the kernel's range (major 0-4095, minor 0-1048575): no device has it.
+pub(crate) fn linux_device_number(major: i64, minor: i64) -> Option<i64> {
+    if !(0..=0xfff).contains(&major) || !(0..=0xfffff).contains(&minor) {
+        return None;
+    }
+    Some((major << 8) | (minor & 0xff) | ((minor & 0xfff00) << 12))
 }
 
 /// `docs/BUGS_FOUND.md #91`: the declared types whose slot holds a POINTER,

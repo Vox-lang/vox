@@ -1,0 +1,30 @@
+(Bug #131, position 1: `The X is <call>.` declares X from what the call
+ returns. A call with no arguments is written directly, and declares X the
+ same way the call written with `of` does: a copy of the thing, not an
+ address printed as a number.)
+
+A thing called point has
+  a number called x is 3,
+  a number called y is 4.
+
+To 'fresh point'.
+  a point called made.
+  Return a point, made.
+
+To 'moved point' with a number called step.
+  a point called made.
+  Set made's x to step.
+  Return a point, made.
+
+The got is 'fresh point'.
+Print got.
+Print got's x add got's y.
+
+The other is 'moved point' of 9.
+Print other.
+
+(Each call gives an independent copy.)
+The second is 'fresh point'.
+Set second's x to 30.
+Print got.
+Print second.

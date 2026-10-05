@@ -1,0 +1,4 @@
+(Compile-fail: bug #135. kill(2) reads the pid as a 32-bit int, so
+ 4294967297 would address process 1.)
+
+Send signal 0 to process 4294967297.

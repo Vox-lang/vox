@@ -1,0 +1,8 @@
+(A call with no arguments written directly is judged by its declared result,
+ like a number variable: Write takes text, a buffer, or a format string.)
+
+To seven.
+    Return a number, 7.
+
+open a file for writing called 'the log' at "/tmp/vox_cf_write_seven.txt".
+Write seven to 'the log'.

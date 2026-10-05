@@ -1,0 +1,31 @@
+(Bug #131: a call with no arguments, written directly, inside list and map
+ literals, appends, element writes, as an argument to another call, and as
+ the list an element is read from.)
+
+To seven.
+    Return a number, 7.
+
+To greeting.
+    Return a text, "hello".
+
+To 'some numbers'.
+    Return a list, [1, 2, 3].
+
+To double with a number called n.
+    Return a number, n multiply 2.
+
+a list called mixed is [seven, greeting].
+Print mixed.
+append seven to mixed.
+append greeting to mixed.
+Print mixed.
+Set element 1 of mixed to seven add 1.
+Print mixed.
+
+a map called table is {"n": seven, "t": greeting}.
+Print table.
+Set table's "m" to seven.
+Print table.
+
+Print double of seven.
+Print element 2 of 'some numbers'.

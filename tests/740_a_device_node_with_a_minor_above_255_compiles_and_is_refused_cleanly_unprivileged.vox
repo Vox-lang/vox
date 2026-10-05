@@ -1,0 +1,14 @@
+(Unprivileged, mknod(2) refuses a character device with EPERM, so the)
+(statement sets the error flag and the program carries on. The packing)
+(of 259:300 itself is pinned by the codegen unit tests.)
+Delete the file "/tmp/vox_test_740_device".
+
+Create a device node called "/tmp/vox_test_740_device" with type "c" major 259 minor 300.
+On error print "refused, numbers written out".
+
+a number called major is 259.
+a number called minor is 300.
+Create a device node called "/tmp/vox_test_740_device" with type "c" major major minor minor.
+On error print "refused, numbers worked out at run time".
+
+Print "carried on".

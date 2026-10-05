@@ -152,7 +152,32 @@ impl Parser {
         Ok(Statement::LibraryDecl { name, version })
     }
 
+    /// Josj's ruling (2026-10-05, BUGS_FOUND #132): a `see` is legal only
+    /// at the top level of a file. One written inside an `If`, a loop, a
+    /// function body or a thing definition used to be parsed into that body
+    /// and never read, so the file it named silently never arrived. It is
+    /// refused at the `see` itself, naming the block it is written in.
+    pub(crate) fn err_see_inside_a_block(&self, block: &str) -> Box<CompileError> {
+        self.err(&format!(
+            "A `see` stands at the top level of a file\n  \
+             Canonical form: see \"<path>.vox\". or see '<lib>' version \"<x.y>\" from \"<path>.lib\".\n  \
+             This `see` is written inside {}: move it to the top level, above the block. \
+             What a file sees belongs to the whole program, so a `see` inside an 'If', \
+             a loop, a function body or a thing definition has no scope to belong to.",
+            block
+        ))
+    }
+
     pub(crate) fn parse_see(&mut self) -> Result<Statement, Box<CompileError>> {
+        // Refused before the `see` is consumed, so the caret lands on it.
+        // Depth past 1 with no clause on the stack is a function body's own
+        // statement: a function body is the one block that does not push
+        // itself (see `innermost_open_clause`).
+        if !self.at_top_level() {
+            let block = self.open_clauses.last().copied().unwrap_or("a function body");
+            return Err(self.err_see_inside_a_block(block));
+        }
+
         // Stage A5 retired the abandoned direct-`.so` syntax. The one library
         // import that survives is the canonical form:
         //   see '<lib>' version "<ver>" from "<path>.lib".

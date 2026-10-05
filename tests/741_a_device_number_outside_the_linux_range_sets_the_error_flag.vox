@@ -1,0 +1,31 @@
+(A pipe ignores its device number, so it is made without privilege: an)
+(in-range number makes it, and a number no Linux device can have, a major)
+(above 4095 or a minor above 1048575, sets the error flag instead.)
+Delete the file "/tmp/vox_test_741_pipe".
+
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major 4095 minor 1048575.
+On error print "the largest numbers were refused", exit 1.
+Print "the largest numbers made a pipe".
+Delete the file "/tmp/vox_test_741_pipe".
+
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major 4096 minor 0.
+On error print "major 4096 refused".
+
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major 0 minor 1048576.
+On error print "minor 1048576 refused".
+
+a number called major is 0 subtract 1.
+a number called minor is 0.
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major major minor minor.
+On error print "major -1 refused at run time".
+
+Set major to 4095.
+Set minor to 1048576.
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major major minor minor.
+On error print "minor 1048576 refused at run time".
+
+Set minor to 1048575.
+Create a device node called "/tmp/vox_test_741_pipe" with type "p" major major minor minor.
+On error print "the largest numbers were refused at run time", exit 1.
+Print "the largest numbers made a pipe at run time".
+Delete the file "/tmp/vox_test_741_pipe".

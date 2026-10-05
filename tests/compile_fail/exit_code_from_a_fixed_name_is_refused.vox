@@ -1,0 +1,4 @@
+(Compile-fail: bug #136. A fixed name is checked like its literal.)
+
+a number called failure is 1000.
+Terminate failure.

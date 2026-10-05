@@ -1,0 +1,6 @@
+(A `see` stands at the top level of a file, so a function body refuses one.)
+To 'run the check'.
+    see "./no-such-file.vox".
+    Print "inside".
+
+'run the check'.

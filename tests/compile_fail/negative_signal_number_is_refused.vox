@@ -1,0 +1,3 @@
+(Compile-fail: bug #135. A negative signal number is no signal.)
+
+Send signal -9 to process 1234.

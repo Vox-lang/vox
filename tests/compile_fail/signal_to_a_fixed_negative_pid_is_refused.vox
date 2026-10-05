@@ -1,0 +1,4 @@
+(Compile-fail: bug #135. A fixed name is checked like its literal.)
+
+a number called everyone is -1.
+Send signal 0 to process everyone.

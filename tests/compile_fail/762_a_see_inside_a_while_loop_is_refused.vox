@@ -1,0 +1,6 @@
+(A `see` stands at the top level of a file, so a While loop refuses one.)
+a number called count is 0.
+While count is less than 1,
+    see "./no-such-file.vox",
+    Set count to count add 1.
+Print "after".

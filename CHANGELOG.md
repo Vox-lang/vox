@@ -15,6 +15,56 @@ adheres to [Semantic Versioning](https://semver.org/).
   one copy is never seen in another. A write of a number, a boolean or
   `nothing` into a text field is refused at the write. (#103)
 
+### Changed
+- **The compiler now builds with no third-party crates.** The unused
+  `thiserror` dependency is gone, so `Cargo.lock` lists only vox-lang
+  and the RPM spec no longer needs a vendor tarball or `bundled(crate(...))`
+  declarations.
+
+### Fixed
+- **A device node's major and minor now reach mknod(2) as the standard Linux
+  device number, so a minor above 255 is no longer cut short.** The two were
+  packed in the old 16-bit layout (major shifted by 8, minor added on top), so
+  minor 300 arrived as 44 and minor 256 spilled into the major. They are now
+  packed as glibc's makedev packs them, and a major above 4095 or a minor above
+  1048575, which no Linux device can have, sets the error flag instead of
+  reaching the kernel as some other device (#133).
+- **A `see` written inside a block is refused with a diagnostic naming the
+  rule.** A `see` stands at the top level of a file; one inside an `If` or
+  `Otherwise` branch, a loop, an `On error` handler, a function body or a
+  thing definition was parsed into that body and never read, so the file it
+  named silently never arrived. The compiler now refuses it at the `see`
+  itself and names the block it is written in. (#132)
+- **A move or bind mount held in variables is a move or bind mount.**
+  `with type "none" with options "bind"` (or `"move"`) makes the
+  `MS_BIND`/`MS_MOVE` call whether the type and options are literals, text
+  variables, buffers or format-built buffers: when either side is not a
+  literal, the program compares the texts at run time, so the operand's
+  spelling never changes what the mount does. (#134)
+- **A call with no arguments, written directly, means its result in every
+  position.** The compiler now settles a bare function name as a call once,
+  before checking, so `The got is 'fresh point'.` declares a copy of the
+  thing, `Write greeting to log.` writes the text, and `{greeting}`, element
+  reads and thing copies take the result exactly as the same call written
+  with an argument does. A text declared from a call is a text (so `append`
+  takes it), a text from a call with no declared return type appends to a
+  list as text, and `Write` refuses a number, float or boolean call as it
+  refuses a variable of that type. (#131)
+- **`Send signal` sends exactly the signal written, to exactly the
+  processes named.** kill(2) reads the signal and the pid as 32-bit
+  numbers, so a wider one reached it as a different value: signal
+  4294967305 arrived as SIGKILL, and a pid of 0 or below silently meant a
+  process group or every process. A signal is now 0 to 64 and `to process`
+  names one process, 1 to 2147483647: out of range is a compile error when
+  the compiler can prove it, and otherwise sets the error flag and sends
+  nothing. The kernel's group meanings have their own forms:
+  `to process group <g>`, `to my process group` and `to every process`. A
+  named signal number (`Send signal sig to process pid.`) now parses. (#135)
+- **An exit code above 255 no longer reports a different status.** The
+  kernel keeps only the low 8 bits, so `Exit 256.` reported success. A
+  provable code outside 0 to 255 is a compile error; a computed one exits
+  with 255. `quit` and `terminate` follow. (#136)
+
 ## [0.4.15] - 2026-09-06
 
 A value whose type is only known while the program runs now converts to fit, so a mixed list or map value can no longer crash a program.

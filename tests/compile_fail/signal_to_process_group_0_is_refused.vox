@@ -1,0 +1,4 @@
+(Compile-fail: bug #135. A process group is numbered from 1; the
+ caller's own group is `to my process group`.)
+
+Send signal 0 to process group 0.

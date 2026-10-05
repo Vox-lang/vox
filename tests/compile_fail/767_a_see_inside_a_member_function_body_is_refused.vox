@@ -1,0 +1,12 @@
+(A `see` stands at the top level of a file, so a member function's body
+ refuses one.)
+A thing called point has
+  a function called 'moved',
+  a number called x is 0.
+
+To do the point's 'moved'.
+  see "./no-such-file.vox".
+  a point called result.
+  Return a point, result.
+
+Print "after".

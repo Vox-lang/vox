@@ -2379,6 +2379,10 @@ If arguments's empty then,
 
 **Notes:**
 - Exit code defaults to 0 if not specified
+- The exit code is 0 to 255. A code outside that range that the compiler
+  can prove (a literal, or a name that holds one number for the whole
+  program) is a compile error; a code computed outside it when the program
+  runs exits with 255
 - All resources are automatically cleaned up before exit
 - Alternative keywords: `quit`, `terminate`
 
@@ -4286,7 +4290,9 @@ On error print "unmount failed".
   buffers).
 - Moving/binding an already-mounted filesystem uses `fstype "none"` with
   `options "move"` or `options "bind"` - Vox recognizes this pattern and
-  translates it into the correct `MS_MOVE`/`MS_BIND` mount flags:
+  translates it into the correct `MS_MOVE`/`MS_BIND` mount flags, whether the
+  type and options are written as literals or held in text variables or
+  buffers:
   ```
   Mount "/proc" at "/newroot/proc" with type "none" with options "move".
   ```
@@ -4521,15 +4527,35 @@ the five-second mark.
 
 #### Send a signal: `Send signal`
 
-Unlike `fork`/`reap`, this is a **statement**, not an expression:
+Unlike `fork`/`reap`, this is a **statement**, not an expression. It
+performs `kill(2)` (syscall 62), and it has four forms, one for each set of
+processes it can reach:
 
 ```vox fragment
 Send signal <N-expr> to process <pid-expr>.
+Send signal <N-expr> to process group <group-expr>.
+Send signal <N-expr> to my process group.
+Send signal <N-expr> to every process.
 ```
 
-It performs `kill(2)` (syscall 62): `<pid-expr>` is the target PID (loaded
-into `rdi`), `<N-expr>` is the signal number (loaded into `rsi`). `child` is
-accepted as an alias for `process`, mirroring `reap process/child`:
+- `to process <pid>` reaches exactly one process, the one numbered `<pid>`.
+  `child` is accepted as an alias for `process`, mirroring
+  `reap process/child`.
+- `to process group <group>` reaches every process in that process group.
+- `to my process group` reaches every process in the program's own process
+  group, the program included.
+- `to every process` reaches every process the program is permitted to
+  signal, except process 1 and the program itself.
+
+`<N-expr>` is the signal number, 0 to 64. A process and a process group are
+numbered from 1 to 2147483647. A number outside its range that the compiler
+can prove (a literal, or a name that holds one number for the whole
+program) is a compile error; one known only when the program runs sets the
+error flag (`EINVAL`) and sends nothing. The words `group`, `my` and
+`every` belong to the statement only in these shapes, so each remains an
+ordinary name everywhere else, including as the pid itself:
+`Send signal 0 to process group.` signals the one process whose number the
+variable `group` holds.
 
 ```
 Send signal 9 to child pid.
@@ -4546,7 +4572,27 @@ On error print "no such process".
 
 Signal 0 is the standard existence check: it delivers nothing but returns an
 error if no process has that PID, which makes it a safe way to probe the error
-path. A common pattern is to send a real signal to a forked child and reap it:
+path, and the only signal a program should send to a group or to everyone
+while it is being tried out:
+
+```
+Send signal 0 to my process group.
+On error print "unexpected: my own process group is always there".
+Send signal 0 to process group 2147483647.
+On error print "no process group 2147483647".
+```
+
+A real signal to a group reaches every member at once. The program's own
+group usually includes the shell pipeline that started it, so a supervisor
+that signals its group is written with that in mind:
+
+```vox fragment
+(Stops every process in the program's own process group, the program
+ included. A fragment: running it would stop whatever started it.)
+Send signal 15 to my process group.
+```
+
+A common pattern is to send a real signal to a forked child and reap it:
 
 ```
 Set pid to fork the process.
@@ -5112,7 +5158,7 @@ Set result to value bit-shift-right 8 bit-and 0xFF.
 | `Execute` | `execve` - replace the process image |
 | `Shutdown`/`Poweroff`, `Reboot`/`Restart`, `Halt` | `reboot(2)` - power off/restart/halt the machine |
 | `fork`, `reap` | Process control expressions - `fork(2)`/`wait4(2)` |
-| `Send signal` | `kill(2)` - send a signal to a process (`child` aliases `process`) |
+| `Send signal` | `kill(2)` - send a signal to a process, a process group, my process group, or every process (`child` aliases `process`) |
 | `Read` | `Read from <file> into <buffer>.` / `Read line from <file> into <buffer>.` |
 | `Write` | `Write <value> to <file>.` |
 | `Open` | `open a file for reading/writing/appending called <name> at <path>.` |
@@ -5440,6 +5486,10 @@ For each number from 1 to 15, print the number, but if 'check divisibility' of t
 - **`see '<lib>' version "<ver>" from "<path>.lib".`**: consume a shared
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
+
+A `see` stands at the top level of a file, written against the left margin:
+one inside an `If` or `Otherwise` branch, a loop, an `On error` handler, a
+function body or a thing definition is a compile error that names the rule.
 
 ```vox fragment
 see "./utils.vox".
