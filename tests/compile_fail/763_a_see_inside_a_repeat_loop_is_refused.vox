@@ -1,0 +1,4 @@
+(A `see` stands at the top level of a file, so a Repeat loop refuses one.)
+Repeat 2 times,
+    see "./no-such-file.vox".
+Print "after".

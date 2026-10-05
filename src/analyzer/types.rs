@@ -338,6 +338,15 @@ impl Analyzer {
             Expr::TreatingAs { value, .. } => value.as_ref(),
             other => other,
         };
+        // A call is judged by its declared return type, whether it is written
+        // directly (a call with no arguments) or with them (#131).
+        if let Expr::FunctionCall { name, .. } = operand {
+            let Some(ty) = self.function_return_type(name) else {
+                return;
+            };
+            self.reject_file_write_type(file, name, ty);
+            return;
+        }
         let Expr::Identifier(name) = operand else {
             return;
         };
@@ -350,6 +359,10 @@ impl Analyzer {
             Some(t) => t,
             None => return,
         };
+        self.reject_file_write_type(file, name, ty);
+    }
+
+    fn reject_file_write_type(&mut self, file: &str, name: &str, ty: Type) {
         let message = match ty {
             Type::Integer | Type::Float | Type::Boolean => format!(
                 "Cannot write {} {} to a file; Write takes text, a buffer, or a \
@@ -914,6 +927,15 @@ yields the number 0 and sets the error flag",
             }
             Expr::BoolLit(b) => if *b { "true".to_string() } else { "false".to_string() },
             Expr::Identifier(name) => name.clone(),
+            // A call with no arguments is spelled back the way it is written:
+            // its name alone, quoted when it is more than one word (#131).
+            Expr::FunctionCall { name, args } if args.is_empty() => {
+                if name.contains(char::is_whitespace) {
+                    format!("'{}'", name)
+                } else {
+                    name.clone()
+                }
+            }
             // The collection and buffer reads bug #54 added to
             // `arithmetic_operand_type`: without these the help line for a
             // mismatched element read read `label is <value> as text.`,
@@ -1827,7 +1849,10 @@ explicitly:  a {} called {} is {} as {}.",
         {
             return;
         }
-        match self.arithmetic_operand_type(value) {
+        match self
+            .call_result_scalar_type(value)
+            .or_else(|| self.arithmetic_operand_type(value))
+        {
             Some(t) => {
                 self.scalar_types.insert(name.to_string(), t);
             }
@@ -1839,6 +1864,20 @@ explicitly:  a {} called {} is {} as {}.",
             if let Some(loc) = self.find_declaration_location(name) {
                 self.declared_locations.insert(name.to_string(), loc);
             }
+        }
+    }
+
+    /// The declared scalar type of a call's result: a text, number, float or
+    /// boolean, known from the definition whether the call is written
+    /// directly or with arguments (#131). Anything else, including a call
+    /// with no declared return type, answers None.
+    pub(crate) fn call_result_scalar_type(&self, value: &Expr) -> Option<Type> {
+        let Expr::FunctionCall { name, .. } = value else {
+            return None;
+        };
+        match self.function_return_type(name)? {
+            t @ (Type::String | Type::Integer | Type::Float | Type::Boolean) => Some(t),
+            _ => None,
         }
     }
 

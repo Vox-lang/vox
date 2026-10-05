@@ -1,0 +1,3 @@
+(Compile-fail: bug #136. `quit` and `terminate` follow `Exit`.)
+
+Quit 300.

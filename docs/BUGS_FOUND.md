@@ -13075,7 +13075,7 @@ error: cannot assign text to 'plain', which is a number
 
 ### 131. A zero-argument call written directly is not honoured in three positions
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/770_a_thing_declared_from_a_direct_zero_argument_call_holds_what_it_returns.vox
 
 LANGUAGE.md "Function Calls": "Calls with no arguments can be written directly". In each position below, the direct zero-argument call does not deliver what the function returns. One entry, three repros.
 
@@ -13148,7 +13148,7 @@ The same program with `a text called word is "made".` compiles and prints `made`
 
 ### 132. A `see` nested in an `If` body or a function body is silently dropped
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/compile_fail/765_a_see_inside_a_function_body_is_refused.vox
 
 ```vox
 a number called gate is 3.
@@ -13194,15 +13194,15 @@ With the `see` moved to the top level, the same program compiles and prints `7`.
 
 **The manual:** LANGUAGE.md "Cross-file definitions": "A `see` of a file that cannot be read is an error." and "The seen file arrives where the `see` is written".
 
-**Root cause:** not yet investigated.
+**Root cause:** the parser (`parse_see`, src/parser/functions.rs) reads a seen `.vox` file into the program only when the `see` stands at the top level; anywhere deeper it returned a bare `See` statement inside the enclosing body. Nothing downstream reads that statement there: the analyzer and code generation treat a `See` as already handled (codegen emits only an assembly comment), and `.lib` imports are resolved by a scan of the top-level statements alone (`resolve_program_imports`, src/lib_file.rs). So the file never arrived and nothing said so. Inside a thing definition a `see` was refused, but only by the generic "Expected 'a' or 'an'" entry error.
 
-**Fix direction:** TheJostler ruled, 2026-10-05, that a nested `see` should work: it is honoured, not refused. What a `see` inside an `If` means at run time (for example, whether the branch decides anything) is semantics pending the owner's answer; no fix starts on that part until it is given.
+**Fix direction:** superseded by the owner's ruling of 2026-10-05: "See's should only work globally, not inside loops, functions, ifs or types." A `see` is legal only at the top level of a file. Anywhere else (an `If` or `Otherwise` branch, any loop, an `On error` handler, a function or member function body, a thing definition) it is a compile error that names the rule and the block, with the caret on the `see`. LANGUAGE.md "The `see` Keyword" states the rule. Regression tests: tests/compile_fail/760 to 768 (one per position) and tests/769 (a top-level `see` after other code still brings its file in).
 
 ---
 
 ### 133. A device-node minor number is encoded in 8 bits
 
-**Status:** Open, fix approved 2026-10-05. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/741_a_device_number_outside_the_linux_range_sets_the_error_flag.vox
 
 ```vox
 Create a directory called "vf_scratch".
@@ -13231,7 +13231,7 @@ refused
 
 ### 134. The `none` + `move`/`bind` mount pattern is recognised only for literals
 
-**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/751_the_move_and_bind_patterns_held_in_text_variables_reach_mount.vox
 
 ```vox
 Create a directory called "vf_scratch".
@@ -13264,3 +13264,62 @@ the variable pattern was refused
 **Root cause:** `src/codegen/statements.rs` detects the pattern at compile time by matching `Expr::StringLit` only, for the type and for the options; any other operand gets flags 0 and is passed through as text.
 
 **Fix direction:** TheJostler ruled option A, 2026-10-05: variables must work like literals. The pattern is recognised at run time too, for text variables and buffers, so the operand's spelling never changes what the mount does.
+
+---
+
+### 135. A signal number or pid wider than 32 bits reaches kill(2) as a different value
+
+**Status:** fixed in the next release. Regression test: tests/800_a_signal_number_out_of_range_at_run_time_sends_nothing.vox
+
+```vox
+Send signal 4294967296 to process 1.
+On error print "signal 4294967296 refused".
+Print "carried on".
+```
+```text
+$ vox signal_truncation.vox -o signal_truncation && strace -e trace=kill ./signal_truncation
+kill(1, 0)                              = -1 EPERM (Operation not permitted)
+signal 4294967296 refused
+carried on
++++ exited with 0 +++
+```
+
+**Observed:** signal 4294967296 (2^32) reaches the kernel as signal 0, the existence check. By the same arithmetic, 4294967305 arrives as signal 9, SIGKILL. The refusal printed above is EPERM for signal 0 sent to process 1, not EINVAL for the signal that was written. The pid is a 32-bit `int` in kill(2) too, so `process 4294967297` addresses process 1, and a pid of 0 or below silently means a process group (0, below -1) or every process the program may signal (-1).
+
+**Expected:** a number that is not a valid signal sets the error flag (EINVAL) and sends nothing, and `Send signal N to process <pid>.` never reaches more than the one process it names.
+
+**The manual:** LANGUAGE.md "Send a signal": "on failure (`ESRCH` no such process, `EINVAL` invalid signal, `EPERM` not permitted) it sets it". An invalid signal number gives EINVAL; it does not become a different signal.
+
+**Root cause:** `src/codegen/statements.rs` loads the 64-bit Vox numbers straight into `rdi` and `rsi` for `SEND_SIGNAL`, and the kernel reads only their low 32 bits. Nothing checks either number's range, and nothing separates one process from the kernel's group meanings of 0 and negative pids.
+
+**Fix direction:** TheJostler, 2026-10-05: "confirmed that is a bug". Signal numbers are 0 to 64; a provable out-of-range number is a compile error, and one known only at run time sets the error flag (EINVAL) and sends nothing. `to process` / `to child` means exactly one process, pid 1 to 2147483647, with the same compile-time / run-time split. The kernel's group meanings get their own plain-English forms in the same release ("We want to be Linux friendly"): `to process group <g>` (kill(-g)), `to my process group` (kill(0)), `to every process` (kill(-1)).
+
+---
+
+### 136. An exit code above 255 exits with a different status
+
+**Status:** fixed in the next release. Regression test: tests/804_an_exit_code_above_255_at_run_time_exits_with_255.vox
+
+```vox
+Print "exiting with 256".
+Exit 256.
+```
+```text
+$ vox exit_256.vox -o exit_256 && ./exit_256; echo "exit status: $?"
+exiting with 256
+exit status: 0
+$ strace -e trace=exit,exit_group ./exit_256
+exiting with 256
+exit(256)                               = ?
++++ exited with 0 +++
+```
+
+**Observed:** `Exit 256.` passes 256 to exit(2), and the kernel keeps only the low 8 bits, so the program reports success (0). Any code that is a multiple of 256 does the same, and every other code above 255 or below 0 arrives as a different status.
+
+**Expected:** the program never reports a status other than the one written: the codes are 0 to 255.
+
+**The manual:** LANGUAGE.md "Program Termination": "Immediately exit the program with an exit code", with no range stated.
+
+**Root cause:** `src/codegen/statements.rs` passes the 64-bit Vox number straight to `EXIT`, unchecked.
+
+**Fix direction:** TheJostler, 2026-10-05: exit codes are 0 to 255. A literal outside is a compile error; a computed code outside exits with 255. The manual gets one sentence stating the range. `quit` and `terminate` follow.

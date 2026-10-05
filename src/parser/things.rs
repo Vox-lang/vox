@@ -462,6 +462,9 @@ impl Parser {
                 break;
             }
 
+            if matches!(self.current(), Token::See) {
+                return Err(self.err_see_inside_a_block("a thing definition"));
+            }
             if !matches!(self.current(), Token::A | Token::An) {
                 return Err(self.err(&format!(
                     "Expected 'a' or 'an' to open an entry of thing '{}', got {:?}\n  \
@@ -948,7 +951,16 @@ impl Parser {
     /// function that returns a thing.
     fn thing_yielded_by(&self, value: &Expr) -> Option<String> {
         match value {
-            Expr::Identifier(name) => self.thing_of_variable(name),
+            // A name is a thing variable, or a call written directly to a
+            // function that takes no parameters (LANGUAGE.md "Function
+            // Calls"), which yields what the same call with arguments does.
+            Expr::Identifier(name) => self.thing_of_variable(name).or_else(|| {
+                if self.function_first_parameters.contains_key(name) {
+                    None
+                } else {
+                    self.thing_returning_functions.get(name).cloned()
+                }
+            }),
             Expr::ThingField { base, path } => {
                 let mut current = self.thing_of_variable(base)?;
                 for step in path {

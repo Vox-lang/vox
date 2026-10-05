@@ -197,10 +197,11 @@ then
     exit 1
 fi
 
-# Packaging invariant: vox.spec's vendored build path hand-lists every crate
-# it bundles as `Provides: bundled(crate(...))`, and that list is only true
-# for as long as it matches Cargo.lock. The spec cannot be generated (Copr
-# builds one SRPM for every chroot), so this is what stops the two drifting.
+# Packaging invariant: vox.spec hand-lists every crate the binary bundles as
+# `Provides: bundled(crate(...))`, and that list is only true for as long as
+# it matches Cargo.lock (today both are empty: Vox has no crate dependencies).
+# The spec cannot be generated (Copr builds one SRPM for every chroot), so
+# this is what stops the two drifting.
 if [[ -x "$SCRIPT_DIR/scripts/check-spec-bundled.sh" ]]; then
     echo -e "${YELLOW}Checking vox.spec bundled crates...${NC}"
     if "$SCRIPT_DIR/scripts/check-spec-bundled.sh"; then

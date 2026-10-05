@@ -303,6 +303,11 @@ impl Analyzer {
             }
         }
 
+        // Every definition and import is known now, so a name written where a
+        // value goes can be settled as a call or a variable once, for every
+        // check and for codegen alike (#131).
+        self.resolve_zero_argument_calls(program);
+
         let parse_point = if explicit_parse_seen {
             program
                 .statements
@@ -765,9 +770,18 @@ impl Analyzer {
                             self.scalar_types.insert(name.clone(), t);
                         }
                         Type::String => {
+                            // A call declared to return a text is positively
+                            // text too, written directly or with arguments
+                            // (#131).
                             let is_text = value
                                 .as_ref()
-                                .map(|v| matches!(self.arithmetic_operand_type(v), Some(Type::String)))
+                                .map(|v| {
+                                    matches!(
+                                        self.call_result_scalar_type(v)
+                                            .or_else(|| self.arithmetic_operand_type(v)),
+                                        Some(Type::String)
+                                    )
+                                })
                                 .unwrap_or(false);
                             if is_text {
                                 self.scalar_types.insert(name.clone(), Type::String);
@@ -1901,9 +1915,20 @@ impl Analyzer {
                 self.deps.uses_heap = true;
             }
 
-            Statement::SendSignal { signal, pid } => {
+            Statement::SendSignal { signal, target } => {
                 self.analyze_expr(signal);
-                self.analyze_expr(pid);
+                self.check_signal_number(signal);
+                match target {
+                    SignalTarget::Process(pid) => {
+                        self.analyze_expr(pid);
+                        self.check_signal_process(pid, false);
+                    }
+                    SignalTarget::ProcessGroup(group) => {
+                        self.analyze_expr(group);
+                        self.check_signal_process(group, true);
+                    }
+                    SignalTarget::MyProcessGroup | SignalTarget::EveryProcess => {}
+                }
                 self.deps.uses_io = true;
             }
 
@@ -1959,6 +1984,7 @@ impl Analyzer {
             
             Statement::Exit { code } => {
                 self.analyze_expr(code);
+                self.check_exit_code(code);
             }
             
             // Time and Timer statements

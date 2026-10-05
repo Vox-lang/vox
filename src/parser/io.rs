@@ -846,6 +846,11 @@ impl Parser {
         // "Send signal <N-expr> to process <pid-expr>."
         //   - `child` is accepted as an alias for `process`, mirroring
         //     `reap process/child`.
+        // "Send signal <N-expr> to process group <group-expr>."
+        // "Send signal <N-expr> to my process group."
+        // "Send signal <N-expr> to every process."
+        //   - `group`, `my` and `every` are claimed by lexeme here only, so
+        //     each stays an ordinary name everywhere else.
         self.advance(); // consume 'send'
         self.skip_noise();
 
@@ -863,7 +868,9 @@ impl Parser {
         }
         self.skip_noise();
 
-        let signal = self.parse_primary()?;
+        // `to` belongs to this statement: a named signal number must not
+        // read it as its own call connector (the range-bound precedent).
+        let signal = self.parse_primary_reserving(true, false)?;
         self.skip_noise();
 
         // Expect "to"
@@ -876,17 +883,57 @@ impl Parser {
         self.advance();
         self.skip_noise();
 
+        let word_is = |token: &Token, word: &str| {
+            matches!(token, Token::Identifier(ref id) if id.eq_ignore_ascii_case(word))
+        };
+
+        // "my process group": the caller's own group, kill(0).
+        if word_is(self.current(), "my")
+            && word_is(self.peek(1), "process")
+            && word_is(self.peek(2), "group")
+        {
+            self.advance();
+            self.advance();
+            self.advance();
+            return Ok(Statement::SendSignal { signal, target: SignalTarget::MyProcessGroup });
+        }
+
+        // "every process": every process the caller may signal, kill(-1).
+        if word_is(self.current(), "every") && word_is(self.peek(1), "process") {
+            self.advance();
+            self.advance();
+            return Ok(Statement::SendSignal { signal, target: SignalTarget::EveryProcess });
+        }
+
         // Optional "process" / "child" qualifier (either accepted).
+        let mut named_process = false;
         if let Token::Identifier(ref id) = self.current() {
             if id.eq_ignore_ascii_case("process") || id.eq_ignore_ascii_case("child") {
+                named_process = id.eq_ignore_ascii_case("process");
                 self.advance();
                 self.skip_noise();
             }
         }
 
+        // "process group <g>": `group` is the word only when a group number
+        // follows it; a lone `group` ending the statement is a pid variable
+        // of that name, as it always was.
+        if named_process
+            && word_is(self.current(), "group")
+            && !matches!(
+                self.peek(1),
+                Token::Period | Token::EOF | Token::Newline | Token::Comma | Token::Apostrophe
+            )
+        {
+            self.advance();
+            self.skip_noise();
+            let group = self.parse_primary()?;
+            return Ok(Statement::SendSignal { signal, target: SignalTarget::ProcessGroup(group) });
+        }
+
         let pid = self.parse_primary()?;
 
-        Ok(Statement::SendSignal { signal, pid })
+        Ok(Statement::SendSignal { signal, target: SignalTarget::Process(pid) })
     }
 
     pub(crate) fn parse_chdir(&mut self) -> Result<Statement, Box<CompileError>> {

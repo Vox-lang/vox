@@ -1,0 +1,3 @@
+(Compile-fail: bug #135. The group forms take the same signal numbers.)
+
+Send signal 99 to every process.

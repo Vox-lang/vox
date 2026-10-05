@@ -1,0 +1,33 @@
+(Bug #131: a call with no arguments written directly means its result in
+ every position, exactly like a call written with an argument.)
+
+To greeting.
+    Return a text, "hello".
+
+To seven.
+    Return a number, 7.
+
+To half.
+    Return a float, 0.5.
+
+To 'some numbers'.
+    Return a list, [1, 2, 3].
+
+Print greeting.
+Print seven.
+Print half.
+Print 'some numbers'.
+
+a text called words is "".
+Set words to greeting.
+Print words.
+a number called count is 0.
+Set count to seven.
+Print count.
+count is seven.
+Print count.
+a list called scores is [9].
+Set scores to 'some numbers'.
+Print scores.
+
+Print "say {greeting}, {seven:04}, {half:.2}!".

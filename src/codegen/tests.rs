@@ -3392,3 +3392,236 @@ Set fallback to "changed".
             "fallback's own pointer can be handed back verbatim as the treating replacement"
         );
     }
+
+    /// #133: a device node's major and minor reach mknod(2) in Linux's
+    /// device-number layout (glibc's makedev), so a minor above 255 is no
+    /// longer cut to its low 8 bits. Each pair's dev is computed by hand from
+    /// the layout: minor bits 0-7, major bits 8-19, minor bits 8-19 at 20-31.
+    #[test]
+    fn device_node_numbers_are_packed_in_the_linux_layout() {
+        use super::statements::linux_device_number;
+        let packed = [
+            (259, 300, 0x0011_032c),
+            (4095, 1_048_575, 0xffff_ffff),
+            (0, 0, 0),
+            (255, 255, 0xffff),
+            (256, 256, 0x0011_0000),
+            (1, 3, 0x0103),
+        ];
+        for (major, minor, dev) in packed {
+            assert_eq!(
+                linux_device_number(major, minor),
+                Some(dev),
+                "makedev({}, {})",
+                major,
+                minor
+            );
+            let asm = compile_to_asm(&format!(
+                "Create a device node called \"x\" with type \"c\" major {} minor {}.\n",
+                major, minor
+            ));
+            assert!(
+                asm.contains(&format!("mov rdx, {}  ; dev = makedev({}, {})", dev, major, minor)),
+                "makedev({}, {}) should reach mknod as {:#x}",
+                major,
+                minor,
+                dev
+            );
+        }
+    }
+
+    /// #133: a major above 4095 or a minor above 1048575 names no Linux
+    /// device (mknod(2) takes a 32-bit dev), so it never reaches the kernel
+    /// as some other device: the statement sets the error flag instead.
+    #[test]
+    fn device_node_numbers_out_of_the_linux_range_set_the_error_flag() {
+        use super::statements::linux_device_number;
+        for (major, minor) in [(4096, 0), (0, 1_048_576), (-1, 0), (0, -1)] {
+            assert_eq!(linux_device_number(major, minor), None, "makedev({}, {})", major, minor);
+        }
+        let asm = compile_to_asm(
+            "Create a device node called \"x\" with type \"c\" major 4096 minor 0.\n",
+        );
+        assert!(asm.contains("names no Linux device"), "out-of-range major must skip mknod");
+        assert!(asm.contains("SET_LAST_ERROR 22  ; EINVAL"));
+    }
+
+    /// #133: numbers only known at run time are packed by the same layout,
+    /// range-checked first, so none of the old `shl rax, 8` / `or rax, rcx`
+    /// legacy packing survives.
+    #[test]
+    fn device_node_numbers_known_at_run_time_are_range_checked_and_packed() {
+        let asm = compile_to_asm(
+            "a number called major is 259.\na number called minor is 300.\n\
+             Create a device node called \"x\" with type \"c\" major major minor minor.\n",
+        );
+        for line in [
+            "cmp rax, 0xfff",
+            "cmp rcx, 0xfffff",
+            "and rdx, 0xff",
+            "and rcx, 0xfff00",
+            "shl rcx, 12",
+            "mov rdx, rax  ; dev = makedev(major, minor)",
+            "SET_LAST_ERROR 22  ; EINVAL",
+        ] {
+            assert!(asm.contains(line), "run-time packing should emit `{}`", line);
+        }
+        assert!(!asm.contains("dev = (major << 8) | minor"));
+    }
+
+    /// The `none` + `move`/`bind` mount pattern written as literals is
+    /// translated at compile time: the flags are set directly and the plain
+    /// MOUNT macro is used, with no run-time comparison.
+    #[test]
+    fn the_literal_move_or_bind_pattern_keeps_its_compile_time_flags() {
+        let asm = compile_to_asm(
+            "Mount \"/a\" at \"/b\" with type \"none\" with options \"bind\".\n\
+             Mount \"/a\" at \"/b\" with type \"none\" with options \"move\".\n",
+        );
+        assert!(asm.contains("mov r10, 4096  ; mount flags"), "literal bind sets MS_BIND");
+        assert!(asm.contains("mov r10, 8192  ; mount flags"), "literal move sets MS_MOVE");
+        assert!(
+            !asm.contains("MOUNT_RECOGNISING_MOVE_OR_BIND"),
+            "a pattern known at compile time needs no run-time check"
+        );
+    }
+
+    /// Text variables, buffers and format-built buffers can all hold the
+    /// pattern, so each one is checked at run time, as is a mix of one
+    /// literal and one variable.
+    #[test]
+    fn the_move_or_bind_pattern_held_in_variables_is_recognised_at_run_time() {
+        let sources = [
+            "a text called kind is \"none\".\na text called binding is \"bind\".\n\
+             Mount \"/a\" at \"/b\" with type kind with options binding.\n",
+            "a buffer called kind is \"none\".\na buffer called binding is \"bind\".\n\
+             Mount \"/a\" at \"/b\" with type kind with options binding.\n",
+            "a text called stem is \"non\".\na buffer called kind is \"{stem}e\".\n\
+             a buffer called binding is \"bi{stem}\".\n\
+             Mount \"/a\" at \"/b\" with type kind with options binding.\n",
+            "a text called binding is \"bind\".\n\
+             Mount \"/a\" at \"/b\" with type \"none\" with options binding.\n",
+            "a text called kind is \"none\".\n\
+             Mount \"/a\" at \"/b\" with type kind with options \"move\".\n",
+        ];
+        for source in sources {
+            let asm = compile_to_asm(source);
+            assert!(
+                asm.contains("MOUNT_RECOGNISING_MOVE_OR_BIND"),
+                "a pattern held in a variable must be compared at run time:\n{}",
+                source
+            );
+        }
+    }
+
+    /// When a literal on either side already rules the pattern out, or no
+    /// options are given, the mount stays a plain MOUNT with flags 0.
+    #[test]
+    fn a_mount_a_literal_rules_out_stays_a_plain_mount() {
+        let sources = [
+            "a text called binding is \"bind\".\n\
+             Mount \"/a\" at \"/b\" with type \"tmpfs\" with options binding.\n",
+            "a text called kind is \"none\".\n\
+             Mount \"/a\" at \"/b\" with type kind with options \"size=64m\".\n",
+            "a text called kind is \"none\".\n\
+             Mount \"/a\" at \"/b\" with type kind.\n",
+        ];
+        for source in sources {
+            let asm = compile_to_asm(source);
+            assert!(
+                !asm.contains("MOUNT_RECOGNISING_MOVE_OR_BIND"),
+                "a literal already rules the pattern out:\n{}",
+                source
+            );
+            assert!(asm.contains("mov r10, 0  ; mount flags"), "plain mount flags:\n{}", source);
+        }
+    }
+
+    /// The instructions a `Send signal` statement emits, from the first
+    /// parked operand to the end of its refusal path (docs/BUGS_FOUND.md #135).
+    fn send_signal_asm(source: &str) -> String {
+        let asm = compile_to_asm(source);
+        let end = asm.find("SEND_SIGNAL").expect("a Send signal statement emits SEND_SIGNAL");
+        let start = asm[..end].rfind("; send a signal (kill(2))").expect("the statement opens with its comment");
+        let after = &asm[end..];
+        let tail = match after.find("jmp .signal_done_") {
+            Some(jump) => {
+                let label = after[jump + 4..].lines().next().unwrap_or("").trim();
+                let defined = after.find(&format!("{}:", label)).expect("the done label is defined");
+                end + defined + label.len() + 1
+            }
+            None => end + "SEND_SIGNAL".len(),
+        };
+        asm[start..tail].to_string()
+    }
+
+    #[test]
+    fn send_signal_to_a_process_reaches_kill_with_that_pid_and_nothing_else() {
+        let asm = send_signal_asm("Send signal 9 to process 1234.\n");
+        assert!(asm.contains("mov rax, 1234"), "the pid is loaded as written: {}", asm);
+        assert!(asm.contains("mov rax, 9"), "the signal is loaded as written: {}", asm);
+        assert!(!asm.contains("neg rdi"), "one process is never turned into a group: {}", asm);
+        assert!(!asm.contains("cmp rsi"), "a proved signal needs no run-time check: {}", asm);
+        assert!(!asm.contains("SET_LAST_ERROR 22"), "a proved pid has no refusal path: {}", asm);
+    }
+
+    #[test]
+    fn send_signal_to_a_process_group_reaches_kill_with_the_group_negated() {
+        let asm = send_signal_asm("Send signal 15 to process group 4321.\n");
+        assert!(asm.contains("mov rax, 4321"), "{}", asm);
+        let neg = asm.find("neg rdi").expect("kill(-group)");
+        let send = asm.find("SEND_SIGNAL").unwrap();
+        assert!(neg < send, "the group is negated before the syscall: {}", asm);
+    }
+
+    #[test]
+    fn send_signal_to_my_process_group_reaches_kill_with_pid_zero() {
+        let asm = send_signal_asm("Send signal 15 to my process group.\n");
+        assert!(asm.contains("xor edi, edi"), "kill(0, 15): {}", asm);
+        assert!(asm.contains("mov rax, 15"), "{}", asm);
+        assert!(!asm.contains("neg rdi"), "{}", asm);
+    }
+
+    #[test]
+    fn send_signal_to_every_process_reaches_kill_with_pid_minus_one() {
+        let asm = send_signal_asm("Send signal 9 to every process.\n");
+        assert!(asm.contains("mov rdi, -1"), "kill(-1, 9): {}", asm);
+        assert!(asm.contains("mov rax, 9"), "{}", asm);
+    }
+
+    #[test]
+    fn send_signal_numbers_known_only_at_run_time_are_range_checked() {
+        let asm = send_signal_asm(
+            "a number called sig is 0.\nSet sig to 9.\na number called pid is 1.\nSet pid to 2.\nSend signal sig to process pid.\n",
+        );
+        assert!(asm.contains("cmp rsi, 64"), "signal 0..64, unsigned: {}", asm);
+        assert!(asm.contains("lea rax, [rdi-1]"), "pid 1..2147483647, unsigned: {}", asm);
+        assert!(asm.contains("cmp rax, 2147483646"), "{}", asm);
+        assert_eq!(asm.matches("ja .signal_refused").count(), 2, "{}", asm);
+        assert!(asm.contains("SET_LAST_ERROR 22"), "out of range sets EINVAL: {}", asm);
+        let refused = asm.find(".signal_refused_").map(|at| asm[at..].find(":").map(|c| at + c)).flatten();
+        let send = asm.find("SEND_SIGNAL").unwrap();
+        assert!(refused.map_or(false, |at| at > send), "the refusal path skips the syscall: {}", asm);
+    }
+
+    #[test]
+    fn send_signal_group_number_known_only_at_run_time_is_checked_before_it_is_negated() {
+        let asm = send_signal_asm(
+            "a number called leader is 0.\nSet leader to 7.\nSend signal 0 to process group leader.\n",
+        );
+        let check = asm.find("cmp rax, 2147483646").expect("the group is range checked");
+        let neg = asm.find("neg rdi").expect("kill(-group)");
+        assert!(check < neg, "checked as written, then negated: {}", asm);
+        assert!(!asm.contains("cmp rsi"), "a literal signal needs no run-time check: {}", asm);
+    }
+
+    #[test]
+    fn exit_codes_known_only_at_run_time_above_255_exit_with_255() {
+        let asm = compile_to_asm("a number called code is 0.\nSet code to 256.\nExit code.\n");
+        let check = asm.find("cmp rax, 255").expect("the code is range checked");
+        let clamp = asm.find("mov eax, 255").expect("out of range exits with 255");
+        let exit = asm.find("EXIT rdi").expect("exit");
+        assert!(check < clamp && clamp < exit, "{}", asm);
+        let literal = compile_to_asm("Exit 3.\n");
+        assert!(!literal.contains("cmp rax, 255"), "a proved code needs no check: {}", literal);
+    }

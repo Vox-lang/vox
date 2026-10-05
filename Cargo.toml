@@ -15,9 +15,6 @@ exclude = ["tests/", "docs/", "vox-vscode/", ".github/", ".copr/", "vox.spec", "
 name = "vox"
 path = "src/main.rs"
 
-[dependencies]
-thiserror = "2.0"
-
 [profile.release]
 opt-level = 3
 lto = true

@@ -1,0 +1,26 @@
+(docs/BUGS_FOUND.md #135: kill(2) reads the signal number as a 32-bit
+ int, so 4294967305 would reach it as 9, SIGKILL, and 4294967296 as 0. A
+ signal number outside 0 to 64 that only the running program knows sets
+ the error flag and sends nothing: the forked child is still running
+ after both, and is then stopped with signal 9 and reaped.)
+
+a number called oversized is 0.
+Set oversized to 4294967305.
+a number called wrapped is 0.
+Set wrapped to 4294967296.
+
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Send signal oversized to process pid.
+    On error print "signal 4294967305 refused".
+    Send signal wrapped to child pid.
+    On error print "signal 4294967296 refused".
+    Set finished to reap process pid without waiting.
+    If finished is 0 then,
+        Print "the child is still running".
+    Send signal 9 to process pid.
+    Set reaped to reap process pid.
+    If reaped is pid then,
+        Print "the child is stopped and reaped".

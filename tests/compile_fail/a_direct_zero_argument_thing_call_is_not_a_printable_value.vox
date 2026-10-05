@@ -1,0 +1,11 @@
+(A whole thing returned by a call is copied into a thing variable; the
+ suggested spelling for a function with no parameters has no `of ...`.)
+
+A thing called point has
+  a number called x is 3.
+
+To 'fresh point'.
+    a point called made.
+    Return a point, made.
+
+Print 'fresh point'.

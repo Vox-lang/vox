@@ -153,7 +153,24 @@ impl CodeGenerator {
                             // (`a buffer called b is 4 bytes in size.` does
                             // not reach this arm; it parses to BufferDecl,
                             // handled below.)
-                            let info = self.prescan_expr_tag(other, env, list_seen_tags);
+                            let mut info = self.prescan_expr_tag(other, env, list_seen_tags);
+                            // A call whose result has no declared type is
+                            // accepted only where the position supplies one
+                            // (#45), and a typed declaration is that position:
+                            // its type is the only proof there is, written
+                            // directly or with arguments (#131).
+                            if let (Expr::FunctionCall { name: called, .. }, TagInfo::Unknowable, Some(t)) =
+                                (other, &info, declared_tag)
+                            {
+                                let label = self.resolved_call_label(called);
+                                let untyped = matches!(
+                                    self.function_return_full_types.get(&label),
+                                    None | Some(Type::Void) | Some(Type::Unknown)
+                                );
+                                if untyped {
+                                    info = TagInfo::Known(t);
+                                }
+                            }
                             env.insert(name.clone(), info);
                         }
                         None => {

@@ -20,11 +20,13 @@ mod buffer_append_copy_analysis_tests;
 mod guard_env_tests;
 mod scope;
 mod expressions;
+mod kernel_ranges;
 mod statements;
 pub(crate) mod things;
 mod types;
 mod untyped_returns;
 mod void_results;
+mod zero_arg_calls;
 
 pub struct Analyzer {
     pub deps: Dependencies,

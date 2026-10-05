@@ -1,0 +1,7 @@
+(A library `see` stands at the top level of a file too, so a function body
+ refuses one instead of leaving the call below it unknown.)
+To 'run the check'.
+    see mathkit version "1.0" from "./libmathkit.lib".
+    Print 'add two numbers' of 3 and 4.
+
+'run the check'.

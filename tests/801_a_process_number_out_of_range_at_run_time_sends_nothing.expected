@@ -1,0 +1,5 @@
+process 0 refused
+process -1 refused
+process 2147483648 refused
+the child's pid plus 2 to the 32 refused
+the child is stopped and reaped

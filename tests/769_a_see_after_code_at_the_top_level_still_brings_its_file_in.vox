@@ -1,0 +1,5 @@
+(A `see` stands at the top level of a file, and it need not be the first
+ line: one written after other code still brings its file in.)
+Print "before the see".
+see "./include/greeting.vox".
+Print greet of "world".

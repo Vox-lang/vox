@@ -1,0 +1,12 @@
+(Buffers built by format strings are compared at run time like any other buffer.)
+(The target does not exist, so the kernel refuses with ENOENT whatever the caller's privileges.)
+a text called stem is "non".
+a text called ending is "nd".
+a text called tail is "ve".
+a buffer called kind is "{stem}e".
+a buffer called binding is "bi{ending}".
+Mount "/tmp" at "/tmp/vox_753_no_such_target" with type kind with options binding.
+On error print "the bind built by format strings reached mount and was refused".
+set binding to "mo{tail}".
+Mount "/tmp" at "/tmp/vox_753_no_such_target" with type kind with options binding.
+On error print "the move built by format strings reached mount and was refused".

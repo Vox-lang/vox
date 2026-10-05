@@ -1,0 +1,15 @@
+(Bug #131: a call whose result has no declared type takes its type from the
+ declaration it initialises, written directly or with arguments, so the
+ text appends to a list as text and not as its address.)
+
+To 'opaque label'. Return "hi".
+
+To 'opaque word' with a number called ignored. Return "there".
+
+a text called saved is 'opaque label'.
+a text called other is 'opaque word' of 0.
+a list called items is [].
+append saved to items.
+append other to items.
+Print items.
+Print element 2 of items.

@@ -1,0 +1,22 @@
+(Bug #131, position 2: `Write <call> to <file>` writes the text the call
+ returns. It used to write nothing and set no error flag.)
+
+To greeting.
+    a text called words is "hello from a function".
+    Return a text, words.
+
+a text called 'log path' is "/tmp/vox_test_771_write_call.txt".
+open a file for writing called 'the log' at 'log path'.
+Write greeting to 'the log'.
+On error Print "write flagged".
+Print 'the log's size.
+Write "{greeting}!" to 'the log'.
+Print 'the log's size.
+close 'the log'.
+
+a buffer called readback is 64 bytes in size.
+open a file for reading called 'saved' at 'log path'.
+read from 'saved' into readback.
+Print readback.
+close 'saved'.
+Delete the file 'log path'.

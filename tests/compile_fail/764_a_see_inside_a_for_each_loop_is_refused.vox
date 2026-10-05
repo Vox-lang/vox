@@ -1,0 +1,5 @@
+(A `see` stands at the top level of a file, so a For each loop refuses one.)
+a list called names is ["ada", "grace"].
+For each name in names,
+    see "./no-such-file.vox".
+Print "after".

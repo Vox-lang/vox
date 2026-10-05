@@ -41,9 +41,9 @@ release.sh
 /cat
 /rmdir_check
 
-# Cargo home written into the tree by an rpm-style build: both build paths in
-# vox.spec put a `.cargo/config.toml` here in %prep (one pointing at vendor/,
-# one written by %cargo_prep), and cargo then caches into the same directory.
+# Cargo home written into the tree by an rpm-style build: the macro build path
+# in vox.spec has %cargo_prep put a `.cargo/config.toml` here in %prep, and
+# cargo then caches into the same directory.
 # Build output, never source.
 /.cargo/
 

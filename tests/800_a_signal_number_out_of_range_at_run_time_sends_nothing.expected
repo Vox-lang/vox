@@ -1,0 +1,4 @@
+signal 4294967305 refused
+signal 4294967296 refused
+the child is still running
+the child is stopped and reaped

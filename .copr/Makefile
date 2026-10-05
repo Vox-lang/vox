@@ -3,18 +3,18 @@
 # access:
 #   make -f .copr/Makefile srpm outdir="<outdir>" spec="<spec_path>"
 # (see https://docs.copr.fedorainfracloud.org/user_documentation.html#make-srpm)
-# This target must be self-contained: it vendors crates.io deps here (this
-# step has network access) so a later mock build of the SRPM itself (no
-# network) can run `cargo build --offline` on the chroots that build vendored.
-# See vox.spec for both build paths. Already root here, so plain dnf -- no
-# sudo (may not even exist in the minimal chroot).
+# This target must be self-contained. Vox has no crate dependencies, so there
+# is nothing to vendor: the SRPM is Source0 plus the spec, and a later mock
+# build (no network) needs nothing beyond the source tree. See vox.spec for
+# both build paths. Already root here, so plain dnf -- no sudo (may not even
+# exist in the minimal chroot).
 
 outdir ?= $(CURDIR)/outdir
 builddir := $(shell mktemp -d)
 
 .PHONY: srpm
 srpm:
-	dnf -y install --setopt=install_weak_deps=False cargo rust rpm-build git curl
+	dnf -y install --setopt=install_weak_deps=False rpm-build git curl
 
 	mkdir -p "$(outdir)" "$(builddir)/SOURCES" "$(builddir)/SPECS"
 
@@ -58,16 +58,6 @@ srpm:
 		echo "snapshot build: HEAD is not $$tag, archiving HEAD"; \
 		git archive --prefix=vox-$(VERSION)/ -o "$$src" HEAD; \
 	fi
-
-	# Vendor against the exact Cargo.lock inside the tarball that is about to
-	# be shipped, not the ambient working tree's Cargo.lock -- those can drift
-	# (e.g. an uncommitted `cargo build` bumping a lockfile entry), which
-	# would vendor crate versions that don't match what Source0 ships and
-	# break the offline `cargo build` on the vendored path.
-	mkdir -p "$(builddir)/src"
-	tar -xzf "$(builddir)/SOURCES/vox-$(VERSION).tar.gz" -C "$(builddir)/src"
-	cd "$(builddir)/src/vox-$(VERSION)" && cargo vendor --locked "$(builddir)/vendor" >/dev/null
-	tar -C "$(builddir)" -czf "$(builddir)/SOURCES/vox-$(VERSION)-vendor.tar.gz" vendor
 
 	cp vox.spec "$(builddir)/SPECS/"
 

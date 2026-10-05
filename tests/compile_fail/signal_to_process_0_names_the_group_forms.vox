@@ -1,0 +1,5 @@
+(Compile-fail: bug #135. `to process` names exactly one process. The
+ kernel reads pid 0 as the caller's whole process group, so 0 is refused
+ and the error names the forms that say so.)
+
+Send signal 0 to process 0.

@@ -1,0 +1,6 @@
+(The literal pattern is translated at compile time: MS_MOVE or MS_BIND, with no type and no data.)
+(The target does not exist, so the kernel refuses with ENOENT whatever the caller's privileges.)
+Mount "/tmp" at "/tmp/vox_750_no_such_target" with type "none" with options "bind".
+On error print "the literal bind reached mount and was refused".
+Mount "/tmp" at "/tmp/vox_750_no_such_target" with type "none" with options "move".
+On error print "the literal move reached mount and was refused".

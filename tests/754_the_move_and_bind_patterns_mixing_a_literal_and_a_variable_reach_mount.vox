@@ -1,0 +1,8 @@
+(When one side is a literal and the other a variable, the variable side is compared at run time.)
+(The target does not exist, so the kernel refuses with ENOENT whatever the caller's privileges.)
+a text called kind is "none".
+a text called binding is "bind".
+Mount "/tmp" at "/tmp/vox_754_no_such_target" with type "none" with options binding.
+On error print "a literal type with a variable bind reached mount and was refused".
+Mount "/tmp" at "/tmp/vox_754_no_such_target" with type kind with options "move".
+On error print "a variable type with a literal move reached mount and was refused".

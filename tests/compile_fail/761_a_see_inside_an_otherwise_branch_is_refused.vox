@@ -1,0 +1,8 @@
+(A `see` stands at the top level of a file, so an Otherwise branch refuses one.)
+a number called attempts is 3.
+If attempts is 4 then,
+    Print "four".
+Otherwise,
+    see "./no-such-file.vox",
+    Print "not four".
+Print "after".

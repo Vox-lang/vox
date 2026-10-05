@@ -1,0 +1,9 @@
+(Texts held in variables are compared at run time and make the same MS_MOVE or MS_BIND call as literals.)
+(The target does not exist, so the kernel refuses with ENOENT whatever the caller's privileges.)
+a text called kind is "none".
+a text called binding is "bind".
+a text called moving is "move".
+Mount "/tmp" at "/tmp/vox_751_no_such_target" with type kind with options binding.
+On error print "the bind held in text variables reached mount and was refused".
+Mount "/tmp" at "/tmp/vox_751_no_such_target" with type kind with options moving.
+On error print "the move held in text variables reached mount and was refused".

@@ -1,0 +1,26 @@
+(docs/BUGS_FOUND.md #135: `group`, `my` and `every` are claimed only in
+ the shape of a group form, so each still names a pid anywhere else,
+ including as the pid of a `Send signal` itself. Signal 0 to a forked
+ child only.)
+
+a number called group is 0.
+a number called my is 0.
+a number called every is 0.
+Set pid to fork the process.
+If pid is 0 then,
+    Wait 30 seconds.
+If pid is greater than 0 then,
+    Set group to pid.
+    Set my to pid.
+    Set every to pid.
+    Send signal 0 to process group.
+    On error print "unexpected error on group".
+    Send signal 0 to my.
+    On error print "unexpected error on my".
+    Send signal 0 to every.
+    On error print "unexpected error on every".
+    Print "group, my and every each reached the child".
+    Send signal 9 to process pid.
+    Set reaped to reap process pid.
+    If reaped is pid then,
+        Print "the child is stopped and reaped".

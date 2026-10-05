@@ -1,0 +1,7 @@
+(A `see` stands at the top level of a file. The path does not exist:
+ the rule refuses the `see` before the file would be read.)
+a number called attempts is 3.
+If attempts is 3 then,
+    see "./no-such-file.vox",
+    Print "inside".
+Print "after".

@@ -1,0 +1,26 @@
+(Only "none" with exactly "move" or "bind" is the pattern; anything close to it is mounted as given.)
+(The target does not exist, so the kernel refuses with ENOENT whatever the caller's privileges.)
+a text called kind is "none".
+a text called 'almost none' is "non".
+a text called 'empty type' is "".
+a text called 'none and more' is "nonetheless".
+a buffer called 'blank options' is 16 bytes.
+a text called 'almost bind' is "bin".
+a text called binder is "binder".
+a text called moved is "moved".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type 'almost none' with options "bind".
+On error print "a type of non stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type 'none and more' with options "move".
+On error print "a type of nonetheless stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type 'empty type' with options "bind".
+On error print "an empty type stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type kind with options 'almost bind'.
+On error print "options of bin stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type kind with options binder.
+On error print "options of binder stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type kind with options moved.
+On error print "options of moved stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type kind with options 'blank options'.
+On error print "empty options stayed a plain mount".
+Mount "/tmp" at "/tmp/vox_755_no_such_target" with type "tmpfs" with options binder.
+On error print "a literal tmpfs type stayed a plain mount".

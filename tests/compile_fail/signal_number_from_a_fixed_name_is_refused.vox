@@ -1,0 +1,5 @@
+(Compile-fail: bug #135. A name that holds one number for the whole
+ program is as provable as the literal it was given.)
+
+a number called hangup is 100.
+Send signal hangup to process 1234.

@@ -1,0 +1,18 @@
+(docs/BUGS_FOUND.md #135: the kernel's group meanings have their own
+ forms. Signal 0 delivers nothing, so this is the only signal a test may
+ send to a group or to everyone: it proves each form reaches kill(2)
+ and clears the error flag. Process group 2147483647 does not exist
+ (pids stop far below it), so that one fails with ESRCH, and a group
+ only the running program knows to be 0 is refused before the kernel.)
+
+Send signal 0 to my process group.
+On error print "unexpected error on my process group".
+Send signal 0 to every process.
+On error print "unexpected error on every process".
+Send signal 0 to process group 2147483647.
+On error print "no process group 2147483647".
+a number called leader is 1.
+Set leader to 0.
+Send signal 0 to process group leader.
+On error print "process group 0 refused".
+Print "done".

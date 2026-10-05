@@ -27,7 +27,7 @@
 section .text
 
 ; Create a device node (character or block special file)
-; Args: rdi = path, rsi = mode (S_IFCHR/S_IFBLK | perms), rdx = dev (major<<8 | minor)
+; Args: rdi = path, rsi = mode (S_IFCHR/S_IFBLK | perms), rdx = dev (makedev(major, minor))
 ; (all pre-loaded by codegen)
 ; Returns: 0 in rax on success, negative on error. Sets _last_error.
 %macro MKNOD 0
@@ -74,6 +74,68 @@ section .text
     pop r9
     pop rcx
     pop rbx
+%endmacro
+
+; Mount a filesystem, recognising the move/bind pattern at run time.
+; Codegen uses this when the filesystem type or the options are not
+; literals, so the pattern cannot be known at compile time. When the
+; type reads exactly "none" and the options read exactly "move" or
+; "bind", the call becomes MS_MOVE or MS_BIND with a NULL type and NULL
+; data, the same call the literal pattern makes; anything else is
+; mounted as given. Each byte is read only after the one before it
+; matched a non-NUL character, so a shorter text is never overread.
+; Args: as MOUNT (r10 arrives as 0).
+%macro MOUNT_RECOGNISING_MOVE_OR_BIND 0
+    test rdx, rdx
+    jz %%as_given
+    cmp byte [rdx], 'n'
+    jne %%as_given
+    cmp byte [rdx+1], 'o'
+    jne %%as_given
+    cmp byte [rdx+2], 'n'
+    jne %%as_given
+    cmp byte [rdx+3], 'e'
+    jne %%as_given
+    cmp byte [rdx+4], 0
+    jne %%as_given
+
+    test r8, r8
+    jz %%as_given
+    cmp byte [r8], 'm'
+    je %%maybe_move
+    cmp byte [r8], 'b'
+    je %%maybe_bind
+    jmp %%as_given
+
+%%maybe_move:
+    cmp byte [r8+1], 'o'
+    jne %%as_given
+    cmp byte [r8+2], 'v'
+    jne %%as_given
+    cmp byte [r8+3], 'e'
+    jne %%as_given
+    cmp byte [r8+4], 0
+    jne %%as_given
+    mov r10, 8192           ; MS_MOVE
+    jmp %%without_type_and_data
+
+%%maybe_bind:
+    cmp byte [r8+1], 'i'
+    jne %%as_given
+    cmp byte [r8+2], 'n'
+    jne %%as_given
+    cmp byte [r8+3], 'd'
+    jne %%as_given
+    cmp byte [r8+4], 0
+    jne %%as_given
+    mov r10, 4096           ; MS_BIND
+
+%%without_type_and_data:
+    xor rdx, rdx
+    xor r8, r8
+
+%%as_given:
+    MOUNT
 %endmacro
 
 ; Unmount a filesystem

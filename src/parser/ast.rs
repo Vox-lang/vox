@@ -682,13 +682,36 @@ pub enum Statement {
         args: Expr, // expected to be an Expr::ListLit
     },
 
-    // kill(2): "Send signal <N> to process <pid>." / "... to child <pid>."
-    // rdi = pid, rsi = signal. Sets _last_error on failure, clears on success.
+    // kill(2): "Send signal <N> to process <pid>." and its group forms.
+    // rdi = the kernel's pid argument, rsi = signal. Sets _last_error on
+    // failure, clears on success.
     SendSignal {
         signal: Expr,
-        pid: Expr,
+        target: SignalTarget,
     },
 }
+
+/// Who a `Send signal` statement reaches, each one a single plain-English
+/// form so the kernel's 0 and negative pid meanings are never reached by a
+/// number that happens to be 0 or below.
+#[derive(Debug, Clone)]
+pub enum SignalTarget {
+    /// `to process <pid>` / `to child <pid>`: exactly one process, kill(pid).
+    Process(Expr),
+    /// `to process group <g>`: every process in group g, kill(-g).
+    ProcessGroup(Expr),
+    /// `to my process group`: every process in the caller's group, kill(0).
+    MyProcessGroup,
+    /// `to every process`: every process the caller may signal, kill(-1).
+    EveryProcess,
+}
+
+/// The highest signal number Linux defines (SIGRTMAX); 0 is the existence check.
+pub const MAX_SIGNAL_NUMBER: i64 = 64;
+/// The highest pid or process group kill(2) can name: its pid_t is a 32-bit int.
+pub const MAX_PROCESS_ID: i64 = 2147483647;
+/// The highest exit status the kernel passes on: it keeps the low 8 bits.
+pub const MAX_EXIT_CODE: i64 = 255;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceNodeType {
@@ -1772,9 +1795,11 @@ pub fn collect_freeable_texts(stmts: &[Statement]) -> std::collections::HashSet<
                     find_nested_retains(new_root, retaining);
                     find_nested_retains(put_old, retaining);
                 }
-                Statement::SendSignal { signal, pid } => {
+                Statement::SendSignal { signal, target } => {
                     find_nested_retains(signal, retaining);
-                    find_nested_retains(pid, retaining);
+                    if let SignalTarget::Process(pid) | SignalTarget::ProcessGroup(pid) = target {
+                        find_nested_retains(pid, retaining);
+                    }
                 }
                 _ => {}
             }

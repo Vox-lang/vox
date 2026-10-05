@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #136: `quit` follows `Exit`. A code below 0 that only
+ the running program knows exits with 255, not with its low 8 bits:
+ -256 would otherwise report success.)
+
+a number called code is 0.
+Set code to -256.
+Print "quitting with -256".
+Quit code.

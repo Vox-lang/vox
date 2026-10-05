@@ -1,0 +1,4 @@
+(Compile-fail: bug #135. The kernel reads pid -1 as every process the
+ caller may signal; `to child` names one process, so -1 is refused.)
+
+Send signal 0 to child -1.

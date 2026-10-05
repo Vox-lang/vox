@@ -1,0 +1,28 @@
+(Bug #131, position 3: a text declared from a call is a text, whether the
+ call is written directly or with arguments, so `append` takes it as a
+ buffer source like any other text.)
+
+a buffer called sink is "".
+
+To 'make line'.
+    Return a text, "made".
+
+To 'make word' with a number called count.
+    Return a text, "-word".
+
+a text called word is 'make line'.
+append word to sink.
+Print sink.
+
+The next is 'make word' of 1.
+append next to sink.
+Print sink.
+
+The last is 'make line'.
+append last to sink.
+Print sink.
+
+a text called later is "".
+Set later to 'make line'.
+append later to sink.
+Print sink.

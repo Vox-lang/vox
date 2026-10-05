@@ -1,13 +1,16 @@
 #!/bin/bash
 #
-# The vendored build path in vox.spec (EPEL, CentOS Stream, openSUSE, Mageia,
-# Amazon Linux, openEuler, Azure Linux, Fedora ELN) statically links every
-# crate in Cargo.lock into the vox binary, so the spec must declare each one
-# with `Provides: bundled(crate(<name>)) = <version>`: "all bundled crate
+# Vox has no dependencies beyond the Rust standard library, so Cargo.lock lists
+# only vox-lang itself and vox.spec declares no bundled crates. If a crate is
+# ever added, a binary that statically links it must declare it with
+# `Provides: bundled(crate(<name>)) = <version>`: "all bundled crate
 # dependencies MUST be declared with virtual Provides in the format
 # Provides: bundled(crate($crate)) = $version in the subpackage that contains
 # the Rust component"
 # (https://docs.fedoraproject.org/en-US/packaging-guidelines/Rust/).
+# Adding a crate also means giving vox.spec a vendor tarball and a `cargo
+# build --offline` source replacement again (see git history of vox.spec and
+# .copr/Makefile before the zero-dependency change).
 #
 # The spec has to be static -- Copr builds ONE source RPM and feeds it to
 # every chroot, so nothing may rewrite the spec at SRPM time -- which means
@@ -40,6 +43,7 @@ if [[ ! -f "$manifest" ]]; then
 fi
 self="$(sed -n 's/^name = "\(.*\)"/\1/p' "$manifest" | head -1)"
 
+# Every package in Cargo.lock except the crate this repo is.
 from_lock="$(awk -v self="$self" '
     /^\[\[package\]\]/ { name = ""; version = ""; next }
     /^name = / { gsub(/^name = "|"$/, ""); name = $0; next }
@@ -48,20 +52,21 @@ from_lock="$(awk -v self="$self" '
                      next }
 ' "$lock" | sort)"
 
-# A lockfile that parses to nothing means the format moved under us, not that
-# there is nothing to declare -- fail loudly rather than pass vacuously.
-if [[ -z "$from_lock" ]]; then
-    echo "check-spec-bundled: no packages parsed out of $lock -- has the" >&2
+# An empty list is the expected state, but only if the lockfile still parses:
+# it must contain this crate itself, or the format moved under us and an
+# empty list would be a vacuous pass.
+if ! grep -q "^name = \"$self\"\$" "$lock"; then
+    echo "check-spec-bundled: $self not found in $lock -- has the" >&2
     echo "  Cargo.lock format changed? Refusing to report a vacuous pass." >&2
     exit 2
 fi
 
-# Only the Provides inside the vendored branch count; read them as written.
+# Read the Provides lines as written.
 from_spec="$(sed -n 's/^Provides:[[:space:]]*bundled(crate(\([^)]*\)))[[:space:]]*=[[:space:]]*\(.*\)$/\1 \2/p' \
     "$spec" | sed 's/[[:space:]]*$//' | grep . | sort)"
 
 if [[ "$from_lock" == "$from_spec" ]]; then
-    count=$(printf '%s\n' "$from_lock" | grep -c .)
+    count=$(printf '%s\n' "$from_lock" | grep -c . || true)
     echo "check-spec-bundled: OK - $count bundled crate(s) match Cargo.lock"
     exit 0
 fi
@@ -71,7 +76,11 @@ echo "  in Cargo.lock but not in vox.spec:" >&2
 comm -23 <(printf '%s\n' "$from_lock") <(printf '%s\n' "$from_spec") | sed 's/^/    /' >&2
 echo "  in vox.spec but not in Cargo.lock:" >&2
 comm -13 <(printf '%s\n' "$from_lock") <(printf '%s\n' "$from_spec") | sed 's/^/    /' >&2
-echo "  Fix: make the 'Provides: bundled(crate(...)) = ...' lines in vox.spec" >&2
-echo "  read exactly:" >&2
-printf '%s\n' "$from_lock" | awk '{ printf "    Provides:       bundled(crate(%s)) = %s\n", $1, $2 }' >&2
+if [[ -z "$from_lock" ]]; then
+    echo "  Fix: remove the 'Provides: bundled(crate(...))' lines from vox.spec." >&2
+else
+    echo "  Fix: make the 'Provides: bundled(crate(...)) = ...' lines in vox.spec" >&2
+    echo "  read exactly:" >&2
+    printf '%s\n' "$from_lock" | awk '{ printf "    Provides:       bundled(crate(%s)) = %s\n", $1, $2 }' >&2
+fi
 exit 1

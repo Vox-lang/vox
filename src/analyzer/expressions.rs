@@ -946,13 +946,23 @@ impl Analyzer {
                 // has none (plan 310 §5). `analyze_thing_source` is the path
                 // that accepts it.
                 if let Some(thing) = self.thing_returned_by(name) {
+                    // A function with no parameters is called by its name
+                    // alone, so the suggested spelling has no `of ...`.
+                    let call = if self.is_zero_arg_function(name) {
+                        self.render_value_hint(&Expr::FunctionCall {
+                            name: name.clone(),
+                            args: Vec::new(),
+                        })
+                    } else {
+                        format!("{} of ...", name)
+                    };
                     self.push_error(
                         format!(
                             "A call to '{}' returns a whole {}, which is not a value\n  \
                              What a call returns is copied into a {}: write `a {} \
-                             called <name> is {} of ...` or `The <name> is {} of ...` \
+                             called <name> is {}` or `The <name> is {}` \
                              (plan 310 §5).",
-                            name, thing, thing, thing, name, name
+                            name, thing, thing, thing, call, call
                         ),
                         Some(name),
                     );
