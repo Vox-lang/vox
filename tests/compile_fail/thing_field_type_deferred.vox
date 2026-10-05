@@ -1,7 +1,8 @@
-(Compile-fail: plan 310 §6 - the v1 field types are number, float, boolean,
- time, and any previously defined thing. Text is deferred pending the
- handle-copy verification §6 asks for, so a text field is rejected at the
- definition rather than declared as eight bytes nobody can copy or print.)
+(Compile-fail: plan 310 §6 - a field may be a number, float, boolean,
+ time, text, or any previously defined thing. A list can be changed in
+ place, so sharing one between two copies of a thing would be visible;
+ a list field is rejected at the definition rather than declared as
+ eight bytes two copies would share.)
 
 A thing called label has
-  a text called caption.
+  a list called captions.

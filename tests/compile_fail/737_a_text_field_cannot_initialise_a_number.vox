@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #103: reading a text field into a number variable is
+ refused at the declaration, the same as reading a text variable into it.)
+
+A thing called note has
+  a text called body is "1".
+a note called saved.
+a number called size is saved's body.

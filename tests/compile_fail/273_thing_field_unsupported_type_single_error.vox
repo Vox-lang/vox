@@ -4,8 +4,10 @@
  slots of "expected X, got Y" rendered the same word ("is a text, but its
  default is a text"). Support is decided first now; a rejected type
  short-circuits before the default is even considered, leaving exactly one
- error, the true one.)
+ error, the true one. Text became a field type after this fix, so the
+ case now uses a buffer field, which still is not one, with the same
+ text default.)
 
 A thing called 'file report' has
-  a text called filename is "",
+  a buffer called filename is "",
   a number called lines is 0.

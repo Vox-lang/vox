@@ -1,0 +1,28 @@
+(docs/BUGS_FOUND.md #103: a text field inside a thing inside a thing
+ inside a thing. Copying the outer thing, copying a nested thing out of
+ it, and writing through the full chain on either copy never shows up
+ in the other.)
+
+A thing called tag has
+  a text called word is "leaf".
+A thing called branch has
+  a tag called tip,
+  a text called name is "branch".
+A thing called tree has
+  a branch called limb,
+  a text called species is "oak".
+
+a tree called elder.
+a tree called sapling is elder.
+Set sapling's limb's tip's word to "bud".
+Set sapling's limb's name to "twig".
+Print elder.
+Print sapling.
+Set elder's limb to sapling's limb.
+Set sapling's limb's tip's word to "flower".
+Print elder's limb's tip's word.
+Print sapling's limb's tip's word.
+If elder is sapling then,
+  Print "the trees are equal".
+Otherwise,
+  Print "the trees differ".

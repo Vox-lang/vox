@@ -162,6 +162,13 @@ impl Analyzer {
             // base keep answering None.
             Expr::PropertyAccess { property, .. } => Self::property_value_type(property),
             Expr::ByteAccess { .. } => Some(Type::Integer),
+            // A text field holds a pointer, so it is text wherever it is
+            // read: refused in arithmetic, refused into a number. The other
+            // field types answer None here.
+            Expr::ThingField { .. } => match self.field_value_type(expr) {
+                Some(Type::String) => Some(Type::String),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -239,6 +246,9 @@ impl Analyzer {
                     format!("\"{}\"", s)
                 }
             }
+            // A field is named the way the author wrote it, so a text field
+            // in arithmetic reads "text note's body", not "text this value".
+            Expr::ThingField { base, path } => things::render_chain(base, path),
             _ => "this value".to_string(),
         }
     }
@@ -885,7 +895,7 @@ yields the number 0 and sets the error flag",
     /// literal/identifier shapes that are common in a mismatched assignment;
     /// anything else falls back to a generic placeholder rather than
     /// fabricating source that wouldn't parse.
-    fn render_value_hint(&self, expr: &Expr) -> String {
+    pub(crate) fn render_value_hint(&self, expr: &Expr) -> String {
         match expr {
             Expr::StringLit(s) => format!("\"{}\"", s),
             Expr::IntegerLit(n) => n.to_string(),

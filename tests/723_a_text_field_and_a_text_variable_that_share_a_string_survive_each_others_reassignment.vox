@@ -1,0 +1,24 @@
+(docs/BUGS_FOUND.md #103 and #108: a global text that owns a string it
+ built frees that string when it is set again, unless something else may
+ still hold it. A field written from the text is such a holder, so the
+ text stops freeing; and a text read FROM a field never frees the field's
+ string, only the strings it built itself. Fifty reassignments each way,
+ and the field still reads what it was given.)
+
+A thing called note has
+  a text called body is "".
+
+a number called seed is 7.
+a text called owned is "built {seed}".
+a note called kept.
+Set kept's body to owned.
+Repeat 50 times,
+  Set owned to "{owned}+".
+Print kept.
+
+a text called reader is "first {seed}".
+Set reader to kept's body.
+Repeat 50 times,
+  Set reader to "{reader}-".
+Print kept.
+Print reader.

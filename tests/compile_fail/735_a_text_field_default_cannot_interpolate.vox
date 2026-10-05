@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #103: a field default is a literal. A text default
+ with a `{name}` in it would be computed, so it is refused; `{{` writes a
+ literal brace, see tests/730.)
+
+A thing called note has
+  a text called body is "{x}".

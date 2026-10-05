@@ -1,0 +1,21 @@
+(docs/BUGS_FOUND.md #103: the empty text, a text longer than the 4096
+ bytes a buffer starts with, and text in several scripts all fit a text
+ field, survive a copy, and read back byte for byte.)
+
+A thing called note has
+  a text called body is "héllo wörld ✓ 日本",
+  a text called blank is "".
+
+a note called wide.
+Repeat 5000 times,
+  Set wide's blank to "{wide's blank}y".
+a note called held is wide.
+Set wide's blank to "".
+Print held's body.
+Print "[{wide's blank}]".
+a buffer called measure.
+append "{held's blank}" to measure.
+Print measure's size.
+a buffer called script.
+append "{held's body}" to script.
+Print script's size.
