@@ -2889,16 +2889,16 @@ After a successful in-place retype, the variable is tracked with the new
 type for the rest of its lifetime, so arithmetic and further casts behave
 accordingly. Retyping to the type it already holds is a no-op.
 
-**Failed conversions set `_last_error` and leave the variable as 0.** A
-text that cannot be parsed as a number, for instance, results in 0 and
-raises the error flag so `On error` can catch it:
+**A failed conversion sets `_last_error` and leaves the variable as it was.** A
+text that is not a number keeps its text and its tag, and the error flag
+is raised so `On error` can catch it:
 
 ```
 a value called bad is "abc".
 bad is a number.
 on error print "cast failed".
 print bad.
-(prints: cast failed / 0)
+(prints: cast failed / abc)
 ```
 
 **Inspecting a `value`'s current type.** The universal `type` property reads the variable's runtime tag and returns a text description such as `Text (dynamic)`, `Number (dynamic)`, `Float (dynamic)`, `Boolean (dynamic)`, `List (dynamic)`, `Map (dynamic)`, or `Nothing (dynamic)`. Because it reads the tag, the reported type changes with reassignment:
