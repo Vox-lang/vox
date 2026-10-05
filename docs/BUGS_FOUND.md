@@ -12970,3 +12970,297 @@ renders `255|255|255|`; `{n:#x}` is the obvious hex typo and silently prints dec
 **Status:** fixed in v0.4.15. Regression test: tests/compile_fail/284_a_bare_malformed_precision_is_an_unrecognised_specifier.vox.
 
 `{n:.z}` renders as a bare `{n}` with no diagnostic: the leading-dot precision branch returns before #126's catch-all. Same principle as #126; fold into that fix.
+
+---
+
+### 128. `Free` through one name of an assigned list, then a read through the other name, segfaults
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+a list called xs is ["a"].
+a list called ys is xs.
+Free xs.
+print ys's length.
+```
+```text
+$ vox free_alias.vox -o free_alias && ./free_alias
+Segmentation fault         (core dumped)
+[exit 139]
+```
+
+**Observed:** the program dies on a signal at the read of `ys`.
+
+**Expected:** `0`. `ys` names the same list as `xs`, so after `Free xs.` it is empty too. Never a signal.
+
+**The manual:** LANGUAGE.md "Releasing a Buffer": "A list also accepts `Free`, with the same after-state a buffer gets: it becomes **empty** (length 0, `empty` is true, prints `[]`), and every later write - `append`, `Set element N of ...` - is refused with the error flag; a second `Free` is the same no-op-that-flags, not a second release. Free releases the list and every collection it holds: a nested list or map element is freed too, recursively, before the list itself is." The manual has no sentence on what `a list called ys is xs.` means; the owner's expectation below settles it for this entry.
+
+**Root cause:** not yet investigated. `ys` appears to hold the old block pointer, which `Free xs.` releases without updating the second name.
+
+**Fix direction:** TheJostler, 2026-10-05: "seg fault - automatically a YES. I would expect ys to be freed as well... the memory tracker we already use ... needs to check for children on a free call and free the children too." After `Free xs.`, every name for that list reads it as empty, and `Free` releases the children it holds.
+
+---
+
+### 129. A number field used to initialise a text variable segfaults
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+A thing called point has
+  a number called x is 7.
+a point called origin.
+a text called label is origin's x.
+Print label.
+```
+```text
+$ vox number_field_into_text.vox -o number_field_into_text && ./number_field_into_text
+Segmentation fault         (core dumped)
+[exit 139]
+```
+
+**Observed:** compiles clean, then dies on a signal at `Print label.`
+
+**Expected:** a compile error, the same one a number variable gets. The variable form is refused today:
+```text
+error: cannot initialise 'label', which is text, with a number
+  --> p1.vox:2:15
+    |
+  2 | a text called label is n.
+    |               ^^^^^ this text is given a number
+```
+
+**The manual:** LANGUAGE.md "Type Immutability": "**A variable's type is fixed at its declaration and never changes**". LANGUAGE.md "Declarations and field access": "A field is an ordinary expression and an ordinary lvalue everywhere either is allowed".
+
+**Root cause:** not yet investigated. A first reading: the declaration's initialiser check learns nothing from a field read (the provable-type lookup has no arm for a field), so the number's bits are stored as a text pointer.
+
+**Fix direction:** TheJostler, 2026-10-05: "label is origin's x should check: is origin's x a text, if yes proceed, if not compiler error; if impossible to check at compile time, maybe an assembly macro which dynamically casts... Does this already exist? Check before designing and get my go-ahead on the design first." **A DESIGN go-ahead from TheJostler is required before any fix starts.** The first step is to check whether a run-time cast already exists for this (the #114/#115 run-time tag cast is the obvious candidate) and bring the design to the owner.
+
+---
+
+### 130. A text written into a number field is stored as its address
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+A thing called point has
+  a number called x is 0.
+a point called origin.
+Set origin's x to "hello".
+Print origin's x.
+```
+```text
+$ vox text_into_number_field.vox -o text_into_number_field && ./text_into_number_field
+4198488
+[exit 0]
+```
+
+**Observed:** compiles clean and prints the text's address as the field's number.
+
+**Expected:** a compile error, as for a number variable:
+```text
+error: cannot assign text to 'plain', which is a number
+  --> p3.vox:2:5
+    |
+  2 | Set plain to "hello".
+    |     ^^^^^ this assigns text
+```
+
+**The manual:** LANGUAGE.md "Declarations and field access": "A field is an ordinary expression and an ordinary lvalue everywhere either is allowed: read, `Set ... to`, bare assignment, increment, decrement, format-string interpolation, and a comparison in a condition". LANGUAGE.md "Type Immutability": "Every form that writes to an already-declared name (`x is <value>.`, `the x is <value>.`, and `Set x to <value>.`) is checked the same way: if the new value's type doesn't match the type `x` was declared with, that's a compile error, not a silent retype."
+
+**Root cause:** the analyzer's `Statement::SetThingField` arm (`src/analyzer/statements.rs`) type-checks only a field that holds a whole thing; for a scalar field it falls through to `analyze_expr(value)`, which checks nothing against the field's declared type.
+
+**Fix direction:** TheJostler's rule, 2026-10-05: a text written into a number field is refused unless cast. "casting a text to a number runs atoi on the string... 'hello' is not a valid number so it should throw a compile error; if it's not known at compile time what the text will be, set on error and no-op." So: `Set origin's x to "hello".` is a compile error; `Set origin's x to "hello" as a number.` is a compile error too, because the literal is not a number; a text cast whose content is only known at run time sets the error flag and leaves the field unchanged. For reference, `a number called n is "hello" as a number.` compiles today and prints `0`; the cast half of the rule changes that.
+
+---
+
+### 131. A zero-argument call written directly is not honoured in three positions
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+LANGUAGE.md "Function Calls": "Calls with no arguments can be written directly". In each position below, the direct zero-argument call does not deliver what the function returns. One entry, three repros.
+
+**Position 1: `The X is <call>.`**
+```vox
+A thing called point has
+  a number called x is 3.
+To 'fresh point'.
+  a point called made.
+  Return a point, made.
+The got is 'fresh point'.
+Print got.
+```
+```text
+$ vox the_x_is_call.vox -o the_x_is_call && ./the_x_is_call
+140729520118576
+[exit 0]
+```
+Expected `{x: 3}`. LANGUAGE.md "Value copy semantics": "`The after is nudged of before.` declares `after` from what the call returns, so a maker never has to have its type written twice."
+
+**Position 2: `Write <call> to <file>`**
+```vox
+To greeting.
+    a text called words is "hello from a function".
+    Return a text, words.
+
+open a file for writing called 'the log' at "greeting.txt".
+Write greeting to 'the log'.
+On error Print "write flagged".
+Print 'the log's size.
+Print greeting.
+```
+```text
+$ vox write_call.vox -o write_call && ./write_call
+0
+hello from a function
+[exit 0]
+$ stat -c '%s bytes' greeting.txt
+0 bytes
+```
+Expected the file to hold `hello from a function` and a size of 21. `Print greeting` in the same program prints the text, so the call works there; `Write` writes nothing and sets no flag. LANGUAGE.md "Writing": "`Write` takes a text, a buffer, or a format string"; "A failed `Write` sets the error flag and is catchable with `On error`".
+
+**Position 3: a text declared from the call, then appended to a buffer**
+```vox
+a buffer called sink is "".
+
+To 'make line'.
+    Return a text, "made".
+
+a text called word is 'make line'.
+append word to sink.
+Print sink.
+```
+```text
+$ vox append_call_text.vox -o append_call_text
+error: Buffer append requires a buffer source: word
+  --> append_call_text.vox:6:15
+    |
+  6 | a text called word is 'make line'.
+    |               ^--- here
+[exit 1]
+```
+The same program with `a text called word is "made".` compiles and prints `made`. LANGUAGE.md "Buffer Append and Copy": "`append source to destination` adds source bytes to the end of destination."
+
+**Root cause:** not yet investigated. The three positions share one shape: a call written directly, with no arguments, reaches a path that was wired for a call with `of` (position 1), for a name (position 2) or for a literal-initialised text (position 3).
+
+**Fix direction:** a direct zero-argument call means its result in every position a call with arguments does. Positions 1 and 2 are wrong answers that compile clean; position 3 is a refusal that should not happen.
+
+---
+
+### 132. A `see` nested in an `If` body or a function body is silently dropped
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+a number called gate is 3.
+If gate is 3 then,
+    see "./no-such-file.vox",
+    Print "inside".
+Print "after".
+```
+```text
+$ vox nested_see.vox -o nested_see && ./nested_see
+inside
+after
+[exit 0]
+```
+The same `see` at the top level is refused, as the manual says:
+```text
+error: Cannot read './no-such-file.vox', the file this `see` names: No such file or directory (os error 2)
+  A source include is resolved against the directory of the file that writes it.
+  --> toplevel_see.vox:1:25
+    |
+  1 | see "./no-such-file.vox".
+    |                         ^--- here
+```
+
+A `.lib` `see` inside a function body is dropped the same way, and the error lands on the call it should have enabled:
+```vox
+To 'run the check'.
+    see mathkit version "1.0" from "./libmathkit.lib".
+    Print 'add two numbers' of 3 and 4.
+
+'run the check'.
+```
+```text
+$ vox nested_lib_see.vox -o nested_lib_see
+error: Unknown function: add two numbers
+  --> nested_lib_see.vox:3:12
+    |
+  3 |     Print 'add two numbers' of 3 and 4.
+    |            ^--- here
+[exit 1]
+```
+With the `see` moved to the top level, the same program compiles and prints `7`.
+
+**The manual:** LANGUAGE.md "Cross-file definitions": "A `see` of a file that cannot be read is an error." and "The seen file arrives where the `see` is written".
+
+**Root cause:** not yet investigated.
+
+**Fix direction:** TheJostler ruled, 2026-10-05, that a nested `see` should work: it is honoured, not refused. What a `see` inside an `If` means at run time (for example, whether the branch decides anything) is semantics pending the owner's answer; no fix starts on that part until it is given.
+
+---
+
+### 133. A device-node minor number is encoded in 8 bits
+
+**Status:** Open, fix approved 2026-10-05. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+Create a directory called "vf_scratch".
+Create a directory called "vf_scratch/process-control".
+Create a device node called "vf_scratch/process-control/scratch_d7" with type "c" major 259 minor 300.
+On error print "refused".
+```
+```text
+$ vox minor_encoding.vox -o minor_encoding && strace -e trace=mknod ./minor_encoding
+mknod("vf_scratch/process-control/scratch_d7", S_IFCHR|0666, makedev(0x103, 0x2c)) = -1 EPERM (Operation not permitted)
+refused
++++ exited with 0 +++
+```
+
+**Observed:** major 259 (0x103) arrives intact; minor 300 arrives as 44 (0x2c). Unprivileged, the call is refused either way, so the fault is visible only to strace or to a privileged program, which would create the wrong device.
+
+**Expected:** `makedev(0x103, 0x12c)`.
+
+**The manual:** LANGUAGE.md "Device Nodes": "`major`/`minor` are the standard Linux device-driver identification numbers". Minors above 255 are standard today (for example major 259, the block extended range), and Linux's device number layout keeps the low 8 bits of the minor at bits 0-7 and the rest at bits 20-31.
+
+**Root cause:** `src/codegen/statements.rs` builds the device number as `(major << 8) | minor`, and `coreasm/x86_64/proc.asm` documents the same layout. That is the legacy 16-bit encoding, so the minor's bits above 8 land in the major field and the kernel decodes them away.
+
+**Fix direction:** TheJostler, 2026-10-05: "Fix this everywhere, hunt and fix please." Encode with the Linux layout, as glibc's `gnu_dev_makedev` does (`((major & 0xfffff000) << 32) | ((major & 0xfff) << 8) | ((minor & 0xffffff00) << 12) | (minor & 0xff)`), and hunt every other place that builds or documents a device number the old way. A fixer is on it.
+
+---
+
+### 134. The `none` + `move`/`bind` mount pattern is recognised only for literals
+
+**Status:** Open, awaiting approval. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d) by the master; confirmed by the owner 2026-10-05.
+
+```vox
+Create a directory called "vf_scratch".
+Create a directory called "vf_scratch/process-control".
+a text called quay is "vf_scratch/process-control/scratch_d8".
+Create a directory called quay.
+Mount quay at quay with type "none" with options "bind".
+On error print "the literal pattern was refused".
+a text called 'none word' is "none".
+a text called 'bind word' is "bind".
+Mount quay at quay with type 'none word' with options 'bind word'.
+On error print "the variable pattern was refused".
+Remove the directory called quay.
+```
+```text
+$ vox bind_variables.vox -o bind_variables && strace -e trace=mount ./bind_variables
+mount("vf_scratch/process-control/scratch_d8", "vf_scratch/process-control/scratch_d8", NULL, MS_BIND, NULL) = -1 EPERM (Operation not permitted)
+the literal pattern was refused
+mount("vf_scratch/process-control/scratch_d8", "vf_scratch/process-control/scratch_d8", "none", 0, "bind") = -1 EPERM (Operation not permitted)
+the variable pattern was refused
++++ exited with 0 +++
+```
+
+**Observed:** written as literals, the pattern becomes `MS_BIND` with no filesystem type and no data. The same values held in text variables reach the kernel as filesystem type `"none"`, flags 0, data `"bind"`: a plain mount of a filesystem called `none`, not a bind.
+
+**Expected:** both statements make the same `MS_BIND` call.
+
+**The manual:** LANGUAGE.md "Mounting Filesystems": "`source`/`target`/`fstype`/`options` accept string literals, text variables, or buffers (including format-string-built buffers)." and "Moving/binding an already-mounted filesystem uses `fstype "none"` with `options "move"` or `options "bind"` - Vox recognizes this pattern and translates it into the correct `MS_MOVE`/`MS_BIND` mount flags".
+
+**Root cause:** `src/codegen/statements.rs` detects the pattern at compile time by matching `Expr::StringLit` only, for the type and for the options; any other operand gets flags 0 and is passed through as text.
+
+**Fix direction:** TheJostler ruled option A, 2026-10-05: variables must work like literals. The pattern is recognised at run time too, for text variables and buffers, so the operand's spelling never changes what the mount does.
