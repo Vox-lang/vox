@@ -152,7 +152,7 @@ impl Parser {
         Ok(Statement::LibraryDecl { name, version })
     }
 
-    /// Josj's ruling (2026-10-05, BUGS_FOUND #132): a `see` is legal only
+    /// TheJostler's ruling (2026-10-05, BUGS_FOUND #132): a `see` is legal only
     /// at the top level of a file. One written inside an `If`, a loop, a
     /// function body or a thing definition used to be parsed into that body
     /// and never read, so the file it named silently never arrived. It is
