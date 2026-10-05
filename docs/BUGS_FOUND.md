@@ -13323,3 +13323,435 @@ exit(256)                               = ?
 **Root cause:** `src/codegen/statements.rs` passes the 64-bit Vox number straight to `EXIT`, unchecked.
 
 **Fix direction:** TheJostler, 2026-10-05: exit codes are 0 to 255. A literal outside is a compile error; a computed code outside exits with 255. The manual gets one sentence stating the range. `quit` and `terminate` follow.
+
+---
+
+### 137. A time used to initialise a text variable segfaults
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+a time called now is current time.
+a text called label is now.
+Print label.
+```
+```text
+$ vox time_into_text.vox -o time_into_text && ./time_into_text
+Segmentation fault         (core dumped)
+[exit 139]
+```
+
+**Observed:** compiles clean, then dies on a signal at `Print label.`
+
+**Expected:** a compile error, the same one a number gets when it initialises a text (see #129). A time is not a text. Writing a property works today:
+```vox
+a time called now is current time.
+a text called label is now's hour as text.
+Print label.
+```
+```text
+12
+```
+
+**The manual:** LANGUAGE.md "Type Immutability": "**A variable's type is fixed at its declaration and never changes**". A declaration is checked against the type of its initialiser.
+
+**Root cause:** not yet investigated. A first reading, shared with #129: the lookup that works out an initialiser's type answers "unknown" for a time, and "unknown" is let through, so the time's bits are stored as a text pointer.
+
+**Fix direction:** TheJostler ruled on 2026-10-05 that a time used as a text is a compile error, and that the author writes a property instead, for example `now's hour as text`. Every time property (`hour`, `minute`, `second`, `day`, `month`, `year`, `unix`) is a number. This is one case of the wider ruling recorded under #138: a type the compiler cannot establish is refused, never let through.
+
+---
+
+### 138. A list parameter's `'s first` and `'s last` read text elements as numbers
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+To 'show ends' of a list called items.
+    Print "last: {items's last}".
+    Print "first: {items's first}".
+    Print items's last.
+    Print element 2 of items.
+
+a list called xs is ["b", "c"].
+'show ends' of xs.
+```
+```text
+$ vox param_last.vox -o param_last && ./param_last
+last: 4211171
+first: 4211169
+4211171
+c
+[exit 0]
+```
+
+**Observed:** `'s first` and `'s last` on a list parameter print the element's address as a number. `element 2 of items` on the same parameter prints `c`.
+
+**Expected:** `last: c`, `first: b`, `c`, `c`. A program never sees an address.
+
+**The manual:** LANGUAGE.md "List Properties": `'s first` and `'s last` read the first and last element, and a list parameter is the caller's list.
+
+**Root cause:** not yet investigated. A first reading: inside the function the parameter's element type is not known to the analyzer, so the read is treated as a number instead of following the tag each list slot already carries.
+
+**Fix direction:** TheJostler ruled on 2026-10-05 that Vox never prints an address and never lets one reach the program: pointers are abstracted away from the author. Two changes remove the whole family (#129, #130, #137 and this one). A type the compiler cannot establish is a compile error with a helpful message, never a pass. Where only the run time can know (a `value`'s tag, a collection slot's tag), a mismatch sets the error flag and the operation does nothing. Collections dispatch on the slot tags they already carry, so a read of a text element is a text whatever the reader's static type. The mechanism is a small set of assembly macros in coreasm, not new language.
+
+---
+
+### 139. One list passed as two parameters splits when it grows
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+To 'merge' of a list called first and a list called second.
+    For each number from 1 to 20, append the number to first.
+    Print "second sees: {second's length}".
+    append "via second" to second.
+    Print "first sees: {first's length}".
+
+a list called xs is ["a"].
+'merge' of xs and xs.
+Print "xs length: {xs's length}".
+Print "xs last: {xs's last}".
+```
+```text
+$ vox merge_growth.vox -o merge_growth && ./merge_growth
+second sees: 8
+first sees: 21
+xs length: 9
+xs last: via second
+[exit 0]
+```
+
+**Observed:** after 20 appends through `first`, `second` still sees 8 elements, and the append through `second` is lost to `first`. The caller's `xs` ends with 9 elements. Both parameters named the same list, and the list has split in two. A map passed twice behaves the same way.
+
+**Expected:** `second sees: 21`, `first sees: 22`, `xs length: 22`, `xs last: via second`. Each parameter is the caller's list, so both are one list.
+
+**The manual:** LANGUAGE.md "Functions" and "Function Calls" (list parameters): a list parameter names the caller's collection, and growth through it is the caller's growth.
+
+**Root cause:** not yet investigated. A first reading, shared with #128 and #140: each name keeps its own copy of the list's block pointer, so growth through one name moves the list and leaves the other name on the old block.
+
+**Fix direction:** TheJostler confirmed on 2026-10-05 that this is a bug. Every name of a list (a variable, a parameter, and `is also called`) goes through the one slot that owns the list, so growth, `Free` and writes through any name are seen by all. This is the same change that settles #140 and #143.
+
+---
+
+### 140. `Free` through one of two parameters naming one list, then a read through the other, segfaults
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+To 'merge' of a list called first and a list called second.
+    Free first.
+    Print "second sees: {second's length}".
+    append "after" to second.
+    Print "second now: {second}".
+
+a list called xs is ["a", "b"].
+'merge' of xs and xs.
+Print "xs: {xs}".
+```
+```text
+$ vox merge_free.vox -o merge_free && ./merge_free
+second sees: Segmentation fault         (core dumped)
+[exit 139]
+```
+
+**Observed:** the program dies on a signal at the read through `second`.
+
+**Expected:** `second sees: 0`, then the append is refused with the error flag and `second now: []`, then `xs: []`. `Free first.` empties the one list both parameters name. Never a signal.
+
+**The manual:** LANGUAGE.md "Releasing a Buffer": a freed list becomes empty, and every later write is refused with the error flag. Parameters name the caller's list.
+
+**Root cause:** not yet investigated. A first reading, the parameter sibling of #128: `second` holds the block that `Free first.` released.
+
+**Fix direction:** TheJostler ruled on 2026-10-05 that a segmentation fault here is a bug. Naming copies, but a parameter still borrows the caller's list, so two parameters can name one list and this program remains reachable under the copy rule. The one-owning-slot representation described under #139 removes it: `Free` through either parameter empties the list for both.
+
+---
+
+### 141. A boolean field `as text` gives "1"
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+A thing called switch has
+  a boolean called ok is true.
+a switch called origin.
+Print origin's ok as text.
+a boolean called ready is true.
+Print ready as text.
+Print origin's ok.
+```
+```text
+$ vox bool_field_text.vox -o bool_field_text && ./bool_field_text
+1
+true
+1
+[exit 0]
+```
+
+**Observed:** `origin's ok as text` is `1`; the boolean variable `ready as text` is `true`.
+
+**Expected:** `true` for both. A field is an ordinary expression, so it converts the way a variable does.
+
+**The manual:** LANGUAGE.md "Basic Conversions": `true as text` gives `"true"`. LANGUAGE.md "Declarations and field access": "A field is an ordinary expression and an ordinary lvalue everywhere either is allowed".
+
+**Root cause:** not yet investigated. A first reading: the conversion looks at the static type of a variable but finds none for a field, and falls back to the number rendering.
+
+**Fix direction:** TheJostler ruled on 2026-10-05 to fix this even though it changes existing test expectations. Only `<boolean field> as text` changes, to `true` and `false`. Printing a boolean stays `1` and `0`, as LANGUAGE.md "Mixed-Type Lists" states, so a program that prints a boolean directly, field or variable, is unaffected. The tests that assert the old `as text` output are reviewed and updated one by one with the fix.
+
+---
+
+### 142. `reap process <pid>` with 0 or a negative pid reaps another child
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+a number called kid is fork the process.
+If kid is 0 then, Exit 7.
+a number called got is reap process 0.
+On error Print "refused".
+If got is kid then, Print "reap process 0 reaped the child".
+Print "status {the reaped status}".
+```
+```text
+$ vox reap_zero.vox -o reap_zero && ./reap_zero
+reap process 0 reaped the child
+status 1792
+[exit 0]
+```
+
+**Observed:** `reap process 0` returns whichever child finishes, here the forked child with exit code 7 (status 1792, which is 7 shifted left by 8). It does not refuse. The kernel's wait4 call reads 0 as "any child in my process group", -1 as "any child", and -g as "any child in group g", and it keeps only the low 32 bits of a wider pid.
+
+**Expected:** `reap process <pid>` waits for exactly the process it names.
+
+**The manual:** LANGUAGE.md "Process Control: fork and reap": "`reap process <pid-expr>` ... `wait4(2)` for a specific PID". The same family as #135.
+
+**Root cause:** not yet investigated. The pid expression is passed to wait4 unchecked, so the kernel's group meanings of 0 and negative values apply.
+
+**Fix direction:** TheJostler ruled on 2026-10-05, as for #135, that `reap process <pid>` means exactly one process, pid 1 to 2147483647: a provable pid outside that range is a compile error, and one known only at run time sets the error flag and reaps nothing. The kernel's group meanings get plain-English forms in the same release, so nothing Linux can do is taken away. `reap any child process` exists today; the release adds `reap any child in my process group` and `reap any child in process group <g>`.
+
+---
+
+### 143. Two names of one collection can disagree: growth, `Free` and `Set` through one are not seen by the other
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+Seven programs, one cause: each name of a collection keeps its own copy of the block pointer, so a change that moves or releases the block through one name leaves the others on the old block. Each was re-run on vox main dfdfc7f from a directory outside any repository. Each program below is shown with its own output.
+
+**(a) One buffer passed as two parameters, grown through the first, read through the second.**
+```vox
+To 'merge' of a buffer called first and a buffer called second.
+    For each number from 1 to 3000, append "abcdefgh" to first.
+    Print "second sees: {second's size}".
+    append "Z" to second.
+    Print "first sees: {first's size}".
+
+a buffer called hold is "a".
+'merge' of hold and hold.
+Print "hold size: {hold's size}".
+```
+```text
+second sees: Segmentation fault         (core dumped)
+[exit 139]
+```
+Expected: `second sees: 24001`, `first sees: 24002`, `hold size: 24002`.
+
+**(b) `Free` through one of two buffer parameters naming one buffer, then a read through the other.**
+```vox
+To 'merge' of a buffer called first and a buffer called second.
+    Free first.
+    Print "second sees: {second's size}".
+    append "after" to second.
+    Print "second now: {second}".
+
+a buffer called hold is "ab".
+'merge' of hold and hold.
+Print "hold: {hold}".
+```
+```text
+second sees: Segmentation fault         (core dumped)
+[exit 139]
+```
+Expected: `second sees: 0`, the append refused with the error flag, `second now: `, `hold: `.
+
+**(c) `Free` by a list's global name inside a function, then a read of the list parameter that names it.**
+```vox
+a list called xs is ["a", "b"].
+To 'look at' with a list called items.
+    Free xs.
+    Print "items: {items}".
+
+'look at' of xs.
+Print "xs: {xs}".
+```
+```text
+items: [Segmentation fault         (core dumped)
+[exit 139]
+```
+Expected: `items: []`, then `xs: []`.
+
+**(d) The same with a `value` parameter.**
+```vox
+a list called xs is ["a", "b"].
+To 'look at' with a value called v.
+    Free xs.
+    Print "v: {v}".
+
+'look at' of xs.
+Print "xs: {xs}".
+```
+```text
+v: [Segmentation fault         (core dumped)
+[exit 139]
+```
+Expected: `v: []`, then `xs: []`.
+
+**(e) `Free` inside `For each` over the same list.**
+```vox
+a list called xs is ["a", "b", "c"].
+For each item in xs, print item, Free xs.
+Print "after: {xs's length}".
+```
+```text
+a
+Segmentation fault         (core dumped)
+[exit 139]
+```
+Expected: `a`, then the loop ends because the list is empty, then `after: 0`.
+
+**(f) A call that grows the list the statement writes into.**
+```vox
+To 'grow' with a list called items.
+    For each number from 1 to 20, append the number to items.
+    Return a number, 99.
+
+a list called xs is [1, 2].
+Set element 1 of xs to 'grow' of xs.
+Print "first: {element 1 of xs}, length: {xs's length}".
+a list called ys is [1, 2].
+append 'grow' of ys to ys.
+Print "last: {ys's last}, length: {ys's length}".
+```
+```text
+first: 1, length: 22
+last: 99, length: 9
+[exit 0]
+```
+Expected: `first: 99, length: 22` and `last: 99, length: 23`. The first write is lost, and the second append lands on a stale copy of `ys`. A map does the same:
+```vox
+To 'grow map' with a map called shelf.
+    For each number from 1 to 20, Set shelf's "{number}" to number.
+    Return a number, 99.
+
+a map called m is {"k": 1}.
+Set m's "k" to 'grow map' of m.
+a number called k is m's "k".
+Print "k: {k}, length: {m's length}".
+```
+```text
+k: 99, length: 8
+```
+Expected length: 21. Here the write is kept and the 20 new entries are lost.
+
+**(g) `Set` on a list parameter does not reach the caller.**
+```vox
+To 'replace it' with a list called items.
+    Set items to ["new"].
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'replace it' of xs.
+Print "xs: {xs}".
+```
+```text
+inside: ["new"]
+xs: ["old"]
+[exit 0]
+```
+Expected: `xs: ["new"]`. The parameter is the caller's list.
+
+**Observed:** four programs die on a signal, and three silently lose a write or a growth.
+
+**The manual:** LANGUAGE.md "Functions" and "Function Calls": a buffer parameter and a list parameter each name the caller's collection, so a change through the parameter is a change to the caller's; and "Releasing a Buffer": a freed collection is empty and refuses writes. Never a signal.
+
+**Root cause:** shared with #128, #139 and #140. Every name caches the block pointer of the collection, so growth or `Free` through one name leaves the others pointing at the old block.
+
+**Fix direction:** TheJostler confirmed the whole family on 2026-10-05. Every name of a collection (variable, parameter, `value` parameter, loop source, and later `is also called`) goes through the one slot that owns it, so growth, `Free` and `Set` through any name are seen by every name. Which `For each` should see a write made during the loop is a separate question with its own ruling; this entry covers the crashes and the lost writes only.
+
+---
+
+### 144. A call with arguments cannot be the source of `Write` or of `append` to a buffer, even braced
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+To 'greeting for' of a number called id.
+    Return a text, "hi".
+
+a buffer called log is "".
+Write 'greeting for' of 0 to log.
+```
+```text
+$ vox write_call.vox -o write_call
+error: Expected 'to' after value, got Of
+  --> write_call.vox:5:22
+    |
+  5 | Write 'greeting for' of 0 to log.
+    |                      ^--- here
+```
+Braced, the same line is refused differently:
+```text
+error: Expected value to write
+  --> write_call.vox:5:7
+    |
+  5 | Write {'greeting for' of 0} to log.
+    |       ^--- here
+```
+`append {'greeting for' of 0} to sink.` (with `sink` a buffer) is refused with `error: Buffer append requires a buffer source or format/literal text`.
+
+**Observed:** compile errors on a valid use of a call. A text variable works in both positions:
+```vox
+a buffer called sink is "".
+a text called w is 'greeting for' of 0.
+append w to sink.
+Print sink.
+```
+```text
+hi
+```
+
+**Expected:** `Write 'greeting for' of 0 to log.` and `append 'greeting for' of 0 to sink.` compile, because a call that returns a text is a text.
+
+**The manual:** LANGUAGE.md "Writing": `Write` takes "a text, a buffer, or a format string". LANGUAGE.md "Arithmetic": curly braces group an expression.
+
+**Root cause:** not yet investigated. A first reading: the parsers for the source of `Write` and of `append ... to <buffer>` accept a name, a literal or a format string, and have no arm for a call with arguments.
+
+**Fix direction:** TheJostler confirmed on 2026-10-05 that this is a bug. A call that returns a text or a buffer is accepted as the source of `Write` and of `append`, braced or not, and the messages above are replaced by one that names the form the author wrote. Binding the result to a variable first, or interpolating it in a format string, works today.
+
+---
+
+### 145. A list declared with `The X is <list>.` refuses `'s length`, and the message names `size`
+
+**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+
+```vox
+a list called got is [1, 2].
+The other is got.
+Print other's length.
+```
+```text
+$ vox the_is_list.vox -o the_is_list
+error: Property 'size' requires a buffer, list, map, or file variable: other
+  --> the_is_list.vox:2:5
+    |
+  2 | The other is got.
+    |     ^--- here
+```
+
+**Observed:** `other` is refused as not being a list, and the message names the property `size`, which the author did not write.
+
+**Expected:** `2`. `The other is got.` brings `other` into being with the type of `got`, which is a list.
+
+**The manual:** LANGUAGE.md "Two Canonical Forms": `the NAME is VALUE.` brings NAME into being "with VALUE's type".
+
+**Root cause:** not yet investigated. A first reading: `length` is an alias of `size`, and the declaration `The X is <list>.` records no collection type for `other`, so the property check that runs under the name `size` refuses it. The alias and the new declaration form collide here.
+
+**Fix direction:** TheJostler ruled on 2026-10-05 to keep it simple: `The X is <list>.` gives `X` the list type, so `'s length` and `'s size` both work, and a refusal on a property names the property the author wrote.
