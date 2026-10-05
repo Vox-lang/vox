@@ -13755,3 +13755,42 @@ error: Property 'size' requires a buffer, list, map, or file variable: other
 **Root cause:** not yet investigated. A first reading: `length` is an alias of `size`, and the declaration `The X is <list>.` records no collection type for `other`, so the property check that runs under the name `size` refuses it. The alias and the new declaration form collide here.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 to keep it simple: `The X is <list>.` gives `X` the list type, so `'s length` and `'s size` both work, and a refusal on a property names the property the author wrote.
+### 146. A shared library asks for an executable stack, so a C host cannot `dlopen` it
+
+**Status:** fixed in the next release. Regression test: tests/bugs_found_146_stack_is_not_executable.rs
+
+```vox
+Library shelf version "1.0".
+
+To 'add to' with a list called items.
+    append "added" to items.
+```
+```c
+/* dlopen_check.c */
+#include <dlfcn.h>
+#include <stdio.h>
+int main(void) {
+    void *library = dlopen("./libshelf.so", RTLD_NOW);
+    if (!library) { printf("dlopen failed: %s\n", dlerror()); return 1; }
+    printf("loaded\n");
+    return 0;
+}
+```
+```text
+$ vox shelf_lib.vox --shared -o libshelf.so
+$ readelf -lW libshelf.so | grep GNU_STACK
+$ gcc dlopen_check.c -o dlopen_check && ./dlopen_check
+dlopen failed: ./libshelf.so: cannot enable executable stack as shared object requires: Invalid argument
+```
+
+Verified on vox 0.4.15 (dfdfc7f), glibc 2.43, GNU ld 2.46.
+
+**Observed:** neither a `--shared` library nor an executable carries a GNU_STACK program header (`readelf -lW` prints no such line). The dynamic loader reads a library without one as needing an executable stack. glibc 2.43 refuses to `dlopen` it, and a C program linked against it at build time starts with an executable stack (`/proc/self/maps` shows `rwxp` on `[stack]`, where the same program without the library shows `rw-p`). A Vox program that `see`s the library still runs, and a Vox executable on x86-64 Linux still gets a stack that is not executable, because the kernel's default for a 64-bit program without the header is read and write only.
+
+**Expected:** every executable and library Vox builds says its stack is read and write only (GNU_STACK `RW`), so any host can load the library and no process that loads it gets an executable stack.
+
+**The manual:** LANGUAGE.md "Shared libraries": "It carries its own copy of the Vox runtime, so it is loadable from C, Rust, or any other host, not only from Vox."
+
+**Root cause:** the compiler assembles its output with NASM, which writes a `.note.GNU-stack` section only when the source declares one, and the generated assembly never declared it. `ld` reads an object without that note as one that may need an executable stack, so it leaves the GNU_STACK header out of everything it links from that object.
+
+**Fix direction:** the generated assembly declares `section .note.GNU-stack noalloc noexec nowrite progbits` for every program and library, so `ld` writes GNU_STACK with `RW` flags into both.
