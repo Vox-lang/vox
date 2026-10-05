@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #129: Set, a bare is and the ... is all write the text,
+ and each of them is refused, as for a number variable.)
+
+A thing called point has
+  a number called x is 7.
+a point called origin.
+a text called heading is "seven".
+a text called caption is "seven".
+a text called title is "seven".
+Set heading to origin's x.
+caption is origin's x.
+the title is origin's x.

@@ -1,0 +1,20 @@
+(docs/BUGS_FOUND.md #130: a field is written by the same rule as a
+ variable. A text that is not a number, cast into a number field or a
+ float field, raises the error flag and leaves the field as it was; one
+ that is a number is stored.)
+
+A thing called point has
+  a number called x is 9,
+  a float called weight is 1.5.
+
+a point called origin.
+a text called word is "hello".
+a text called digits is "42".
+Set origin's x to word as a number.
+On error print "x kept".
+Set origin's weight to word as a float.
+On error print "weight kept".
+Print origin.
+Set origin's x to digits as a number.
+origin's weight is digits as a float.
+Print origin.

@@ -162,11 +162,15 @@ impl Analyzer {
             // base keep answering None.
             Expr::PropertyAccess { property, .. } => Self::property_value_type(property),
             Expr::ByteAccess { .. } => Some(Type::Integer),
-            // A text field holds a pointer, so it is text wherever it is
-            // read: refused in arithmetic, refused into a number. The other
-            // field types answer None here.
+            // A field read has its field's declared type, exactly as a
+            // variable read has the variable's: a text field is refused in
+            // arithmetic and into a number, a number field into a text. A
+            // time field answers None, as a time variable does, and a
+            // nested thing is judged by `check_thing_copy` instead.
             Expr::ThingField { .. } => match self.field_value_type(expr) {
-                Some(Type::String) => Some(Type::String),
+                Some(
+                    field @ (Type::Integer | Type::Float | Type::Boolean | Type::String),
+                ) => Some(field),
                 _ => None,
             },
             _ => None,
@@ -1424,7 +1428,7 @@ explicitly:  a {} called {} is {} as {}.",
     /// exist. `render_value_hint` falls back to a placeholder for shapes it
     /// cannot write back as source, and a help line containing that
     /// placeholder would not be pasteable, so those get the prose half only.
-    fn documented_cast_phrase(&self, from: &Type, to: &Type) -> Option<String> {
+    pub(crate) fn documented_cast_phrase(&self, from: &Type, to: &Type) -> Option<String> {
         use Type::*;
         let documented = matches!(
             (from, to),
@@ -1516,7 +1520,10 @@ explicitly:  a {} called {} is {} as {}.",
                 name,
                 hint
             );
-            match self.documented_cast_phrase(&actual, declared) {
+            let cast = self
+                .documented_cast_phrase(&actual, declared)
+                .filter(|_| self.literal_cast_problem(value, declared, 0).is_none());
+            match cast {
                 Some(cast) => format!(
                     "{} - or convert it explicitly:  a {} called {} is {} as {}.",
                     redeclare,
@@ -1636,7 +1643,10 @@ explicitly:  a {} called {} is {} as {}.",
             self.typed_phrase(declared)
         ));
         let hint = self.render_value_hint(value);
-        let help = match self.documented_cast_phrase(&actual, declared) {
+        let cast = self
+            .documented_cast_phrase(&actual, declared)
+            .filter(|_| self.literal_cast_problem(value, declared, 0).is_none());
+        let help = match cast {
             Some(cast) if !hint.contains("<value>") => format!(
                 "convert it explicitly:  Return {}, {} as {}.",
                 self.typed_phrase(declared),
@@ -1802,12 +1812,15 @@ explicitly:  a {} called {} is {} as {}.",
         } else {
             format!("a {}", self.type_name(&declared))
         };
-        err = err.with_help_line(&format!(
-            "convert it explicitly:  {} is {} as {}.",
-            name,
-            self.render_value_hint(value),
-            cast_target
-        ));
+        // A text the cast would refuse (`"hello" as a number`) is no way out.
+        if self.literal_cast_problem(value, &declared, 0).is_none() {
+            err = err.with_help_line(&format!(
+                "convert it explicitly:  {} is {} as {}.",
+                name,
+                self.render_value_hint(value),
+                cast_target
+            ));
+        }
         self.errors.push(err);
 
         // Poison the tracked type after reporting: the assignment was

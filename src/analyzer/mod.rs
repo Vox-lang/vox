@@ -21,6 +21,7 @@ mod guard_env_tests;
 mod scope;
 mod expressions;
 mod kernel_ranges;
+mod number_text;
 mod statements;
 pub(crate) mod things;
 mod types;

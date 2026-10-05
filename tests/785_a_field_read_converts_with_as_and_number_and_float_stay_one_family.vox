@@ -1,0 +1,18 @@
+(docs/BUGS_FOUND.md #129: a field read has its field's type, exactly as a
+ variable read has the variable's. What a number variable may do, a number
+ field may do: initialise a float, be initialised from a float, convert
+ with `as text`, and go into a value.)
+
+A thing called point has
+  a number called x is 7,
+  a float called weight is 2.5.
+
+a point called origin.
+a float called scaled is origin's x.
+a number called rounded is origin's weight.
+a text called label is origin's x as text.
+a value called anything is origin's x.
+Print scaled.
+Print rounded.
+Print label.
+Print anything.

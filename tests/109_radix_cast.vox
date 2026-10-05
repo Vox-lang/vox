@@ -40,9 +40,14 @@ Set n10 to s23 as a base23 number.
 Print n10.
 
 (Deliberately includes an 'x', which is a valid letter overall but
-invalid specifically for base32 (digits only go up to 'v') - should
-truncate at the 'x', parsing only "v0")
+invalid specifically for base32 (digits only go up to 'v') - the whole
+text must be digits of the base, so "v0x1" is not a base32 number: the
+error flag goes up and n11 keeps its declaration's 0. "v0" alone is.)
 A text called s32 is "v0x1".
+Set n11 to s32 as a base32 number.
+On error print "v0x1 is not a base32 number".
+Print n11.
+Set s32 to "v0".
 Set n11 to s32 as a base32 number.
 Print n11.
 
@@ -50,7 +55,9 @@ A text called s36 is "z9a".
 Set n12 to s36 as a base36 number.
 Print n12.
 
-(First character invalid for the given base -> parses as empty -> 0)
+(First character invalid for the given base: not a number in that base,
+ so the error flag goes up and n13 keeps its declaration's 0)
 A text called s5 is "abc".
 Set n13 to s5 as a base5 number.
+On error print "abc is not a base5 number".
 Print n13.

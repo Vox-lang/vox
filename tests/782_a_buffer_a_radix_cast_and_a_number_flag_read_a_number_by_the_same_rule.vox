@@ -1,0 +1,55 @@
+(docs/BUGS_FOUND.md #130: the rule is the same for every reading of a
+ number out of text: a buffer's bytes, a text read in another base, and
+ the value given to a number flag. A buffer is read like a text. A radix
+ cast reads only the digits of its base, after the base's own prefix
+ when it has one. A number flag given a value that is not a number keeps
+ its default and raises the error flag.)
+
+a flag called retries is "-r" or "--retries", it is a number with default 3.
+a flag called limit is "-l" or "--limit", it is a number with default 8.
+Parse flags.
+On error print "a flag that is not a number raised the error flag".
+Print "retries {retries}, limit kept {limit}".
+
+a buffer called reply is "nope".
+a number called count is 7.
+Set count to reply as a number.
+On error print "a buffer kept {count}".
+a buffer called apples is "12 apples".
+Set count to apples as a number.
+On error print "a buffer with words after its digits kept {count}".
+a buffer called prefixed is "0x1F".
+Set count to prefixed as a number.
+Print count.
+a buffer called half is "-2.25".
+a float called ratio is 1.0.
+Set ratio to half as a float.
+Print ratio.
+
+a text called digits is "zz".
+Set count to digits as a hex number.
+On error print "a hex text kept {count}".
+Set digits to "ff".
+Set count to digits as a hex number.
+Print count.
+Set digits to "-0x1F".
+Set count to digits as a hex number.
+Print count.
+Set digits to "0o17".
+Set count to digits as an octal number.
+Print count.
+Set digits to "0b101".
+Set count to digits as a binary number.
+Print count.
+Set digits to "0b1".
+Set count to digits as a hex number.
+Print count.
+Set digits to "0o8".
+Set count to digits as an octal number.
+On error print "[{digits}] as an octal number kept {count}".
+Set digits to "0x1F".
+Set count to digits as a base 10 number.
+On error print "[{digits}] as a base 10 number kept {count}".
+Set digits to "1.5".
+Set count to digits as a hex number.
+On error print "[{digits}] as a hex number kept {count}".

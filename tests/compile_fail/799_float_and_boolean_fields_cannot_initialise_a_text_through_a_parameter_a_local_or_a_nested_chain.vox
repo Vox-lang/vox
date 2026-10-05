@@ -1,0 +1,17 @@
+(docs/BUGS_FOUND.md #129: the field's type is known however the field is
+ reached: through a thing parameter, a function's own thing, or a chain of
+ nested things, and a float or a boolean field is refused into text the
+ same way a number field is.)
+
+A thing called point has
+  a float called weight is 2.5,
+  a boolean called ready is true.
+A thing called route has
+  a point called start.
+a route called leg.
+
+To weigh with a point called p. a text called label is p's weight. Print label.
+
+To check. a point called here. a text called answer is here's ready. Print answer.
+
+a text called heading is leg's start's weight.

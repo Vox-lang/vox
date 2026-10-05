@@ -1,0 +1,26 @@
+Set kept 5
+bare is kept 5
+the is kept 5
+after a division, kept 5
+a declaration holds 0
+a float kept 2.5
+[12 apples] kept 5
+[1.5x] kept 5
+[] kept 5
+[-] kept 5
+[0x] kept 5
+[0o8] kept 5
+[0b2] kept 5
+[--1] kept 5
+[1-] kept 5
+[7 ] kept 5
+[ 7] kept 5
+[+7] kept 5
+[1e5] kept 5
+[3.] kept 5
+[.5] as a float kept 2.5
+[1e5] as a float kept 2.5
+[9223372036854775808] as a float kept 2.5
+a list slot kept 5
+a retyped value kept 7 days
+a local kept 3

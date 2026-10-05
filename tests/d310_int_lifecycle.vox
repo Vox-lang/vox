@@ -1,9 +1,16 @@
 (Regression test: a failed integer cast sets _last_error, but a later
-successful integer cast clears it so a subsequent On error does not fire.)
+successful integer cast clears it so a subsequent On error does not fire.
+The texts are read at run time: a literal that is not a number is refused
+by the compiler.)
 
-A number called bad is "not a number" as a number.
+a text called word is "not a number".
+a text called other is "also bad".
+a text called digits is "42".
+A number called bad is word as a number.
 On error print "first".
 
-A number called bad2 is "also bad" as a number.
-A number called good is "42" as a number.
+A number called bad2 is other as a number.
+A number called good is digits as a number.
 On error print "second".
+Print bad.
+Print good.

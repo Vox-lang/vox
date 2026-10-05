@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #129: a function that returns text cannot hand back a
+ number field.)
+
+A thing called point has
+  a number called x is 7.
+a point called origin.
+
+To describe. Return a text, origin's x.
+
+Print describe.

@@ -342,8 +342,9 @@ impl Parser {
                 self.skip_noise();
             }
 
-            // Optional radix word before 'number': hex/binary/octal, or 'base N'
-            let mut radix: u32 = 10;
+            // Optional radix word before 'number': hex/binary/octal, or 'base N'.
+            // 0 when there is none: the text is read as Vox source writes a number.
+            let mut radix: u32 = 0;
             if let Token::Identifier(ref id) = self.current() {
                 if id.eq_ignore_ascii_case("hex") || id.eq_ignore_ascii_case("hexadecimal") {
                     radix = 16;
@@ -389,7 +390,7 @@ impl Parser {
                     }
                 } else if id.len() > 4 && id[..4].eq_ignore_ascii_case("base") && id[4..].chars().all(|c| c.is_ascii_digit()) {
                     // Fused form as ONE token: "base16", "base8", "base2"
-                    radix = id[4..].parse().unwrap_or(10);
+                    radix = id[4..].parse().unwrap_or(0);
                     if !(2..=36).contains(&radix) {
                         return Err(self.err("Only base 2 through base 36 are supported"));
                     }

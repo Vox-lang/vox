@@ -1,0 +1,4 @@
+cannot initialise 'label', which is text, with a float
+cannot initialise 'answer', which is text, with a boolean
+cannot initialise 'heading', which is text, with a float
+799_float_and_boolean_fields_cannot_initialise_a_text_through_a_parameter_a_local_or_a_nested_chain.vox:17:15

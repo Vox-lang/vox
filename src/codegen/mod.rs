@@ -181,6 +181,10 @@ pub struct CodeGenerator {
     // back in rax, so a thing-returning call is an address like every other
     // thing-valued expression. `None` for every other function.
     current_thing_return_slot: Option<i64>,
+    // Frame slot the statement being generated clears before its value and
+    // a cast of a text to a number sets when the text is not a number
+    // (casts.rs). `None` outside a statement that stores such a cast.
+    cast_failure_marker: Option<i64>,
     loop_stack: Vec<(String, String)>, // (continue_label, break_label)
     flag_schemas: Vec<FlagSchemaRuntime>,
     parsed_args_active: bool,
@@ -387,6 +391,7 @@ mod expr;
 mod statements;
 use statements::declared_slot_vartype;
 mod things;
+mod casts;
 
 // ---- Stage A3: the `.lib` interface file emitted beside each `.so` ----
 //
@@ -587,6 +592,7 @@ impl CodeGenerator {
             function_return_full_types: std::collections::HashMap::new(),
             current_function_return_type: None,
             current_thing_return_slot: None,
+            cast_failure_marker: None,
             loop_stack: Vec::new(),
             flag_schemas: Vec::new(),
             parsed_args_active: false,

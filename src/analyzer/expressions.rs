@@ -1179,11 +1179,12 @@ impl Analyzer {
                 self.analyze_expr(value);
             }
 
-            Expr::Cast { value, target_type, .. } => {
+            Expr::Cast { value, target_type, radix } => {
                 // Recurse so unknown variables / nested type errors inside
                 // a cast (`missing as a number`) are reported instead of
                 // compiling silently and emitting garbage.
                 self.analyze_expr(value);
+                self.check_literal_cast(value, target_type, *radix);
 
                 // Plan 294 finding 21 (adjacent discovery, not one of the
                 // original 18): a cast on a dynamically-tagged `value`

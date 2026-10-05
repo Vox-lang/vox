@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #129: a text parameter cannot be given a number field.)
+
+A thing called point has
+  a number called x is 7.
+a point called origin.
+
+To greet with a text called who. Print who.
+
+greet with origin's x.

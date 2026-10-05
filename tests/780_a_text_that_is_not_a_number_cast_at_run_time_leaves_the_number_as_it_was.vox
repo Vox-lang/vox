@@ -1,0 +1,99 @@
+(docs/BUGS_FOUND.md #130: a text the program only learns at run time is
+ read as a number when the program runs. When it is not one, the error
+ flag goes up and the sentence that stores it changes nothing: every
+ spelling of a write keeps the old value, and a declaration holds its
+ type's default. The flag is still up after the rest of the value has
+ run, even past a division, which clears it on success.)
+
+a text called word is "hello".
+a number called count is 5.
+Set count to word as a number.
+On error print "Set kept {count}".
+count is word as a number.
+On error print "bare is kept {count}".
+the count is {word as a number} add 1.
+On error print "the is kept {count}".
+Set count to {word as a number} divide 1.
+On error print "after a division, kept {count}".
+a number called fresh is word as a number.
+On error print "a declaration holds {fresh}".
+a float called ratio is 2.5.
+Set ratio to word as a float.
+On error print "a float kept {ratio}".
+
+(A text is a number only when the whole of it could be written as a
+ number literal in Vox source. None of these could: a word after the
+ digits, nothing at all, a sign with no digits, a prefix with no digit of
+ its base, two signs, a sign after the digits, a space on either side, a
+ plus sign, an exponent, and a point with no digit on one side of it.)
+
+a text called sample is "12 apples".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "1.5x".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "-".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "0x".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "0o8".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "0b2".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "--1".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "1-".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "7 ".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to " 7".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "+7".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "1e5".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to "3.".
+Set count to sample as a number.
+On error print "[{sample}] kept {count}".
+Set sample to ".5".
+Set ratio to sample as a float.
+On error print "[{sample}] as a float kept {ratio}".
+Set sample to "1e5".
+Set ratio to sample as a float.
+On error print "[{sample}] as a float kept {ratio}".
+Set sample to "9223372036854775808".
+Set ratio to sample as a float.
+On error print "[{sample}] as a float kept {ratio}".
+
+(A value read out of a list slot, and a value retyped in place, follow
+ the same rule.)
+
+a list called replies is [].
+append "7 days" to replies.
+append 5 to replies.
+Set count to element 1 of replies.
+On error print "a list slot kept {count}".
+a value called answer is "7 days".
+answer is a number.
+On error print "a retyped value kept {answer}".
+
+To tally with a text called reply.
+  a number called total is 3.
+  Set total to reply as a number.
+  On error print "a local kept {total}".
+
+tally with word.

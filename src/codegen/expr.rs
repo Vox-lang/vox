@@ -2120,7 +2120,7 @@ impl CodeGenerator {
                                     self.emit_indent("mov rdi, rbx");
                                     self.emit_indent("call _buffer_data");
                                     self.emit_indent("mov rdi, rax");
-                                    if *radix == 10 {
+                                    if *radix == 0 {
                                         self.emit_indent("mov rsi, r12  ; max length");
                                         self.emit_indent("call _parse_i64_bounded");
                                     } else {
@@ -2130,16 +2130,18 @@ impl CodeGenerator {
                                     }
                                     self.emit_indent("pop r12");
                                     self.emit_indent("pop rbx");
+                                    self.emit_mark_failed_cast();
                                 }
                                 Some(VarType::String) => {
                                     self.uses_ints = true;
                                     self.emit_indent("mov rdi, rax");
-                                    if *radix == 10 {
+                                    if *radix == 0 {
                                         self.emit_indent("call _parse_i64");
                                     } else {
                                         self.emit_indent(&format!("mov rsi, {}", radix));
                                         self.emit_indent("call _parse_int_radix");
                                     }
+                                    self.emit_mark_failed_cast();
                                 }
                                 _ => {
                                     // Other types stay as-is (already integer)
@@ -2172,11 +2174,13 @@ impl CodeGenerator {
                                     self.emit_indent("call _parse_f64_bounded");
                                     self.emit_indent("pop r12");
                                     self.emit_indent("pop rbx");
+                                    self.emit_mark_failed_cast();
                                 }
                                 Some(VarType::String) => {
                                     self.uses_floats = true;
                                     self.emit_indent("mov rdi, rax");
                                     self.emit_indent("call _parse_f64");
+                                    self.emit_mark_failed_cast();
                                 }
                                 _ => {
                                     // Integer to float

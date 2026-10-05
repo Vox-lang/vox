@@ -1,4 +1,5 @@
 use super::*;
+use super::number_literal::{read_number_literal, NumberLiteral};
 
 /// Whether a character may continue a bare identifier (`[A-Za-z0-9_]`).
 /// Used by the possessive rule (plan §5) to decide what counts as a
@@ -178,97 +179,17 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self, first: char) -> Token {
-        // Check for hex (0x) or binary (0b) prefix
-        if first == '0' {
-            if let Some(&next) = self.peek() {
-                if next == 'x' || next == 'X' {
-                    self.advance(); // consume 'x'
-                    return self.read_hex_number();
-                } else if next == 'b' || next == 'B' {
-                    self.advance(); // consume 'b'
-                    return self.read_binary_number();
-                }
-            }
-        }
-        
-        let mut num = String::from(first);
-        let mut is_float = false;
-        
-        while let Some(&ch) = self.peek() {
-            if ch.is_ascii_digit() {
-                num.push(ch);
-                self.advance();
-            } else if ch == '.' && !is_float {
-                // Check if next char after '.' is a digit (to distinguish from period)
-                let mut chars = self.input.clone();
-                chars.next(); // skip the '.'
-                if let Some(&next) = chars.peek() {
-                    if next.is_ascii_digit() {
-                        is_float = true;
-                        num.push(ch);
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-        
-        if is_float {
-            // BUGS_FOUND #22 flags an analogous hole here: `num.parse()` on
-            // a decimal string that overflows f64 does not error in Rust,
-            // it saturates to `inf` - a second silent-wrong-answer path,
-            // deliberately not fixed in this session.
-            Token::FloatLiteral(num.parse().unwrap_or(0.0))
-        } else {
-            match num.parse::<i64>() {
+        let read = read_number_literal(first, &mut self.input);
+        // A number never spans a line, so only the column moves.
+        self.column += read.spelling.chars().count() - 1;
+        match read.literal {
+            NumberLiteral::Whole(Some(magnitude)) => match i64::try_from(magnitude) {
                 Ok(n) => Token::IntegerLiteral(n),
-                Err(_) => Token::IntegerLiteralOverflow(num),
-            }
-        }
-    }
-    
-    fn read_hex_number(&mut self) -> Token {
-        let mut num = String::new();
-        while let Some(&ch) = self.peek() {
-            if ch.is_ascii_hexdigit() {
-                num.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        if num.is_empty() {
-            Token::IntegerLiteral(0)
-        } else {
-            match i64::from_str_radix(&num, 16) {
-                Ok(n) => Token::IntegerLiteral(n),
-                Err(_) => Token::IntegerLiteralOverflow(format!("0x{}", num)),
-            }
-        }
-    }
-    
-    fn read_binary_number(&mut self) -> Token {
-        let mut num = String::new();
-        while let Some(&ch) = self.peek() {
-            if ch == '0' || ch == '1' {
-                num.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        if num.is_empty() {
-            Token::IntegerLiteral(0)
-        } else {
-            match i64::from_str_radix(&num, 2) {
-                Ok(n) => Token::IntegerLiteral(n),
-                Err(_) => Token::IntegerLiteralOverflow(format!("0b{}", num)),
-            }
+                Err(_) => Token::IntegerLiteralOverflow(read.spelling),
+            },
+            NumberLiteral::Whole(None) => Token::IntegerLiteralOverflow(read.spelling),
+            NumberLiteral::Fraction { value, .. } => Token::FloatLiteral(value),
+            NumberLiteral::BarePrefix => Token::IntegerLiteral(0),
         }
     }
     

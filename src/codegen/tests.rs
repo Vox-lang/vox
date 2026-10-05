@@ -2276,6 +2276,19 @@ Otherwise, a number called s is 1, append s to out.\n";
             lines[..end].join("\n").contains("mov qword [rel _last_error], 0")
         }
 
+        /// Whether the routine `name` hands its work to `callee`, by a call
+        /// or a jump, before the next routine's label.
+        fn function_body_calls(asm: &str, name: &str, callee: &str) -> bool {
+            let label = format!("\n{}:", name);
+            let start = asm
+                .find(&label)
+                .unwrap_or_else(|| panic!("{} label not found", name));
+            asm[start + label.len()..]
+                .lines()
+                .take_while(|l| !l.starts_with("global "))
+                .any(|l| l.trim() == format!("call {}", callee) || l.trim() == format!("jmp {}", callee))
+        }
+
         fn macro_body_has_clear(asm: &str, name: &str) -> bool {
             let open = format!("%macro {} 0", name);
             let start = asm
@@ -2291,21 +2304,16 @@ Otherwise, a number called s is 1, append s to out.\n";
         }
 
         assert!(
-            function_body_has_clear(int_asm, "_parse_i64"),
-            "_parse_i64 must clear _last_error on success"
+            function_body_has_clear(int_asm, "_read_number_text"),
+            "_read_number_text must clear _last_error on success"
         );
-        assert!(
-            function_body_has_clear(int_asm, "_parse_int_radix"),
-            "_parse_int_radix must clear _last_error on success"
-        );
-        assert!(
-            function_body_has_clear(int_asm, "_parse_i64_bounded"),
-            "_parse_i64_bounded must clear _last_error on success"
-        );
-        assert!(
-            function_body_has_clear(int_asm, "_parse_int_radix_bounded"),
-            "_parse_int_radix_bounded must clear _last_error on success"
-        );
+        for entry in ["_parse_i64", "_parse_int_radix", "_parse_i64_bounded", "_parse_int_radix_bounded"] {
+            assert!(
+                function_body_calls(int_asm, entry, "_read_number_text"),
+                "{} must read its text through _read_number_text",
+                entry
+            );
+        }
         assert!(
             macro_body_has_clear(int_asm, "INT_DIV"),
             "INT_DIV must clear _last_error on its non-zero-divisor path"
@@ -2316,12 +2324,16 @@ Otherwise, a number called s is 1, append s to out.\n";
         );
 
         assert!(
-            function_body_has_clear(float_asm, "_parse_f64"),
-            "_parse_f64 must clear _last_error on success"
+            function_body_has_clear(float_asm, "_read_float_text"),
+            "_read_float_text must clear _last_error on success"
         );
         assert!(
-            function_body_has_clear(float_asm, "_parse_f64_bounded"),
-            "_parse_f64_bounded must clear _last_error on success"
+            function_body_calls(float_asm, "_parse_f64", "_read_float_text"),
+            "_parse_f64 must read its text through _read_float_text"
+        );
+        assert!(
+            function_body_calls(float_asm, "_parse_f64_bounded", "_read_float_text"),
+            "_parse_f64_bounded must read its text through _read_float_text"
         );
 
         assert!(

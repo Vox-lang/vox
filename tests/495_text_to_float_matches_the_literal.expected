@@ -8,4 +8,5 @@ literal against itself: same double
 3.14 from text: same double
 -2.5 from text: same double
 42 from text: same double
-7. from text: same double
+7. from text: not a number
+0.0

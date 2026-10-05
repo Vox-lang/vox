@@ -515,8 +515,9 @@ impl CodeGenerator {
     /// Emit an in-place cast of a `value` variable: load the runtime tag,
     /// dispatch on it to the conversion that already exists for that source
     /// type, store the converted payload back, and update the shadow tag slot.
-    /// On an unconvertible source tag or a failed text-to-number/float parse,
-    /// set `_last_error` and leave the payload at 0.
+    /// On an unconvertible source tag, set `_last_error` and leave the
+    /// payload at 0; on a text that is not a number, set `_last_error` and
+    /// leave the value as it was.
     pub(crate) fn emit_value_retype(&mut self, name: &str, target_type: &Type) {
         if !matches!(target_type, Type::Integer | Type::Float | Type::String | Type::Boolean) {
             self.emit_indent("; value retype to non-scalar target is unsupported");
@@ -549,17 +550,33 @@ impl CodeGenerator {
             type_noun_name(target_type)
         ));
 
+        // A text that is not a number leaves the value as it was, with the
+        // error flag raised (LANGUAGE.md "Casting Rules"), so the cast gets
+        // a marker of its own, as a statement storing a cast does.
+        self.stack_offset += 8;
+        let marker = self.stack_offset;
+        self.emit_indent(&format!(
+            "mov qword [rbp-{}], 0  ; no cast of a text to a number has failed yet",
+            marker
+        ));
+        let outer = self.cast_failure_marker.replace(marker);
+
         // Load payload and tag.
         self.emit_indent(&format!("mov rax, {}  ; value payload", payload_op));
         self.emit_load_value_tag(&Expr::Identifier(name.to_string()));
         self.emit_scalar_cast_from_runtime_tag(target_type);
+        self.cast_failure_marker = outer;
 
         // Store result back.
+        let kept = self.new_label("retype_kept");
+        self.emit_indent(&format!("cmp qword [rbp-{}], 0", marker));
+        self.emit_indent(&format!("jne {}  ; a text was not a number: keep it", kept));
         self.emit_indent(&format!("mov {}, rax  ; updated payload", payload_op));
         self.emit_indent(&format!(
             "mov byte {}, r11b  ; updated tag",
             tag_loc.operand()
         ));
+        self.emit(&format!("{}:", kept));
     }
 
     /// The runtime-tagged half of `<value> as a <type>` (BUGS_FOUND #114
@@ -691,12 +708,14 @@ impl CodeGenerator {
                 self.uses_ints = true;
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _parse_i64");
+                self.emit_mark_failed_cast();
             }
             TAG_FLOAT => {
                 self.emit_indent("; text -> float");
                 self.uses_floats = true;
                 self.emit_indent("mov rdi, rax");
                 self.emit_indent("call _parse_f64");
+                self.emit_mark_failed_cast();
             }
             TAG_STRING => {
                 self.emit_indent("; text -> text (no-op)");

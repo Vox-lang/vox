@@ -477,7 +477,9 @@ impl CodeGenerator {
 
     /// `Set origin's x to 3.` - evaluate the value, then one store to a
     /// compile-time address. There is no reallocation and no error path: the
-    /// address cannot change and cannot fail (plan 310 §3).
+    /// address cannot change and cannot fail (plan 310 §3). The one store
+    /// that does not happen is a value whose cast of a text to a number
+    /// failed, which leaves the field as it was (casts.rs).
     pub(crate) fn generate_set_thing_field(&mut self, base: &str, path: &[String], value: &Expr) {
         // A chain ending on a nested thing names the whole thing, so the
         // write is a copy of every one of its bytes (plan 310 §5).
@@ -501,6 +503,7 @@ impl CodeGenerator {
             if matches!(self.thing_field_type(base, path), Some(Type::Float)) {
                 self.uses_floats = true;
             }
+            self.emit_keep_value_if_cast_failed(Some(&operand));
             self.emit_indent(&format!(
                 "mov qword {}, rax  ; {} is now this value",
                 operand,

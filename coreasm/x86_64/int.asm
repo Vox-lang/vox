@@ -100,432 +100,236 @@ section .text
     neg rax
 %endmacro
 
-; Parse signed integer from string
-; Args: rdi = string pointer
-; Returns: rax = parsed integer (0 on empty/invalid prefix, or a wrapped
-; value on magnitude overflow - the error flag is authoritative, not rax)
+; dl = the byte %1 places ahead of rbx, or 0 when the text has ended there.
+; r10 holds how many bytes are left to read (-1: read up to the NUL).
+%macro NUMBER_TEXT_BYTE 1
+    xor edx, edx
+    cmp r10, %1
+    jbe %%past_the_end
+    mov dl, [rbx + %1]
+%%past_the_end:
+%endmacro
+
+; Read a text as a number (LANGUAGE.md "Casting Rules"). Every text and
+; buffer cast to a number, a number flag and a `value` holding text comes
+; through here, by way of the four entry points below.
 ;
-; The accumulator is built as an unsigned magnitude via `mul` (which
-; reports a truncated 64-bit product through a nonzero high half),
-; unlike the old `imul` which silently wrapped. A sticky flag alone is
-; not enough, though: 2^63 (9223372036854775808) fits in 64 unsigned
-; bits without tripping it, yet is only a valid i64 as the MAGNITUDE of
-; i64::MIN, not as a positive value. So after the loop the magnitude is
-; range-checked against the sign: <= i64::MAX for a positive number,
-; <= 2^63 (i64::MIN's magnitude) for a negative one. Either check
-; failing, or the sticky flag, sets the error flag - this range check
-; is what bug #35 was missing entirely.
+; The text is a number exactly when the WHOLE of it could be written as a
+; number literal in Vox source, after one optional '-':
+;   - base 0 (no radix word): decimal digits with an optional fractional
+;     part ("0234" is 234; "4.8" is 4, the fraction dropped as a float cast
+;     to a number drops it), or a whole number after 0x, 0b or 0o;
+;   - base 2-36 (a radix cast): only digits of that base, after the base's
+;     own prefix when it has one (0x for 16, 0o for 8, 0b for 2).
+; No space, '+' or exponent is read, and nothing may follow the number.
+;
+; The magnitude is built with `mul`, whose high half reports a product
+; past 64 bits, and a carry out of the add does the same (sticky in r12).
+; After the digits it is range-checked against the sign: at most i64::MAX
+; for a positive number, at most 2^63 (i64::MIN's magnitude) for a
+; negative one.
+;
+; Args: rdi = text, rsi = most bytes to read (-1: up to the NUL; a buffer
+;       passes its length, since bytes past it may be stale), rdx = base
+; Returns: rax = the number, and _last_error = 0; or rax = 0 and
+;          _last_error = 1 when the text is not a number
+global _read_number_text
+_read_number_text:
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+
+    mov rbx, rdi                ; reading position
+    mov r10, rsi                ; bytes left
+    mov r8, rdx                 ; base, 0 for any number literal
+    xor r9, r9                  ; 1 when the text opens with '-'
+    xor r11, r11                ; digits read
+    xor r12, r12                ; overflow (sticky)
+    xor rax, rax                ; magnitude
+
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '-'
+    jne .rnt_prefix
+    mov r9, 1
+    inc rbx
+    dec r10
+
+.rnt_prefix:
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '0'
+    jne .rnt_no_prefix
+    NUMBER_TEXT_BYTE 1
+    or dl, 0x20                 ; X, B, O read as x, b, o
+    mov rcx, 16
+    cmp dl, 'x'
+    je .rnt_prefix_base
+    mov rcx, 2
+    cmp dl, 'b'
+    je .rnt_prefix_base
+    mov rcx, 8
+    cmp dl, 'o'
+    jne .rnt_no_prefix
+.rnt_prefix_base:
+    test r8, r8
+    jz .rnt_take_prefix         ; no radix word: any of the three
+    cmp r8, rcx
+    jne .rnt_no_prefix          ; another base's prefix: read as digits
+.rnt_take_prefix:
+    mov r8, rcx
+    add rbx, 2
+    sub r10, 2
+    xor esi, esi                ; a prefixed number has no fraction
+    jmp .rnt_digits
+
+.rnt_no_prefix:
+    xor esi, esi
+    test r8, r8
+    jnz .rnt_digits
+    mov r8, 10
+    mov rsi, 1                  ; a decimal may have a fractional part
+
+.rnt_digits:
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '0'
+    jb .rnt_digits_read
+    cmp dl, '9'
+    ja .rnt_letter
+    movzx rcx, dl
+    sub rcx, '0'
+    jmp .rnt_digit
+.rnt_letter:
+    or dl, 0x20                 ; A-Z read as a-z
+    cmp dl, 'a'
+    jb .rnt_digits_read
+    cmp dl, 'z'
+    ja .rnt_digits_read
+    movzx rcx, dl
+    sub rcx, 'a' - 10
+.rnt_digit:
+    cmp rcx, r8                 ; a digit of the base, or the digits end
+    jae .rnt_digits_read
+    mul r8                      ; rdx:rax = rax * base (unsigned)
+    or r12, rdx                 ; high half set: past 64 bits
+    add rax, rcx
+    adc r12, 0                  ; carry out: past 64 bits
+    inc rbx
+    dec r10
+    inc r11
+    jmp .rnt_digits
+
+.rnt_digits_read:
+    test r11, r11
+    jz .rnt_not_a_number
+    test rsi, rsi
+    jz .rnt_at_the_end
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '.'
+    jne .rnt_at_the_end
+    NUMBER_TEXT_BYTE 1          ; a fractional part needs a digit
+    cmp dl, '0'
+    jb .rnt_not_a_number
+    cmp dl, '9'
+    ja .rnt_not_a_number
+    inc rbx
+    dec r10
+.rnt_fraction:
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '0'
+    jb .rnt_at_the_end
+    cmp dl, '9'
+    ja .rnt_at_the_end
+    inc rbx
+    dec r10
+    jmp .rnt_fraction
+
+.rnt_at_the_end:
+    NUMBER_TEXT_BYTE 0          ; nothing may follow the number
+    test dl, dl
+    jnz .rnt_not_a_number
+    test r12, r12
+    jnz .rnt_not_a_number
+    test r9, r9
+    jnz .rnt_negative
+    test rax, rax               ; positive: at most i64::MAX
+    js .rnt_not_a_number
+    jmp .rnt_a_number
+.rnt_negative:
+    mov rdx, 0x8000000000000000 ; negative: at most i64::MIN's magnitude
+    cmp rax, rdx
+    ja .rnt_not_a_number
+    neg rax
+.rnt_a_number:
+    mov qword [rel _last_error], 0
+    jmp .rnt_done
+.rnt_not_a_number:
+    xor eax, eax
+    mov qword [rel _last_error], 1
+
+.rnt_done:
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; The entry points codegen calls. Each passes its text, its length bound
+; and its base on to _read_number_text, and keeps rsi and rdx as they were.
+
+; `as a number` of a text. Args: rdi = text
 global _parse_i64
 _parse_i64:
-    push rbx
-    push rcx
+    push rsi
     push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-
-    xor rax, rax              ; accumulator (unsigned magnitude)
-    xor rcx, rcx               ; sign flag (0=+,1=-)
-    xor r8, r8                ; parsed-a-digit flag
-    xor r9, r9                 ; overflow-sticky flag
-    mov r11, 10                 ; base-10 multiplier for `mul`
-    mov rbx, rdi
-
-    mov r10b, [rbx]
-    cmp r10b, '-'
-    jne .pi64_loop
-    mov rcx, 1
-    inc rbx
-
-.pi64_loop:
-    mov r10b, [rbx]
-    test r10b, r10b
-    jz .pi64_done
-    cmp r10b, '0'
-    jl .pi64_done
-    cmp r10b, '9'
-    jg .pi64_done
-    sub r10b, '0'
-    movzx r10, r10b
-
-    mul r11                   ; rdx:rax = rax * 10 (unsigned)
-    or r9, rdx                 ; sticky: high bits nonzero -> overflow
-    add rax, r10
-    adc r9, 0                   ; sticky: carry out of the add -> overflow
-
-    inc rbx
-    mov r8, 1
-    jmp .pi64_loop
-
-.pi64_done:
-    test r8, r8
-    jz .pi64_no_digits
-    test rcx, rcx
-    jnz .pi64_check_neg
-    test rax, rax              ; positive: magnitude must fit under i64::MAX
-    js .pi64_set_overflow
-    jmp .pi64_range_ok
-.pi64_check_neg:
-    mov r10, 0x8000000000000000   ; negative: magnitude may reach i64::MIN's
-    cmp rax, r10
-    ja .pi64_set_overflow
-    jmp .pi64_range_ok
-.pi64_set_overflow:
-    mov r9, 1
-.pi64_range_ok:
-    test r9, r9
-    jnz .pi64_overflow_err
-    mov qword [rel _last_error], 0
-    jmp .pi64_sign
-.pi64_no_digits:
-    mov qword [rel _last_error], 1
-    jmp .pi64_sign
-.pi64_overflow_err:
-    mov qword [rel _last_error], 1
-.pi64_sign:
-    test rcx, rcx
-    jz .pi64_ret
-    neg rax
-
-.pi64_ret:
-    pop r11
-    pop r10
-    pop r9
-    pop r8
+    mov rsi, -1
+    xor edx, edx
+    call _read_number_text
     pop rdx
-    pop rcx
-    pop rbx
+    pop rsi
     ret
 
-; Parse a signed integer from a string in an arbitrary base (2-36).
-; Supports both cases of alphabetic digits (a-z / A-Z, values 10-35).
-; Backs "as a hex/octal/binary/base N number" casts - _parse_i64 above
-; remains the dedicated base-10 path and is untouched.
-; Args: rdi = string pointer, rsi = base (2-36)
-; Returns: rax = parsed integer (0 on empty/invalid prefix, or a wrapped
-; value on magnitude overflow - the error flag is authoritative, not rax)
-; See _parse_i64 above for the overflow-detection rationale; this is the
-; same sticky-flag-plus-sign-aware-range-check design, generalised to an
-; arbitrary base via `mul r8` instead of a fixed multiplier register.
+; `as a hex/octal/binary/base N number` of a text.
+; Args: rdi = text, rsi = base (2-36)
 global _parse_int_radix
 _parse_int_radix:
-    push rbx
-    push rcx
+    push rsi
     push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-
-    mov r8, rsi                ; base
-    xor rax, rax               ; accumulator
-    xor r9, r9                  ; sign flag (0=+, 1=-)
-    xor r10, r10                ; parsed-a-digit flag
-    xor r11, r11                 ; overflow-sticky flag
-    mov rbx, rdi
-
-    mov dl, [rbx]
-    cmp dl, '-'
-    jne .pir_loop
-    mov r9, 1
-    inc rbx
-
-.pir_loop:
-    mov dl, [rbx]
-    test dl, dl
-    jz .pir_done
-
-    cmp dl, '0'
-    jl .pir_done
-    cmp dl, '9'
-    jg .pir_alpha
-    movzx rcx, dl
-    sub rcx, '0'
-    jmp .pir_check
-
-.pir_alpha:
-    mov cl, dl
-    or cl, 0x20               ; fold to lowercase (a-z / A-Z -> a-z)
-    cmp cl, 'a'
-    jl .pir_done
-    cmp cl, 'z'
-    jg .pir_done
-    movzx rcx, cl
-    sub rcx, 'a'
-    add rcx, 10
-
-.pir_check:
-    cmp rcx, r8                ; digit value must be < base, else stop
-    jge .pir_done
-
-    mul r8                     ; rdx:rax = rax * base (unsigned)
-    or r11, rdx                 ; sticky: high bits nonzero -> overflow
-    add rax, rcx
-    adc r11, 0                   ; sticky: carry out of the add -> overflow
-
-    inc rbx
-    mov r10, 1
-    jmp .pir_loop
-
-.pir_done:
-    test r10, r10
-    jz .pir_no_digits
-    test r9, r9
-    jnz .pir_check_neg
-    test rax, rax               ; positive: magnitude must fit under i64::MAX
-    js .pir_set_overflow
-    jmp .pir_range_ok
-.pir_check_neg:
-    mov rdx, 0x8000000000000000    ; negative: magnitude may reach i64::MIN's
-    cmp rax, rdx
-    ja .pir_set_overflow
-    jmp .pir_range_ok
-.pir_set_overflow:
-    mov r11, 1
-.pir_range_ok:
-    test r11, r11
-    jnz .pir_overflow_err
-    mov qword [rel _last_error], 0
-    jmp .pir_sign
-.pir_no_digits:
-    mov qword [rel _last_error], 1
-    jmp .pir_sign
-.pir_overflow_err:
-    mov qword [rel _last_error], 1
-.pir_sign:
-    test r9, r9
-    jz .pir_ret
-    neg rax
-
-.pir_ret:
-    pop r11
-    pop r10
-    pop r9
-    pop r8
+    mov rdx, rsi
+    mov rsi, -1
+    call _read_number_text
     pop rdx
-    pop rcx
-    pop rbx
+    pop rsi
     ret
 
-; Parse a signed base-10 integer from a LENGTH-BOUNDED byte range,
-; rather than scanning for a NUL terminator. Needed for buffer content:
-; _buffer_clear only zeroes the buffer's first byte (a cheap "empty"
-; marker), not the whole allocation - so a buffer that held a longer
-; value before being cleared and rewritten with something shorter can
-; have stale non-NUL bytes sitting right after its new logical content.
-; A NUL-scanning parse would read straight through those stale bytes.
-; Args: rdi = pointer, rsi = max length in bytes (e.g. buffer's own
-; tracked length via _buffer_length)
-; Returns: rax = parsed integer (0 on empty/invalid prefix, or a wrapped
-; value on magnitude overflow - the error flag is authoritative, not rax)
-; See _parse_i64 above for the overflow-detection rationale.
+; `as a number` of a buffer. Args: rdi = bytes, rsi = the buffer's length
 global _parse_i64_bounded
 _parse_i64_bounded:
-    push rbx
-    push rcx
+    push rsi
     push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-
-    xor rax, rax               ; accumulator
-    xor rcx, rcx                ; sign flag (0=+, 1=-)
-    xor r9, r9                  ; parsed-a-digit flag
-    xor r11, r11                 ; overflow-sticky flag
-    mov r12, 10                   ; base-10 multiplier for `mul`
-    mov rbx, rdi
-    mov r8, rsi                ; remaining length
-
-    test r8, r8
-    jz .pi64b_no_digits
-
-    mov r10b, [rbx]
-    cmp r10b, '-'
-    jne .pi64b_loop
-    mov rcx, 1
-    inc rbx
-    dec r8
-
-.pi64b_loop:
-    test r8, r8
-    jz .pi64b_done
-    mov r10b, [rbx]
-    test r10b, r10b
-    jz .pi64b_done
-    cmp r10b, '0'
-    jl .pi64b_done
-    cmp r10b, '9'
-    jg .pi64b_done
-    sub r10b, '0'
-    movzx r10, r10b
-
-    mul r12                    ; rdx:rax = rax * 10 (unsigned)
-    or r11, rdx                  ; sticky: high bits nonzero -> overflow
-    add rax, r10
-    adc r11, 0                    ; sticky: carry out of the add -> overflow
-
-    inc rbx
-    dec r8
-    mov r9, 1
-    jmp .pi64b_loop
-
-.pi64b_done:
-    test r9, r9
-    jz .pi64b_no_digits
-    test rcx, rcx
-    jnz .pi64b_check_neg
-    test rax, rax                ; positive: magnitude must fit under i64::MAX
-    js .pi64b_set_overflow
-    jmp .pi64b_range_ok
-.pi64b_check_neg:
-    mov r10, 0x8000000000000000     ; negative: magnitude may reach i64::MIN's
-    cmp rax, r10
-    ja .pi64b_set_overflow
-    jmp .pi64b_range_ok
-.pi64b_set_overflow:
-    mov r11, 1
-.pi64b_range_ok:
-    test r11, r11
-    jnz .pi64b_overflow_err
-    mov qword [rel _last_error], 0
-    jmp .pi64b_sign
-.pi64b_no_digits:
-    mov qword [rel _last_error], 1
-    jmp .pi64b_sign
-.pi64b_overflow_err:
-    mov qword [rel _last_error], 1
-.pi64b_sign:
-    test rcx, rcx
-    jz .pi64b_ret
-    neg rax
-
-.pi64b_ret:
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
+    xor edx, edx
+    call _read_number_text
     pop rdx
-    pop rcx
-    pop rbx
+    pop rsi
     ret
 
-; Parse an integer from a LENGTH-BOUNDED byte range, in an arbitrary
-; base (2-36), rather than scanning for a NUL terminator. Same
-; buffer-reuse safety rationale as _parse_i64_bounded above.
-; Args: rdi = pointer, rsi = base (2-36), rdx = max length in bytes
-; Returns: rax = parsed integer (0 on empty/invalid prefix, or a wrapped
-; value on magnitude overflow - the error flag is authoritative, not rax)
-; See _parse_i64 above for the overflow-detection rationale.
+; `as a hex/octal/binary/base N number` of a buffer.
+; Args: rdi = bytes, rsi = base (2-36), rdx = the buffer's length
 global _parse_int_radix_bounded
 _parse_int_radix_bounded:
-    push rbx
-    push rcx
+    push rsi
     push rdx
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-
-    mov r8, rsi                 ; base
-    mov r10, rdx                ; remaining length
-    xor rax, rax
-    xor r9, r9                   ; sign flag
-    xor r11, r11                  ; parsed-a-digit flag
-    xor r12, r12                   ; overflow-sticky flag
-    mov rbx, rdi
-
-    test r10, r10
-    jz .pirb_no_digits
-
-    mov dl, [rbx]
-    cmp dl, '-'
-    jne .pirb_loop
-    mov r9, 1
-    inc rbx
-    dec r10
-
-.pirb_loop:
-    test r10, r10
-    jz .pirb_done
-    mov dl, [rbx]
-    test dl, dl
-    jz .pirb_done
-
-    cmp dl, '0'
-    jl .pirb_done
-    cmp dl, '9'
-    jg .pirb_alpha
-    movzx rcx, dl
-    sub rcx, '0'
-    jmp .pirb_check
-
-.pirb_alpha:
-    mov cl, dl
-    or cl, 0x20
-    cmp cl, 'a'
-    jl .pirb_done
-    cmp cl, 'z'
-    jg .pirb_done
-    movzx rcx, cl
-    sub rcx, 'a'
-    add rcx, 10
-
-.pirb_check:
-    cmp rcx, r8
-    jge .pirb_done
-
-    mul r8                        ; rdx:rax = rax * base (unsigned)
-    or r12, rdx                     ; sticky: high bits nonzero -> overflow
-    add rax, rcx
-    adc r12, 0                       ; sticky: carry out of the add -> overflow
-
-    inc rbx
-    dec r10
-    mov r11, 1
-    jmp .pirb_loop
-
-.pirb_done:
-    test r11, r11
-    jz .pirb_no_digits
-    test r9, r9
-    jnz .pirb_check_neg
-    test rax, rax                   ; positive: magnitude must fit under i64::MAX
-    js .pirb_set_overflow
-    jmp .pirb_range_ok
-.pirb_check_neg:
-    mov rdx, 0x8000000000000000        ; negative: magnitude may reach i64::MIN's
-    cmp rax, rdx
-    ja .pirb_set_overflow
-    jmp .pirb_range_ok
-.pirb_set_overflow:
-    mov r12, 1
-.pirb_range_ok:
-    test r12, r12
-    jnz .pirb_overflow_err
-    mov qword [rel _last_error], 0
-    jmp .pirb_sign
-.pirb_no_digits:
-    mov qword [rel _last_error], 1
-    jmp .pirb_sign
-.pirb_overflow_err:
-    mov qword [rel _last_error], 1
-.pirb_sign:
-    test r9, r9
-    jz .pirb_ret
-    neg rax
-
-.pirb_ret:
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
+    xchg rsi, rdx
+    call _read_number_text
     pop rdx
-    pop rcx
-    pop rbx
+    pop rsi
     ret

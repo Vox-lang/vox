@@ -14,6 +14,14 @@ impl VarTarget {
             VarTarget::Global(l) => Some(l.as_str()),
         }
     }
+
+    /// The memory operand that names this storage.
+    pub(crate) fn operand(&self) -> String {
+        match self {
+            VarTarget::Local(offset) => format!("[rbp-{}]", offset),
+            VarTarget::Global(label) => format!("[rel {}]", label),
+        }
+    }
 }
 
 impl CodeGenerator {

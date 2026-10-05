@@ -1,0 +1,31 @@
+cannot cast "hello" to a number: it does not begin with a digit
+a number is written as it would be in Vox source, after an optional '-'
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:7:14
+cannot cast "12 apples" to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:8:14
+cannot cast "1.5x" to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:9:14
+cannot cast "" to a number: it is empty
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:10:14
+cannot cast "-" to a number: no digit follows its '-'
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:11:14
+cannot cast "0x" to a number: no digit of its base follows its prefix
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:12:14
+cannot cast "0o8" to a number: no digit of its base follows its prefix
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:13:14
+cannot cast "0b2" to a number: no digit of its base follows its prefix
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:14:14
+cannot cast "--1" to a number: it does not begin with a digit
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:15:14
+cannot cast "1-" to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:16:14
+cannot cast "7 " to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:17:14
+cannot cast " 7" to a number: it does not begin with a digit
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:18:14
+cannot cast "+7" to a number: it does not begin with a digit
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:19:14
+cannot cast "1e5" to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:20:14
+cannot cast "3." to a number: the text goes on after the number
+787_a_text_that_is_not_a_number_cannot_be_cast_to_one.vox:21:14

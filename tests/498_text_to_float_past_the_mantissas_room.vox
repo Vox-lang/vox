@@ -15,9 +15,15 @@ a text called 'twenty nines' is "0.99999999999999999999".
 a float called 'nines parsed' is 'twenty nines' as a float.
 If 'nines parsed' is 1.0 then, Print "twenty nines below one: rounds to one". Otherwise, Print "twenty nines below one: DIFFERENT".
 
+(Twenty nines with no point are a whole number, which must fit in a
+ number to be read as one, as the same literal must in the source; with
+ a point they are a decimal, read to the nearest float.)
 a text called 'a long count' is "99999999999999999999".
 a float called 'count parsed' is 'a long count' as a float.
-If 'count parsed' is 100000000000000000000.0 then, Print "twenty nines with no point: rounds to ten to the twenty". Otherwise, Print "twenty nines with no point: DIFFERENT".
+On error print "twenty nines with no point: too large for a number".
+Set 'a long count' to "99999999999999999999.0".
+Set 'count parsed' to 'a long count' as a float.
+If 'count parsed' is 100000000000000000000.0 then, Print "twenty nines with a point: rounds to ten to the twenty". Otherwise, Print "twenty nines with a point: DIFFERENT".
 
 a text called 'a long measure' is "123456789012345678901.5".
 a float called 'measure parsed' is 'a long measure' as a float.

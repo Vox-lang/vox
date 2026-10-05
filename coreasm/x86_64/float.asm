@@ -497,227 +497,149 @@ _f64_scale10:
     pop rbx
     ret
 
-; Parse a double-precision float from a NUL-terminated string.
-; Handles an optional leading '-', an integer part, and an optional
-; '.' followed by a fractional part. Degrades gracefully to 0.0 on an
-; empty or entirely-invalid string, matching the "stop at first invalid
-; character" convention used by _parse_i64/_parse_int_radix elsewhere
-; in this codebase.
+; Read a text as a float (LANGUAGE.md "Casting Rules"): the same texts
+; _read_number_text reads as a number, which this file needs int.asm for.
+; A decimal with a fractional part ("4.8", "-2.5") is read here; any other
+; number literal is a whole number ("12", "0x10"), read by
+; _read_number_text and converted, so it must fit in a number exactly as
+; the literal must in source.
 ;
-; Both parts accumulate into one integer mantissa, with r9 counting how
-; far the decimal point sits from its right-hand end; _f64_scale10 then
-; puts the point where it belongs in a single rounding. Digits past the
-; mantissa's room are dropped - 18 significant digits is already one more
-; than a double can tell apart - and a dropped digit left of the point
-; still counts towards the exponent, so the magnitude survives.
-; Args: rdi = string pointer
-; Returns: rax = the parsed value's raw 64-bit bit pattern (per this
-; codebase's float convention - see RAX_TO_XMM0/XMM0_TO_RAX above)
-global _parse_f64
-_parse_f64:
+; The decimal's digits accumulate into one integer mantissa, with r9
+; counting how far the decimal point sits from its right-hand end;
+; _f64_scale10 then puts the point where it belongs in a single rounding.
+; Digits past the mantissa's room are dropped - 18 significant digits is
+; already one more than a double can tell apart - and a dropped digit left
+; of the point still counts towards the exponent, so the magnitude
+; survives.
+;
+; Args: rdi = text, rsi = most bytes to read (-1: up to the NUL; a buffer
+;       passes its length, since bytes past it may be stale)
+; Returns: rax = the float's raw 64-bit pattern (this codebase's float
+;          convention - see RAX_TO_XMM0/XMM0_TO_RAX above), and
+;          _last_error = 0; or 0.0 and _last_error = 1 when the text is not
+;          a number
+global _read_float_text
+_read_float_text:
     push rbx
-    push rcx              ; mantissa room, then the exponent argument
+    push rcx                    ; mantissa room, then the exponent argument
     push rdx
-    push r8               ; sign flag
-    push r9               ; decimal exponent
-    push r11              ; parsed-a-digit flag
+    push r8                     ; 1 when the text opens with '-'
+    push r9                     ; decimal exponent
+    push r10                    ; bytes left
+    push r11                    ; digits read
 
-    xor r8, r8
-    xor r9, r9
-    xor r11, r11
-    mov rbx, rdi
-
-    mov dl, [rbx]
-    cmp dl, '-'
-    jne .pf64_sign_done
-    mov r8, 1
-    inc rbx
-.pf64_sign_done:
-    xor rax, rax
-    mov rcx, 100000000000000000      ; 10^17: one more digit still fits
-                                      ; in a signed 64-bit mantissa
-
-.pf64_int_loop:
-    mov dl, [rbx]
-    cmp dl, '0'
-    jl .pf64_int_done
-    cmp dl, '9'
-    jg .pf64_int_done
-    cmp rax, rcx
-    jae .pf64_int_drop
-    imul rax, rax, 10
-    movzx rdx, dl
-    sub rdx, '0'
-    add rax, rdx
-    jmp .pf64_int_next
-.pf64_int_drop:
-    inc r9                            ; no room for the digit, but it
-                                      ; still moves the point one place
-.pf64_int_next:
-    inc rbx
-    mov r11, 1
-    jmp .pf64_int_loop
-
-.pf64_int_done:
-    mov dl, [rbx]
-    cmp dl, '.'
-    jne .pf64_check_digits
-    inc rbx
-
-.pf64_frac_loop:
-    mov dl, [rbx]
-    cmp dl, '0'
-    jl .pf64_check_digits
-    cmp dl, '9'
-    jg .pf64_check_digits
-    cmp rax, rcx
-    jae .pf64_frac_next               ; below the double's resolution
-    imul rax, rax, 10
-    movzx rdx, dl
-    sub rdx, '0'
-    add rax, rdx
-    dec r9
-.pf64_frac_next:
-    inc rbx
-    mov r11, 1
-    jmp .pf64_frac_loop
-
-.pf64_check_digits:
-    test r11, r11
-    jnz .pf64_scale
-    mov qword [rel _last_error], 1
-    xorpd xmm0, xmm0
-    jmp .pf64_done
-.pf64_scale:
-    mov qword [rel _last_error], 0
-    mov rcx, r9
-    call _f64_scale10
-    test r8, r8
-    jz .pf64_done
-    xorpd xmm1, xmm1
-    subsd xmm1, xmm0
-    movsd xmm0, xmm1
-
-.pf64_done:
-    movq rax, xmm0
-
-    pop r11
-    pop r9
-    pop r8
-    pop rdx
-    pop rcx
-    pop rbx
-    ret
-
-; Same as _parse_f64, but bounded by an explicit max length rather than
-; scanning for a NUL terminator. Buffer content isn't reliably
-; NUL-terminated at its logical end (_buffer_clear only zeroes the
-; first byte, not the whole allocation - see the int.asm bounded
-; parsers for the full explanation), so buffer-typed float casts must
-; use this instead of _parse_f64 directly.
-; Args: rdi = string pointer, rsi = max length in bytes
-; Returns: rax = the parsed value's raw 64-bit bit pattern
-global _parse_f64_bounded
-_parse_f64_bounded:
-    push rbx
-    push rcx              ; mantissa room, then the exponent argument
-    push rdx
-    push r8               ; sign flag
-    push r9               ; decimal exponent
-    push r10              ; remaining length
-    push r11              ; parsed-a-digit flag
-
-    xor r8, r8
-    xor r9, r9
-    xor r11, r11
-    xor rax, rax
     mov rbx, rdi
     mov r10, rsi
-    mov rcx, 100000000000000000      ; 10^17, as in _parse_f64 above
 
-    test r10, r10
-    jz .pf64b_no_digits
-
-    mov dl, [rbx]
+    ; Look ahead past the '-' and the digits: a '.' there means a decimal
+    ; with a fractional part.
+    xor r11, r11
+    NUMBER_TEXT_BYTE r11
     cmp dl, '-'
-    jne .pf64b_int_loop
+    jne .rft_look
+    inc r11
+.rft_look:
+    NUMBER_TEXT_BYTE r11
+    cmp dl, '0'
+    jb .rft_looked
+    cmp dl, '9'
+    ja .rft_looked
+    inc r11
+    jmp .rft_look
+.rft_looked:
+    cmp dl, '.'
+    je .rft_decimal
+
+    xor edx, edx                ; rdi, rsi are still the text and bound
+    call _read_number_text
+    cmp qword [rel _last_error], 0
+    jne .rft_zero
+    cvtsi2sd xmm0, rax
+    jmp .rft_done
+
+.rft_decimal:
+    xor r8, r8
+    xor r9, r9
+    xor r11, r11
+    xor rax, rax
+    mov rcx, 100000000000000000 ; 10^17: one more digit still fits in a
+                                ; signed 64-bit mantissa
+    NUMBER_TEXT_BYTE 0
+    cmp dl, '-'
+    jne .rft_whole
     mov r8, 1
     inc rbx
     dec r10
-
-.pf64b_int_loop:
-    test r10, r10
-    jz .pf64b_int_done
-    mov dl, [rbx]
+.rft_whole:
+    NUMBER_TEXT_BYTE 0
     cmp dl, '0'
-    jl .pf64b_int_done
+    jb .rft_point
     cmp dl, '9'
-    jg .pf64b_int_done
+    ja .rft_point
+    inc r11
     cmp rax, rcx
-    jae .pf64b_int_drop
+    jae .rft_whole_drop
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
-    jmp .pf64b_int_next
-.pf64b_int_drop:
-    inc r9
-.pf64b_int_next:
+    jmp .rft_whole_next
+.rft_whole_drop:
+    inc r9                      ; no room for the digit, but it still
+                                ; moves the point one place
+.rft_whole_next:
     inc rbx
     dec r10
-    mov r11, 1
-    jmp .pf64b_int_loop
+    jmp .rft_whole
 
-.pf64b_int_done:
-    test r10, r10
-    jz .pf64b_check_digits
-    mov dl, [rbx]
-    cmp dl, '.'
-    jne .pf64b_check_digits
-    inc rbx
+.rft_point:
+    test r11, r11               ; a digit before the point
+    jz .rft_not_a_number
+    inc rbx                     ; the '.' the look ahead found
     dec r10
-
-.pf64b_frac_loop:
-    test r10, r10
-    jz .pf64b_check_digits
-    mov dl, [rbx]
+    xor r11, r11
+.rft_fraction:
+    NUMBER_TEXT_BYTE 0
     cmp dl, '0'
-    jl .pf64b_check_digits
+    jb .rft_fraction_read
     cmp dl, '9'
-    jg .pf64b_check_digits
+    ja .rft_fraction_read
+    inc r11
     cmp rax, rcx
-    jae .pf64b_frac_next
+    jae .rft_fraction_next      ; below the double's resolution
     imul rax, rax, 10
     movzx rdx, dl
     sub rdx, '0'
     add rax, rdx
     dec r9
-.pf64b_frac_next:
+.rft_fraction_next:
     inc rbx
     dec r10
-    mov r11, 1
-    jmp .pf64b_frac_loop
+    jmp .rft_fraction
 
-.pf64b_check_digits:
-    test r11, r11
-    jnz .pf64b_scale
-.pf64b_no_digits:
-    mov qword [rel _last_error], 1
-    xorpd xmm0, xmm0
-    jmp .pf64b_done
-.pf64b_scale:
+.rft_fraction_read:
+    test r11, r11               ; a digit after the point
+    jz .rft_not_a_number
+    NUMBER_TEXT_BYTE 0          ; nothing may follow the number
+    test dl, dl
+    jnz .rft_not_a_number
     mov qword [rel _last_error], 0
     mov rcx, r9
     call _f64_scale10
     test r8, r8
-    jz .pf64b_done
+    jz .rft_done
     xorpd xmm1, xmm1
     subsd xmm1, xmm0
     movsd xmm0, xmm1
+    jmp .rft_done
 
-.pf64b_done:
+.rft_not_a_number:
+    mov qword [rel _last_error], 1
+.rft_zero:
+    xorpd xmm0, xmm0
+
+.rft_done:
     movq rax, xmm0
-
     pop r11
     pop r10
     pop r9
@@ -726,6 +648,20 @@ _parse_f64_bounded:
     pop rcx
     pop rbx
     ret
+
+; `as a float` of a text. Args: rdi = text
+global _parse_f64
+_parse_f64:
+    push rsi
+    mov rsi, -1
+    call _read_float_text
+    pop rsi
+    ret
+
+; `as a float` of a buffer. Args: rdi = bytes, rsi = the buffer's length
+global _parse_f64_bounded
+_parse_f64_bounded:
+    jmp _read_float_text
 
 ; Append a double-precision float's decimal representation to a dynamic
 ; buffer. The output is trimmed of trailing zeros in the fractional part,

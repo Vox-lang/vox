@@ -1,0 +1,4 @@
+cannot assign a number to 'origin's weight', which is a float
+792_a_number_cannot_be_written_into_a_float_or_a_boolean_field.vox:11:5
+cannot assign a number to 'origin's ready', which is a boolean
+792_a_number_cannot_be_written_into_a_float_or_a_boolean_field.vox:12:5

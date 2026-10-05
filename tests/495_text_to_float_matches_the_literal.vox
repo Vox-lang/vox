@@ -35,8 +35,10 @@ a text called 'the manual example' is "3.14".
 a float called 'the manual parsed' is 'the manual example' as a float.
 If 'the manual parsed' is 3.14 then, Print "3.14 from text: same double". Otherwise, Print "3.14 from text: DIFFERENT".
 
-(A negative, an integer with no point at all, and a text whose digits
- run out at the point - the shapes the parser has to keep handling.)
+(A negative and an integer with no point at all, the shapes the parser
+ has to keep handling. A text whose digits run out at the point is not a
+ number, as `7.` is not a float literal in the source: the error flag
+ goes up and the float keeps its declaration's 0.0.)
 a text called owed is "-2.5".
 a float called 'owed parsed' is owed as a float.
 If 'owed parsed' is -2.5 then, Print "-2.5 from text: same double". Otherwise, Print "-2.5 from text: DIFFERENT".
@@ -47,4 +49,5 @@ If 'countable parsed' is 42.0 then, Print "42 from text: same double". Otherwise
 
 a text called truncated is "7.".
 a float called 'truncated parsed' is truncated as a float.
-If 'truncated parsed' is 7.0 then, Print "7. from text: same double". Otherwise, Print "7. from text: DIFFERENT".
+On error print "7. from text: not a number".
+Print 'truncated parsed'.

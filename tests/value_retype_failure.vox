@@ -1,4 +1,4 @@
-(Regression: a failed runtime conversion sets _last_error and leaves the variable as 0.)
+(Regression: a failed runtime conversion sets _last_error and leaves the variable as it was.)
 
 a value called bad is "abc".
 bad is a number.
