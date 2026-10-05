@@ -166,8 +166,7 @@ mod tests {
                     // otherwise reading) that default text variable
                     // segfaults at runtime. That is a codegen problem, not
                     // a parser/resolver problem, so it is out of scope for
-                    // this parse-level exhaustiveness test - see the master
-                    // report for the repro. Only the parse-level assertion
+                    // this parse-level exhaustiveness test. Only the parse-level assertion
                     // runs here; deliberately not asserted against a
                     // runtime .vox/.expected fixture (tests/declare_create_
                     // text.vox does NOT exercise the bare-Create default -

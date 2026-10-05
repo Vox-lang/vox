@@ -127,7 +127,7 @@ Stages S1–S4 have **disjoint file sets** and run in parallel. S5 gates on S1.
 
 ## S1 — Compiler: the identifier token
 
-**Owner:** worker `p270-compiler`  **Files:** `src/**` only.
+**Owner:** `p270-compiler`  **Files:** `src/**` only.
 **Out of scope:** `tests/*.vox`, `examples/`, `*.md`, `vox-vscode/`.
 
 ### Work
@@ -184,7 +184,7 @@ Stages S1–S4 have **disjoint file sets** and run in parallel. S5 gates on S1.
 `verify.sh <repo> <commit> --shared` passes with baselines above. `git diff`
 shows no change under `tests/*.vox` except newly added `compile_fail` cases.
 
-> **Note for the worker:** the integration suite will be **red** at the end of
+> **Note:** the integration suite will be **red** at the end of
 > this stage — 250 corpus files still use the old syntax and S5 migrates them.
 > That is expected and is not a reason to soften the compiler. Report the
 > failure count; do not fix corpus files. Cargo tests must be green.
@@ -193,7 +193,7 @@ shows no change under `tests/*.vox` except newly added `compile_fail` cases.
 
 ## S2 — Documentation
 
-**Owner:** worker `p270-docs`  **Files:** `LANGUAGE.md`, `README.md`,
+**Owner:** `p270-docs`  **Files:** `LANGUAGE.md`, `README.md`,
 `INSTALL.md`, `docs/**` except `docs/plans/`.
 **Out of scope:** `src/`, any `.vox`, `vox-vscode/`, `CHANGELOG.md` (S6 owns it).
 
@@ -234,7 +234,7 @@ same objective-gate approach as `vox-vscode/check-grammar.sh`.
 
 ## S3 — VS Code extension
 
-**Owner:** worker `p270-vscode`  **Files:** `vox-vscode/**` only.
+**Owner:** `p270-vscode`  **Files:** `vox-vscode/**` only.
 
 ### Work
 
@@ -266,7 +266,7 @@ Objective tokenizer output committed as a fixture, so drift is caught later.
 
 ## S4 — Codemod
 
-**Owner:** worker `p270-codemod`  **Files:** `tools/**` only.
+**Owner:** `p270-codemod`  **Files:** `tools/**` only.
 **Explicitly must not touch `tests/` or `examples/` in this stage** — S5 does that.
 
 ### Work
@@ -316,7 +316,7 @@ needing hand migration, which is a legitimate outcome to report rather than gues
 
 ## S5 — Corpus migration (gates on S1 + S4)
 
-**Owner:** worker `p270-corpus`  **Files:** `tests/**`, `examples/**`.
+**Owner:** `p270-corpus`  **Files:** `tests/**`, `examples/**`.
 
 **250 of 312 `.vox` files** are affected. Measured edits: `called "X"` 788,
 callee sites 298, `To "X"` 95, `Library` 13, timer refs 4, `see … version` 1.
@@ -351,7 +351,7 @@ asserting.
 
 ---
 
-## S6 — Release (master-owned, gates on S1–S5)
+## S6 — Release (gates on S1–S5)
 
 - Version → **0.3.0** in `Cargo.toml`, `vox-vscode/package.json`
   (**both must match** — 0.2.0 shipped mismatched and needed a follow-up PR).
@@ -362,7 +362,7 @@ asserting.
 
 ---
 
-## Hard constraints (all workers)
+## Hard constraints (all tasks)
 
 - **No libc, no new crates.** Hand-written runtime; this is not negotiable and
   is why `src/elf.rs` is a hand-rolled ELF reader rather than a dependency.

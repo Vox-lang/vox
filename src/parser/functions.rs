@@ -90,7 +90,7 @@ impl Parser {
         result
     }
 
-    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — Josj's Q1
+    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — TheJostler's Q1
     /// ruling (2026-08-23): a library declaration is a top-level construct
     /// like a function or a thing, so one reached while an `If`, a loop, or
     /// a function body is still open is refused here rather than silently
@@ -417,7 +417,7 @@ impl Parser {
         Ok(Some(statements?))
     }
 
-    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — Josj's Q1
+    /// Mirrors `things.rs`'s `err_thing_defined_inside_a_block` — TheJostler's Q1
     /// ruling (2026-08-23): "function declarations are not supposed to be
     /// nestable." A `To` reached while an `If`, a loop, or another
     /// function's body is still open used to be parsed as a nested

@@ -1,4 +1,4 @@
-(Master's finding: the first cut of `Free` only taught `emit_free_buffer`
+(Found in review: the first cut of `Free` only taught `emit_free_buffer`
  to recognise the shared released header - `Resize` (and anything else
  that can hand a buffer pointer to `_realloc_buffer`/`_reallocate_buffer`)
  did not know about it. `Resize`d, the released header fell into the

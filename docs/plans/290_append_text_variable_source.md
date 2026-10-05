@@ -22,7 +22,7 @@ underlying runtime value (a pointer to a NUL-terminated C-string) a string
 literal already is.
 
 Found while porting a Game of Life demo written in Vox, independently
-reproduced by the root master against a genuinely fresh build before this
+reproduced against a genuinely fresh build before this
 track was spun up.
 
 ## Root cause — confirmed by reading the code, not inferred
@@ -176,7 +176,7 @@ clearer one fits, just keep it accurate: it's no longer "must be a buffer.")
      `tests/067_format_buffer_fixed_overflow.vox` (or run the full suite —
      see below) still pass: the fixed-buffer bounds check must still fire
      for a text-variable source too large for the destination (this is also
-     exactly what the red team will be probing — see the red team brief for
+     exactly what the red team will be probing — see the red-team notes for
      this track; make sure your own test coverage independently proves it
      before red team even starts, since a real bounds-check regression here
      would be a memory-safety bug, not a cosmetic one).
@@ -189,7 +189,7 @@ clearer one fits, just keep it accurate: it's no longer "must be a buffer.")
    binary), not by trusting build timing.
 5. 0 build warnings.
 6. New test files: use numbers **217-219** (the range reserved for this
-   track's worker 1; worker 2, working findings 5+6 in a sibling worktree,
+   track's first task; the second, working findings 5+6 in a sibling worktree,
    uses 220+ — check `ls tests/*.vox | grep -oE '[0-9]+' | sort -n | tail -1`
    before picking a number in case this range has since been taken by
    something else landing on `main`).

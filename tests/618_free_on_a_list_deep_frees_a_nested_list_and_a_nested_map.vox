@@ -4,13 +4,13 @@
  LIST_TAG_MAP=5) and recurses into `_free_list`/`_free_map` for each -
  both are unconditionally heap blocks, so this is safe without knowing
  anything about what's inside them. Nested collections are pointer-in on
- 0.4.14 (probed separately, see REPORT-109.md "Nested collections: copy-in
- or pointer-in?"), so `inner`/`m` below are the SAME blocks `outer` frees.
+ 0.4.14 (see docs/BUGS_FOUND.md #109, "Nested collections: copy-in or
+ pointer-in?"), so `inner`/`m` below are the SAME blocks `outer` frees.
  This only proves the outer Free does not crash and the outer list ends up
  empty; it does not - and cannot - prove the freed pages were unmapped from
  inside the language, since reading `inner`/`m` directly afterwards is
- exactly the dangling-alias hazard flagged in the report as a question for
- the master, not something this test exercises.)
+ exactly the dangling-alias hazard recorded in docs/BUGS_FOUND.md #109 as an
+ open question, not something this test exercises.)
 
 a list called inner is [1, 2, 3].
 a map called m is {"a": 1, "b": 2}.

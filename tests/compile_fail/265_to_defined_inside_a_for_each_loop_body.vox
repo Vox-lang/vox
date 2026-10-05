@@ -1,4 +1,4 @@
-(Compile-fail: Josj's Q1 ruling, 2026-08-23 - a function definition is
+(Compile-fail: TheJostler's Q1 ruling, 2026-08-23 - a function definition is
  never nestable. A `To` reached while a `For each` body is still open used
  to be silently parsed into that body instead of being refused (BUGS_FOUND
  #96); the sibling run tests 560/561 prove the blank-line-closed and

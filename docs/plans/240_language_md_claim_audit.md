@@ -301,14 +301,14 @@ sanitizer alone, so `1.0` → `1_0` (the `.` becomes a single `_`, no prefix).
 **Fixed** the wording in `LANGUAGE.md` to state this, and to call out the
 double-underscore trap explicitly.
 
-**Could not verify the composed symbol empirically.** The steer asked for
+**Could not verify the composed symbol empirically.** The request asked for
 `nm -D --defined-only` on a `probe`/`0.1` library to show `probe_0_1_inner`.
 On this branch the `<lib>_<version>_<name>` composition is **not yet live**:
 function labels are `mangle_symbol(name)` only (`src/codegen/mod.rs:2713`), and
 `Statement::LibraryDecl` just emits a comment (`:4158`). Building
 `Library "probe" version "0.1"` + `To "inner"` with `--shared` exports the bare
 symbol `inner`, not `probe_0_1_inner` — consistent with `LANGUAGE.md` line 2900
-("The mangled form … arrives with Stage A1"). So the `nm` check the steer
+("The mangled form … arrives with Stage A1"). So the `nm` check the request
 named cannot pass on this branch yet. The rule itself was verified from the
 `mangle_symbol` implementation and unit tests, and by composing per the stated
 rule. Reporting this rather than fabricating the verification.
@@ -374,7 +374,7 @@ left as-is — see the finding below.
 
 ### INSTALL steps not safely executed
 
-Per the brief, nothing that writes outside the worktree or a temp dir was run.
+Nothing that writes outside the worktree or a temp dir was run.
 Inspected-only (not executed), with what was checked:
 
 - README block 4 (apt install) and block 5 (yum install) — package names
@@ -390,8 +390,8 @@ Inspected-only (not executed), with what was checked:
 
 Neither document hardcodes a version; `vox --version` reports `v0.1.23`,
 matching `Cargo.toml`. The README badges are dynamic. Nothing to flag, and the
-upcoming `0.2.0` bump requires no change to either doc. (Flagging here per the
-brief rather than guessing what a version field should say.)
+upcoming `0.2.0` bump requires no change to either doc. (Flagging here
+rather than guessing what a version field should say.)
 
 ### Most damaging finding to a new user
 

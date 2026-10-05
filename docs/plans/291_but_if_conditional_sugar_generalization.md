@@ -42,7 +42,7 @@ to parse `print <value>`, not `print <value> without newline`. The trailing
 the start of the *next* statement and fails there.
 
 Both confirmed live against `main`, independently re-verified by the root
-master against a fresh build before this track was spun up.
+re-run against a fresh build before this track was spun up.
 
 ## Root cause — confirmed by reading the code, not inferred
 
@@ -338,7 +338,7 @@ real token stream require.
    failed, verified behaviorally (run the actual repros against your built
    binary), not by trusting build timing.
 5. 0 build warnings.
-6. New test files: use numbers **220 and up** (worker 1, working finding 4
+6. New test files: use numbers **220 and up** (the first track, working finding 4
    in a sibling worktree, uses 217-219; check
    `ls tests/*.vox | grep -oE '[0-9]+' | sort -n | tail -1` before picking a
    number in case this range has since been taken by something else landing

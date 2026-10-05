@@ -1,6 +1,6 @@
 # 310 — User-defined structures
 
-**Status:** APPROVED in full by Josj (2026-08-17) — including the four
+**Status:** APPROVED in full by TheJostler (2026-08-17) — including the four
 formerly-proposed items: value-copy semantics, the v1 field set with
 unlimited thing nesting, map-style recursive printing, and field-wise
 equality. Nothing in this document is implemented yet; implementation
@@ -335,7 +335,7 @@ participate in every declaration form the builtin type keywords do.
 
 ## 13. Review record
 
-All four formerly-open items approved by Josj, 2026-08-17:
+All four formerly-open items approved by TheJostler, 2026-08-17:
 
 1. Copy semantics: value types, full copy on assign/pass (§5). APPROVED.
 2. v1 field set: number/float/boolean/time + unlimited thing nesting;

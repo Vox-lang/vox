@@ -186,7 +186,7 @@ section .text
 ; macros below are dead from the live build's perspective. The authoritative
 ; buffer-header layout and the live BUFFER_LENGTH / BUFFER_CAPACITY / data-
 ; address macros now live in core.asm (always included). They are kept here
-; only to avoid deleting beyond this brief's scope; see REPORT-COREASM-MACROS.
+; only to keep that cleanup out of scope here.
 
 ; Get buffer length
 ; Args: buffer_var_ptr

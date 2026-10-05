@@ -511,7 +511,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   declared `map` return, whose result leaked an address the same way — fell
   to `Unknown`, which every property and print dispatch reads as the file
   branch. The four copies are now one `vartype_of_declared_type`. Found by
-  the vox-fuzz candidate audit and adjudicated by the language lawyer
+  the vox-fuzz audit and checked against the manual
   ([#76](docs/BUGS_FOUND.md)).
 
 - The `append` value slot now reads the values every other value position
@@ -585,7 +585,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   to read as `2.999995446079999` and `"123456789012345678901.5"` as a
   negative number — and stops an empty buffer cast to a float handing back
   whatever float was computed last. Found by the vox-fuzz claim ledger row
-  VAL-09 and adjudicated by the language lawyer
+  VAL-09 and checked against the manual
   ([#82](docs/BUGS_FOUND.md)).
 
 - **`not` now takes the whole condition after it, so `If not v1 is v2
@@ -652,8 +652,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   f is 3.14.` three lines above. The symbol-location scan now asks whether the
   symbol could have been lexed as a name at all, and for one that could not —
   a literal the format parser handed back — looks for it inside the text
-  literal it was written in instead of in code. Found by the language lawyer
-  during the round-3 candidate audit ([#89](docs/BUGS_FOUND.md)).
+  literal it was written in instead of in code. Found during
+  the round-3 audit ([#89](docs/BUGS_FOUND.md)).
 
 - **A `buffer` grown past its capacity through a parameter no longer
   segfaults the caller** — `To 'pad out' with a buffer called sink. append
@@ -703,7 +703,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   known-scalar rejection, not a whitelist: an untyped parameter, a
   `value`, a function result and a property read all keep iterating.
   Found by the vox-fuzz collections-b claim ledger (discrepancies D3 and
-  D4) and adjudicated by the language lawyer as one memory-safety bug.
+  D4) and judged as one memory-safety bug.
 
 - **A bare `otherwise` is accepted after any base action, not just
   `append`** ([#50](docs/BUGS_FOUND.md)) — `print gauge, but if gauge is
@@ -716,7 +716,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   comma behind for the guard to consume, which is why that one spelling
   worked. The guard now accepts both keywords and no longer consumes them
   as separators. Found by the vox-fuzz collections-b claim ledger
-  (discrepancy D2) and adjudicated by the language lawyer.
+  (discrepancy D2) and checked against the manual.
 
 - **A text-valued special name built into a buffer no longer segfaults**
   ([#52](docs/BUGS_FOUND.md)) — `copy "{arguments's first}" to built`
@@ -807,7 +807,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   that cannot be text, so the substitution simply never fires instead of
   faulting. A mixed list is left to the runtime, as `value` always is.
   Found by the vox-fuzz basics-expansion claim ledger (discrepancies D3
-  and D4), master-reproduced.
+  and D4), reproduced.
 
 - **`all the numbers from/between …` no longer segfaults outside a loop
   header, and both spellings now include their end bound**
@@ -863,8 +863,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   crash or answer wrongly on 0.4.8+#49-#56. The same crash reached at run
   time — through a `value`, or a collection whose element type cannot be
   proven — is recorded in BUGS_FOUND and not fixed here. Found by the
-  vox-fuzz random-literals worker's probes (§4 D1),
-  master-reproduced.
+  vox-fuzz random-literals probes, reproduced.
 
 - **A buffer declared from a text-valued property keeps its type — and,
   on `Set`, its bounds** ([#58](docs/BUGS_FOUND.md)) — `a buffer called
@@ -944,7 +943,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   twin is here. Six regression tests, `tests/368_…` through
   `tests/373_…`, one per sink, all proven to print heap addresses on
   unfixed `main` and to pass after. Found by the vox-fuzz collections-a
-  claim ledger (discrepancy D7) and adjudicated by the language lawyer.
+  claim ledger (discrepancy D7) and checked against the manual.
 
 - **A call with no declared return type is a compile error where nothing
   supplies one, instead of being read as a number**
@@ -973,7 +972,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   and a "Reading a result" subsection states the rule under Functions.
   Full runtime tag propagation (stage 1d) is what would let such a call
   carry its own tag. Found by the vox-fuzz collections-a claim ledger
-  (discrepancy D5) and adjudicated by the language lawyer, who found the
+  (discrepancy D5) and checked against the manual, which showed the
   defect broader than the mixed-list case the ledger reported.
 
 - **A diagnostic's caret no longer lands in a comment, in a text literal,
@@ -1000,8 +999,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   test asserting no token the lexer emits can start inside what the
   classifier calls a comment. Regression tests
   `tests/compile_fail/137_caret_skips_a_comment_mention.vox` through
-  `140_caret_skips_a_multi_line_comment_mention.vox`. Found by the
-  language lawyer while adjudicating the vox-fuzz collections-a claim
+  `140_caret_skips_a_multi_line_comment_mention.vox`. Found while
+  adjudicating the vox-fuzz collections-a claim
   ledger, whose every probe file mis-pointed this way.
 
 - **A buffer put into a text no longer needs the cast, and never yields
@@ -1030,8 +1029,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   `386_text_from_buffer_at_every_write_site.vox` and
   `387_text_from_buffer_is_an_independent_copy.vox` — the last pinning
   #41's promise through #51's spelling, that clearing, refilling and
-  resizing the buffer leave the text exactly as it was. Found by the
-  vox-41 fix worker probing sibling forms of bug #41.
+  resizing the buffer leave the text exactly as it was. Found while
+  fixing #41 and probing sibling forms of it.
 
 
 - **A `treating` clause over a mixed list keeps each element's runtime
@@ -1062,8 +1061,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   `tests/400_treating_a_mixed_list_keeps_each_tag.vox` through
   `406_treating_survives_an_is_a_guard_downstream.vox`, proven to print
   pointers on 0.4.8+#49-#58 and to pass after, with #55's
-  `359`/`360` unchanged as controls. Found by the #55 fix worker
-  (REPORT-55 §6), master-reproduced.
+  `359`/`360` unchanged as controls. Found by the #55 fix,
+  reproduced.
 
 - **`{f:.N}` prints N correctly-rounded decimal places for any N**
   ([#60](docs/BUGS_FOUND.md)) — `{pi:.17}` was right, `{pi:.18}` printed
@@ -1093,8 +1092,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   places), the largest double, the 2^52/2^53/2^63 boundaries and N up to
   1500. Regression test `tests/410_float_precision_any_places.vox`,
   proven to print the corrupt bands on 0.4.8 and to pass after. Found by
-  the vox-fuzz literals worker's format-specifier probes (§4 D2),
-  master-reproduced.
+  the vox-fuzz literals format-specifier probes, reproduced.
 
 - **A pad width is honoured at any size it can be written, and is written
   a page at a time** ([#61](docs/BUGS_FOUND.md)) — `{n:2147483648}`
@@ -1119,8 +1117,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   `tests/compile_fail/169_pad_width_past_what_vox_can_count.vox`,
   `170_decimal_precision_past_what_vox_can_count.vox` and four codegen
   tests that pin the emitted width without writing two billion spaces.
-  Found by the vox-fuzz literals worker's format-specifier probes (§4
-  D3), master-reproduced and root-caused against source.
+  Found by the vox-fuzz literals format-specifier probes,
+  reproduced and root-caused against source.
 
 - **A `.lib` entry with no `, returning` clause can no longer be read as a
   value** ([#62](docs/BUGS_FOUND.md)) — `a number called n is greet.`
@@ -1160,7 +1158,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   through `168_bare_return_result_used.vox`, plus the passing controls
   `tests/407_procedure_called_as_a_statement.vox` and
   `tests/408_declared_return_used_as_a_value.vox`. Found by the #45 fix
-  worker while closing #45.
+  while closing #45.
 
 - **`the h's descriptor` reads the property, like `h's descriptor`
   always did** ([#64](docs/BUGS_FOUND.md)) — `the` is only an article
@@ -1187,7 +1185,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   `424_the_possessive_on_numbers_and_timers.vox` and
   `tests/compile_fail/171_the_possessive_file_handle_exists.vox`, all
   six proven to fail against the previous tree. Found by the #38 fix
-  worker probing the file-property surface, master-confirmed.
+  while probing the file-property surface, confirmed.
 
 - **A declaration whose initializer is the wrong type is a compile error
   instead of a segfault or a wrong value** ([#65](docs/BUGS_FOUND.md)) —
@@ -1218,7 +1216,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   compile-and-misbehave on 9734e5d, plus the passing controls
   `tests/395_declaration_initialiser_types_that_agree.vox` and
   `tests/396_mistyped_initialisers_written_correctly.vox`. Found by the
-  #51 fix worker and by the vox-fuzz names-and-strings claim ledger
+  #51 fix and by the vox-fuzz names-and-strings claim ledger
   (discrepancy D1).
 
 - **`a float called ratio is 3.` holds 3.0 instead of 0.0**
@@ -1291,7 +1289,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   The declaration now registers the declared type; the same omission on
   `Get the current time into` is closed alongside it so a `time` reports
   `Time (static)`. Found by the vox-fuzz buffer claim ledger (discrepancy
-  D2) and adjudicated by the language lawyer.
+  D2) and checked against the manual.
 
 - **A conditional `value` return no longer segfaults the caller**
   ([#43](docs/BUGS_FOUND.md)) — a function whose only `Return` sat
@@ -1337,8 +1335,8 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   was unreachable. The counter now lives in `rbx`, which is callee-saved and
   already pushed. `Seek ... to byte N` was a bare `lseek` and was never
   affected; `_seek_fd_line` exists only in the x86_64 runtime. Found by the
-  vox-fuzz files claim ledger (discrepancy D3) and adjudicated by the language
-  lawyer.
+  vox-fuzz files claim ledger (discrepancy D3) and checked against the
+  manual.
 
 - **A failed `Write` sets the error flag, and both read forms agree about a
   dead handle** ([#48](docs/BUGS_FOUND.md)) — a `Write` to a full device, to a
@@ -1352,7 +1350,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
   the errno for a failure, `EIO` for a short write, zero on success — and
   `Write`, `Write a newline` and `Read from` set the flag on a dead handle
   exactly as `Read line from` already did. Found by the vox-fuzz files claim
-  ledger (discrepancies D4 and D5) and adjudicated by the language lawyer.
+  ledger (discrepancies D4 and D5) and checked against the manual.
 
 ### Changed
 
@@ -1378,7 +1376,7 @@ Four register fixes (#102, #105, #106, #108) and the diagnostic halves of two mo
 
 - **LANGUAGE.md collections section: five examples corrected, one
   annotated** — from the vox-fuzz collections-a claim ledger
-  (discrepancies D1-D6), each adjudicated by the language lawyer and each
+  (discrepancies D1-D6), each checked against the manual and each
   recompiled against this tree. The mixed-list widening example's `append
   hello to items` is now `append "hello" to items`: a bare word is an
   identifier (LANGUAGE.md:645-668), so the example as printed did not

@@ -955,7 +955,7 @@ fn migrate(src: &str) -> Migration {
             }
             Decision::Failed => {
                 // The name cannot be written canonically; leave the `"..."` and
-                // record it so the migration worker knows to hand-rename it.
+                // record it so the person migrating knows to hand-rename it.
                 out.push_str(&src[tok.start..tok.end]);
                 failures.push((line, content.clone()));
             }

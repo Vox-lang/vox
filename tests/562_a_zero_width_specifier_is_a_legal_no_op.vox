@@ -4,7 +4,7 @@
  leading `0` and then demanding digits after it; a clause of nothing BUT
  zeros left no digits behind, fell into #98's new catch-all, and was
  reported as an unknown specifier - a regression the fuzzer's own CI
- caught on the 0.4.11 re-pin. Josj's ruling (2026-08-23): width 0 is a
+ caught on the 0.4.11 re-pin. TheJostler's ruling (2026-08-23): width 0 is a
  legal no-op, same as any width too small to add characters.
 
  A width asks nothing of a type (LANGUAGE.md, the width rule), so the

@@ -793,7 +793,7 @@ To f with a number called aa and a text called s and a value called v.\n  Return
         // `To greet.` — no params, void return — reads as a bare entry with
         // no `with` clause and no `, returning` clause. A parameterless function
         // with a return reads `To makebuf, returning a number.`. This is the
-        // parameterless / value-parameter readability the steer asked to settle.
+        // parameterless / value-parameter readability this test settles.
         let src = "\
 Library m version \"1.0\".\n\
 To greet.\n  Print \"hi\".\n\n\
@@ -3114,9 +3114,8 @@ Otherwise, a number called s is 1, append s to out.\n";
     /// A clause of nothing BUT zeros - a bare `0`, or `00000` - leaves no
     /// digits behind either way, so #98's catch-all reported it as an
     /// unknown specifier. But the manual's width row has no floor on `N`,
-    /// and 0.4.10 rendered `{n:0}` as a no-op; Josj's ruling (2026-08-23,
-    /// vox-notes/VERIFIED-ZERO-WIDTH-SPECIFIER.md) is that width 0 is
-    /// legal, so a clause of all zeros must read as width 0, not as junk.
+    /// and 0.4.10 rendered `{n:0}` as a no-op; TheJostler's ruling (2026-08-23)
+    /// is that width 0 is legal, so a clause of all zeros must read as width 0, not as junk.
     #[test]
     fn a_clause_of_nothing_but_zeros_is_a_legal_width_of_zero() {
         for spec_text in ["0", "00", "00000"] {
@@ -3310,7 +3309,7 @@ Set shared_name to "changed".
         );
     }
 
-    /// The use-after-free master review caught before this fix shipped:
+    /// The use-after-free found in review before this fix shipped:
     /// `src as text` on an already-text `src` is a bare pointer
     /// pass-through in codegen (`generate_expr`'s Cast/String branch
     /// leaves a text source untouched), so `u`'s declaration takes `src`'s

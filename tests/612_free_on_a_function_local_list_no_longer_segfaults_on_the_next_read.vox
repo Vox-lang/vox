@@ -1,7 +1,7 @@
 (docs/BUGS_FOUND.md #109. On 0.4.14, `Free` on a function-local list emitted
  `HEAP_FREE rdi` and left the slot pointing at the now-unmapped block, so
- the next length/print/append segfaulted (rc 139) - master-reproduced with
- `local_list_free.vox`. Fixed: the slot now points at the shared
+ the next length/print/append segfaulted (rc 139) - reproduced with a
+ function-local list. Fixed: the slot now points at the shared
  `_released_list_header` after the free, exactly like a buffer.)
 
 To 'try it'.

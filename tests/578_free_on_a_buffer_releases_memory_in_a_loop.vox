@@ -6,7 +6,7 @@
  tracked, always munmap), so memory stays flat regardless of how many
  iterations run.
 
- Reads /proc/self/statm itself, the same idiom the #108 fixer's tests
+ Reads /proc/self/statm itself, the same idiom the #108 tests
  564/565 use: field 2 is resident pages. Before the fix this printed a
  five-figure page count at even half this iteration count; the threshold
  is a wide margin under that, not a tight bound - it only needs to catch

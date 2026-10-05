@@ -57,9 +57,8 @@ greet with 5 as text.
 a text called given is 'give a label'.
 print given.
 
-(The language designer's ruling (Josj, 2026-08-21): "in human language we
- call 1 a number and pi a number; it should be the same in Vox - dynamic
- casting as and when needed". So neither direction is refused. A whole
+(The language designer's ruling (TheJostler, 2026-08-21): in human language 1 and
+ pi are both numbers, so Vox converts dynamically as and when needed. So neither direction is refused. A whole
  number initialising a float is converted to one at the declaration - this
  printed 0.0 before, the integer's bits read as a double - and a float
  initialising a number keeps its decimals, exactly as it always did.)

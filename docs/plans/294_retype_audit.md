@@ -1,6 +1,6 @@
 # Plan 294 — retype audit, and implementation checklist for type immutability
 
-**Status:** audit only. **No `src/` changes.** A separate worker owns `src/`
+**Status:** audit only. **No `src/` changes.** A separate task owns `src/`
 and is implementing the type-immutability rule; another is fixing Bug B.
 
 **Tree:** branch `retype-audit`, base `409bd2c`.
@@ -323,7 +323,7 @@ Print "{n}".
 ```
 
 Observed `4198480`; expected `abc` (the plain form `n is "abc".` prints
-`abc`). Same root cause as finding 1, benign direction. **A separate worker
+`abc`). Same root cause as finding 1, benign direction. **A separate task
 owns this fix; this track does not touch it.**
 
 > **Under the new rule:** closed, with finding 1's caveat. Note the rule
@@ -589,9 +589,9 @@ and `infer_simple_expr_type` (analyzer), `infer_expr_type` (codegen).
 | `unprovable_scalars` | `codegen:27` |
 | `Type::Value` / `VarType::Mixed` | `ast.rs`, `codegen` |
 
-### E. Sites the brief did not list — what I found beyond it
+### E. Sites not on the original list — what I found beyond it
 
-The steer asked specifically for anything not on its list. These are the ones:
+The request asked specifically for anything not on its list. These are the ones:
 
 1. **`ParseFlags` is an unimplemented no-op** (A5). Flag values are never
    parsed at runtime, so `FlagSchemaDecl`'s declared type is currently never
@@ -606,7 +606,7 @@ The steer asked specifically for anything not on its list. These are the ones:
    `Box::new(Type::Unknown)`, at all four sites. Even a homogeneous map
    literal like `{"k": 42}` yields no value type.
 4. **`Repeat` counters are not user-bindable** (A8) — one *fewer* site than
-   the steer expected; the counter is an internal `_repeat_counter` slot.
+   the request expected; the counter is an internal `_repeat_counter` slot.
 5. **Tuples, multiple return values and destructuring do not exist yet.**
    `Type` has no tuple variant, `Expr` has none, and
    `grep -rn "Tuple\|destructur" src/` returns nothing. Plans 110/120/130
@@ -805,7 +805,7 @@ initially recorded this as a finding; it is not one.
 `src/parser/mod.rs:4318-4327` documents the behaviour explicitly, so
 `n is "abc".` is a genuine top-level statement. Confirmed directly: a
 `Print "SIDE EFFECT".` before the `Return` never runs, while a
-`Print "LEAKED".` after it prints in top-level order. Consequently the brief's
+`Print "LEAKED".` after it prints in top-level order. Consequently the request's
 "early `Return`" item has no separate failure mode — a return inside a
 conditional reduces to the `If` case.
 
@@ -823,7 +823,7 @@ body or explicit comma clauses.
 
 ## Suspected, not reproduced
 
-- **Short-circuit evaluation.** Listed in the brief as a direction-1 path. No
+- **Short-circuit evaluation.** Listed in the request as a direction-1 path. No
   repro is constructible because assignment is not an expression in Vox —
   there is no way to place a store inside the right-hand operand of `and`/`or`.
 - **`MapSet` / `BufferCopy` retyping their target.** These write *through* a
@@ -854,7 +854,7 @@ enforced on that path.**
 
 **Group C — statements that rebind a name without retyping it.** Findings 2, 3,
 17 (and finding 12's slot reuse). Each is a separate statement arm.
-**Survives the rule.** The group the brief predicted would be largest, and the
+**Survives the rule.** The group the request predicted would be largest, and the
 one where undiscovered instances are most likely.
 
 **Group D — untyped expression results leave stale tracking.** Findings 4, 14.
@@ -903,9 +903,9 @@ per program point.
   observed symptom, though not the tracking defect.
 - **Migration count is a lower bound**, per the limits stated in that section.
 
-## Notes on the brief
+## Notes on the request
 
-The brief was accurate everywhere I checked it; the `scalar_types` and
+The request was accurate everywhere I checked it; the `scalar_types` and
 `variable_types` write-site line numbers were all correct. Three refinements:
 
 1. `src/codegen/mod.rs:4689` (`// Track as integer for now`) was flagged as a
@@ -913,7 +913,7 @@ The brief was accurate everywhere I checked it; the `scalar_types` and
    **correct** — verified. The suspicious comment is benign.
 2. **Bug B deserves higher than "high".** The same missing update with the
    operands swapped (finding 1) is a segfault, not wrong output.
-3. The brief's premise that "reassigning a number to text is legal Vox" is
+3. The request's premise that "reassigning a number to text is legal Vox" is
    true today and is what makes Bug B a bug rather than invalid code — and it
    is exactly what the new rule repeals. Under the rule, Bug B's repro program
    becomes a compile error and the finding is closed by redefinition rather
@@ -923,7 +923,7 @@ The brief was accurate everywhere I checked it; the `scalar_types` and
 
 # Follow-up — closing the "what I could not audit" gaps
 
-Added after the main audit was committed as `f16cab4`, at the master's
+Added after the main audit was committed as `f16cab4`, at the maintainer's
 request: the three gaps listed in "What I could not audit" above are resolved
 here. **Two are new findings (19, 20); two are null results with evidence.**
 

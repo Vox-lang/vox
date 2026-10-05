@@ -64,7 +64,7 @@ Therefore: **search by behaviour, not by pattern.**
       list-element and buffer-initialiser were the two live ones; the
       rest were correct and must stay correct.
 
-## The trap, recorded because it caught the master once
+## The trap, recorded because it caught the project once
 
 A `text`-typed collision produces the **right answer even before a fix**,
 because the wrong tag and the right tag are the same value. Any site
@@ -80,6 +80,5 @@ nothing. Every test must include a `list` or `number` collision.
 
 ## Reference
 
-Full evening audit, including the blast-radius table and the 12-site
-list: `~/scr/english/vox-notes/2026-08-19-evening-bug-audit.md`,
-sections J, K, L.
+The full evening audit of 2026-08-19 included the blast-radius table and the 12-site
+list (sections J, K, L).

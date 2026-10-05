@@ -1,5 +1,5 @@
 (docs/BUGS_FOUND.md #109. Nested collections are pointer-in (see
- REPORT-109.md), so a list holding the SAME nested list through two slots
+ docs/BUGS_FOUND.md #109), so a list holding the SAME nested list through two slots
  would have the walk try to free that nested block twice in one `Free` call
  - the second attempt would be a read of already-unmapped memory. The
  `_free_visit_or_skip` dedup table (list.asm), reset fresh by codegen

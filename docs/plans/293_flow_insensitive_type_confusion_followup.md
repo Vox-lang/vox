@@ -47,12 +47,12 @@ which is unmapped, hence the segfault.
 
 **This reproduces identically on unmodified `main` (`b143840`), with no
 code from plans 290, 291, or 292 involved at all** — confirmed by the
-sub-master: extracted `b143840`, built clean, compiled and ran the exact
+independently: extracted `b143840`, built clean, compiled and ran the exact
 program above, got the same SIGSEGV. This is a pre-existing bug in the
 analyzer's type-tracking architecture, not something plans 290-292 created.
 
 **How this track found it anyway:** the red team spawned on plan 290/291
-(brief: probe buffer-bounds behavior around `Append` accepting a `text`
+(scope: probe buffer-bounds behavior around `Append` accepting a `text`
 variable source) constructed a variant using the exact same mechanism to
 attack `Append`:
 
@@ -66,7 +66,7 @@ Append n to b.
 Print "reached".
 ```
 
-This also segfaults post-plan-290 (confirmed by the sub-master, same
+This also segfaults post-plan-290 (confirmed independently, same
 mechanism: `named_value_type(n)` now reports `Type::String` due to the same
 flow-insensitivity, so plan 290's widened `ListAppend` check accepts `n` as
 a text source; codegen then hands the raw integer `5` to
@@ -127,7 +127,7 @@ introduced into that helper.
 
 ## Repro files
 
-Both confirmed by the sub-master against a genuinely fresh, force-clean
+Both confirmed independently against a genuinely fresh, force-clean
 rebuild — not just read from a report:
 
 - `Print`-based (reproduces on unmodified `main`): see "Problem" section

@@ -1,4 +1,4 @@
-(Compile-fail: bug #40, master review - a `value` operand reaches the same
+(Compile-fail: bug #40, found in review - a `value` operand reaches the same
  unconditional pointer read as a bare scalar. Holding nothing it wrote
  address 0 and segfaulted; holding a number it wrote that number as an
  address and segfaulted; holding text it happened to work. The compiler
