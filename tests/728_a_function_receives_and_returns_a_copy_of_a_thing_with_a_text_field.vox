@@ -1,0 +1,31 @@
+(docs/BUGS_FOUND.md #103: a function gets its own copy of a thing with a
+ text field. Rewriting the parameter's text cannot reach the caller, and
+ the only way out is the Return, which copies into the caller's storage.
+ A function that falls off its end hands back the all-defaults thing,
+ text default included.)
+
+A thing called badge has
+  a text called name is "nobody",
+  a number called level is 0.
+
+To promoted with a badge called holder.
+  Set holder's name to "{holder's name} (senior)".
+  Set holder's level to holder's level add 1.
+  Return a badge, holder.
+
+To 'maybe badge' with a boolean called 'the choice'.
+  a badge called inner.
+  Set inner's name to "never seen".
+  If 'the choice' then,
+    Return a badge, inner.
+
+a badge called worker.
+Set worker's name to "Ada".
+The boss is promoted of worker.
+Print worker.
+Print boss.
+The chief is promoted of boss.
+Print boss.
+Print chief.
+a badge called unwritten is 'maybe badge' of false.
+Print unwritten.

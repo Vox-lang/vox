@@ -1,0 +1,20 @@
+(docs/BUGS_FOUND.md #103: a buffer CAN be changed in place, so a text
+ field written from one takes a copy of its bytes, the same copy a text
+ variable takes. Rewriting a byte, clearing, appending to and freeing the
+ buffer afterwards leaves the field as it was written.)
+
+A thing called note has
+  a text called body is "".
+
+a buffer called scratch is 16 bytes in size.
+copy "cat" to scratch.
+a note called saved.
+Set saved's body to scratch.
+Set byte 1 of scratch to 98.
+Print saved's body.
+Print scratch.
+clear scratch.
+append "something else" to scratch.
+Print saved's body.
+Free scratch.
+Print saved.

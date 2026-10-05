@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #103: a field read is as typed as a variable read, so
+ copying a number field into a text field is the same refusal as copying
+ a number into it.)
+
+A thing called note has
+  a text called body is "",
+  a number called size is 3.
+a note called saved.
+Set saved's body to saved's size.

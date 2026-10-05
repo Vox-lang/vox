@@ -1,0 +1,24 @@
+(docs/BUGS_FOUND.md #103: overwriting a text field in a loop, each value
+ built from the one before, leaves exactly the last value, and a copy of
+ the thing taken part way through keeps the value of that moment. Sizes
+ are printed, not the texts, so the output stays short.)
+
+A thing called counter has
+  a text called label is "",
+  a number called count is 0.
+
+a counter called tally.
+a counter called snapshot.
+For each n from 1 to 6000,
+  Set tally's label to "{tally's label}x",
+  Set tally's count to n,
+  If n is 1000 then,
+    Set snapshot to tally..
+Print tally's count.
+Print snapshot's count.
+a buffer called whole.
+append "{tally's label}" to whole.
+a buffer called part.
+append "{snapshot's label}" to part.
+Print whole's size.
+Print part's size.

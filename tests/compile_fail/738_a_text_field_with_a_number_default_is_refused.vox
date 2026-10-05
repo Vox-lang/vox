@@ -1,0 +1,5 @@
+(docs/BUGS_FOUND.md #103: a text field's default is a text literal; a
+ number default is the mismatch error, naming both types.)
+
+A thing called note has
+  a text called body is 5.

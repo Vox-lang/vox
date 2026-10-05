@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #103: a text default is read the way any quoted
+ literal is: `{{` and `}}` are one brace each, and an escaped quote is a
+ quote. A default with a real `{name}` in it is computed, not a literal,
+ and is refused; see tests/compile_fail/735.)
+
+A thing called note has
+  a text called body is "{{not a hole}} and \"quoted\"".
+
+a note called saved.
+Print saved's body.
+Print saved.

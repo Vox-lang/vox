@@ -6,6 +6,11 @@
 // message's text and location via substring match, which cannot prove the
 // garbled sibling is GONE; this test spawns the compiler and asserts the
 // "but its default is" template is absent, so exactly one error survives.
+//
+// Text became a field type later in #103's life, so the rejected case now
+// uses a buffer field (still not a field type) with the same text default,
+// which reaches the same two templates; the register's original repro is
+// pinned separately as the program that now compiles.
 
 use std::fs;
 use std::process::{Command, Stdio};
@@ -66,11 +71,11 @@ fn rejected_field_type_reports_exactly_one_error() {
     let (ok, stderr) = compile_stderr(
         &work,
         "A thing called 'file report' has\n  \
-           a text called filename is \"\",\n  \
+           a buffer called filename is \"\",\n  \
            a number called lines is 0.\n",
     );
 
-    assert!(!ok, "a thing with a text field must still be rejected");
+    assert!(!ok, "a thing with a buffer field must still be rejected");
     assert_eq!(
         stderr.matches("error:").count(),
         1,
@@ -86,6 +91,27 @@ fn rejected_field_type_reports_exactly_one_error() {
         !stderr.contains("but its default is"),
         "the garbled default-mismatch template must not fire when the field's \
          type was already rejected; got:\n{}",
+        stderr
+    );
+
+    fs::remove_dir_all(&work).ok();
+}
+
+#[test]
+fn the_registered_repro_with_a_text_field_now_compiles() {
+    let work = work_dir("text-field");
+    let (ok, stderr) = compile_stderr(
+        &work,
+        "A thing called 'file report' has\n  \
+           a text called filename is \"\",\n  \
+           a number called lines is 0.\n",
+    );
+
+    assert!(ok, "a text field is a field type; got:\n{}", stderr);
+    assert_eq!(
+        stderr.matches("error:").count(),
+        0,
+        "expected no errors, got:\n{}",
         stderr
     );
 

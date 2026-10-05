@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #103: a function reaches a main-line thing's text
+ field the same way it reaches a number field: it reads the default, and
+ its write is the one the main line sees afterwards.)
+
+A thing called note has
+  a text called body is "default".
+
+To 'read it'.
+  Print kept's body.
+  Set kept's body to "set in the function".
+
+a note called kept.
+'read it'.
+Print kept.

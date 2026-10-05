@@ -11590,9 +11590,8 @@ type is `list` with `value: None`. The conditional-defaults path
 
 ### 103. A thing with a disallowed field type gets two errors, the first garbled — and the field-type surface itself is narrower than it should be
 
-**Status:** Open — diagnostic fixed in v0.4.14 (regression tests
-`tests/compile_fail/273`–`274`); the field-type surface awaits the owner's
-ruling. Registered 2026-08-25 (GitHub #243). Severity: **diagnostic
+**Status:** Open, text fields delivered (tests 720-738); list, map and buffer fields await the owner's design ruling.
+Registered 2026-08-25 (GitHub #243). Severity: **diagnostic
 bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8)
 by the master, 2026-08-25.
 

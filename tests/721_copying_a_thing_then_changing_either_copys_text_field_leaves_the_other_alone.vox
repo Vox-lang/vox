@@ -1,0 +1,37 @@
+(docs/BUGS_FOUND.md #103: a thing holding text is still a value. A text
+ is never changed in place; every sentence that changes one points its
+ slot at another text. So after a copy, each way of writing a text
+ field, on either side of the copy, is seen only by the side written:
+ Set to a literal, Set to a format string, Set to a text variable, a
+ bare `is`, and a whole-thing assignment back over the original.)
+
+A thing called letter has
+  a text called greeting is "dear friend",
+  a text called signature.
+
+a letter called original.
+Set original's signature to "Ada".
+a letter called reply is original.
+Set original's signature to "Ada Lovelace".
+Print original's signature.
+Print reply's signature.
+
+Set reply's greeting to "{reply's greeting}, again".
+Print original's greeting.
+Print reply's greeting.
+
+a text called borrowed is "Grace".
+Set reply's signature to borrowed.
+Set borrowed to "{borrowed} Hopper".
+Print original's signature.
+Print reply's signature.
+Print borrowed.
+
+original's greeting is "to whom it may concern".
+Print original.
+Print reply.
+
+Set original to reply.
+Set reply's signature to "changed after the copy back".
+Print original.
+Print reply.

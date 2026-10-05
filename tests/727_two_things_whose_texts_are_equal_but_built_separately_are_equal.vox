@@ -1,0 +1,26 @@
+(docs/BUGS_FOUND.md #103: `is` between two things compares a text field
+ by its bytes, not by where they live. Two 5000-byte texts built in two
+ different loops are equal; one more byte makes them differ; two empty
+ texts, one a literal and one built by a format string, are equal.)
+
+A thing called note has
+  a text called body is "".
+
+a note called built.
+a note called typed.
+Repeat 5000 times,
+  Set built's body to "{built's body}y".
+a text called piece is "y".
+Repeat 4999 times,
+  Set piece to "{piece}y".
+Set typed's body to piece.
+If built is typed then,
+  Print "equal across two allocations".
+Set typed's body to "{piece}z".
+If built is not typed then,
+  Print "one more byte differs".
+a note called 'first empty'.
+a note called 'second empty'.
+Set 'second empty''s body to "{'first empty''s body}".
+If 'first empty' is 'second empty' then,
+  Print "two empty texts are equal".

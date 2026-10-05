@@ -990,11 +990,13 @@ a 'bounding box' called viewport.
 Print viewport's width.
 ```
 
-**Field types in v1.** A field may be `number`, `float`, `boolean`,
-`time`, or any **previously defined** thing (things nest to any depth;
-see [Nesting](#nesting)). `text`, `list`, `map`, and `buffer` fields are
-deferred: they carry references and would reopen the aliasing question
-value copy semantics (below) is designed to avoid.
+**Field types.** A field may be `number`, `float`, `boolean`, `time`,
+`text`, or any **previously defined** thing (things nest to any depth;
+see [Nesting](#nesting)). A text field follows the same value semantics
+as every other field (below): a copy of the thing never shares its text
+with the original, and a text field with no default holds the empty
+text `""`. `list`, `map`, and `buffer` are not field types: each can be
+changed in place, so two copies of a thing holding one would share it.
 
 #### The article rule
 
@@ -1196,6 +1198,22 @@ Print invitation's postbox's x.
 Print reply's postbox's x.
 ```
 
+A text field is copied the same way. Changing it in one copy, by any
+spelling of assignment, is never seen in the other:
+
+```
+A thing called letter has
+  a text called greeting is "dear friend",
+  a text called signature.
+
+a letter called original.
+Set original's signature to "Ada".
+a letter called reply is original.
+Set reply's signature to "Grace".
+Print original.
+Print reply.
+```
+
 The same is true across a call. A function receives a copy of a thing
 and hands one back by returning it; nudging the parameter cannot reach
 the caller's point, because the only way out is the `Return`, which
@@ -1314,8 +1332,10 @@ Print after.
 `Print p.` walks the fields in definition order and recurses into the
 things they hold, map-style. Every field name is baked into the emitted
 program, so nothing is read from a descriptor and nothing is allocated.
-A quoted field name prints in the quotes it is written with, and a
-function member takes no part; it is the type's API, not its state:
+A quoted field name prints in the quotes it is written with, a text
+field prints its text in double quotes (the way a list or a map prints
+a text), and a function member takes no part; it is the type's API, not
+its state:
 
 ```
 A thing called point has
@@ -1374,8 +1394,10 @@ a text called note is "the point is {origin}".
 ### Equality
 
 `is` between two values of the same thing compares those same fields at
-the same depth; `is not` is its negation. Like printing, the comparison is
-written out by the compiler, so it recurses into nested things:
+the same depth; `is not` is its negation. A text field compares by its
+characters, wherever each copy's text is stored. Like printing, the
+comparison is written out by the compiler, so it recurses into nested
+things:
 
 ```
 A thing called point has

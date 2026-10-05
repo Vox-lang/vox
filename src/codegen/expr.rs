@@ -2546,6 +2546,7 @@ impl CodeGenerator {
             Expr::ThingField { base, path } => match self.thing_field_type(base, path) {
                 Some(Type::Float) => Some(VarType::Float),
                 Some(Type::Boolean) => Some(VarType::Boolean),
+                Some(Type::String) => Some(VarType::String),
                 Some(_) => Some(VarType::Integer),
                 None => None,
             },

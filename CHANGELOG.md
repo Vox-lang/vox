@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **A thing can hold text fields.** `a text called name is "Ada",` is a
+  field like any other: it takes a text default (or holds the empty text
+  without one), reads, writes, prints in double quotes, interpolates,
+  compares by its characters, and nests at any depth. A copy of a thing
+  never shares its text with the original, so changing a text field in
+  one copy is never seen in another. A write of a number, a boolean or
+  `nothing` into a text field is refused at the write. (#103)
+
 ## [0.4.15] - 2026-09-06
 
 A value whose type is only known while the program runs now converts to fit, so a mixed list or map value can no longer crash a program.

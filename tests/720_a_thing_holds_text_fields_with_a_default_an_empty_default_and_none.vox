@@ -1,0 +1,16 @@
+(docs/BUGS_FOUND.md #103: text is a field type. A field with a text
+ default holds that text, one with "" holds the empty text, and one with
+ no default holds the empty text too, never a missing one: printing the
+ whole thing and each field shows all three.)
+
+A thing called letter has
+  a text called greeting is "dear friend",
+  a text called postscript is "",
+  a text called signature,
+  a number called pages is 1.
+
+a letter called note.
+Print note.
+Print note's greeting.
+Print "[{note's postscript}]".
+Print "[{note's signature}]".
