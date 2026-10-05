@@ -134,12 +134,18 @@ impl CodeGenerator {
                     self.emit_indent(&format!("jge {}", done_label));
                     self.emit_indent("mov rdi, rax");
                     self.emit_indent("call _get_raw_arg");
+                    let kept_label = self.new_label("flag_value_kept");
                     if matches!(schema.value_type, FlagValueType::Number) {
+                        // A value that is not a number raises the error flag
+                        // and leaves the flag holding what it held.
                         self.uses_ints = true;
                         self.emit_indent("mov rdi, rax");
                         self.emit_indent("call _parse_i64");
+                        self.emit_indent("cmp qword [rel _last_error], 0");
+                        self.emit_indent(&format!("jne {}", kept_label));
                     }
                     self.emit_indent(&format!("mov [rbp-{}], rax", flag_off));
+                    self.emit(&format!("{}:", kept_label));
                     self.emit_indent(&format!("mov qword [rbp-{}], 1", seen_off));
                     self.emit_indent(&format!("inc qword [rbp-{}]", idx_off));
                     self.emit_indent(&format!("jmp {}", continue_label));

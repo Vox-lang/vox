@@ -103,8 +103,10 @@ Print "{n}".
 fn explicit_cast_works_both_directions_all_three_spellings() {
     let work = work_dir("explicit-cast");
 
-    let bin = compile(&work, "a number called n is 5.\nn is \"abc\" as a number.\nPrint \"{n}\".\n");
-    run_and_expect(&bin, "0\n");
+    // A text that is not a number, known only at run time, leaves n as it
+    // was (LANGUAGE.md "Casting Rules"); a literal one is a compile error.
+    let bin = compile(&work, "a number called n is 5.\na text called word is \"abc\".\nn is word as a number.\nPrint \"{n}\".\n");
+    run_and_expect(&bin, "5\n");
 
     let bin = compile(&work, "a number called n is 5.\nthe n is \"42\" as a number.\nPrint \"{n}\".\n");
     run_and_expect(&bin, "42\n");

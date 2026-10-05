@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #130, the register repro: a number field is read back
+ as a number, so a text written into one was stored as its address. It is
+ refused at the write, as for a number variable, and no cast of "hello" is
+ offered, because "hello" is not a number.)
+
+A thing called point has
+  a number called x is 0.
+a point called origin.
+Set origin's x to "hello".
+Print origin's x.

@@ -222,7 +222,7 @@ pub enum Expr {
     Cast {
         value: Box<Expr>,
         target_type: Type,
-        radix: u32, // base for string->integer casts (2, 8, 10, or 16); ignored otherwise
+        radix: u32, // base a radix word names for text->integer casts (2-36), 0 when none; ignored otherwise
     },
     
     // Duration cast (timer's duration in seconds)

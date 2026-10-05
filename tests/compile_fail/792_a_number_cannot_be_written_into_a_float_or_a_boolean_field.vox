@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #130: a number written into a float field was read back
+ as 0.0, and 7 written into a boolean field was stored as 7. Both are
+ refused, as for a variable.)
+
+A thing called point has
+  a number called x is 0,
+  a float called weight is 1.5,
+  a boolean called ready is false,
+  a time called taken.
+a point called origin.
+Set origin's weight to 3.
+Set origin's ready to 7.

@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #130: the same rule for a float. A point needs a
+ digit on each side of it, there is no exponent, a prefixed number has
+ no fraction, and a whole number must fit in a number, as it must when
+ it is written in Vox source.)
+
+a float called ratio is 1.0.
+Set ratio to "." as a float.
+Set ratio to ".5" as a float.
+Set ratio to "3." as a float.
+Set ratio to "1e5" as a float.
+Set ratio to "0x1.5" as a float.
+Set ratio to "9223372036854775808" as a float.

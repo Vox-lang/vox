@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #130: every field is checked like a variable, not only
+ a text one. A float written into a number field was stored as its bits.)
+
+A thing called point has
+  a number called x is 0,
+  a float called weight is 1.5,
+  a boolean called ready is false,
+  a time called taken.
+a point called origin.
+Set origin's x to 2.5.

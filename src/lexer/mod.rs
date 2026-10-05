@@ -8,6 +8,7 @@ pub use tokens::Token;
 #[allow(unused_imports)]
 pub use tokens::RESERVED_ALIASES;
 mod scan;
+pub(crate) mod number_literal;
 mod regions;
 pub use regions::{classify_lines, SourceRegion};
 

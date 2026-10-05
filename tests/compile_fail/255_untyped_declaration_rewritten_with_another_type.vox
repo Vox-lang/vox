@@ -5,5 +5,5 @@
  lock had nothing to check the write against.)
 
 Set zoo to 5.
-Set zoo to "text now".
+Set zoo to "7".
 Print zoo.

@@ -1,0 +1,3 @@
+cannot assign a float to 'origin's x', which is a number
+convert it explicitly:  Set origin's x to 2.5 as a number.
+791_a_float_cannot_be_written_into_a_number_field.vox:10:5

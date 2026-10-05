@@ -13003,7 +13003,7 @@ Segmentation fault         (core dumped)
 
 ### 129. A number field used to initialise a text variable segfaults
 
-**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/compile_fail/794_a_number_field_cannot_initialise_a_text.vox
 
 ```vox
 A thing called point has
@@ -13039,7 +13039,7 @@ error: cannot initialise 'label', which is text, with a number
 
 ### 130. A text written into a number field is stored as its address
 
-**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
+**Status:** fixed in the next release. Regression test: tests/compile_fail/786_a_text_cannot_be_written_into_a_number_field.vox
 
 ```vox
 A thing called point has

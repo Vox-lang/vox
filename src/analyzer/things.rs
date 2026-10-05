@@ -697,19 +697,38 @@ impl Analyzer {
             .map(|field| field.field_type)
     }
 
-    /// `Set note's body to <value>.` on a text field: the slot is read back
-    /// as a pointer to text, so a number, a float or a boolean stored there
-    /// would be dereferenced by the next read. The same rule a text
-    /// variable's own write follows (LANGUAGE.md "Type Immutability"),
-    /// including its exemptions: a buffer is copied into fresh text, and a
-    /// value whose type cannot be proven is let through.
-    pub(crate) fn check_text_field_write(&mut self, base: &str, path: &[String], value: &Expr) {
+    /// `Set origin's x to <value>.` on a field that holds one value: the slot
+    /// is read back as the field's own type, so a value of another type
+    /// stored there is read as the wrong thing - a text's address as a
+    /// number, a float's bits as a number, a number's bits as a float, a
+    /// number as a pointer to text. The same rule a variable's own write
+    /// follows (LANGUAGE.md "Type Immutability"), including its exemptions:
+    /// a buffer is copied into fresh text, and a value whose type cannot be
+    /// proven is let through.
+    pub(crate) fn check_field_write(
+        &mut self,
+        base: &str,
+        path: &[String],
+        declared: &Type,
+        value: &Expr,
+    ) {
         let target = render_chain(base, path);
         let message = if matches!(value, Expr::NothingLit) {
+            let empty = match declared {
+                Type::String => "; \"\" is the empty one",
+                Type::Integer => "; 0 is the empty one",
+                Type::Float => "; 0.0 is the empty one",
+                Type::Boolean => "; false is the empty one",
+                _ => "",
+            };
             format!(
-                "cannot assign nothing to '{}', which is a text\n  \
-                 A text field always holds a text; \"\" is the empty one.",
-                target
+                "cannot assign nothing to '{}', which is a {}\n  \
+                 A {} field always holds a {}{}.",
+                target,
+                self.type_name(declared),
+                self.type_name(declared),
+                self.type_name(declared),
+                empty
             )
         } else {
             let Some(actual) = self
@@ -718,32 +737,48 @@ impl Analyzer {
             else {
                 return;
             };
-            if matches!(
-                actual,
-                Type::String | Type::Buffer | Type::Value | Type::Void | Type::Unknown
-            ) {
+            if matches!(actual, Type::Value | Type::Void | Type::Unknown) {
                 return;
             }
-            // The cast is only offered where the manual documents one into
-            // text, and only when the value can be written back as source.
-            let hint = self.render_value_hint(value);
-            let cast = if matches!(actual, Type::Integer | Type::Float | Type::Boolean)
-                && !hint.contains("<value>")
+            if matches!(declared, Type::String) && matches!(actual, Type::Buffer) {
+                return;
+            }
+            if self.treating_types_compatible(declared, &actual)
+                || self.absent_read_fits(declared, value)
             {
-                format!("\n  convert it explicitly:  Set {} to {} as text.", target, hint)
-            } else {
-                String::new()
+                return;
+            }
+            // The cast is only offered where the manual documents one, only
+            // when the value can be written back as source, and never for a
+            // text the cast itself would refuse.
+            let hint = self.render_value_hint(value);
+            let cast = self
+                .documented_cast_phrase(&actual, declared)
+                .filter(|_| !hint.contains("<value>"))
+                .filter(|_| self.literal_cast_problem(value, declared, 0).is_none())
+                .filter(|_| {
+                    !matches!(declared, Type::String)
+                        || matches!(actual, Type::Integer | Type::Float | Type::Boolean)
+                });
+            let cast = match cast {
+                Some(phrase) => format!(
+                    "\n  convert it explicitly:  Set {} to {} as {}.",
+                    target, hint, phrase
+                ),
+                None => String::new(),
             };
             format!(
-                "cannot assign {} to '{}', which is a text{}",
+                "cannot assign {} to '{}', which is a {}{}",
                 self.typed_phrase(&actual),
                 target,
+                self.type_name(declared),
                 cast
             )
         };
         // The caret goes on the sentence that writes the field, in each of
         // the spellings that write one, not on the thing's declaration.
-        let occurrence = *self.symbol_error_counts.get(base).unwrap_or(&0);
+        // Writes are counted per field, since the patterns name the field.
+        let occurrence = *self.symbol_error_counts.get(&target).unwrap_or(&0);
         let chain = path.join("'s ");
         let patterns = [
             format!("Set {}'s {} to ", base, chain),
@@ -754,7 +789,7 @@ impl Analyzer {
         if let Some(loc) = self.find_bind_site_location(base, &patterns, occurrence, true) {
             err = err.with_location(loc);
         }
-        self.symbol_error_counts.insert(base.to_string(), occurrence + 1);
+        self.symbol_error_counts.insert(target, occurrence + 1);
         self.errors.push(err);
     }
 

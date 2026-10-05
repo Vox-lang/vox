@@ -1,0 +1,10 @@
+(docs/BUGS_FOUND.md #129, the register repro: a number field read into a
+ text variable stored the number as a text pointer, and printing it
+ segfaulted. A field read has its field's type, so this is the refusal a
+ number variable gets.)
+
+A thing called point has
+  a number called x is 7.
+a point called origin.
+a text called label is origin's x.
+Print label.

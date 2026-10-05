@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #130: a number holds -9223372036854775808 to
+ 9223372036854775807, in any spelling, so a text one past either end is
+ not a number. Cast to a number, a decimal's whole part must fit.)
+
+a number called count is 0.
+Set count to "9223372036854775808" as a number.
+Set count to "-9223372036854775809" as a number.
+Set count to "0x8000000000000000" as a number.
+Set count to "99999999999999999999.5" as a number.

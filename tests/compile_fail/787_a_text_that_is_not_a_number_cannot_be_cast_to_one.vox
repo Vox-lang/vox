@@ -1,0 +1,22 @@
+(docs/BUGS_FOUND.md #130: the compiler can read a text literal for itself,
+ and a text is a number only when the whole of it could be written as a
+ number literal in Vox source. None of these could, so each cast could
+ only ever fail.)
+
+a number called count is 0.
+Set count to "hello" as a number.
+Set count to "12 apples" as a number.
+Set count to "1.5x" as a number.
+Set count to "" as a number.
+Set count to "-" as a number.
+Set count to "0x" as a number.
+Set count to "0o8" as a number.
+Set count to "0b2" as a number.
+Set count to "--1" as a number.
+Set count to "1-" as a number.
+Set count to "7 " as a number.
+Set count to " 7" as a number.
+Set count to "+7" as a number.
+Set count to "1e5" as a number.
+Set count to "3." as a number.
+Print count.

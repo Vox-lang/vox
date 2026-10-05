@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #129: a list variable cannot be given a number field.)
+
+A thing called point has
+  a number called x is 7.
+a point called origin.
+a list called readings is [1, 2].
+Set readings to origin's x.

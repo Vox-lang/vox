@@ -1,0 +1,15 @@
+a flag that is not a number raised the error flag
+retries 16, limit kept 8
+a buffer kept 7
+a buffer with words after its digits kept 7
+31
+-2.25
+a hex text kept 31
+255
+-31
+15
+5
+177
+[0o8] as an octal number kept 177
+[0x1F] as a base 10 number kept 177
+[1.5] as a hex number kept 177

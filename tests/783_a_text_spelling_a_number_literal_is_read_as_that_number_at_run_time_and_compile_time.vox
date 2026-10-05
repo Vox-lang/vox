@@ -1,0 +1,61 @@
+(docs/BUGS_FOUND.md #130: what counts as a number, read at run time. A
+ text is a number when the whole of it could be written as a number
+ literal in Vox source, after one optional minus: digits, where a leading
+ zero means nothing, with an optional fractional part, or a whole number
+ after 0x, 0b or 0o. Each of these is a number, so the flag stays down
+ and the value is stored. As a number, a fractional part is dropped, as
+ it is when a float is cast to a number. A number too large to hold is
+ not one, and keeps the old value.)
+
+a number called count is 1.
+a float called ratio is 1.0.
+a text called sample is "-7".
+Set count to sample as a number.
+Print count.
+Set sample to "0234".
+Set count to sample as a number.
+Print count.
+Set sample to "007".
+Set count to sample as a number.
+Print count.
+Set sample to "-0".
+Set count to sample as a number.
+Print count.
+Set sample to "4.8".
+Set count to sample as a number.
+Print count.
+Set ratio to sample as a float.
+Print ratio.
+Set sample to "-2.5".
+Set count to sample as a number.
+Print count.
+Set ratio to sample as a float.
+Print ratio.
+Set sample to "-0x345A".
+Set count to sample as a number.
+Print count.
+Set sample to "0o234".
+Set count to sample as a number.
+Print count.
+Set sample to "0b101".
+Set count to sample as a number.
+Print count.
+Set sample to "0x10".
+Set ratio to sample as a float.
+Print ratio.
+On error print "never printed".
+Set sample to "9223372036854775808".
+Set count to sample as a number.
+On error print "too large, kept {count}".
+
+(A text literal is read by the compiler itself, by the same rule, and
+ the same spellings are number literals in the source: 0o writes octal.)
+
+a number called padded is "0234" as a number.
+a number called signed is "-0x345A" as a number.
+a number called truncated is "4.8" as a number.
+a float called sixteen is "0x10" as a float.
+a number called prefixed is "0x1F" as a hex number.
+a number called octal is 0o234.
+a number called fifteen is 0O17.
+Print "{padded} {signed} {truncated} {sixteen} {prefixed} {octal} {fifteen}".

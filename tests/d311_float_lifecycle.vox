@@ -1,9 +1,16 @@
 (Regression test: a failed float cast sets _last_error, but a later
-successful float cast clears it so a subsequent On error does not fire.)
+successful float cast clears it so a subsequent On error does not fire.
+The texts are read at run time: a literal that is not a number is refused
+by the compiler.)
 
-A float called bad is "not a float" as a float.
+a text called word is "not a float".
+a text called other is "also bad".
+a text called digits is "3.14".
+A float called bad is word as a float.
 On error print "first".
 
-A float called bad2 is "also bad" as a float.
-A float called good is "3.14" as a float.
+A float called bad2 is other as a float.
+A float called good is digits as a float.
 On error print "second".
+Print bad.
+Print good.

@@ -1,0 +1,13 @@
+cannot cast "zz" to a hex number: it holds a character that is not a digit of its base
+a hex number is written as an optional '-' and hex digits, after an optional 0x
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:7:14
+cannot cast "0x" to a hex number: it has no digit of its base
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:8:14
+cannot cast "1.5" to a hex number: it holds a character that is not a digit of its base
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:9:14
+cannot cast "0o8" to an octal number: it holds a character that is not a digit of its base
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:10:14
+cannot cast "2" to a binary number: it holds a character that is not a digit of its base
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:11:14
+cannot cast "0x1F" to a base 10 number: it holds a character that is not a digit of its base
+789_a_text_that_is_not_digits_of_its_base_cannot_be_cast_to_a_number_in_that_base.vox:12:14

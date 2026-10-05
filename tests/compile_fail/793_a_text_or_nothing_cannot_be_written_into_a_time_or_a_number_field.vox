@@ -1,0 +1,11 @@
+(docs/BUGS_FOUND.md #130: a text written into a time field was stored as its
+ address, and a number field always holds a number, so nothing is refused.)
+
+A thing called point has
+  a number called x is 0,
+  a float called weight is 1.5,
+  a boolean called ready is false,
+  a time called taken.
+a point called origin.
+Set origin's taken to "noon".
+Set origin's x to nothing.

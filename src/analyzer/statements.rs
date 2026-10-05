@@ -478,15 +478,22 @@ impl Analyzer {
                         let target = things::render_chain(base, path);
                         self.check_thing_copy(&target, base, &inner, value);
                     }
-                    Some(Type::String) => {
+                    Some(
+                        declared @ (Type::Integer
+                        | Type::Float
+                        | Type::Boolean
+                        | Type::Time
+                        | Type::String),
+                    ) => {
                         // A value that already named its own problem (a
                         // text field in arithmetic, which is what
-                        // `increment note's body.` becomes) needs no second
+                        // `increment note's body.` becomes, or a cast of a
+                        // text that is not a number) needs no second
                         // message about where it was going.
                         let reported_before = self.errors.len();
                         self.analyze_expr(value);
                         if self.errors.len() == reported_before {
-                            self.check_text_field_write(base, path, value);
+                            self.check_field_write(base, path, &declared, value);
                         }
                     }
                     _ => self.analyze_expr(value),

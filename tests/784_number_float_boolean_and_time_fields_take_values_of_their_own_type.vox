@@ -1,0 +1,24 @@
+(docs/BUGS_FOUND.md #130: the field type check refuses only a value of
+ another type. A value of the field's own type, a converted one, another
+ field of the same type, and a time into a time field are all written.)
+
+A thing called measurement has
+  a number called count is 0,
+  a float called level is 0.0,
+  a boolean called ready is false,
+  a time called taken,
+  a text called label is "12".
+
+a measurement called sample.
+a measurement called duplicate.
+Set sample's count to sample's label as a number.
+Set sample's level to sample's count as a float.
+Set sample's ready to true.
+a time called now is current time.
+Set sample's taken to now.
+Set duplicate's count to sample's count.
+Print sample's count.
+Print sample's level.
+If sample's ready then, print "ready".
+Print duplicate's count.
+If sample's taken is now then, print "the time is kept".

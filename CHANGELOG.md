@@ -14,6 +14,22 @@ adheres to [Semantic Versioning](https://semver.org/).
   never shares its text with the original, so changing a text field in
   one copy is never seen in another. A write of a number, a boolean or
   `nothing` into a text field is refused at the write. (#103)
+- **Octal number literals.** `0o17` is 15, beside `0x` hex and `0b`
+  binary; the prefix letter may be a capital. (#130)
+
+### Fixed
+- **A field is type-checked exactly like a variable, both ways, and a
+  text is a number exactly when it is written as one.** Writing a text, a
+  float, a number or `nothing` into a number, float, boolean or time field
+  of another type is a compile error, where it used to store an address or
+  raw bits; reading a number, float or boolean field into a text, a list,
+  a text parameter or a text return is refused the same way, where it used
+  to segfault. A text or buffer cast to a number or a float is a number
+  when the whole text could be written as a number literal in Vox source
+  (`"0234"`, `"-2.5"`, `"-0x345A"`, `"0o17"`), and `"12 apples"` is not
+  one. A text literal that is not a number is a compile error, and a text
+  read at run time that is not a number raises the error flag and leaves
+  the destination as it was. (#129, #130)
 
 ### Changed
 - **The compiler now builds with no third-party crates.** The unused

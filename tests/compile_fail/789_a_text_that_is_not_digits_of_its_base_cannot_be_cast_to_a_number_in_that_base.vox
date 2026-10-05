@@ -1,0 +1,12 @@
+(docs/BUGS_FOUND.md #130: in another base the digits are that base's,
+ after that base's own prefix when it has one: 0x for hex, 0o for
+ octal, 0b for binary. A text holding anything else is not a number in
+ that base.)
+
+a number called count is 0.
+Set count to "zz" as a hex number.
+Set count to "0x" as a hex number.
+Set count to "1.5" as a hex number.
+Set count to "0o8" as an octal number.
+Set count to "2" as a binary number.
+Set count to "0x1F" as a base 10 number.

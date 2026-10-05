@@ -148,7 +148,8 @@ impl CodeGenerator {
         {
             result.push_str(&format!("%include \"coreasm/{}/resource_render.asm\"\n", self.target_arch));
         }
-        if self.uses_ints {
+        // float.asm reads a whole number in a text through int.asm's reader.
+        if self.uses_ints || self.uses_floats {
             result.push_str(&format!("%include \"coreasm/{}/int.asm\"\n", self.target_arch));
         }
         if self.uses_floats {
@@ -283,6 +284,12 @@ impl CodeGenerator {
     }
 
     fn generate_statement(&mut self, stmt: &Statement) {
+        let outer_marker = self.begin_cast_failure_marker(stmt);
+        self.generate_statement_body(stmt);
+        self.cast_failure_marker = outer_marker;
+    }
+
+    fn generate_statement_body(&mut self, stmt: &Statement) {
         match stmt {
             // A thing definition is compile-time only: it names a layout,
             // allocates nothing, and emits no instructions. Storage is
@@ -333,6 +340,10 @@ impl CodeGenerator {
                 // writes the global BSS mirror directly, matching the read
                 // path's local-then-global resolution.
                 let had_existing_slot = self.variables.contains_key(name);
+                // A write to a name that already holds a value, rather than
+                // the one that brings it into being: what a failed cast of a
+                // text to a number leaves standing (casts.rs).
+                let rewrites_a_value = var_type.is_none() && self.variable_types.contains_key(name);
                 let target = if had_existing_slot {
                     // A local slot already exists (branch-declared name, loop
                     // variable, function parameter, or local shadow).
@@ -777,6 +788,10 @@ impl CodeGenerator {
                         }
                         self.emit_dynamic_value_collection_guard(val, cast_slot_type);
                         self.emit_empty_value_if_missed(val, slot_type);
+                        if !is_text_target && !is_value_var {
+                            let kept = rewrites_a_value.then(|| target.operand());
+                            self.emit_keep_value_if_cast_failed(kept.as_deref());
+                        }
                         // docs/BUGS_FOUND.md #108: a global `freeable_texts`
                         // text frees the string it replaces (see
                         // `emit_owned_text_global_store`'s doc comment for
@@ -967,6 +982,9 @@ impl CodeGenerator {
                         // #91, the assignment half of the declaration guard.
                         self.emit_empty_value_if_missed(
                             value, self.variable_types.get(name).cloned());
+                        if !is_value_local {
+                            self.emit_keep_value_if_cast_failed(Some(&format!("[rbp-{}]", offset)));
+                        }
                         self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                         // Reassigning a `value` local must update its shadow tag
                         // slot too, or the runtime tag would go stale.
@@ -1042,6 +1060,9 @@ impl CodeGenerator {
                         if is_text_write && self.freeable_texts.contains(name) {
                             self.emit_owned_text_global_store(name, &label, value);
                         } else {
+                            if self.variable_types.get(name) != Some(&VarType::Mixed) {
+                                self.emit_keep_value_if_cast_failed(Some(&format!("[rel {}]", label)));
+                            }
                             self.emit_indent(
                                 &format!("mov [rel {}], rax", label));
                         }
@@ -1070,6 +1091,7 @@ impl CodeGenerator {
                     // creates it (docs/BUGS_FOUND.md #95).
                     self.declare_untyped_from_value(name, value);
                     self.generate_expr(value);
+                    self.emit_keep_value_if_cast_failed(None);
                     let offset = self.alloc_var(name);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                 }

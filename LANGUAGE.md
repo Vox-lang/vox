@@ -606,23 +606,23 @@ silent retype.
 
 ```vox fragment
 a number called n is 5.
-n is "abc".              (compile error: cannot assign text to 'n', which is a number)
+n is "42".               (compile error: cannot assign text to 'n', which is a number)
 n is "42" as a number.   (OK: n is now 42)
 ```
 
 The error names the variable, its declared type and where it was declared,
 the type of the value that doesn't match, and the exact cast that would fix
-it:
+it, when there is one (a text that is not a number has none):
 
 ```text
 error: cannot assign text to 'n', which is a number
   --> prog.vox:2:1
    |
- 2 | n is "abc".
+ 2 | n is "42".
    | ^ this assigns text
    |
   note: 'n' was declared as a number at prog.vox:1:17
-  help: convert it explicitly:  n is "abc" as a number.
+  help: convert it explicitly:  n is "42" as a number.
 ```
 
 Convert explicitly with [Type Casting](#type-casting) (`as a number` / `as
@@ -997,6 +997,10 @@ as every other field (below): a copy of the thing never shares its text
 with the original, and a text field with no default holds the empty
 text `""`. `list`, `map`, and `buffer` are not field types: each can be
 changed in place, so two copies of a thing holding one would share it.
+A field's type is fixed by the definition, as a variable's is by its
+declaration: writing a value of another type into a field, or reading a
+field into a variable of another type, is the compile error
+[Type Immutability](#type-immutability) describes, and `as` converts.
 
 #### The article rule
 
@@ -1937,15 +1941,20 @@ deferred. Things live in the compile-time type table, not the runtime tag.
 | Boolean | `true`, `false` |
 | Hexadecimal | `0xFF`, `0xDEADBEEF` |
 | Binary | `0b10110100`, `0b1111` |
+| Octal | `0o17`, `0o755` |
 | Character | `'A'`, `'!'` |
 
 **Note:** Float literals are recognized by the presence of a decimal point. Floats and integers can be mixed in arithmetic expressions.
 
 **Note:** Arithmetic operates on numbers (booleans count as 0/1). Text, buffers, and lists must be cast with `as a number` or `as a float` before they can be used in arithmetic - using them directly is a compile error, since they hold pointers rather than numeric values.
 
-**Hex and Binary:**
+**Hex, Binary and Octal:**
 - Hexadecimal literals use `0x` prefix: `0xFF` equals 255
 - Binary literals use `0b` prefix: `0b1010` equals 10
+- Octal literals use `0o` prefix: `0o17` equals 15
+- The prefix letter may be a capital (`0X1F`, `0B1`, `0O17`), and so may a
+  hex digit
+- A leading zero without a prefix means nothing: `0234` equals 234
 - Character literals use single quotes: `'A'` equals 65
 
 ### Variable Reference
@@ -2146,11 +2155,14 @@ a text called upper is "FF".
 a number called n5 is upper as a hex number. (255)
 ```
 
-Like the base-10 case, parsing **stops at the first character invalid
-for that base** rather than raising an error - `"12g5" as a hex number`
-gives `18` (stops at `g`), and a string that's invalid from its very
-first character (e.g. `"abc" as a base5 number`, since `a`'s value of
-10 is too big for base 5) gives `0`.
+A radix cast reads **the whole text as digits of that base**, after an
+optional `-` and, for base 16, 8 and 2, an optional `0x`, `0o` or `0b`
+prefix: `"0x1F" as a hex number` is `31`, `"0o17" as an octal number` is
+`15`. Any other character makes the text not a number in that base:
+`"12g5" as a hex number` (`g` is not a hex digit), `"abc" as a base5
+number` (`a`'s value of 10 is too big for base 5), and `"0x1F" as a base
+10 number` (a prefix belongs to its own base) are not numbers; see the
+Casting Rules below for what follows.
 
 **Examples:**
 
@@ -2208,12 +2220,41 @@ Print the hpadded.  (prints "09")
 - Float to number **truncates** (does not round)
 - To round: add 0.5 before casting (`{3.7 add 0.5} as a number` → `4`)
 - Text, buffers, and lists cannot be used directly in arithmetic; cast them with `as a number` / `as a float` first
-- Text to number fails if text is not a valid number (sets error flag)
-- Text to number in a non-default base (`as a hex/octal/binary/base N
-  number`) stops parsing at the first character invalid for that base,
-  rather than failing outright - it does not set the error flag
+- **A text is a number** when the whole text could be written as a number
+  literal in Vox source (see [Literals](#literals)), after one optional
+  `-`: decimal digits, where a leading zero means nothing (`"0234"` is
+  `234`), with an optional fractional part (`"4.8"`, `"-2.5"`), or a whole
+  number after `0x`, `0b` or `0o` (`"-0x345A"` is `-13402`, `"0o234"` is
+  `156`, `"0b101"` is `5`). Nothing else may be in the text: `"12 apples"`,
+  `"1.5x"`, `"1e5"`, `"+7"`, `" 7"`, `"7 "`, `"3."`, `".5"`, `"0x"`, `"-"`
+  and the empty text `""` are not numbers.
+- `as a number` of a text with a fractional part keeps the whole part and
+  drops the fraction, as a float cast to a number does: `"4.8" as a
+  number` is `4`, `"-2.5" as a number` is `-2`. The whole number must fit
+  in a number (-9223372036854775808 to 9223372036854775807), in any
+  spelling.
+- `as a float` reads the same texts: `"4.8" as a float` is `4.8`, `"0x10"
+  as a float` is `16.0`. A text with no fractional part is a whole number,
+  so it must fit in a number, as it must when written in the source.
+- A buffer cast to a number or a float is read exactly as a text.
+- A text literal that is not a number cannot be cast to one: `"hello" as
+  a number` is a compile error, because the compiler can read the text for
+  itself.
+- A text known only when the program runs (a variable, a field, a buffer,
+  a line of input, a `value` holding text) that is not a number raises the
+  error flag, and the sentence that stores the cast changes nothing: the
+  destination keeps the value it had, and a declaration holds its type's
+  default (`0`, `0.0`). A `value` retyped in place (`answer is a number.`)
+  keeps its text. A text that is a number clears the flag.
 - Zero is `false`, any non-zero number is `true`
 - `in` keyword is for timer `duration`/`elapsed` casts (see above)
+
+```
+a text called reply is "hello".
+a number called count is 5.
+Set count to reply as a number.
+On error print "not a number, so count is still {count}".
+```
 
 ---
 
@@ -2816,8 +2857,10 @@ To bump with a value called v. Return a number, v add 1.
 variable's type is fixed forever, but `value` is deliberately not one. The
 statement `<valuevar> is a <type>.` reads the variable's runtime tag,
 performs the conversion that the corresponding static cast would use, and
-stores the result back into the same variable with the new tag. This works
-for `number`, `float`/`decimal`, `text`, and `boolean` targets:
+stores the result back into the same variable with the new tag. A text
+that is not a number leaves the variable as it was, with the error flag
+raised (see the Casting Rules). This works for `number`,
+`float`/`decimal`, `text`, and `boolean` targets:
 
 ```
 a value called numstr is "357".
@@ -4880,7 +4923,9 @@ Supported flag value types:
 
 - `boolean` (presence sets true)
 - `text` (consumes the next token as text)
-- `number` (consumes the next token and parses it as a number)
+- `number` (consumes the next token and reads it as a number, by the
+  rule under "Casting Rules"; a token that is not a number leaves the flag
+  holding its default and raises the error flag)
 
 #### 2) Optional schema modifiers
 

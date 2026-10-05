@@ -1,0 +1,13 @@
+cannot cast "." to a float: it does not begin with a digit
+a number is written as it would be in Vox source, after an optional '-'
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:7:14
+cannot cast ".5" to a float: it does not begin with a digit
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:8:14
+cannot cast "3." to a float: the text goes on after the number
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:9:14
+cannot cast "1e5" to a float: the text goes on after the number
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:10:14
+cannot cast "0x1.5" to a float: the text goes on after the number
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:11:14
+cannot cast "9223372036854775808" to a float: it is too large for a number
+788_a_text_that_is_not_a_float_cannot_be_cast_to_one.vox:12:14

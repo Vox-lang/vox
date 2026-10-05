@@ -42,11 +42,14 @@ Set byte 3 of buf2 to '5'.
 Set f7 to buf2 as a float.
 Print f7.
 
-(Degenerate inputs must not crash)
+(Degenerate inputs must not crash. Neither is a number: the error flag
+ goes up and the float keeps its declaration's 0.0.)
 A text called emptystr is "".
 Set f8 to emptystr as a float.
+On error print "the empty text is not a number".
 Print f8.
 
 A text called trailing is "5.5abc".
 Set f9 to trailing as a float.
+On error print "5.5abc is not a number".
 Print f9.
