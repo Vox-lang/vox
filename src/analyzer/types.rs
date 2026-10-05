@@ -1366,9 +1366,8 @@ explicitly:  a {} called {} is {} as {}.",
     ///
     /// And permissive in four places of its own:
     /// - **`number` and `float` are one family.** The language designer's
-    ///   ruling (Josj, 2026-08-21): "in human language we call 1 a number
-    ///   and pi a number; it should be the same in Vox - dynamic casting as
-    ///   and when needed". So `a number called n is 3.5.` keeps the 3.5,
+    ///   ruling (TheJostler, 2026-08-21): in human language 1 and pi are both
+    ///   numbers, so Vox converts dynamically as and when needed. So `a number called n is 3.5.` keeps the 3.5,
     ///   and `a float called ratio is 3.` takes the 3 - converted to 3.0 at
     ///   the store (codegen's `VarDecl` arm), not stored as raw integer bits
     ///   for the next read to render as `0.0`. The type lock still refuses

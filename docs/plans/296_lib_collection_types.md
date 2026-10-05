@@ -1,7 +1,7 @@
 # Plan 296 — full type-vocabulary parity for parameters and return types,
 # on ordinary Vox functions and across the `.lib` boundary
 
-**Status:** specced 2026-08-08, rescoped 2026-08-09 (two owner steering
+**Status:** specced 2026-08-08, rescoped 2026-08-09 (two owner direction
 messages, both folded in below). Baseline measurements below are against
 `23bc193` (v0.3.3).
 
@@ -217,7 +217,7 @@ but never seeds its environment with that function's own **parameters** —
 so any list built through a parameter (appended-to as an out-param, or
 returned after being appended-to) is invisible to the same inference that
 already works for a list built and printed within one straight-line scope.
-This plan does not fix it: the two steering messages scoped element-typing
+This plan does not fix it: the two direction messages scoped element-typing
 fixes to "the boundary" (the `.lib` case) specifically, and a general fix
 to the pre-scan's parameter-seeding is a larger, independent change with
 its own blast radius across every function call in the language, not just
@@ -281,7 +281,7 @@ deliberately unspellable (see judgment calls above).
 - **Never `--no-gpg-sign`.** Hardware key; a hanging commit is waiting for a
   human.
 - **No `Co-Authored-By:` trailers.**
-- **Do not spawn workers.** You are the worker.
+- **Do not delegate further.** Do the work directly.
 - Commit incrementally so the owner can review as you go.
 
 ## Reporting

@@ -1469,7 +1469,7 @@ fn walk_widened_lists(stmts: &[Statement], out: &mut std::collections::HashSet<S
 /// read anywhere disables freeing for that name EVERYWHERE, including at a
 /// `Set` that executes before the retaining read ever runs. The cost is a
 /// missed free; offering one anyway would risk a use-after-free, which is
-/// worse than the leak this fix exists to close (master's ruling,
+/// worse than the leak this fix exists to close (TheJostler's ruling,
 /// docs/BUGS_FOUND.md #108).
 ///
 /// A read inside a format string's `{name}` interpolation is NOT collected -

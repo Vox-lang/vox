@@ -110,11 +110,9 @@ Watch the boundary cases while deciding:
    reachable and cross-reference each way), status fixed, naming the tests.
    CHANGELOG `Unreleased`/`Fixed` entry.
 
-## Verification the master will run (for your awareness)
+## Verification that will be run
 
-The red team's PoC lives at
-`~/.local/state/agent-worker/vox-redteam-304/arena/findings/01-.../poc.sh`.
-After your commit the master re-runs it against the new commit and it must flip
+The red team's PoC is re-run against the new commit and it must flip
 from REPRODUCED to NOT REPRODUCED. A green `./test.sh` is necessary but not
 sufficient — the PoC flip is the proof.
 

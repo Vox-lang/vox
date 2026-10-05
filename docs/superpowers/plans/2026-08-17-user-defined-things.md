@@ -1,6 +1,5 @@
 # User-Defined Things Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement plan 310 — user-defined composite types (`A thing
 called point has ...`) with value semantics, unlimited nesting, manifest
@@ -60,7 +59,7 @@ The showcase file mirrors it with runnable-shaped examples.
   shapes go in `src/compile_fail_tests.rs` following its existing
   pattern.
 - Any pre-existing compiler bug uncovered while testing is a dogfood
-  finding: report it to the master, do not fix it in this branch.
+  finding: report it to the maintainer, do not fix it in this branch.
 
 ## File Structure
 
@@ -755,13 +754,12 @@ git add -A && git commit -m "docs(things): LANGUAGE.md chapter, changelog, vscod
 
 ---
 
-## Execution notes for the master
+## Execution notes
 
-- Worker assignment per the delegation policy: Tasks 1, 2, and 5 are the
+- Tasks 1, 2, and 5 are the
   subtle parser/analyzer work (sentence-shape lookaheads, possessive
-  chain resolution, manifest checking) — Opus 5 agent-workers. Tasks 3,
-  4, 6 are pattern-following codegen — Ollama vox-workers with Opus
-  escalation if frame conventions bite. Tasks 7–8 — Ollama vox-workers.
+  chain resolution, manifest checking). Tasks 3,
+  4, 6 are pattern-following codegen. Tasks 7–8 are routine.
 - Review gate between every task; a task is accepted only with the full
   gate green and the diff read.
 - Red-team pass after Task 6: attack copy semantics (aliasing via

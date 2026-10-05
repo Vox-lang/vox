@@ -1,4 +1,4 @@
-(docs/BUGS_FOUND.md #108 aliasing probe, found in master review before this
+(docs/BUGS_FOUND.md #108 aliasing probe, found in review before this
  fix shipped: `src as text` on an ALREADY-text `src` is a bare pointer
  pass-through in codegen (`generate_expr`'s Cast/String branch leaves a
  text source untouched, LANGUAGE.md's Basic Conversions table), so

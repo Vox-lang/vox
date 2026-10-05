@@ -704,7 +704,7 @@ impl CodeGenerator {
     /// `emit_copy_if_collection_reg`, reading the runtime tag out of a
     /// `byte`-sized memory operand first (a mixed shadow-tag slot, e.g.
     /// `"[rbp-24]"`) - docs/BUGS_FOUND.md #111. Uses r9d as the scratch
-    /// register for the loaded tag, which nothing at any of this brief's
+    /// register for the loaded tag, which nothing at any of its
     /// call sites depends on afterward.
     pub(crate) fn emit_copy_if_collection_mem(&mut self, tag_operand: &str) {
         self.emit_indent(&format!(

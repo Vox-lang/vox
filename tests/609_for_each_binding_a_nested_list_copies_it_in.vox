@@ -1,6 +1,6 @@
 (docs/BUGS_FOUND.md #111. `For each x in outer` binding x to a nested
  list yields a copy - one of the four forms the ruling names by name.
- The analyzer does not (yet, independent of this brief) accept a for-each
+ The analyzer does not (yet, independent of this fix) accept a for-each
  loop variable as a direct `Set element N of`/`append ... to` target, so
  this isolates the binding itself instead: aliasing x into `snapshot` via
  a plain `Set` (untouched by #111 - plain variable assignment stays a

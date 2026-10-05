@@ -11,7 +11,7 @@ instead, since they're worth knowing about even though they aren't compiler bugs
 ## How an entry enters this register
 
 Every entry is re-run against current `main` immediately before it is filed, and records the
-commit it was re-verified at. Candidates can wait in `vox-notes` while the compiler moves on,
+commit it was re-verified at. Candidates can wait while the compiler moves on,
 so the check that decides an entry is the one made at filing time.
 
 ---
@@ -1229,10 +1229,10 @@ should set the error flag and yield empty text, catchable by
 ### 27. A period never closes a `Repeat` body — following statements are silently absorbed into the loop
 
 **Status:** **fixed in v0.4.6.** Found 2026-08-19 against
-released v0.4.5. Surfaced by a vox-fuzz worker hand-verifying loop syntax
+released v0.4.5. Surfaced by vox-fuzz hand-verifying loop syntax
 for plan 323; its own characterisation ("a `While` containing another loop
 cannot be closed") did not reproduce, and the real defect was localised by
-the master.
+reading the generated assembly.
 
 `Repeat` is the only loop construct whose body a period fails to close.
 The statement after it is silently pulled inside the loop and re-runs on
@@ -1332,10 +1332,9 @@ passed / 0 failed — the eight fixed tests, no regressions.
 
 **Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`
 (post-#27). Surfaced
-by a vox-fuzz generator worker whose generated program hit it through a
-name collision; hand-reduced by that worker to a form with nothing
-fuzzer-specific left, then independently reproduced and characterised by
-the master.
+by a vox-fuzz generator whose generated program hit it through a
+name collision; hand-reduced to a form with nothing
+fuzzer-specific left, then independently reproduced and characterised.
 
 ```vox
 a number called n is 0.
@@ -1375,9 +1374,9 @@ silently fine whenever the guard happens to be true, which is the worst
 possible failure pattern for anyone trying to reproduce it.
 
 
-**CORRECTION (master, 2026-08-19, after reviewing the regression tests).**
+**CORRECTION (2026-08-19, after reviewing the regression tests).**
 My original matrix understated the reach of this bug in two places, and
-the fix worker found shapes I had not tried:
+the fix found shapes not tried in the first matrix:
 
 - **`Repeat 0 times` is not immune.** Closing its body with a *period*
   survives; closing it with a **blank line** segfaults. My "the odd one
@@ -1394,7 +1393,7 @@ string-initialised declaration reusing a name whose only prior
 allocation sat on a path that did not run — the enclosing construct and
 the *earlier* declaration's form are both incidental.
 
-**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19 (master).**
+**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19.**
 Not a guess: `vox --emit-asm` on the crashing program shows it exactly.
 
 ```asm
@@ -1446,7 +1445,7 @@ diagnosis.
 **Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`
 (post-#27/#28).
 Found by the vox-fuzz generator red team; reproduced and characterised
-by the master. **This is [#19](#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision)'s
+independently. **This is [#19](#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision)'s
 family, and #19 is marked fixed in v0.4.4 — the list-literal path was
 missed.**
 
@@ -1492,7 +1491,7 @@ string literals never spell an identifier, and its lists are never
 nested nor printed whole. Three coverage gaps intersect exactly here.
 The fuzzer did not look and find nothing — it could not look.
 
-**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19 (master).**
+**ROOT CAUSE — diagnosed from the emitted assembly, 2026-08-19.**
 
 Compiling the colliding and non-colliding programs and diffing the
 assembly isolates it to a single instruction — the list slot's **type
@@ -1545,8 +1544,8 @@ demonstrated bug-finding shape and costs almost nothing to add.
 ### 30. A buffer initialised from a string literal copies a same-named buffer instead — silently
 
 **Status:** **fixed in v0.4.6.** Found 2026-08-19 against `main`.
-Found by the
-master while locating #29's code site; same family as #19/#29.
+Found while
+locating #29's code site; same family as #19/#29.
 
 ```vox
 a buffer called hello is "SURPRISE".
@@ -1803,9 +1802,9 @@ unfixed compiler on exactly the large-magnitude rows (`over`, `negover`,
 rounding control (`roundctrl`) kept passing on both sides of the fix.
 Found 2026-08-20 against released v0.4.6. Found
 while probing which literal magnitudes are legal before teaching
-vox-fuzz to emit aggressive ones (Josj: *"I wanna see
-1243626351836374761.1224435542121323 ... I wanna make the compiler AND
-the runtime cry"*). The first extreme value tried reproduced it.
+vox-fuzz to emit aggressive ones (TheJostler asked for extreme values such as
+1243626351836374761.1224435542121323 to be tried against the compiler and
+the runtime). The first extreme value tried reproduced it.
 
 ```vox
 a float called over is 10000000000000000000.0.
@@ -1967,7 +1966,7 @@ exactly the float/text/buffer rows, with the two-texts control printing
 two different addresses (4210950/4210953). Found 2026-08-20 against
 released v0.4.6. The
 float half was found by a red-team agent attacking documented-but-
-unexercised surfaces; the master reproduced it independently and the
+unexercised surfaces; it was reproduced independently and the
 controls below widened it to `text`, which is the worse half.
 
 ```vox
@@ -2057,8 +2056,8 @@ exactly the writing/appending `readable` rows (both wrongly printed 1);
 the `writable` rows on both sides of the fix, and the constant
 `permissions` value across all three rows, are the controls. Found
 2026-08-20 against released v0.4.6 by the same red-team agent that found
-#36, after being steered off format strings onto the file-property
-surface. Reproduced independently by the master, whose controls
+#36, after being pointed away from format strings onto the file-property
+surface. Reproduced independently, and the controls
 narrowed the claim: it is `readable` alone, not the property pair.
 
 ```vox
@@ -2117,8 +2116,8 @@ matrix above only covers the three modes LANGUAGE.md documents.
 
 **Status:** **fixed**, found 2026-08-20 against released v0.4.6 by the
 red-team agent on the file-property surface, alongside #37. Reproduced
-by the master, who tested the whole table rather than the one property.
-Closed 2026-08-21 by master ruling (with the language designer's
+independently, testing the whole table rather than the one property.
+Closed 2026-08-21 by ruling (with the language designer's
 delegated judgment): **option 3** below — the row is removed and
 LANGUAGE.md now documents the existing `On error` idiom in its place,
 with a worked example covering both an existing and a missing path.
@@ -2188,9 +2187,9 @@ question nobody asks.
 
 ### 39. A format string as the FIRST element of an inline collection makes every element print as a raw pointer
 
-**Status:** **fixed in v0.4.7.** Found 2026-08-20 by an Opus
-worker hand-verifying every format-string shape before writing an emitter
-for it. Reproduced independently by the master, including the ASLR proof
+**Status:** **fixed in v0.4.7.** Found 2026-08-20 while
+hand-verifying every format-string shape before writing an emitter
+for it. Reproduced independently, including the ASLR proof
 below.
 
 ```vox
@@ -2370,7 +2369,7 @@ should put on disk, and whether a float follows the `"{x}"` formatter),
 deliberately not taken here, and LANGUAGE.md now states the rule the
 compiler enforces.
 
-**A `value` operand is refused too** (master review). It is the same
+**A `value` operand is refused too** (found in review). It is the same
 defect wearing a runtime tag: `a value called gap is nothing. Write gap
 to out.` segfaulted, a value holding a number segfaulted, and a value
 holding text happened to write correctly. The compiler cannot tell those
@@ -2473,10 +2472,9 @@ alternative — making the text keep the buffer alive — does not fix the
 aliasing half, where `t1` changes because the buffer was rewritten, and
 that is a correctness bug in its own right. A copy fixes both.
 
-**How it was found:** a worker writing the invariant-detector tool in
-Vox needed to read lines from a file into a list, hit behaviour it could
-not explain, and started probing whether `as text` aliased. The master
-reproduced it and found the dangling case. Worth noting that this came
+**How it was found:** the invariant-detector tool, written in
+Vox, needed to read lines from a file into a list, hit behaviour it could
+not explain, and probing showed `as text` aliased. Reproducing it found the dangling case. Worth noting that this came
 from *writing an ordinary program in Vox*, not from fuzzing — the third
 such find today, after #40 and the format-string bugs.
 
@@ -2486,7 +2484,7 @@ such find today, after #40 and the format-string bugs.
 
 **Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz
 buffer claim ledger — the mapper hand-ran every property in the manual's
-table and this one disagreed; adjudicated by the language lawyer as a
+table and this one disagreed; judged as a
 compiler bug before anything was filed.
 
 ```vox
@@ -2553,8 +2551,8 @@ Regression test: `tests/value_conditional_return.vox`, proven to
 segfault (139, no output at all) on unfixed `origin/main` and to pass
 after. Found 2026-08-20 by the vox-fuzz VALUES claim ledger mapping,
 discrepancy D1 — a mapper probing the manual's own limitation in the
-direction the manual did not show; adjudicated a compiler bug by the
-language lawyer.
+direction the manual did not show; confirmed a compiler bug against
+the manual.
 
 ```vox
 To label with a value called v.
@@ -2663,8 +2661,8 @@ a language decision and it belongs to whoever owns the spec.
 
 ### 51. A text initialised from a buffer WITHOUT the cast (`a text called t is b.`) points at the buffer's header and prints its capacity byte
 
-**Status:** **fixed** (this branch), found 2026-08-20 by the vox-41 fix
-worker probing sibling forms of bug #41. Silent wrong data: one character
+**Status:** **fixed** (this branch), found 2026-08-20 while fixing #41 and
+probing sibling forms of it. Silent wrong data: one character
 where a whole line of text was expected, with no warning and no error.
 Adjudicated by the language designer (TheJostler, 2026-08-21), who ruled
 **option 1, copy**: helpful by default — the bare spelling means what `as
@@ -2749,7 +2747,7 @@ called buf is "Hello".` copies the text's bytes into the buffer rather
 than retyping `buf`.
 
 **The sibling write sites, all of which had the same defect.** The
-register found the declaration; the fix worker found four more ways to
+register found the declaration; the fix found four more ways to
 land a cast-free buffer in a text slot, and every one of them stored the
 struct pointer:
 
@@ -2813,7 +2811,7 @@ the type lock above only guards *writes to an already-declared name* — so
 a number initializer lands in a text slot and the first read dereferences
 `5`. It is a different bug from this one (this entry is about a
 conversion the language defines; that is about a mismatch it does not),
-it was outside this branch's brief, and it wanted its own register entry:
+it was outside this branch's scope, and it wanted its own register entry:
 it got one, and its fix — see **### 65.** below.
 
 ---
@@ -2823,7 +2821,7 @@ it got one, and its fix — see **### 65.** below.
 **Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz files
 claim ledger — the mapper hand-ran the manual's Seeking rules against a file
 whose lines were all different lengths, so the landing line could not be
-mistaken; adjudicated by the language lawyer as a compiler bug before
+mistaken; judged as a compiler bug before
 anything was filed.
 
 ```vox
@@ -2871,15 +2869,15 @@ and then walks a single handle out of order, forward to line 5, back to line
 3, and past the end, which is what shows the seek is absolute rather than a
 scan that happens to accumulate. Both shapes fail on `origin/main`.
 
-**How it was found:** vox-fuzz files claim ledger discrepancy D3, adjudicated
-by the language lawyer.
+**How it was found:** vox-fuzz files claim ledger discrepancy D3, checked
+against the manual.
 
 ---
 
 ### 48. A failing `Write` never sets the error flag, and `Read from` a dead handle sets nothing while `Read line from` sets it
 
 **Status:** **fixed** (0.4.8), found 2026-08-20 by the vox-fuzz files
-claim ledger; adjudicated by the language lawyer as a compiler bug (D4) with
+claim ledger; judged as a compiler bug (D4) with
 the read-side inconsistency (D5) folded into it.
 
 ```vox
@@ -2939,7 +2937,7 @@ all three forms, the read-only handle, the closed handle, both read forms and a
 successful write does **not** fire the handler.
 
 **How it was found:** vox-fuzz files claim ledger discrepancies D4 and D5,
-adjudicated by the language lawyer.
+checked against the manual.
 
 ---
 
@@ -2957,7 +2955,7 @@ routine `Print` uses in every sink. Regression tests
 `tests/373_quoted_list_name_in_a_format_string.vox`, all six proven to
 print heap addresses on unfixed `main` and to pass after, each stable over
 three consecutive runs. Found 2026-08-20 by the vox-fuzz collections-a
-claim ledger (discrepancy D7) and adjudicated by the language lawyer.
+claim ledger (discrepancy D7) and checked against the manual.
 
 **One more sink than the entry knew about.** `{'the running total'}` — a
 `{name}` whose name is QUOTED — and a bare list literal `{[1, 2]}` do not
@@ -3094,7 +3092,7 @@ this entry was written: :3054-3056 is now :3133-3136 and :3081 is now
 **Not affected today:** no vox-fuzz leaf emits a collection slot in a
 non-print sink — `gen leaf format types` builds its `{hl{n}}` and `{hm{n}}`
 slots into `Print` statements only. The corpus was clean, and with this
-fix a leaf worker adding one gets stable output instead of a false
+fix a leaf adding one gets stable output instead of a false
 nondeterminism finding; a quoted collection name in a `Print` slot is now
 safe to emit too.
 
@@ -3103,8 +3101,8 @@ safe to emit too.
 ### 45. A function with no declared return type is read back as an integer wherever its result lands untyped
 
 **Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
-collections-a claim ledger (discrepancy D5) and adjudicated by the language
-lawyer, who found the defect is broader than the mixed-list case the ledger
+collections-a claim ledger (discrepancy D5) and checked against the manual,
+which showed the defect is broader than the mixed-list case the ledger
 reported.
 
 ```vox
@@ -3265,8 +3263,8 @@ procedure records, so the two cannot be told apart without the body.
 
 ### 46. The diagnostic caret can land inside a comment
 
-**Status:** **fixed** (this branch), found 2026-08-20 by the language
-lawyer during adjudication of the vox-fuzz collections-a claim ledger — every probe file
+**Status:** **fixed** (this branch), found 2026-08-20 while
+adjudicating the vox-fuzz collections-a claim ledger — every probe file
 in that ledger opens with a header comment quoting the token it is testing,
 and the carets were pointing at the header instead of the code.
 
@@ -3357,7 +3355,7 @@ appears only as `{name}` inside a text still anchors there.
 `find_symbol_location` — the terminal fallback for the whole family, and
 the one function in the file with **no word boundaries at all** — now goes
 through `find_pattern_location` instead of running its own bare
-`line.find`. That closes the substring anchoring the #55 worker hit
+`line.find`. That closes the substring anchoring hit while fixing #55
 (symbol `n` anchoring on the `n` inside `print`) everywhere at once, and
 makes the occurrence counter see every match on a line rather than only
 the first. The pre-fix scan survives as `find_mention_location`, reached
@@ -3391,8 +3389,8 @@ that, and they need `Expr` to carry one.
 **Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
 collections-b claim ledger discrepancies D3 + D4 — the mapper hand-ran
 every collection kind against LANGUAGE.md's supported-collections list and
-two of them were neither refused nor handled; adjudicated by the language
-lawyer as one compiler bug, **memory safety, certain**, before anything was
+two of them were neither refused nor handled; judged against the manual
+as one compiler bug, **memory safety, certain**, before anything was
 filed.
 
 The whole program is two tokens long:
@@ -3486,8 +3484,8 @@ place to grow when someone maps them.
 **Status:** **fixed** (this branch), found 2026-08-20 by the vox-fuzz
 collections-b claim ledger discrepancy D2 — the mapper found the generator
 already carried a comment recording that bare `otherwise` "does not work
-after print" and had shaped its coverage around it; adjudicated by the
-language lawyer as a compiler bug, **high**, rather than a manual
+after print" and had shaped its coverage around it; assessed against the
+manual as a compiler bug, **high**, rather than a manual
 tightening.
 
 ```vox
@@ -3554,7 +3552,7 @@ promises, crashes. Regression test:
 output at all) on unfixed `origin/main` and to pass after; plus a codegen
 unit test (`src/codegen/tests.rs`) that locks the instruction ordering
 without assembling. Found 2026-08-21 by the vox-fuzz Input/Output claim
-ledger (discrepancy D1), master-reproduced on 0.4.8.
+ledger (discrepancy D1), reproduced on 0.4.8.
 
 ```vox
 a buffer called built is 64 bytes in size.
@@ -3688,7 +3686,7 @@ rejected at compile time after), plus the passing control
 `tests/bug53_return_buffer_variable.vox`, which pins that the buffer
 spellings that always worked still do. Found 2026-08-21 by the vox-fuzz
 Functions claim ledger (discrepancies D7 empty / D8 segfault),
-master-reproduced on 0.4.8 and on current `main`.
+reproduced on 0.4.8 and on current `main`.
 
 ```vox
 To 'give literal'. Return a buffer, "ABC".
@@ -3827,7 +3825,7 @@ Regression tests: compile-fail cases
 `105_foreach_element_into_mistyped_variable.vox`, and the passing controls
 `tests/bug54_element_read_typecheck.vox` and
 `tests/bug54_helper_widens_a_list.vox`. Found 2026-08-21 by the vox-fuzz
-Variables claim ledger (discrepancy D1), master-reproduced on
+Variables claim ledger (discrepancy D1), reproduced on
 0.4.8+#49/#50/#52.
 
 ```vox
@@ -3999,7 +3997,7 @@ the types agree still substitutes) and
 `tests/360_treating_over_an_unprovable_list.vox` (the collection whose
 element type cannot be proven no longer faults). Found 2026-08-21 by the
 vox-fuzz basics-expansion claim ledger (discrepancies D3 and D4),
-master-reproduced on 0.4.8+#49/#50/#52/#53/#54.
+reproduced on 0.4.8+#49/#50/#52/#53/#54.
 
 ```vox
 print each item from ["a"] treating 98 as 31.
@@ -4153,7 +4151,7 @@ fixtures (`tests/compile_fail/116_range_as_list_initialiser.vox`,
 `117_print_a_range.vox`, `118_range_in_arithmetic.vox`), all proven to
 misbehave on unfixed `main` and to pass after. Found 2026-08-21 by the
 vox-fuzz keywords claim ledger (discrepancies D5, D6 and D7),
-master-reproduced on 0.4.8.
+reproduced on 0.4.8.
 
 **Three symptoms, one phrase.**
 
@@ -4305,8 +4303,8 @@ cases `tests/compile_fail/119_nothing_into_text_declaration.vox`,
 `125_nothing_returned_as_text.vox`, plus the passing control
 `tests/363_nothing_in_its_documented_places.vox`, which walks every
 position LANGUAGE.md gives the literal and is byte-identical before and
-after. Found 2026-08-21 by the vox-fuzz random-literals worker's probes
-(REPORT-LITERALS.md §4 D1), master-reproduced on 0.4.8+#49–#56.
+after. Found 2026-08-21 by the vox-fuzz random-literals probes,
+reproduced on 0.4.8+#49–#56.
 
 ```vox
 a text called greeting is nothing.
@@ -4548,7 +4546,7 @@ misbehave on unfixed `main` and to pass after. Found 2026-08-21 by the
 vox-fuzz environment claim ledger (discrepancy D1,
 `docs/ledger/environment.md`, probes `D1.vox`/`D1b.vox`), re-found by the
 fuzzer's new environment leaves (ASSERT ENV-03/ENV-06 in 2 of 40 seeds),
-master-reproduced on 0.4.8. Sibling of #52 — the same family of text-valued
+reproduced on 0.4.8. Sibling of #52 — the same family of text-valued
 special names built into a buffer — but a different mechanism.
 
 ```vox
@@ -4750,7 +4748,7 @@ Regression tests: `tests/400_treating_a_mixed_list_keeps_each_tag.vox`
 `406_treating_survives_an_is_a_guard_downstream.vox`, plus the unchanged
 controls `359_treating_matching_types_substitutes.vox` and
 `360_treating_over_an_unprovable_list.vox` from #55. Found 2026-08-21 by
-the #55 fix worker (REPORT-55, §6) while closing #55; master-reproduced on
+the #55 fix while closing #55; reproduced on
 this branch.
 
 ```vox
@@ -4905,8 +4903,7 @@ N = 0, 1, 15–20, 30, 50; negatives; zero; a value past 2^53 and one past
 2^63; the rounding cases and the exact ties), proven to print the corrupt
 bands on `origin/main`'s runtime and to pass after, plus the untouched
 control `tests/135_float_rounding_carry.vox`. Found 2026-08-20 by the
-vox-fuzz literals worker's format-specifier probes (REPORT-LITERALS §4,
-D2); master-reproduced on this branch.
+vox-fuzz literals format-specifier probes; reproduced on this branch.
 
 ```vox
 a float called f is 3.14159.
@@ -5038,8 +5035,8 @@ the 4096-character page the padding is now written in),
 `170_decimal_precision_past_what_vox_can_count.vox`, plus four codegen
 tests in `src/codegen/tests.rs` that pin the emitted width and precision
 either side of `i32::MAX` without writing two billion spaces. Found
-2026-08-20 by the vox-fuzz literals worker's format-specifier probes
-(REPORT-LITERALS §4, D3); master-reproduced on this branch, root-caused
+2026-08-20 by the vox-fuzz literals format-specifier probes;
+reproduced on this branch, root-caused
 against source on this branch (below).
 
 ```vox
@@ -5174,7 +5171,7 @@ result is refused with the diagnostic below, and the same program calling
 `greet.` as a statement still compiles and runs. Found 2026-08-20 by the
 vox-fuzz libraries claim ledger (Discrepancy 4) as "recorded, not filed,
 not adjudicated"; adjudicated and ordered filed by the language designer
-(Josj, 2026-08-21) and master-reproduced on this branch.
+(TheJostler, 2026-08-21) and reproduced on this branch.
 
 ```vox
 see mathkit version "1.0" from "fixtures/libmathkit.lib".
@@ -5232,7 +5229,7 @@ whatever was left in a register," for both a genuinely void function and
 (per the ledger's LIB-39/broader note) any function whose author wrote a
 bare `Return <expr>.` with no declared return type.
 
-**Expected fix (Josj, 2026-08-21).** Using a void `.lib` entry's result
+**Expected fix (TheJostler, 2026-08-21).** Using a void `.lib` entry's result
 as a value is a compile-time error, not a wider guess at what the
 leftover register might mean — symmetric with #45's fix direction.
 Reject at the use site, naming the function, stating that it returns
@@ -5300,7 +5297,7 @@ the passing controls `tests/407_procedure_called_as_a_statement.vox` (both
 call spellings, and a `Return.` that bails out early) and
 `tests/408_declared_return_used_as_a_value.vox` (a function that DOES
 declare its return type, read in all nine positions). Found 2026-08-21 by
-the #45 fix worker, master-reproduced on this branch.
+the #45 fix, reproduced on this branch.
 
 ```vox
 To ping. Print "pong".
@@ -5388,7 +5385,7 @@ notice the two holes read differently.
 ### 64. The `the <name>'s <property>` spelling implements almost no properties — `the h's size` reads, `the h's descriptor` is a parse error
 
 **Status:** **fixed** (this branch), found 2026-08-21 by the #38 fix
-worker while probing the file-property surface, master-confirmed. Fails
+while probing the file-property surface, confirmed. Fails
 loudly at compile time, so no program can silently do the wrong thing —
 the same mildest class as #38. The cost is that a documented, encouraged
 spelling reaches only a fraction of the language.
@@ -5519,9 +5516,9 @@ result, an argument and a return), plus two passing controls —
 declaration shape the manual documents and is byte-identical before and
 after, and `tests/396_mistyped_initialisers_written_correctly.vox`, which
 writes each refused program the two documented ways and checks the answers.
-Found 2026-08-20 by the #51 fix worker while probing sibling forms, and
+Found 2026-08-20 by the #51 fix while probing sibling forms, and
 independently by the vox-fuzz `names-and-strings` claim ledger
-(Discrepancy 1, probes `D1.vox` / `D1b.vox`); master-reproduced on
+(Discrepancy 1, probes `D1.vox` / `D1b.vox`); reproduced on
 0.4.8+#49–#58.
 
 ```vox
@@ -5701,11 +5698,10 @@ LANGUAGE.md:1803's "Floats and integers can be mixed in arithmetic
 expressions" sits under **Literals** and scopes itself to expressions, that
 the Basic Conversions table gives both directions an explicit cast (:1906,
 :1907), and that the type lock already refuses both one line later. The
-language designer overruled it (Josj, 2026-08-21):
-
-> "in human language we call 1 a number and pi a number; it should be the
-> same in Vox — dynamic casting as and when needed; static int64 is MY
-> language gap, leave it with me"
+language designer overruled it (TheJostler, 2026-08-21): in human language
+1 is a number and pi is a number, so Vox does the same, with dynamic casting
+as and when needed. The static `int64` case is a language gap that stays with
+TheJostler.
 
 So neither direction is a mismatch:
 
@@ -5767,8 +5763,8 @@ silent** — no diagnostic, no crash, and an address printed straight into
 program output: a static rodata address for a `text`, a live heap address
 that changes between runs for a `list`, `map` or `buffer`. Found 2026-08-21
 by the vox-fuzz `functions` claim ledger (Discrepancy 1, probes `D1.vox` and
-`D1b.vox`, against rows FUN-11, FUN-17 and FUN-19), adjudicated as candidate
-**A** of the 0.4.10 audit and master-reproduced on `4b77934` (= v0.4.9).
+`D1b.vox`, against rows FUN-11, FUN-17 and FUN-19), confirmed in
+the 0.4.10 audit and reproduced on `4b77934` (= v0.4.9).
 
 ```vox
 To 'show all'.
@@ -5931,10 +5927,8 @@ value.
 ### 67. A declared `float`, `map` or `buffer` return is printed by the integer formatter — the fix #45's diagnostic tells the author to apply
 
 **Status:** **fixed in 0.4.10** (this branch), found 2026-08-21 by the
-vox-fuzz claim ledger / candidate audit against 0.4.9 (`4b77934`) and
-adjudicated by the language lawyer — section **B** of
-`vox-notes/REPORT-CANDIDATES-0.4.10.md`. Worker's own re-run of the
-headline repro and its neighbour is quoted in `REPORT-67.md`.
+vox-fuzz claim ledger and audit against 0.4.9 (`4b77934`) and
+checked against the manual in the 0.4.10 audit.
 
 ```vox
 To 'give float'. Return a float, 2.5.
@@ -6079,7 +6073,7 @@ is a `test.sh` stage in the repo's own shared-library convention: **A4.3**
 `tests/shared/collections_lib.vox`. All four proven to fail on a clean
 extract of `4b77934` and to pass after.
 
-**Incidental, recorded and left** (see `REPORT-67.md` for repros): a `map`
+**Incidental, recorded and left** (found while fixing #67): a `map`
 **parameter** printed inside a function body prints its address (`To 'show
 map' with a map called seen. Print seen.` over a plain map variable — no
 call involved); its cause is the third copy of the same type table,
@@ -6094,7 +6088,7 @@ but a parameter is not a call result and it is a different entry.
 **Status:** **fixed** in 0.4.10 (unreleased, on top of 0.4.9 `4b77934`).
 Regression tests: `tests/434_element_of_a_mixed_list_in_a_format_hole.vox`
 (the headline repro), `426_a_mixed_element_renders_by_its_own_type.vox`
-(every row of the candidate report's table, mixed and uniform),
+(every row of the audit's table, mixed and uniform),
 `427_the_working_neighbours_of_an_element_hole.vox` (the spellings that
 already worked, unchanged — the control),
 `428_a_format_hole_dispatches_on_every_runtime_tag.vox` (all seven slot
@@ -6110,12 +6104,11 @@ stable over three consecutive runs.
 Found 2026-08-21 by the vox-fuzz claim ledger —
 `vox-fuzz/docs/ledger/collections-b.md` row **LST2-13** (blocked on D7) and
 its **Discrepancy 7**, which reproduces collections-a's D7 against this
-range and whose lawyer resolution reads: *"COMPILER BUG, duplicate of vox
+range and whose resolution reads: *"COMPILER BUG, duplicate of vox
 #44 … New sub-case: the EXPRESSION form `print "{element 2 of nested}"`
 leaks an address in print position too. Fold into #44 as an extra repro."*
 It is filed separately because #44 shipped in 0.4.9 without reaching it.
-Re-adjudicated in the candidate audit 2026-08-21
-(`REPORT-CANDIDATES-0.4.10.md` §E) and master-reproduced on this branch.
+Re-checked in the audit of 2026-08-21 and reproduced on this branch.
 
 ```vox
 a list called nested is [1, [2, 3], "four"].
@@ -6333,10 +6326,10 @@ control `430_treating_a_value_when_opening_a_file.vox` (a neighbouring form
 that was already right and stays byte-identical). The #59 controls
 `359_treating_matching_types_substitutes.vox`,
 `360_treating_over_an_unprovable_list.vox` and `400`-`406` are unchanged.
-Recorded 2026-08-21 by the #59 fix worker, in #59's own "What this fix does
+Recorded 2026-08-21 by the #59 fix, in #59's own "What this fix does
 not reach" ("Unfiled; worth its own entry"); re-verified against 0.4.9 by
-the candidate audit of the same day (REPORT-CANDIDATES-0.4.10 §H1) and
-master-reproduced on this branch.
+the audit of the same day and
+reproduced on this branch.
 
 ```vox
 a value called probe is "-".
@@ -6367,7 +6360,7 @@ print each name from names treating "-" as seven.
 
 The address is a fixed `.rodata` one in a non-PIE binary, byte-identical
 across runs, exactly as #59 records for its own case. The two crashes are
-new to this entry: the candidate report has the two silent-wrong-value
+new to this entry: the audit has the two silent-wrong-value
 reproductions, and the pair above turned up while mapping the clause's
 behaviour across subject types.
 
@@ -6490,7 +6483,7 @@ Unfiled; worth its own entry.
 treating <match> as <replacement> to <list>.` still drops the clause
 entirely — `append each item from [1, "-"] treating "-" as "X" to out.`
 yields `[1, "-"]`. #59 recorded it and it is section H2 of the 0.4.10
-candidate report, on its way to its own entry; nothing here touches it.
+audit, on its way to its own entry; nothing here touches it.
 
 
 ---
@@ -6513,9 +6506,8 @@ Found 2026-08-21 by the vox-fuzz **grammar-summary** claim ledger,
 Discrepancy 3 (row GRM-16, probe `docs/ledger/probes/grammar-summary/
 D3.vox`) — "wrong position in the manual's own grammar, and a silent
 no-op once moved to a position that parses", left unfiled there — and
-adjudicated in the candidate audit of 2026-08-21 (REPORT-CANDIDATES-0.4.10
-§H2). Recorded before that inside #59 as "Found alongside, not fixed here
-(out of scope)". Master-reproduced on this branch.
+confirmed in the audit of 2026-08-21. Recorded before that inside #59 as "Found alongside, not fixed here
+(out of scope)". Reproduced on this branch.
 
 ```vox
 a list called names is ["ann", "-"].
@@ -6666,7 +6658,7 @@ pointer (`428`).
 **What this does not reach.** #59's unfiled residual is untouched: a
 clause whose *match* or *replacement* is a `value` has no emit-time tag,
 so it keeps the old static path under `append` exactly as it does under
-`print` — that is candidate H1, its own entry, not this one. And a
+`print` — that is a separate finding with its own entry, not this one. And a
 `treating` after a plain `append <expr> to <name>` (no `each`) is still
 the generic `Expected a statement, got Treating`: with no loop variable
 bound there is nothing for the clause to substitute for, so the sentence
@@ -6689,10 +6681,9 @@ each refused type, a width in front of the radix, a non-`Print` sink, and the
 expression form of a hole), and five codegen routing tests in `src/codegen/tests.rs` that drive
 `emit_formatted_value` directly, because the analyzer now refuses every
 program that could reach the leaking arms. Found 2026-08-21 by the
-candidate audit for 0.4.10 (`vox-notes/REPORT-CANDIDATES-0.4.10.md` §H4
-and §H4b): H4 from a note against the format layer, H4b — the address
-leak, the bigger half — found by the auditor while checking it.
-Master-reproduced on `4b77934` (= v0.4.9) before this fix.
+audit for 0.4.10: one half from a note against the format layer, the
+address leak, the bigger half, found while checking it.
+Reproduced on `4b77934` (= v0.4.9) before this fix.
 
 ```vox
 a number called n is 255.
@@ -6885,8 +6876,8 @@ it.
   row) and is a dropped specifier, not a wrong value.
 
 - **`{'label'}` — a quoted single-word name in a format hole — is "Unknown
-  variable: 'label'"**, rejecting legal Vox. This is §I1 of the candidate
-  report, reproduced here independently while building the test cases; it
+  variable: 'label'"**, rejecting legal Vox. This was found in the audit
+  and reproduced here independently while building the test cases; it
   is its own entry, not part of this one.
 
 
@@ -6903,10 +6894,9 @@ tests: `tests/440_absent_map_key_reads_zero.vox` and
 `181_absent_key_proof_withheld_for_an_aliased_map.vox`. Found 2026-08-21 by
 the vox-fuzz collections claim ledger — hand-reduced from campaign seed
 1009 while sweeping the leaves `gen leaf map oob` (kind 10) and `gen leaf
-list oob` (kind 5), written up as finding C of
-`vox-notes/REPORT-SWEEP-COLLECTIONS.md`. Adjudicated 2026-08-22 as
-candidate **C-i** of `vox-notes/REPORT-CANDIDATES-ROUND-2.md`,
-master-reproduced on 4b77934.
+list oob` (kind 5), found by the vox-fuzz collections sweep. Confirmed 2026-08-22 as a
+compiler bug,
+reproduced on 4b77934.
 
 ```vox
 a map called guess is {"a": "t"}.
@@ -7055,7 +7045,7 @@ analyzer; codegen and the runtime are untouched.
    Vox represents a boolean as 0/1 and prints it that way. A `text`, `list`
    or `map` slot holds a **pointer**, and 0 as an address is the crash. Only
    those three are refused. This is #65's "a number and a float are one
-   family" ruling (Josj, 2026-08-21) applied to the one read that yields a
+   family" ruling (TheJostler, 2026-08-21) applied to the one read that yields a
    bare 0, and it is what keeps `examples/lists.vox:27` —
    `a boolean called bad is element 100 of bools.` — compiling.
 
@@ -7118,15 +7108,15 @@ the miss is **not** provable — a dynamic key, a variable index, a collection
 grown by `Append`, a non-literal initializer, a map some `Set` reaches. That
 residual is not new (0.4.8 segfaults identically) and it is the corner #54
 and #65 did not cover: they judge a *type mismatch*, and there the declared
-and inferred types agree while the runtime value is 0. It is candidate
-**C-ii** of `REPORT-CANDIDATES-ROUND-2.md` and wants its own number — the
+and inferred types agree while the runtime value is 0. It is a separate bug
+and wants its own number — the
 general answer is a runtime one (a miss must not hand back a raw 0 into a
 pointer slot), not another static proof.
 
 **Downstream — `gen leaf map oob` now encodes the bug as a rule.** The
 collections sweep, unable to decide whether finding C was a compiler bug or
 a manual gap, taught the leaf to live with it:
-`REPORT-SWEEP-COLLECTIONS.md` §"Per leaf" 4 records, under "Kept, with
+the collections sweep's leaf records, under "Kept, with
 citations", that "the captured holder's type follows the map's values —
 Finding C, a compiler rule with a probe table". That is now the wrong rule:
 for an all-text map the leaf will declare a `text` holder for a
@@ -7158,9 +7148,9 @@ mis-tag, the segfault, the nearest working neighbour, a `number` and a
 level, and a `value` return).
 Found by the vox-fuzz claim ledger — the `gen_misc` "cast and break" leaf
 swallowed a `To` into an open clause and hit exit 95 twice in the
-2026-08-21 core sweep — then reduced and adjudicated as candidate **D** of
-`vox-notes/REPORT-CANDIDATES-ROUND-2.md` (2026-08-21/22 audit round 2);
-master-reproduced on 0.4.9 before the fix.
+2026-08-21 core sweep — then reduced and confirmed as a compiler bug in the
+2026-08-21/22 audit;
+reproduced on 0.4.9 before the fix.
 
 ```vox
 To probe with a value called sample.
@@ -7311,8 +7301,7 @@ drawn into the loop.
 exported by library … the local definition wins" — is keyed off the same
 flat top-level scan, so a *swallowed* definition shadowing an imported one
 wins **silently**. The warning exists precisely so that adding a `see` can
-never redirect an existing call without a diagnostic. Repro and measurement
-are in `REPORT-73.md` ("Incidental"). It is a missing diagnostic, not a
+never redirect an existing call without a diagnostic. It is a missing diagnostic, not a
 wrong-code bug, and belongs to #45/#62/#63's family rather than this one.
 
 **Also noted, outside this entry.** `#66`'s fix adds a third flat
@@ -7341,9 +7330,9 @@ every property in the manual's tables into the type those tables give it and
 is byte-identical before and after, and
 `tests/451_mistyped_property_reads_written_correctly.vox`, which writes each
 refused program the two documented ways and checks the answers.
-Found 2026-08-21 during the round-2 candidate audit (candidate **E**), by a
-throwaway probe reducing candidate F that segfaulted for an unrelated
-reason; adjudicated as a bug and master-reproduced on 4b77934 (0.4.9).
+Found 2026-08-21 during the round-2 audit, by a
+throwaway probe reducing another finding that segfaulted for an unrelated
+reason; confirmed as a bug and reproduced on 4b77934 (0.4.9).
 
 ```vox
 a list called xs is ["a","b"].
@@ -7514,11 +7503,10 @@ a second function, three calls deep, and recursion), and the controls
 already right — reading a parameter, an in-place write, return-and-assign,
 growth into a global, growth at the top level, a map at the top level,
 iteration over a parameter, and a collection past the sixth argument word).
-Found 2026-08-21 by the buffers-sweep worker (`vox-notes/REPORT-SWEEP-BUFFERS.md`
-§5 discrepancy **D-A**, recorded but not filed — "either a compiler bug or a
-manual gap; I have not decided which"), adjudicated as a bug by the
-candidate audit of 2026-08-22 (`vox-notes/REPORT-CANDIDATES-ROUND-2.md`
-section **F**), master-reproduced on this branch.
+Found 2026-08-21 by the vox-fuzz buffers sweep
+(recorded but not filed at first — "either a compiler bug or a
+manual gap; I have not decided which"), confirmed as a bug by the
+audit of 2026-08-22, reproduced on this branch.
 
 ```vox
 To 'add one to' with a list called items.
@@ -7665,7 +7653,7 @@ obvious follow-up and is a feature, deliberately not added here.
 in flight and the old behaviour stands; a collection reached through a thing's
 field or any other non-variable argument has no storage to write back to, as
 above. Buffers are a **separate defect with a worse symptom** — see the
-Incidental note in `REPORT-75.md`: `_reallocate_buffer` does free the old
+incidental note from #75: `_reallocate_buffer` does free the old
 block, so a buffer grown through a `buffer` parameter past one page
 segfaults rather than answering short. Extending this fix's two match arms
 to `Type::Buffer` was tried and does **not** close it — `Append <x> to
@@ -7691,10 +7679,10 @@ all), `tests/478_map_parameter_properties_and_printing.vox`,
 two controls that were already right and must stay right —
 `tests/479_map_parameter_keyed_read_and_iteration.vox` and
 `tests/481_typed_parameter_properties_agree.vox`. Found by the vox-fuzz
-claim ledger / candidate audit 2026-08-21 (`REPORT-66.md` incidental 3,
+claim ledger and the audit of 2026-08-21 (an incidental of #66,
 which asked whether the `VarType::Unknown` had any user-visible symptom;
-adjudicated in `REPORT-CANDIDATES-ROUND-2.md` §J, which found three) and
-master-reproduced on `4b77934` = v0.4.9.
+the audit found three) and
+reproduced on `4b77934` = v0.4.9.
 
 **Symptom 1 — the compiler emits assembly that will not assemble.**
 
@@ -7832,8 +7820,7 @@ already promised it; the specific one had a hole where this bug lived.
 
 - `Print "{key} is {holder's key}"` — a map read by a *dynamic* key inside
   a format hole — is rejected with `Unknown variable: holder's key`. That
-  is `REPORT-CANDIDATES-ROUND-2.md` §K's territory (its "bug underneath"),
-  not this entry's, and is unchanged here.
+  is a separate bug (see #81), not this entry's, and is unchanged here.
 - A two-word variable name must be quoted: `A map called blank scores is
   {}.` parses, but `Print blank scores's length.` then fails with `Expected
   a statement, got Apostrophe`. Pre-existing on `4b77934`, unrelated to
@@ -7855,12 +7842,10 @@ Regression tests: `tests/483_append_value_slot_takes_a_sign.vox`,
 `tests/485_append_value_slot_takes_times.vox`, plus two compile-fail
 guards, `tests/compile_fail/213_append_value_slot_names_its_own_slot.vox`
 and `tests/compile_fail/214_append_negative_to_buffer_is_still_a_type_rule.vox`.
-Found 2026-08-22 by the collections sweep (`vox-notes/REPORT-SWEEP-COLLECTIONS.md`,
-worktree `wt-sweep-collections`, Finding B) and by the core sweep
-(`vox-notes/REPORT-SWEEP-CORE.md`, worktree `wt-sweep-core`, D-D — operators
-ledger row **OPR-41**); adjudicated in `vox-notes/REPORT-CANDIDATES-ROUND-2.md`
-§B and `vox-notes/REPORT-CANDIDATES-ROUND-3.md` §O, which ruled the two one
-entry because they are one cause. Master-reproduced on 4b77934 (= 0.4.9).
+Found 2026-08-22 by the vox-fuzz collections sweep and by the core sweep
+(operators ledger row **OPR-41**); confirmed in the audits of 2026-08-22,
+which filed the two as one
+entry because they are one cause. Reproduced on 4b77934 (= 0.4.9).
 
 ```vox
 a list called xs is [1].
@@ -8070,11 +8055,11 @@ before and after), `tests/506_buffer_size_only_run_time_can_decide.vox`
 (the size arrives on the command line — this program segfaulted) and
 `tests/507_buffer_size_from_arguments_good_and_bad.vox` (either side of the
 bound in one program). Found by the vox-fuzz `gen_buffers` derandomisation
-sweep (`REPORT-SWEEP-BUFFERS.md` §5, discrepancy D-B — the one bound
+sweep (the one bound
 `'gen buffer size'` keeps, because a draw outside it is a non-compiling
-program), adjudicated as candidate **G** of the round-2 candidate audit
-(`REPORT-CANDIDATES-ROUND-2.md`, written 2026-08-22 against 4b77934, which
-separated the manual gap **G-i** from the bug **G-ii**); master-reproduced
+program), confirmed in the round-2 audit
+(2026-08-22, against 4b77934), which
+separated the manual gap from the bug; reproduced
 on 0.4.9.
 
 ```vox
@@ -8231,7 +8216,7 @@ the proof declines, and the run-time guard holds the size instead.
   parser where they can be told apart. `Create a buffer called room with
   size 0.` therefore still makes a dynamic buffer.
 - **A dynamic buffer's `capacity` of 4096**, where LANGUAGE.md:3297 says
-  zero. That is round-1 candidate G, an open design question about what a
+  zero. That is an open design question about what a
   declared capacity *means*, and it is untouched here.
 - **A `value`, a parameter, a flag, or any size the compiler cannot
   prove** — the same "can't prove it, so allow it" policy as every other
@@ -8275,9 +8260,9 @@ that must NOT be rejected),
 `tests/518_top_level_write_before_the_declaration.vox`,
 `tests/519_declaration_in_every_branch_read_after.vox` and
 `tests/520_declaration_in_a_loop_body_read_after.vox` — all five
-byte-identical before and after. Found 2026-08-21 by the #66 fix worker
-(`REPORT-66.md`, incidental 1) and adjudicated by the language lawyer in
-the round-2 candidate audit, section H; master-reproduced on 4e29c3c.
+byte-identical before and after. Found 2026-08-21 by the #66 fix
+and checked against the manual in
+the round-2 audit; reproduced on 4e29c3c.
 
 ```vox
 Print label.
@@ -8473,9 +8458,8 @@ function body.
 ### 80. A `thing` instance declared below a function cannot be read inside it — `Expected property name, got Identifier("x")`, with the caret on the property name
 
 **Status:** **fixed** (this branch), for 0.4.10. Found 2026-08-21 by the
-#66 fix worker while probing the forward-global surface (`REPORT-66.md`,
-Incidental 1), adjudicated 2026-08-21 in the round-2 candidate audit
-(`REPORT-CANDIDATES-ROUND-2.md` §I) and master-confirmed against
+#66 fix while probing the forward-global surface, checked 2026-08-21
+in the round-2 audit and confirmed against
 `4b77934`. Rejects legal Vox at compile time, so no program could
 silently do the wrong thing — the same diagnostic class as #64, and the
 loud half of the pair whose silent half is #66.
@@ -8622,9 +8606,8 @@ diagnostic.
 ### 81. A dynamic map key inside a format hole — `"{m's \"{k}\"}"` — renders the value then two stray characters from the hole's own syntax
 
 **Status:** **fixed** (this branch, 0.4.10), found 2026-08-22 by the #68 fix
-worker as an incidental (`REPORT-68.md`, `wt-vox-68`) and adjudicated in the
-candidates round-2 audit (`REPORT-CANDIDATES-ROUND-2.md` §K, verdict
-**K-underneath: bug**, severity *wrong value (silent)*). Silent: the value is
+as an incidental and confirmed in the
+round-2 audit (severity *wrong value (silent)*). Silent: the value is
 right, the two extra characters are not, and the program exits 0. Family of
 **#44** / **#59** / **#60** / **#61** (format-hole rendering) — and like #60
 and #61 it is the hole parser mis-splitting its own syntax rather than codegen
@@ -8758,9 +8741,8 @@ one cleared and refilled), and
 `tests/498_text_to_float_past_the_mantissas_room.vox` (decimals longer
 than the mantissa can hold). Found by the vox-fuzz claim ledger row
 **VAL-09** (`'gen leaf value retype'`, `src/gen_collections.vox`),
-surfaced as discrepancy **D-F** of the core sweep
-(`REPORT-SWEEP-CORE.md`) and adjudicated in
-`REPORT-CANDIDATES-ROUND-3.md` §L-i (2026-08-22). Master-reproduced on
+surfaced by the core sweep and confirmed in
+the audit of 2026-08-22. Reproduced on
 `4b77934` = v0.4.9; byte-identical on v0.4.8, so not a 0.4.9 regression.
 
 ```vox
@@ -8930,10 +8912,9 @@ Found by the vox-fuzz claim ledger: row **OPR-21** (`not <condition>`)
 was left deliberately unexercised by the `gen_core` derandomisation sweep
 because "emitting `If not <comparison>` would put a construct in every
 program whose meaning nobody has blessed"
-(`vox-notes/REPORT-SWEEP-CORE.md`, discrepancy **D-B**, 2026-08-21);
-adjudicated as candidate **M** of
-`vox-notes/REPORT-CANDIDATES-ROUND-3.md` (candidate audit, 2026-08-22)
-and master-reproduced on 0.4.9.
+(core sweep, 2026-08-21);
+confirmed in the audit of 2026-08-22
+and reproduced on 0.4.9.
 
 ```vox
 a number called v1 is 3.
@@ -9081,8 +9062,8 @@ manual says is not a reason. Found by the vox-fuzz **operators** claim
 ledger — rows `OPR-22` and `OPR-23`, both recorded *not assertable, blocked
 on* its **Discrepancy 1** (probe `docs/ledger/probes/operators/D1.vox`) —
 re-confirmed byte-identical on 0.4.9 by the core sweep
-(`REPORT-SWEEP-CORE.md`, D-C) and adjudicated in the candidate audit of
-2026-08-22 (`REPORT-CANDIDATES-ROUND-3.md` §N). Regression tests:
+and confirmed in the audit of
+2026-08-22. Regression tests:
 `tests/502_contraction_isnt.vox`, `tests/503_contraction_arent.vox`,
 `tests/504_apostrophe_meanings_unchanged.vox`, four compile-fail cases
 `tests/compile_fail/contraction_*.vox`, and six lexer unit tests in
@@ -9250,9 +9231,9 @@ cases in `src/codegen/tests.rs`
 first two unit tests were proven to fail on clean `main` (4b77934) and to
 pass after; 427 and `a_float_without_a_precision_still_appends_directly` —
 the working neighbour — pass on both. Found
-2026-08-21 by the vox-fuzz claim ledger / candidate audit (recorded as #71's
-incidental, where it was named for the buffer sinks only), adjudicated by
-the language lawyer as candidate **Q** and master-reproduced on this branch.
+2026-08-21 by the vox-fuzz claim ledger and the audit (recorded as #71's
+incidental, where it was named for the buffer sinks only), confirmed
+against the manual and reproduced on this branch.
 
 ```vox
 a float called ratio is 2.5.
@@ -9392,12 +9373,12 @@ compiler does not now do.
 **Status:** **fixed** (this branch, for 0.4.10). Severity: **wrong value,
 silent** — no error flag, no diagnostic, and the `type` property actively
 misreports the payload it is sitting on. Found 2026-08-22 by the round-3
-candidate audit (`REPORT-CANDIDATES-ROUND-3.md`, section **S**), which took
-the claim from the #67 fixer's incidental — #67's own position table left
+audit, which took
+the claim from an incidental of #67 — #67's own position table left
 the `a value called c is <call>.` row for a buffer unfilled, and that hole
 was the bug. It is **not** attributable to a vox-fuzz ledger row: the audit
 names no ledger for **S**, and this entry does not invent one. The headline
-repro was re-run by the master on `4b77934` (= 0.4.9) before this branch
+repro was re-run on `4b77934` (= 0.4.9) before this branch
 opened. Byte-identical on 0.4.8, so it is not a 0.4.9 regression.
 
 Family: **#51 / #44** — a buffer's struct pointer used where its data
@@ -9474,14 +9455,14 @@ text means the same thing and makes the same copy." By the compiler's own
 tag and its own predicate, a `value` holding a buffer **is** a slot that
 holds text, which puts it squarely inside "every spelling".
 
-**The ruling was already made.** #51 was adjudicated by the language
-designer (TheJostler, 2026-08-21): *"option 1, copy: helpful by default —
-the bare spelling means what `as text` means and what `"{b}"` has meant
-since v0.1.17."* That ruling answers this case; it was simply not carried
+**The ruling was already made.** #51 was ruled on by the language
+designer (TheJostler, 2026-08-21): option 1, copy. The bare spelling is
+helpful by default and means what `as text` means and what `"{b}"` has meant
+since v0.1.17. That ruling answers this case; it was simply not carried
 to the `value` path. No new decision was needed here, and none was taken.
 
 **The sibling write sites, all of which had the same defect.** As with #51,
-the register found the declaration and the fix worker found the rest. Every
+the register found the declaration and the fix found the rest. Every
 one of the five stored the struct pointer; all five print `@` before and
 `first` after, with a 64-byte buffer holding `"first"`:
 
@@ -9566,9 +9547,9 @@ That is #67's incidental 2 and has its own entry; nothing here touches it.
 **Status:** **Fixed in 0.4.10.** Severity: **memory safety** — a
 deterministic segfault from two lines of legal-looking Vox, with no
 diagnostic and no error flag. Found 2026-08-21 by the vox-fuzz claim
-ledger / candidate audit (round 3, candidate **T-1**), met while probing
-the `not`-precedence candidate's "does `not` accept a non-boolean"
-control; adjudicated and master-reproduced on 0.4.9 (4b77934).
+ledger and the round-3 audit, met while probing
+the `not`-precedence question "does `not` accept a non-boolean"
+control; confirmed and reproduced on 0.4.9 (4b77934).
 
 ```vox
 a text called t is "hi".
@@ -9706,9 +9687,8 @@ defect):
 
 ### 89. The "Unknown variable" caret for a bare literal in a format hole lands on the first textual occurrence of that literal anywhere in the file - a legal `a float called f is 3.14.` is marked as the error
 
-**Status:** **fixed in 0.4.10**, found 2026-08-22 by the language lawyer
-while reducing candidate M of the round-3 candidate audit
-(`REPORT-CANDIDATES-ROUND-3.md` §T-2, an incidental of that audit rather
+**Status:** **fixed in 0.4.10**, found 2026-08-22 while reducing a finding of the round-3 audit
+(an incidental of that audit rather
 than a ledger row). Severity: **diagnostic only** - no wrong value, no
 unsafety; a correct error pointed at an innocent line. Family: **#46**, the
 same caret machinery.
@@ -9825,11 +9805,10 @@ occurrence, not at the token that failed, because `Expr` carries no span.
 **Status:** **fixed** in 0.4.10 (unreleased, on top of 0.4.9 `4b77934`).
 Severity: **memory safety** — a six-line program, compiled clean, reads a
 block the runtime has already handed back to the kernel. Found 2026-08-21
-by the #75 fix worker while probing the sibling shapes of a list or map
-grown through a parameter, recorded as that report's Incidental (1)
-(`vox-notes/REPORT-75-incidentals.md`), and traced from there to the
-vox-fuzz buffers sweep (`vox-notes/REPORT-SWEEP-BUFFERS.md` §5, ledger row
-**D-A**) which found the list half. Master-reproduced on `4b77934`.
+by the #75 fix while probing the sibling shapes of a list or map
+grown through a parameter, and traced from there to the
+vox-fuzz buffers sweep (ledger row
+**D-A**) which found the list half. Reproduced on `4b77934`.
 Regression tests: `tests/454_a_buffer_grown_through_a_parameter.vox`
 through `tests/460_a_buffer_argument_with_no_name.vox` (seven fixtures,
 one behaviour each).
@@ -10094,9 +10073,8 @@ promises is safe to take. Regression tests:
 Found by the vox-fuzz claim ledger — the `gen leaf list oob` (kind 5) and
 `gen leaf map oob` (kind 10) leaves of `src/gen_collections.vox`, whose
 "Kept, with citations" lists pin exactly the two manual sentences this
-entry is about — and separated out by the candidate audit of 2026-08-21
-(`vox-notes/REPORT-CANDIDATES-ROUND-2.md` §C, sub-case **C-ii**;
-`vox-notes/REPORT-SWEEP-COLLECTIONS.md` Finding C). Master-reproduced on
+entry is about — and separated out by the audit of 2026-08-21
+(sub-case C-ii of the collections sweep's Finding C). Reproduced on
 `4b77934` (= 0.4.9); byte-identical on 0.4.8, so this is not a 0.4.9
 regression — it is the corner #54 and #65 never covered.
 
@@ -10183,7 +10161,7 @@ that is the whole point of yielding a value rather than crashing.
 
 **The matrix, each row its own program, measured on a clean `git archive
 4b77934` extract (md5 `7936b6d5f1780a640c5672f4695bdb34`, byte-identical
-to the build the candidates report quotes) and on the fix:**
+to the build the audit used) and on the fix:**
 
 | program | before | after |
 |---|---|---|
@@ -10253,17 +10231,16 @@ six-line program is refused, and the byte-equivalent `the <global> is
 `tests/compile_fail/236_unknown_global_caret_lands_on_the_possessive.vox`,
 `tests/compile_fail/237_a_global_declared_as_both_a_list_and_a_buffer.vox`.
 
-**How it was found.** By the repin-tool worker on 2026-08-22, building the
-vox-fuzz ledger's repin citations (`feat/repin-citations`): a global `list`
+**How it was found.** While building the
+vox-fuzz ledger's repin citations on 2026-08-22: a global `list`
 that a function read could not be reassigned by a top-level `Set`, and the
 tool shipped a one-line function wrapping the `Set` as a workaround. Probe
 preserved at `vox-fuzz docs/ledger/probes/repin/vox-global-list-set.vox`.
-Carried into the round-4 candidate list, adjudicated in
-`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §1 (mechanism traced and confirmed
-by two predictions), then **verified by the master himself** on 2026-08-23
-(`vox-notes/VERIFIED-ROUND-4.md` §92 — he re-ran the repro, the working
-neighbour and the whole behaviour table on `527cb89` = 0.4.10) and approved
-for fixing by Josj the same day.
+Carried into the round-4 audit (mechanism traced and confirmed
+by two predictions), then **verified by re-running** on 2026-08-23
+(the repro, the working neighbour and the whole behaviour table on
+`527cb89` = 0.4.10) and approved
+for fixing by TheJostler the same day.
 
 ```vox
 a list called roster is [].
@@ -10381,7 +10358,7 @@ the caret moves from `7:19` (`a list called scratch is [].`) to `10:22`
 The last row is the still-open question of what an untyped `Set` on a name
 nothing declares should mean, which is not this entry's to answer: the name
 is registered but no kind is, so a collection property on it is refused. That
-is unchanged by this fix and is Josj's ruling to make.
+is unchanged by this fix and is TheJostler's ruling to make.
 
 **Family.** #46 and #89 (the caret anchored on a textually earlier mention
 rather than the failing read — this is the possessive-read spelling of the
@@ -10400,13 +10377,10 @@ un-poisoning a name gives it both).
 only** — no runtime change; two unrelated inaccuracies bundled into one
 entry because both are the compiler or the manual telling the user
 something false about a value the user can check for themselves. Found
-2026-08-23 by the round-4 candidate audit
-(`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §6, "now VERIFIED BY EXECUTION")
-and by Josj's own recollection of the buffer default, put to him as design
-question Q2 (`vox-notes/DESIGN-RULINGS.md`); verified by the master by
-execution the same day (`vox-notes/VERIFIED-ROUND-4.md` #93); approved by
-Josj the same day (WhatsApp: "all are real bugs … please get those fixed
-for vox 0.4.11").
+2026-08-23 by the round-4 audit
+and by TheJostler's own recollection of the buffer default; verified by
+execution the same day; approved by TheJostler the same day for fixing in
+vox 0.4.11.
 
 #### Part A — `void_results.rs:139,141` cite LANGUAGE.md by line number, and both numbers are now stale
 
@@ -10475,10 +10449,9 @@ places: the `Create a buffer called buf.` comment at :498 ("buf is empty,
 0 bytes, dynamic capacity"), the Dynamic Buffers "Features" bullet at
 :3438 ("Start with zero capacity and grow automatically as needed"), and
 the Resource Management section at :3995 ("Buffers start at zero capacity
-and grow automatically"). Josj's own recollection (design ruling Q2,
-2026-08-23): "My understanding was that 4K of buffer is automatically
-given on a fresh dynamic buffer... The docs are wrong" — confirmed by the
-master's own run above and by reading the runtime source; **Option B:
+and grow automatically"). TheJostler's own recollection (design ruling,
+2026-08-23) is that a fresh dynamic buffer is given 4K automatically and
+that the docs are wrong — confirmed by the run above and by reading the runtime source; **Option B:
 4096 is the rule.**
 
 **Fix (no runtime change).** LANGUAGE.md's three sentences now say,
@@ -10523,7 +10496,7 @@ stating a rule the runtime did not actually follow).
 **Not closed by this fix.** The other 44 stale `LANGUAGE.md:<N>` citations
 the same grep finds sit in `src/` comments and doc-comments, never reach a
 user, and are left for a documentation pass rather than a diagnostic fix —
-see `vox-notes/REPORT-CANDIDATES-ROUND-4.md` §6.2. The `full` buffer
+as recorded in the round-4 audit. The `full` buffer
 property ("Whether size equals capacity (for fixed buffers)", :3520) and
 the "size is equal to capacity" example (:3488) were checked against the
 new capacity value and still read truthfully; neither needed a change.
@@ -10535,11 +10508,9 @@ new capacity value and still read truthfully; neither needed a change.
 
 **Status:** **fixed** in 0.4.11. Severity: **diagnostic quality** — a
 one-line program is refused for the right reason with the wrong caret, and
-the compiler already had the correct message one branch over. Found by the
-language-lawyer adjudicator during the Round-4 audit's candidate review
-(`audit/round-4`, `vox-notes/REPORT-CANDIDATES-ROUND-4.md` §2); verified
-independently by the master against `vox v0.4.10` on 2026-08-23
-(`vox-notes/VERIFIED-ROUND-4.md` §#94); approved by Josj the same day
+the compiler already had the correct message one branch over. Found during the
+Round-4 audit (`audit/round-4`); verified
+independently against `vox v0.4.10` on 2026-08-23; approved by TheJostler the same day
 (WhatsApp: "all are real bugs … please get those fixed for vox 0.4.11").
 Regression tests: `tests/compile_fail/238`–`251`,
 `tests/533`–`540`.
@@ -10660,14 +10631,13 @@ compile-fail cases
 `258_declared_name_rewritten_by_set.vox` (the working neighbour, which was
 always right and is byte-identical before and after).
 
-**How it was found.** The candidate audit of 2026-08-23 went looking for
+**How it was found.** The audit of 2026-08-23 went looking for
 what `Set count to 5.` means on a name with no declaration — a form the
 parser has always accepted and the manual has never described — and chasing
-what type such a name gets turned up a defect that was not on the candidate
-list (`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §2b, verdicts 2b-i and
-2b-ii). Verified by the master on 2026-08-23 against
-`vox v0.4.10` with the manual read at `527cb89`
-(`vox-notes/VERIFIED-ROUND-4.md` §#95); approved by Josj the same day, with
+what type such a name gets turned up a defect that was not on the audit
+list. Verified on 2026-08-23 against
+`vox v0.4.10` with the manual read at `527cb89`;
+approved by TheJostler the same day, with
 the design sub-question — what an untyped `Set` on a fresh name should mean
 — ruled shape **(b)**: it declares the name with the value's type and locks
 it like any declaration.
@@ -10825,7 +10795,7 @@ no longer a way to produce a program that runs and prints something wrong.
 The three untyped spellings are interchangeable as declarations, which is
 one more shape a declaration leaf may draw.
 
-**Resolved by #96.** Josj ruled Option B on "The parse half" above: a `To`
+**Resolved by #96.** TheJostler ruled Option B on "The parse half" above: a `To`
 reached while a clause is still open is now a compile error, not a
 force-closed clause, which also closes "A related blind spot" just above
 (the swallow it depended on can no longer happen). The eight regression
@@ -10838,9 +10808,9 @@ coverage with compile_fail tests proving the shape is now refused.
 ### 96. A `To` (function definition) inside a still-open `If`/loop/function body was parsed into that body instead of refused, silently moving every following statement's control flow
 
 **Status:** **fixed** in 0.4.11. Severity: **insufficient compile-time
-coverage** (Josj's framing, 2026-08-23) — a program shape that should be
+coverage** (TheJostler's framing, 2026-08-23) — a program shape that should be
 rejected was instead silently mis-parsed; no runtime or codegen change (the
-assembly is already correct either way, `vox-notes/ASM-ANALYSIS-96.md`).
+assembly is already correct either way).
 Regression tests: compile_fail `265`-`269` (a loop body, an `If` body, a
 clause nested inside another function's body, a `Library` declaration, and
 the #73 §4 shadow-warning repro); run `560`/`561` (the blank-line-closed
@@ -10849,11 +10819,11 @@ and double-period forms still compile and run once). Superseded run tests
 program shape this entry now refuses at parse time, so they no longer
 compile and are removed.
 
-Found by the round-4 candidate audit, `vox-notes/REPORT-CANDIDATES-ROUND-4.md`
-§4 ("#73 incidental (1)", the Stage A4 shadow-warning blind spot) and
-design question 1 (`vox-notes/DESIGN-QUESTIONS-FOR-JOSJ.md`); Josj ruled
-Option B in `vox-notes/DESIGN-RULINGS.md` (2026-08-23): "function
-declarations are not supposed to be nestable... through a compiler error."
+Found by the round-4 audit
+("#73 incidental (1)", the Stage A4 shadow-warning blind spot) and
+a design question on nested definitions; TheJostler ruled Option B
+(2026-08-23): function declarations are not nestable, and the compiler
+reports an error.
 
 ```vox
 For each n from 1 to 3,
@@ -10901,7 +10871,7 @@ BUGS_FOUND #5) is untouched: that mechanism decides the next `To` is never
 dispatched as a nested statement in the first place, so the new guard
 never sees it as nested.
 
-No codegen changed: `vox-notes/ASM-ANALYSIS-96.md` shows the swallowed and
+No codegen changed: the emitted assembly shows the swallowed and
 blank-line forms emit byte-identical code for the function itself, and the
 only difference is where the trap places a caller's statement (inside the
 loop instead of after it); a parse-time rejection removes the trap
@@ -10955,9 +10925,8 @@ the `see/list-parameter` case in `test.sh` over
 `tests/shared/noting_lib.vox`, and four codegen unit tests in
 `src/codegen/tests.rs`.
 Found by the #75 fix report as incidental (2), 21–22 Aug 2026; separated
-out and adjudicated by the candidate audit of 2026-08-23
-(`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §5), verified by the master the
-same day (`vox-notes/VERIFIED-ROUND-4.md` §97) and approved by Josj that
+out and confirmed by the audit of 2026-08-23, verified the
+same day and approved by TheJostler that
 day, with the fix shape ruled to be **(A), the caller widens**.
 
 ```vox
@@ -11026,7 +10995,7 @@ site* — a one-level, intra-program question, and codegen already runs
 several whole-program pre-passes of exactly that character
 (`collect_definite_decls`, `collect_literal_collection_shapes`,
 `collect_constant_numbers`, `collect_global_declared_types`). Nothing in it
-makes printing a pointer as a number the right answer. Josj ruled for the
+makes printing a pointer as a number the right answer. TheJostler ruled for the
 widening: refusing the callee would forbid a reasonable, readable program —
 a helper that collects into whatever list it is given.
 
@@ -11175,11 +11144,9 @@ the wrong thing with nothing to say so. Regression tests:
 `tests/compile_fail/252_unrecognised_format_specifier_q.vox`,
 `tests/compile_fail/253_unrecognised_format_specifier_hash_x.vox`,
 `tests/compile_fail/254_unrecognised_format_specifier_zzz.vox`. Found while
-checking candidate 7 during the round-4 audit (`c7-badspec.vox`,
-`vox-notes/REPORT-CANDIDATES-ROUND-4.md` §N1); reproduced and verified by
-the master 2026-08-23 (`vox-notes/VERIFIED-ROUND-4.md` §#98); approved by
-Josj the same day (WhatsApp: "all are real bugs … please get those fixed
-for vox 0.4.11").
+checking a finding of the round-4 audit (`c7-badspec.vox`);
+reproduced and verified 2026-08-23; approved by
+TheJostler the same day for fixing in vox 0.4.11.
 
 ```vox
 a number called n is 255.
@@ -11288,7 +11255,7 @@ is the sentence naming the third.
   table lists specifier *shapes*, not what a bare trailing `:` with nothing
   after it means, and no sentence elsewhere addresses it either. Left as
   before (renders exactly as a bare `{n}`) rather than guessed at; a ruling
-  belongs to Josj, not to this fix.
+  belongs to TheJostler, not to this fix.
 - A sibling silent gap exists one branch earlier: `read_format_spec`'s
   leading-`.` path (`fmt_str.starts_with('.')`) returns immediately when
   what follows is not a count, so `{n:.z}` also renders as a bare `{n}`
@@ -11302,13 +11269,13 @@ is the sentence naming the third.
 
 ### 99. A bare `.lib` name in `see` never finds an installed interface — `/usr/include/vox` is not in the search order, though every doc says installed interfaces live there
 
-**Status:** **Fixed in 0.4.12** — logged 2026-08-23 on Josj's instruction,
-verified by the master the same day (minimal repro below re-run against vox
+**Status:** **Fixed in 0.4.12** — logged 2026-08-23 on TheJostler's instruction,
+verified the same day (minimal repro below re-run against vox
 0.4.11 and the installed vox-libs 0.2.0). Severity: **usability / doc-behaviour
 mismatch** — every consumer of an installed library must pass
 `--lib-path /usr/include/vox` by hand, which no documentation tells them
-and the language designer expected not to be needed ("no path, should auto
-resolve" — Josj, 2026-08-23).
+and the language designer expected not to be needed: TheJostler ruled
+(2026-08-23) that a bare name resolves automatically.
 
 **Repro.** With vox-libs installed (`json.lib` in `/usr/include/vox`,
 `libjson.so` in `/usr/lib64`):
@@ -11347,7 +11314,7 @@ a flag.
 runtime library search path (`RUNPATH [/usr/include/vox:/usr/lib64]`
 observed). Interfaces and shared objects are different search spaces.
 
-**Agreed fix shape (awaiting Josj's "fix #99" to start):** append
+**Agreed fix shape (awaiting TheJostler's approval to start):** append
 `/usr/include/vox` as the FINAL step of the `.lib` search order — containing
 directory, then `--lib-path`, then the system directory — so a development
 `.lib` beside the source or on `--lib-path` always shadows the installed
@@ -11357,7 +11324,7 @@ resolves as today. RUNPATH gains only directories that actually contain a
 resolved `.so`. LANGUAGE.md:~5125 gains the one sentence; the error's
 "Paths tried" lists the system directory too.
 
-**Found by** the master's smoke test of the installed json library
+**Found by** a smoke test of the installed json library
 (vox-libs 0.2.0), 2026-08-23, immediately after `make install` — the first
 ever consumer of an installed Vox library from outside the vox-libs tree.
 
@@ -11476,8 +11443,7 @@ vox-fuzz's CI to compile against 0.4.11
 random widths, one of which rolled zero, and the run that had passed every
 week since `random-unless-ruled` failed the moment CI built against the new
 compiler — a regression in a fix, caught by the fuzzer catching itself, the
-system working as designed. Verified by the master 2026-08-23
-(`vox-notes/VERIFIED-ZERO-WIDTH-SPECIFIER.md`); ruled by Josj the same day:
+system working as designed. Verified 2026-08-23; ruled by TheJostler the same day:
 "I completely agree width 0 is a legal no-op."
 
 **Family.** #98 (the fix this narrows — its mandate was unknown letters,
@@ -11579,7 +11545,7 @@ generator never emits a no-initializer `list` for a builtin value type
 (vox-fuzz `variables.md` VAR-12: "every emitted map carries a literal"),
 which is why the fuzzer has not caught it — only the ledger probe did.
 
-**Fix direction** (for the approved fixer): set `uses_heap` when a
+**Fix direction** (for the approved fix): set `uses_heap` when a
 no-initializer `list` default is emitted, in `emit_type_default`'s
 `Type::List` arm (mirroring how the map path is safe via `uses_maps`), or
 teach the analyzer to record `uses_heap` for a `VarDecl` whose declared
@@ -11592,8 +11558,8 @@ type is `list` with `value: None`. The conditional-defaults path
 
 **Status:** Open, text fields delivered (tests 720-738); list, map and buffer fields await the owner's design ruling.
 Registered 2026-08-25 (GitHub #243). Severity: **diagnostic
-bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8)
-by the master, 2026-08-25.
+bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8),
+2026-08-25.
 
 ```vox
 A thing called 'file report' has
@@ -11618,7 +11584,7 @@ between two identical things. The true error is the second one; the first is
 noise in front of it. Suppressing the default-type check when the field's type
 has already been rejected leaves the (excellent) single diagnostic.
 
-**Owner ruling (Josj, 2026-08-25).** The garbled message is the symptom, but the
+**Owner ruling (TheJostler, 2026-08-25).** The garbled message is the symptom, but the
 real defect is deeper: **every standard type should be a legal thing field, and
 text missing from that set is a delivery gap, not a design limit.** The
 deferral's stated rationale is unproven rather than false — plan 310 §6 keeps
@@ -11657,7 +11623,7 @@ scope.
 anchoring landed earlier in v0.4.14 (regression tests
 `tests/compile_fail/275`–`276`). Registered 2026-08-25 (GitHub #244).
 Severity: **diagnostic-placement** + owner-raised feature. Verified on
-vox 0.4.13 (873daf8) by the master, 2026-08-25.
+vox 0.4.13 (873daf8), 2026-08-25.
 
 ```vox
 Create a buffer called data.
@@ -11684,7 +11650,7 @@ site; in a large file the declaration can be hundreds of lines from the loop.
 over a collection or range (`LANGUAGE.md:316`); the legal walks are a list, a
 range, or `arguments's all`.
 
-**Owner ruling (Josj, 2026-08-25).** The misplaced caret is a small bug, but
+**Owner ruling (TheJostler, 2026-08-25).** The misplaced caret is a small bug, but
 the broader ask is: **looping over the bytes of a buffer should be expressible.
 There is no such sentence today.** Verified: `each byte of data`, `each octet
 of data`, and `each byte from data` are all rejected (`byte` is even a reserved
@@ -11741,7 +11707,7 @@ contextual-keyword parsing doesn't accidentally bypass the map refusal.
 `tests/compile_fail/271_call_missing_preposition_bare_call.vox`,
 `tests/compile_fail/272_call_missing_preposition_two_args.vox`. Registered
 2026-08-25 (GitHub #245). Severity: **diagnostic accuracy**. Verified on
-vox 0.4.13 (873daf8) by the master, 2026-08-25.
+vox 0.4.13 (873daf8), 2026-08-25.
 
 ```vox
 To 'write a blank pair to' with a buffer called output.
@@ -11886,7 +11852,7 @@ all of them again.
 
 ### 107. A buffer, list, or format-string text declared inside a function or loop body is allocated on every entry and released only at program exit
 
-**Status:** Not a compiler defect — a limitation, ruled by Josj 2026-08-28
+**Status:** Not a compiler defect — a limitation, ruled by TheJostler 2026-08-28
 ("agreed with your verdict on #107; what we need is a new feature that
 allows a program to free a buffer manually"). The compiler keeps every
 promise LANGUAGE.md makes (see "What the manual already said"); the missing
@@ -11946,8 +11912,7 @@ campaigns reached 20/15/10 GB and the OOM killer took them at 13:57
 (kernel journal); every one of the 269 "compile exceeded 60 s" findings
 they saved recompiles in ≤ 2.4 s on an idle machine — artifacts of a
 starved box, not compiler bugs. The fuzzer side is vox-fuzz Defect 17.
-Evidence programs and the emitted `.asm`:
-`vox-notes/evidence/2026-08-28-scope-exit-free/`.
+Evidence programs and the emitted `.asm` were recorded at the time.
 
 **Resolution.** Ruled a limitation; the way forward is (C), a manual release
 verb — design work, not a fix. For the record, the shapes considered were:
@@ -11959,8 +11924,7 @@ Free function-local heap variables at return, exempting the returned
 value: a text made from a buffer is already an independent copy
 (LANGUAGE.md:2040), so a returned text never aliases a freed buffer; a
 returned buffer or list escapes and is kept; things holding buffers need
-the same escape rule. (C) An explicit release verb. Master's
-recommendation: A now (docs only), B for 0.5.
+the same escape rule. (C) An explicit release verb. Recommendation: A now (docs only), B for 0.5.
 
 Remedied by the `Free` statement (v0.4.14): see LANGUAGE.md, Releasing a
 Buffer.
@@ -12008,11 +11972,10 @@ allocates nothing, so two text variables can share one string — a
 free-on-`Set` must know whether the outgoing string is shared (ownership
 flag or count) or it frees a string another variable still names.
 
-**How it was found.** The vox-fuzz Defect 17 worker (2026-08-28) hit it in
+**How it was found.** vox-fuzz Defect 17 (2026-08-28) hit it in
 `gen_files.vox`'s `'gen build input'` (`Set gen_input to
-"{gen_input}{c}"` per character); confirmed by the master's own
-measurements above. Evidence: `vox-notes/evidence/2026-08-28-scope-exit-free/`
-(`t_text_acc_*`, `u_*`, `v_*`, `w_*`, `x_*`, `y_*`).
+"{gen_input}{c}"` per character); confirmed by the
+measurements above (evidence programs `t_text_acc_*`, `u_*`, `v_*`, `w_*`, `x_*`, `y_*`).
 
 **Fix.** Two independent checks, both required, combined at every `Set`/
 declaration write of a top-level (global) text variable:
@@ -12072,7 +12035,7 @@ optimisation for function-local accumulation, never a correctness gap.
 bare `Expr::Identifier` operand fell through the recursion's catch-all
 and was never excluded: `a text called u is src as text.` left `src`
 freeable, and `Set src to ...` afterward freed the string `u` still
-named — a real use-after-free, found by the master reviewing the first
+named — a real use-after-free, found while reviewing the first
 patch, before it shipped. Tests 573–576 and two `collect_freeable_texts`
 unit tests pin this shape specifically.
 
@@ -12083,7 +12046,7 @@ unit tests pin this shape specifically.
 **Status:** Fixed in v0.4.15 — a list now gets the same released-buffer
 contract a buffer already has (LANGUAGE.md, Releasing a Buffer), plus,
 by owner ruling, a deep free that recursively releases every nested
-list/map the list holds. Registered 2026-08-29 (verified by the master,
+list/map the list holds. Registered 2026-08-29 (verified,
 confirmed by the owner 2026-08-29). Severity: **memory safety** (dangling
 pointer after `Free` on a function-local list) + silent no-op on a global
 list.
@@ -12148,8 +12111,8 @@ address of memory the kernel had already unmapped; the next `length`,
    already gets (LANGUAGE.md's Bounds Checking) - no new behaviour
    invented for reads.
 2. **Refused by identity, not by shape.** `_list_append` - the only
-   runtime growth path codegen ever calls (`LIST_APPEND`, the macro named
-   in the original brief, is defined in `list.asm` but never invoked by
+   runtime growth path codegen ever calls (the `LIST_APPEND` macro
+   is defined in `list.asm` but never invoked by
    codegen anywhere; left untouched, noted here rather than silently
    ignored) - now opens with an identity check: `cmp rdi, [rel
    _released_list_header address]`, and refuses with `SET_LAST_ERROR 1`
@@ -12160,14 +12123,14 @@ address of memory the kernel had already unmapped; the next `length`,
    resurrected a freed list into a brand-new block instead of refusing
    it. Test 614 pins that a real list crossing that exact boundary still
    grows. `Set element N of L to value` (`Statement::ElementSet`,
-   `src/codegen/statements.rs`) needed no change: contrary to the
-   original brief's `LIST_SET_ELEM` guess, that statement was never
+   `src/codegen/statements.rs`) needed no change: contrary to what the
+   `LIST_SET_ELEM` macro's name suggests, that statement was never
    generated through the `LIST_SET_ELEM` macro (only list-literal/argv
    fill loops use it) - it has always been an inline, LENGTH-bounded
    write (`index <= length` or refuse), and a released list's length is
    always 0, so every write to it was already refused before this fix,
    by the ordinary bounds check. No identity check was added there
-   because none was needed; see "Where the brief was wrong" below.
+   because none was needed; see "Two assumptions that did not hold" below.
 3. `_free_list` (new, `list.asm`) replaces the generic `HEAP_FREE` for a
    list. It computes the block's total size from the list's OWN header
    (capacity, element size, +1 tag byte per slot) and unconditionally
@@ -12194,9 +12157,9 @@ address of memory the kernel had already unmapped; the next `length`,
    unchanged (an `Allocate`d block never carries `VarType::List`, so it
    still falls through to the old, untouched `HEAP_FREE` path) and the
    buffer arm is untouched.
-5. **List parameters (brief rule 4) - already had the mechanism, no
-   compile error needed.** The brief flagged this as possibly requiring
-   a compile-error fallback ("if lists have the same write-back cell
+5. **List parameters - already had the mechanism, no
+   compile error needed.** The plan allowed for a
+   compile-error fallback ("if lists have the same write-back cell
    mechanism ... follow the buffer precedent [...] if they do not, make
    `Free` on a list parameter a compile error"). Investigated first:
    #75 already gave `list`/`map` parameters an address-of-caller's-slot
@@ -12210,8 +12173,7 @@ address of memory the kernel had already unmapped; the next `length`,
    caller's own variable is empty and refuses after a callee frees its
    list parameter.
 
-**Where the brief was wrong (as invited: "the spec/this brief may be
-wrong ... say so").** Two things, both above: `LIST_SET_ELEM` is not
+**Two assumptions that did not hold.** Two things, both above: `LIST_SET_ELEM` is not
 `Set element N of L to ...`'s path (nothing needed changing there), and
 list parameters do NOT need the compile-error fallback (they already had
 an equivalent write-back mechanism, just under a different name).
@@ -12221,8 +12183,7 @@ an equivalent write-back mechanism, just under a different name).
 **Scope addition, owner ruling 2026-08-29 09:18: "Freeing a list should
 free every item within the list as well — agreed."**
 
-**Nested collections: copy-in or pointer-in?** Established first, as
-asked, before building anything on it. Probed on this branch (0.4.14):
+**Nested collections: copy-in or pointer-in?** Established first, before building anything on it. Probed on this branch (0.4.14):
 
 ```vox
 a list called inner is [1, 2].
@@ -12237,8 +12198,7 @@ list-literal fill for `outer` does `mov rax, [rel gvar_0]` (loads
 `inner`'s own pointer) then `LIST_SET_ELEM [rbx+24], rax` - `outer`'s
 slot stores `inner`'s POINTER, tagged `LIST_TAG_LIST`, not a copy.
 **(b) pointer-in.** Deep free was built anyway, per the ruling above -
-this is the "build it anyway" branch the brief's own template
-anticipated for this answer.
+this is the "build it anyway" branch that the plan anticipated for this answer.
 
 **What deep free does.** `_free_list` walks its own slots by their
 per-element type tag before releasing itself: a `LIST_TAG_LIST` (4) or
@@ -12296,7 +12256,7 @@ is a genuine, currently-unfixed leak for any list/map holding text or
 buffer-derived string elements when it is `Free`d - distinguishing the
 two would need a new per-slot ownership bit (the same shape #108's fix
 added for top-level text globals) threaded through every place a string
-element gets written, which is out of this brief's scope (lists only).
+element gets written, which is out of this entry's scope (lists only).
 
 **A new, confirmed hazard: freeing a nested collection leaves ANY other
 variable that still names it dangling.** Because nesting is pointer-in,
@@ -12311,8 +12271,7 @@ Free outer.
 print inner's length.   (segfault, rc 139 - reproduced on this branch)
 ```
 
-**Closed by #111, same day.** Carried to "Questions for the master" in
-REPORT-109.md as the #34 ruling question; the owner ruled (A) copy-by-
+**Closed by #111, same day.** Raised as the #34 ruling question; the owner ruled (A) copy-by-
 default the same day (GitHub #34, Option 1) and #111 (this branch,
 Round 2) implements it: a collection placed inside another collection is
 now a copy, so `outer` above never held `inner`'s own block in the first
@@ -12352,7 +12311,7 @@ likely the shape of the #34 ruling itself.
 through the same lexer/parser every other placeholder shape already used,
 instead of returning early on it. Regression tests: 620–629.
 
-Registered 2026-08-29 (verified by the master 2026-08-29; the owner ruled
+Registered 2026-08-29 (verified 2026-08-29; the owner ruled
 the quoted one-word spelling legal the same day).
 
 ```vox
@@ -12405,7 +12364,7 @@ variable is ever registered under a name with literal `'` characters in
 it — hence "Unknown variable: 'tally'", the quotes baked into the message
 because they were baked into the (wrong) name.
 
-**Disambiguation chosen.** The brief that opened this bug guessed a slot
+**Disambiguation chosen.** The original report guessed a slot
 default of "a quoted token is always a name, never a character" for the
 one-letter case (`'x'`). That is not what LANGUAGE.md rules; :691 rule 3 is
 explicit and declared "no context-sensitivity": a single-quoted token
@@ -12462,7 +12421,7 @@ print outer.
 print inner.
 ```
 → on 0.4.14 (before this fix): `[[777, 2], 3]` then `[777, 2]` -
-mutating `inner` through its own name changed `outer` too. Master-probed
+mutating `inner` through its own name changed `outer` too. Probed
 directly on this branch before building anything: the emitted assembly
 for `outer`'s literal fill loads `inner`'s own pointer (`mov rax, [rel
 gvar_0]`) and stores THAT into `outer`'s slot (`LIST_SET_ELEM [rbx+24],
@@ -12549,7 +12508,7 @@ collection can be placed or read out.**
    given (TAG_LIST/TAG_MAP, whichever branch ran) immediately after the
    copy call returns, before any other code can observe the clobbered
    value. Caught by the regression suite, not by design - recorded here
-   as the one place this brief shipped a real defect internally before
+   as the one place this fix shipped a real defect internally before
    the gate caught it.
 5. **`uses_maps` set defensively inside the copy-in helpers themselves,**
    not just at the analyzer's own detection sites: codegen is single-pass
@@ -12615,7 +12574,7 @@ twice (607), a comprehensive deep-free-after-copy-in scenario with every
 original name (list and map) still readable and writable afterward
 (608), a `For each` loop variable bound to a nested list is independently
 copied - isolated via a plain-assignment alias, since the analyzer does
-not (independent of this brief) accept a loop variable as a direct
+not (independent of this fix) accept a loop variable as a direct
 `Set element N of`/`append ... to` target (609).
 
 Four PRE-EXISTING tests were rewritten in place, at the same numbers,
@@ -12638,7 +12597,7 @@ not derived by inspection.
 test, NOT fixed here.** `print element N of L's length.` - the property
 access chained directly onto an inline `element N of` expression,
 without an intermediate variable - segfaults on 0.4.14 REGARDLESS of
-this brief: reproduced with a plain list of strings, no nesting, no
+this fix: reproduced with a plain list of strings, no nesting, no
 copy-in involved at all (`a list called names is ["hi", "there",
 "world"]. print element 1 of names's length.` → segfault, rc 139). The
 emitted assembly shows the statement compiled as a bare `element 1 of
@@ -12647,16 +12606,14 @@ lost somewhere in parsing, and the raw list pointer is read as though it
 were the integer to print. Assigning to a variable first (`a list called
 g is element 1 of names. print g's length.`) works correctly and was
 used throughout this report's own tests instead. Narrow (#109/#111 are
-lists-only and copy-in-only respectively): flagged here for the master
-to verify and register separately, not registered or fixed on this
+lists-only and copy-in-only respectively): registered separately, not fixed on this
 branch.
 
 **Not attempted.** Reference-counting or any other sharing model:
 Option 1 (copy by default) was the ruling; this entry implements it, not
 an alternative. Making list/map fields legal inside a `thing`: still
 deferred per LANGUAGE.md 1891/2668, unrelated to this ruling landing -
-the Things chapter gained only the one clarifying sentence the brief
-asked for, since a thing cannot hold a collection field to demonstrate
+the Things chapter gained only the one clarifying sentence, since a thing cannot hold a collection field to demonstrate
 the point on yet.
 
 ---
@@ -12665,12 +12622,11 @@ the point on yet.
 
 **Status:** Fixed in v0.4.15 — memory safety, a valid program (written in the
 exact shape LANGUAGE.md itself shows) crashes. Registered 2026-08-29
-(verified by the master 2026-08-29 00:50, confirmed by the owner
+(verified 2026-08-29 00:50, confirmed by the owner
 2026-08-29). Regression tests: 630–640 (one per declared type, plus the
-manual's own `score` example pinned verbatim). Evidence:
-`vox-notes/evidence/2026-08-29-fall-off-end/` (`j_list.vox`,
+manual's own `score` example pinned verbatim). Evidence programs: `j_list.vox`,
 `k_list_print_only.vox`, `j_map.vox`, `k_buffer.vox`, plus the four that
-already passed).
+already passed.
 
 ```vox
 To 'maybe' with a boolean called 'the choice'.
@@ -12774,7 +12730,7 @@ touched for the same reason.
 
 ### 114. Reading a number-valued map key into a `text` variable compiles clean and segfaults on first string use; the type check that fires for a literal map is absent for a dynamically-built one
 
-**Status:** Fixed in v0.4.15. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room by the master; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
+**Status:** Fixed in v0.4.15. Memory safety, a program of individually-legal statements crashed with SIGSEGV (exit 139) on both the shipped 0.4.14 compiler and the 0.4.15 stack. Reported 2026-08-30 (found by the vox-fuzz adversarial hunt, seed 70296130; reduced clean-room; **confirmed by the owner 2026-08-30**, who ruled the fix a cast: "I'd like the type to dynamically switch to the correct new type and be casted as such (since it's a dynamic type). Like 'as a text'.").
 
 **Symptom.** Four lines:
 ```vox
@@ -12796,7 +12752,7 @@ The cast reuses the exact runtime-tag dispatch `<value> as a <type>` already low
 Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `MapAccess` value lands in a destination (`Statement::VarDecl`, covers both a declaration and the `Set` spelling, local and global; `Statement::Assignment`, local and global; `Statement::Return`; and a function-call argument in `src/codegen/functions.rs`), right before the existing `emit_empty_value_if_missed` (#91) at each of those sites:
 
 - `emit_map_value_cast_if_needed`, for a scalar (`number`/`float`/`text`/`boolean`) destination: on a **hit** (`rax != 0`), loads the tag and calls `emit_scalar_cast_from_runtime_tag`. On a **miss** (`rax == 0`) it does nothing and falls through to #91's existing handling, a miss's tag is always `TAG_INTEGER` with payload 0, indistinguishable from a genuinely stored integer `0`, so casting it through this switch would turn "absent key into a text" into the text `"0"` instead of #91's empty text. This is a pre-existing ambiguity #91 already accepted (a real `0`/`false`/`0.0` map value read into a `text` destination is indistinguishable from a miss and answers the same empty text either way); this fix does not touch it.
-- `emit_map_value_collection_guard`, the master's assumption for the fallback the owner flagged: a `list`/`map` destination whose value's runtime tag does **not** match (a number or text where a list/map is expected, `<number> as a list` has no defined meaning, unlike the four scalar casts) sets the error flag and gives the destination its own empty value (`emit_empty_value_for`, shared with #91), rather than storing a scalar payload where every later list/map operation expects a heap pointer. A matching tag is a no-op, `_map_lookup`'s existing `emit_copy_if_collection_reg` has already deep-copied the value correctly.
+- `emit_map_value_collection_guard`, an assumption for the fallback the owner flagged: a `list`/`map` destination whose value's runtime tag does **not** match (a number or text where a list/map is expected, `<number> as a list` has no defined meaning, unlike the four scalar casts) sets the error flag and gives the destination its own empty value (`emit_empty_value_for`, shared with #91), rather than storing a scalar payload where every later list/map operation expects a heap pointer. A matching tag is a no-op, `_map_lookup`'s existing `emit_copy_if_collection_reg` has already deep-copied the value correctly.
 
 **Per-type table** (a map built with `Set`, one call per row, `a <type> called t is m's "k".`):
 
@@ -12814,11 +12770,11 @@ Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `Ma
 
 **This also closes a related, previously out-of-scope gap:** a *heterogeneous literal* map (`{"k": 42, "j": "text"}`) reached the identical runtime path, `check_declared_read_type`/`check_type_lock` can prove a homogeneous literal's value type but not a per-key one, and crashed the same way; `tests/p294_type_lock.rs`'s `heterogeneous_map_value_read_still_crashes_a_known_gap` pinned this as an explicitly out-of-scope known limitation. Because the fix keys off the read's runtime tag rather than whether the map is literal or `Set`-grown, that case now casts too, and the test is renamed `heterogeneous_map_value_read_now_casts_instead_of_crashing` and re-pinned to the new behavior.
 
-**Undefined-cast fallback, still open for the owner (master's assumption, unchanged by this fix):** should a `number`/`text`/`boolean` read into a `list`/`map` destination (or the reverse) later be ruled to convert to something (e.g. `[547]` or a one-key map) rather than error? Left as the error-flag fallback per the brief; a follow-up if the owner rules otherwise.
+**Undefined-cast fallback, still open for the owner (an assumption, unchanged by this fix):** should a `number`/`text`/`boolean` read into a `list`/`map` destination (or the reverse) later be ruled to convert to something (e.g. `[547]` or a one-key map) rather than error? Left as the error-flag fallback; a follow-up if the owner rules otherwise.
 
 **Tests.** `tests/641`–`646` (each scalar cast direction, the exact four-line repro, the undefined-cast fallback, and the unprovable-miss regression pin); `tests/p294_type_lock.rs`'s renamed test above.
 
-**Provenance (precise chain).** The fuzz produced a **wrong-value** divergence, not a crash: the 1,280-line generated program (`--budget 40 --layout random`, seed 70296130) ran to `exit 91` because a type-mismatched read off a dynamic map failed to raise the error flag; the classifier flagged wrong-value. Reducing that program clean-room, the same construct **segfaulted** on string use, the two faces of one hole. Evidence: `vox-notes/evidence/2026-08-30-segv-map-text/` (4-line repro + literal/dynamic pair) and `vox-notes/evidence/2026-08-30-hunt/lst49-70296130/` (the fuzzer program). Artefact for confirmation: the master's bug page.
+**Provenance (precise chain).** The fuzz produced a **wrong-value** divergence, not a crash: the 1,280-line generated program (`--budget 40 --layout random`, seed 70296130) ran to `exit 91` because a type-mismatched read off a dynamic map failed to raise the error flag; the classifier flagged wrong-value. Reducing that program clean-room, the same construct **segfaulted** on string use, the two faces of one hole. Evidence: a 4-line repro, a literal/dynamic pair, and the fuzzer program (seed 70296130).
 
 ---
 
@@ -12826,7 +12782,7 @@ Two new call-site helpers in `src/codegen/vars.rs`, invoked at every place a `Ma
 
 **Status:** fixed in v0.4.15. Regression test: tests/650_a_value_variable_read_into_a_text_variable_casts_to_text.vox, tests/651_a_heterogeneous_list_element_read_into_a_typed_variable_casts_or_flags.vox, tests/652_a_value_returning_function_call_read_into_a_text_variable_casts_to_text.vox, tests/655_a_dynamic_value_read_into_a_list_variable_has_no_defined_cast.vox
 
-Reading a value whose runtime type is only known dynamically into a fixed-type variable copies the raw bits into the destination slot without checking the runtime tag against the destination type. Using the result as the wrong type dereferences a non-pointer, so a pointer prints where a value belongs, or the program segfaults on use. Landing sites, master-verified on the installed 0.4.14 AND the 0.4.15 #114-fixed compiler:
+Reading a value whose runtime type is only known dynamically into a fixed-type variable copies the raw bits into the destination slot without checking the runtime tag against the destination type. Using the result as the wrong type dereferences a non-pointer, so a pointer prints where a value belongs, or the program segfaults on use. Landing sites, verified on the installed 0.4.14 AND the 0.4.15 #114-fixed compiler:
 ```vox
 a value called v is 42.  a text called t is v.  Print "{t}".            (SIGSEGV before this fix)
 a text called t is element 1 of [1, "two", 3].                          (SIGSEGV before this fix)
@@ -12841,7 +12797,6 @@ Fixing the list-element site also surfaced a second, latent defect: `infer_expr_
 
 A cast that succeeds at a named variable's declaration or assignment also re-establishes that name's declared-type invariant for any later mixed-context read (an append, a predicate), so its call sites (`src/codegen/statements.rs`) drop the name from `unprovable_scalars` once the cast has run: a pre-existing safety net (stage 1b) that predates #114 and defaulted such a read to the integer tag specifically because nothing had yet verified the payload matched its declared type. `tests/200_mixed_read_no_forged_tag.vox` pinned that old fallback (`s`, a declared `text`, printed as the number `42` inside a later mixed list); it now pins the corrected behaviour (`s` prints as the text `"42"`), and its header comment is updated to explain why. `src/codegen/tests.rs`'s `declared_type_does_not_forge_a_string_tag` pinned the same fallback at the assembly level and is renamed `declared_type_now_casts_and_is_tagged_correctly`, re-pinned to the new, correct TAG_STRING write; `codegen::tests::type_predicate_on_unprovable_scalar_uses_declared_type`'s blanket "no cmp r11 anywhere" assertion is narrowed to the specific predicate-comparison marker it was actually guarding, since the new cast's own dispatch legitimately adds unrelated `cmp r11,` instructions elsewhere in the same file.
 
-See vox-notes/VERIFIED-DYNAMIC-VALUE-TYPED-READ-CLASS.md.
 
 ---
 
@@ -12880,7 +12835,7 @@ Print 'how many'.
 ```
 gives `error: Unknown variable: xs` with the caret on line 1. The byte-equivalent `the xs is ["a"].` and bare `xs is ["a"].` both print `1`. No manual rule gives `Set` different rules for globals. Two faults: the refusal, and the wrong caret. Fix both.
 
-**Verified against v0.4.14 HEAD (efc2237) before any change in this pass: this repro already compiles clean and prints `1`.** The list, map and buffer spellings, above and below the reading function, and inside every branch of an if/otherwise, are all pinned green by tests 523 to 531 (added by the docs/BUGS_FOUND.md #92 fix, 2026-08-23). This entry's own repro is byte-for-byte the `c1-global-list-set.vox` candidate in vox-notes/REPORT-CANDIDATES-ROUND-4.md and REPORT-CANDIDATES-ROUND-4-partial.md, both timestamped the morning of 2026-08-23, hours before the #92 fix landed that evening (commit de578cb, "Sun Aug 23 17:30:37 2026 +0100"). The 2026-09-01 chaos-hunt registration sweep (commit 1817c64) says several of its entries "were carried as candidates in vox-notes for some time"; #118 appears to be exactly that: a pre-fix candidate re-registered post-fix without being re-verified against the fixed binary. Three regression tests are added under this bug's own number (690 to 692) since the surface brief asked for them specifically; no source change was needed or made.
+**Verified against v0.4.14 HEAD (efc2237) before any change in this pass: this repro already compiles clean and prints `1`.** The list, map and buffer spellings, above and below the reading function, and inside every branch of an if/otherwise, are all pinned green by tests 523 to 531 (added by the docs/BUGS_FOUND.md #92 fix, 2026-08-23). This entry's own repro is byte-for-byte a candidate from the round-4 audit, recorded the morning of 2026-08-23, hours before the #92 fix landed that evening (commit de578cb, "Sun Aug 23 17:30:37 2026 +0100"). The 2026-09-01 chaos-hunt registration sweep (commit 1817c64) says several of its entries were carried as candidates for some time; #118 appears to be exactly that: a pre-fix candidate re-registered post-fix without being re-verified against the fixed binary. Three regression tests are added under this bug's own number (690 to 692) since the repro surface called for them; no source change was needed or made.
 
 ---
 
@@ -12888,7 +12843,7 @@ gives `error: Unknown variable: xs` with the caret on line 1. The byte-equivalen
 
 **Status:** fixed in v0.4.15. Regression test: tests/680–684.
 
-A declaration inside an `If`/branch body is not seen at a later use even though the branch ran; the use reports `Unknown variable`. See vox-notes/VERIFIED-DECLARATIONS-IN-BRANCHES.md. Fixing it also enriches the chaos generator's pool.
+A declaration inside an `If`/branch body is not seen at a later use even though the branch ran; the use reports `Unknown variable`. Fixing it also enriches the chaos generator's pool.
 
 ---
 
@@ -12896,15 +12851,15 @@ A declaration inside an `If`/branch body is not seen at a later use even though 
 
 **Status:** fixed in v0.4.15. Regression test: tests/670_a_possessive_instance_call_looks_past_a_line_break_for_its_preposition.vox
 
-`origin's 'scaled'` then a newline then `of 2.` is refused, though a free call with the same line break compiles, and the manual gives no meaning to a line break inside a sentence. A ledger leaf was held out of a merge because of it. See vox-notes/VERIFIED-NEWLINE-BEFORE-PREPOSITION.md.
+`origin's 'scaled'` then a newline then `of 2.` is refused, though a free call with the same line break compiles, and the manual gives no meaning to a line break inside a sentence. A ledger leaf was held out of a merge because of it.
 
 ---
 
 ### 121. A removed directory still answers `available`
 
-**Status:** fixed, not a compiler defect: does not reproduce. Regression tests: tests/710_a_removed_directory_correctly_reports_unavailable.vox, tests/711_a_directory_recreated_after_removal_correctly_reports_available.vox, tests/712_a_deleted_file_correctly_reports_unavailable.vox. Evidence: vox-notes/REPORT-FIX-121.md.
+**Status:** fixed, not a compiler defect: does not reproduce. Regression tests: tests/710_a_removed_directory_correctly_reports_unavailable.vox, tests/711_a_directory_recreated_after_removal_correctly_reports_available.vox, tests/712_a_deleted_file_correctly_reports_unavailable.vox.
 
-After a successful `Remove the directory`, the path answers `available` = true, though the filesystem confirms it is gone. Deterministic, self-contained repro (harness seed 13). Composition-sensitive to reduce, so seed-13's generated program is the canonical repro. See vox-notes/CANDIDATE-PRC08-STATUS.md.
+After a successful `Remove the directory`, the path answers `available` = true, though the filesystem confirms it is gone. Deterministic, self-contained repro (harness seed 13). Composition-sensitive to reduce, so seed-13's generated program is the canonical repro.
 
 A removed directory, and a deleted file, both correctly report `unavailable`, and a directory recreated after removal correctly reports `available` again, in every case checked directly against the current compiler. The original finding traced to an inverted guard condition in the vox-fuzz generator that produced the seed-13 repro, not to any defect in the compiler's availability check; the finding did not reproduce.
 

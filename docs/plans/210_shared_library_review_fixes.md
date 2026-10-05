@@ -165,7 +165,7 @@ tables. Those are all separately tracked.
 ## Found while fixing these — not a code defect
 
 **A stale system install makes `--shared` look broken outside the repo.**
-Surfaced by the worker as a "coreasm path-resolution quirk"; the real cause is
+Surfaced as a "coreasm path-resolution quirk"; the real cause is
 simpler and worth recording so nobody debugs the compiler over it.
 
 `find_coreasm_path` falls back to system paths when it is not run from a repo

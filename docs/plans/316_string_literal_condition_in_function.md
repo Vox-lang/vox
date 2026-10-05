@@ -2,7 +2,7 @@
 
 **Status:** staged 2026-08-18. Not started. Independent of plan 315 and
 may land before, after, or between its classes — but not in the same
-worker session.
+working session.
 
 **The defect:** BUGS_FOUND.md #21. Inside a function body, a string
 literal on either side of an `If`/`While` comparison is resolved as a
@@ -52,5 +52,5 @@ following the `bugs_found_NN` convention:
 ## Gates
 
 `cargo test`, `./test.sh`; baselines cargo ≥ 312, integration ≥ 355 plus
-new, skips ≤ 6, zero warnings. Master commits; worker stops before
+new, skips ≤ 6, zero warnings. The maintainer commits; work stops before
 committing.

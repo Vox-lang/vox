@@ -72,7 +72,7 @@ shapes — TheJostler's call; narrowing the prose is the cheap honest fix.
 - Re-classify `findings/parser-reject/{0,1}`: #0 = not-a-bug (doc gap
   item 4 + diagnostic item 2); #1 = two documented rules stacked, which
   led to #25. Keep the directories — they are the provenance trail.
-- The worker's flagged classifier gap stands: `'fuzz gen once'` cannot
+- The flagged classifier gap stands: `'fuzz gen once'` cannot
   distinguish generator bugs from real compile-time findings without a
   human reading stderr. A `parser-reject` category needs design: when
   the generator BELIEVES its output valid, an ordinary compile error IS
@@ -81,7 +81,7 @@ shapes — TheJostler's call; narrowing the prose is the cheap honest fix.
 
 ## Process notes
 
-One worker session for items 1-3 (compiler), one docs pass for 4-5
-(master or worker), item 6 rides the next vox-fuzz session. Gates as
+One session for items 1-3 (compiler), one docs pass for 4-5
+(either), item 6 rides the next vox-fuzz session. Gates as
 usual; #25's fix is codegen — the red-team treatment applies before it
 ships in 0.4.3.

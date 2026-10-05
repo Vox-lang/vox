@@ -196,7 +196,7 @@ libraries' mangled symbols into one `.so`, which is fine and is **not** flagged.
 |---|---|
 | location | `src/parser/mod.rs:3874-3876` |
 | quote | Error message: `Or: see "libname" version "1.0" from "./path.so".` (shown when `see` is missing its path/name) |
-| why wrong | The diagnostic offers a `.so` as the `see` argument, steering users at the non-working direct-`.so` form. |
+| why wrong | The diagnostic offers a `.so` as the `see` argument, pointing users at the non-working direct-`.so` form. |
 | suggested correction | Point the hint at `see "./path/to/file.lib"` (or, until `.lib` exists, at `--link`). Do not apply yet. |
 | confidence | confirmed |
 

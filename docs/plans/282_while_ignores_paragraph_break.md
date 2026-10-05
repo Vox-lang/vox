@@ -182,7 +182,7 @@ enclosing function definition**, per rule 2 (a paragraph break closes
 `Return is only valid inside a function`, since `Return` then parses outside
 any function at all.
 
-**Ruling (owner, relayed and independently verified by the sub-master before
+**Ruling (owner, relayed and independently verified before
 being accepted): this is malformed source, not a compiler bug.** There is
 currently no way to write "close this loop, but stay inside the enclosing
 function" — rule 2's "closes everything, uniformly" is the intended

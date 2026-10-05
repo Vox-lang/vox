@@ -2,8 +2,7 @@
  form must keep working unchanged alongside the newer `Create a TYPE
  called NAME.` default-initializing form - both now route through the
  same try_parse_type_noun resolver in src/parser/mod.rs. `file`'s is-form
- is declared only, not exercised further here - see the master report:
- a file declared through this generic path parses but is not registered
+ is declared only, not exercised further here: a file declared through this generic path parses but is not registered
  in the analyzer's file_variables set, so property/read access on it
  (unlike a file opened with `Open a file ... called N.`) is rejected.)
 

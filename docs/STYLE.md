@@ -135,4 +135,4 @@ constraint earns its place.
   `n`, `x`, `v`, `buf`. Those tests are not required to be rewritten;
   they are compiler-mechanics fixtures, and churning 600 files carries
   more risk than value. New tests follow the guide. Whether to retrofit
-  any of them is the project owner's call, not a worker's.
+  any of them is the project owner's call, not a contributor's.

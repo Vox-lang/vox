@@ -1,6 +1,5 @@
 # Compiler module split — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to work this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Break the four monolithic compiler-phase `mod.rs` files into focused topical submodules, as pure behaviour-preserving code motion.
 
@@ -33,7 +32,7 @@ From the spec. `mod.rs` in each phase becomes the thin hub (struct, consts/enums
 
 ### Task 1: Safety tooling — baseline and gate scripts
 
-Foundation for every later task. Committed first so worker and reviewer run the identical check.
+Foundation for every later task. Committed first so author and reviewer run the identical check.
 
 **Files:**
 - Create: `tools/module-split/capture-baseline.sh`

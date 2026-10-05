@@ -1,6 +1,6 @@
 # 311 — Completing process management
 
-**Status:** APPROVED by Josj (2026-08-17), both features and their exact
+**Status:** APPROVED by TheJostler (2026-08-17), both features and their exact
 surface syntax. Not yet implemented.
 
 **Dependencies:** none. Builds on `fork`/`reap`/`Execute`/`Send signal`
@@ -78,7 +78,7 @@ Set st to the reaped status.
   `tests/102_fork_reap.vox` does `Set reaped to reap any child process.`
   The parser consumes `the reaped status` only as that exact phrase.
 
-**Decoding lives in Vox, not the compiler** (Josj's decision, matching
+**Decoding lives in Vox, not the compiler** (TheJostler's decision, matching
 his C argument: the kernel hands you an int, `sys/wait.h` unpacks it).
 The compiler adds one expression and no knowledge of the encoding.
 

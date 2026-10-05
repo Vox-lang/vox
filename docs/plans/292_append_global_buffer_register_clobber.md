@@ -1,9 +1,9 @@
 # Plan 292 — `Append <text var> to <global buffer>` corrupts data (register clobber)
 
 **Status:** specced 2026-08-08. Found by the red team spawned on plan
-290/291's track; self-diagnosed independently by the worker that implemented
+290/291's track; self-diagnosed independently by the implementation of
 plan 290 while investigating a third regression test; confirmed live by the
-sub-master against the merged `p2-append-butif` tip (`5a52cdb`) with a fresh,
+reviewer against the merged `p2-append-butif` tip (`5a52cdb`) with a fresh,
 independently-verified rebuild.
 
 ## Problem
@@ -104,7 +104,7 @@ never touches `rax`, so the source value survives untouched. This is purely
 a `dst_global` (buffer declared outside the current function, mutated via
 its "global mirror") issue.
 
-**Independently confirmed** (not just read): the sub-master built
+**Independently confirmed** (not just read): the reviewer built
 `5a52cdb` from a verified-clean rebuild and ran both the repro above (prints
 `@`, wrong) and the literal-source control case in the same
 function-mutates-global-buffer shape (prints `PAYLOAD`, correct) — isolating

@@ -164,9 +164,9 @@ bisectable, so a rare gate failure is localised to a single move.
 
 ## Execution model
 
-Delegated to a worker under master review (the established pattern for this
+Done as delegated, reviewed work (the established pattern for this
 repo). The asm-identical gate is ideal for delegated work because it is
-self-verifying: the master re-runs the gate and reads each relocation diff,
+self-verifying: the reviewer re-runs the gate and reads each relocation diff,
 rather than trusting a report. The baseline-capture script and the gate script
 are written and committed first, before any extraction, so both sides run the
 identical check.

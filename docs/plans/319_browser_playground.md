@@ -83,7 +83,7 @@ it becomes in the middle, the program's output on the right.**
 - **v0 (days):** compiler-in-WASM + editor + assembly pane. No
   execution. "See what your English becomes" — already shareable, and
   ships the two hard toolchain proofs (Rust→WASM build, trait seam).
-- **v1 (the real work, ~1–2 weeks of worker time):** emulator + syscall
+- **v1 (the real work, ~1–2 weeks of effort):** emulator + syscall
   layer → programs run; the three-pane screen; examples (`cat.vox`,
   `pi.vox`, `delivery.vox`) as one-click loads.
 - **v2:** virtual FS surfaced in the UI for the file examples; canned

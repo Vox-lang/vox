@@ -657,7 +657,7 @@ impl CodeGenerator {
     }
 
     /// docs/BUGS_FOUND.md #115, the collection half of the same
-    /// generalisation (master's assumption, flagged for the owner, unchanged
+    /// generalisation (an assumption flagged for the owner, unchanged
     /// from #114). `<number> as a list` has no defined meaning - unlike the
     /// four scalar casts above, there is no existing lowering to reuse - so a
     /// dynamically-typed value whose runtime tag is not the destination

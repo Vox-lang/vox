@@ -273,7 +273,7 @@ pub struct CodeGenerator {
     /// before its first read, and a declaration that shares a compile-time
     /// slot across sibling branches or a loop re-entering the same
     /// `VarDecl` cannot prove that reliably, so a local freeable text is
-    /// left un-freed (REPORT-108.md) - the whole-program gate still keeps
+    /// left un-freed (docs/BUGS_FOUND.md #108) - the whole-program gate still keeps
     /// it out of the *shared* set, but nothing ever reads a shadow flag
     /// on its behalf.
     global_text_owned_labels: HashMap<String, String>,

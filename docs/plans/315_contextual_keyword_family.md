@@ -122,11 +122,11 @@ integration ≥ 356, skips ≤ 6, zero build warnings.
 
 ## Process
 
-- One worker, one class per session (A then B), reviewed at the boundary.
+- One class per session (A then B), reviewed at the boundary.
 - Red-team pass after both land, before release — attack the ambiguity:
   programs that use a freed word as a variable AND its claimed position
   in the same sentence, chained possessives, format-string interpolation
   of freed-word variables, `Set second to 1. Wait second seconds.` and
   the nastiest compositions it can construct.
-- Commits signed by the master; workers stop before committing.
+- Commits are signed by the maintainer; work stops before committing.
 - Release as 0.4.3: "every property word now sits in the right class."
