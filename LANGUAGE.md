@@ -692,19 +692,19 @@ If 1 is equal to 2,
   `n` is a `number`) is still rejected by this rule exactly like any other
   mismatched assignment; only a `value`-declared name can be retyped.
 
-**What this doesn't catch.** The check only rejects a mismatch it can prove
+**The check's reach.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
 list/map whose element type is provably uniform, a `'s <property>` read
 whose property has the same type whatever it is read from; every property
 in the tables under [Object Properties](#object-properties) except
 `first`, `last`, `absolute`, `duration` and `elapsed`, whose type follows
-the thing they are read from; ...). A value coming from a function call,
-an unprovable list/map read (a map literal with mixed value types, for
-instance), or anything else the compiler can't classify at compile time is
-allowed through unchecked. This closes a large, concrete class of bugs (a
+the thing they are read from; ...). A value from a function call, an
+unprovable list/map read (a map literal with mixed value types, for
+instance), or anything else the compiler can't classify at compile time
+passes unchecked. This closes a large, concrete class of bugs (a
 variable's compiler-tracked type disagreeing with what it actually holds at
-runtime), not every possible source of type confusion, and it says nothing
-about type agreement across a `.lib` import boundary (a library's declared
+runtime), not every possible source of type confusion, and it does not
+cover type agreement across a `.lib` import boundary (a library's declared
 signature is currently trusted, not verified against its `.so`).
 
 ### Naming Rules
@@ -1344,8 +1344,8 @@ Print nudged of before.
    What a call returns is copied into a point)
 ```
 
-The workaround is the inference form above: declare a scratch slot from
-the call, then print it:
+Use the inference form above: declare a scratch slot from the call, then
+print it:
 
 ```
 A thing called point has
@@ -2546,9 +2546,9 @@ supply a type is unaffected: a declared variable, a later assignment to
 one, and an argument landing on a declared parameter all read a result back
 as what the declaration says it is.
 
-Full runtime tag propagation, which would let an opaque call carry its own
-tag the way a `value` does, is stage 1d; see
-`docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+An opaque call carries no tag of its own; a call to a function that
+returns a `value` carries its runtime tag (stage 1d, done; see
+`docs/COLLECTIONS_ROADMAP.md`).
 
 ### Nested Lists
 
@@ -2591,8 +2591,8 @@ Printing is recursive: a nested list prints exactly as written, however
 deep.
 
 **A collection placed inside another collection is a copy**, not a
-shared reference (owner ruling, GitHub #34, 2026-08-29): the parent owns
-its contents. Building a list or map literal with a collection element,
+shared reference: the parent owns its contents. Building a list or map
+literal with a collection element,
 appending a collection to a list, setting a map value to a collection,
 and reading a nested collection back out (`element N of`, `first`/`last`,
 a map value, a `For each` binding) all copy - nothing written afterward
@@ -2742,9 +2742,9 @@ For each position from 1 to holder's length,
 (prints: 1, then 2)
 ```
 
-Two limitations remain for this stage: keys are
-text only (a non-text key is rejected with "Map keys must be text"), and
-there is no entry deletion. See `docs/COLLECTIONS_ROADMAP.md`.
+At this stage, map keys are text only (a non-text key is rejected with
+"Map keys must be text"), and a map has no entry deletion. See
+`docs/COLLECTIONS_ROADMAP.md`.
 
 ### Type Predicates
 
@@ -2778,9 +2778,9 @@ time: `if x is a number` for a declared `a number called x` costs
 nothing and is always true, so the sentence is legal on any value, not
 just mixed ones.
 
-This is the guard idiom that makes mixed lists programmable: with one
-constraint worth stating plainly. The predicate reads the runtime tag; it
-does **not** narrow the static type. Arithmetic still dispatches
+This is the guard idiom that makes mixed lists programmable. The
+predicate reads the runtime tag; it does **not** narrow the static type.
+Arithmetic still dispatches
 statically, so operating on the tested value itself is refused inside the
 guard exactly as it is outside it ("Cannot use a value item in
 arithmetic"). Guarding therefore means getting the element into a
@@ -2800,9 +2800,11 @@ For each position from 1 to mixedbag's length,
 
 (Automatic guarding is a later decision; see the roadmap.) The cast
 expression is *not* a way round this: `item as a number` on a
-dynamically-tagged element is rejected for the same reason ("casting a
-dynamically-tagged value is not currently supported by the compiler: a
-known gap"). `<value> as a <type>` converts a **statically**-typed value;
+dynamically-tagged element is rejected for the same reason ("Cannot cast
+item to a number: item's type is only known at runtime, and casting a
+dynamically-tagged value is not currently supported by the compiler (a
+known gap, not yet resolvable from within the language).").
+`<value> as a <type>` converts a **statically**-typed value;
 see [Type Casting](#type-casting). Use the idiom above instead.
 
 A predicate result is itself a boolean value, so you can store one in a
@@ -2951,12 +2953,12 @@ text.` is only valid when `n` was declared as a `value`; for a `number`
 variable the compiler reports the actual declared type and points at the
 explicit cast (`a text called t is n as text.`) as the correct rewrite.
 
-**Recursion with `value` works.** A `value` parameter threads its tag
+**Recursion with `value`.** A `value` parameter threads its tag
 through every frame, so a recursive walker over mixed data classifies
 correctly at any depth. `value` parameters compose: a `value` passed
 straight to another `value` function round-trips its tag.
 
-**Conditional `value` returns work.** A function whose only returns sit
+**Conditional `value` returns.** A function whose only returns sit
 inside an `If`/`Otherwise` (the *factorial pattern*, with no `Return` on
 the `To` line) carries its declared return type just as the
 single-expression form does, and each branch hands back its own runtime
@@ -2979,13 +2981,14 @@ empty value of its declared type: empty text, zero (`0` / `0.0` /
 empty map `{}`, an empty buffer, the all-defaults instance for a thing,
 or a `value` tagged as the number `0`.
 
-**One limitation to know.** A function whose branches declare *different*
+**Branches that return different types.** A function whose branches
+declare *different*
 types (`Return a text` in one and `Return a number` in the other) has no
 single type for its `To` line to promise, so it declares none and the
 caller reads the result as a number. Declare the same type in every
 branch, or return a `value`, which is exactly the type for a result whose
 shape depends on the branch taken. Conditional `value` *parameters* (the
-factorial pattern with a void return) work as they always have. The
+factorial pattern with a void return) work too. The
 internal ABI that carries the tag is documented in `docs/abi_value.md`;
 the roadmap context is in `docs/COLLECTIONS_ROADMAP.md` (stage 1d).
 
@@ -3348,8 +3351,8 @@ print the right.  (prints 20)
 
 **Zip is not the semantics.** `each x from A and each y from B` is a
 Cartesian product, not a zip, matching comprehension syntax in Haskell,
-Python, and Rust. English's zip marker is `respectively`, which is reserved
-as a possible future marker for a zip mode; it is not parsed today.
+Python, and Rust. English's zip marker, `respectively`, is an ordinary
+identifier in Vox, not parsed as a marker; a zip mode using it is possible.
 
 **Variable shadowing:**
 
@@ -3966,9 +3969,9 @@ On error print "no-such-file.txt: cannot be opened".
 ```
 → `data.txt: exists` then `no-such-file.txt: cannot be opened`
 
-A path-level `exists` predicate (asked before opening, with no handle
-involved) is a planned future addition; today the `On error` idiom
-above is how a program finds out.
+The path-level existence predicate (asked before opening, with no handle
+involved) is [`is available`](#file-operations); the `On error` idiom
+above is how a program finds out on opening.
 
 #### List Properties (Object Properties)
 
@@ -4511,7 +4514,7 @@ ever reaped.
 `reaped` stays an ordinary identifier: `the reaped status` is consumed only
 as that exact phrase, and `the reaped` followed by anything else is an
 ordinary variable reference. (`tests/102_fork_reap.vox` does
-`Set reaped to reap any child process.` and keeps passing.)
+`Set reaped to reap any child process.` and passes.)
 
 #### Decoding the status
 
@@ -5555,9 +5558,9 @@ For each number from 1 to 15, print the number, but if 'check divisibility' of t
 
 `see` pulls in code from another file. It has two distinct jobs:
 
-- **`see "<path>.vox".`**: include another Vox source file. This works today:
-  the file is parsed as part of your program, so its functions become callable
-  with no linking step. It is how you split a program across files.
+- **`see "<path>.vox".`**: include another Vox source file. The file is
+  parsed as part of your program, so its functions become callable with no
+  linking step. It is how you split a program across files.
 - **`see '<lib>' version "<ver>" from "<path>.lib".`**: consume a shared
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
@@ -5587,9 +5590,8 @@ own diagnostic: both name the canonical form `see '<lib>' version "<x.y>" from
 - `/…`: used as-is (absolute).
 - a bare name: `/usr/share/vox/lib/<name>` is checked **first**, and only if
   that does not exist does it fall back to the containing file's directory.
-  Watch this: a bare `see "utils.vox".` can silently pick up a system file in
-  preference to the one sitting next to your source. Write `./utils.vox` when
-  you mean the local one.
+  A bare `see "utils.vox".` can silently pick up a system file in preference
+  to the one next to your source; write `./utils.vox` for the local one.
 
 Those three shapes describe a `.vox` source include. A `.lib` path resolves
 differently: relative or bare, it is tried against the containing file's
@@ -5617,12 +5619,12 @@ at is linked, never read for types. This section covers writing one, the `.lib`
 file, consuming one, putting several libraries in one `.so`, and the symbol
 names a non-Vox caller needs.
 
-> **What runs today.** The whole path runs: building a library with `--shared`
-> produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
-> consumes it from Vox, export names are mangled, and multi-input `--shared`
-> links several libraries (and several versions of one library) into one `.so`.
-> A foreign host can also call the `.so` directly; see
-> [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
+The whole path runs: building a library with `--shared` produces a
+self-contained `.so` plus its `.lib` interface, `see` of a `.lib` consumes it
+from Vox, export names are mangled, and multi-input `--shared` links several
+libraries (and several versions of one library) into one `.so`. A foreign host
+can also call the `.so` directly; see
+[Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
 #### Writing a library
 
@@ -5821,8 +5823,8 @@ same library can live in one `.so`, kept apart by mangling. A consumer who
 upgrades the library keeps calling `mathkit_1_0_add_two_numbers` after
 `mathkit_2_0_add_two_numbers` ships beside it, with no recompile, both symbols
 are present and independently callable. That version isolation is why the
-whole design looks the way it does, and it is the case to keep in mind when
-the rest of it seems elaborate.
+whole design looks the way it does; keep it in mind when the rest seems
+elaborate.
 
 Duplicate `<library, version>` pairs across inputs are rejected with both
 filenames. Multi-input is `--shared` only; it is rejected for executable
