@@ -45,6 +45,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   `thiserror` dependency is gone, so `Cargo.lock` lists only vox-lang
   and the RPM spec no longer needs a vendor tarball or `bundled(crate(...))`
   declarations.
+- **The manual presents paragraphs and periods as Vox's prose
+  structure:** a sentence ends a clause, a paragraph ends a section.
 
 ### Fixed
 - **A device node's major and minor now reach mknod(2) as the standard Linux

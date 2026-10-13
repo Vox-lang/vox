@@ -115,10 +115,19 @@ constraint earns its place.
 
 ## Structure
 
-- Group with blank lines **only at top level between complete
-  constructs**, never inside a loop or conditional body, where a blank
-  line silently closes the construct (see LANGUAGE.md, The termination
-  rule).
+- Indent to mirror the punctuation. Vox reads its structure from
+  periods and blank lines and reads no meaning from indentation, so the
+  indentation is there for the reader: a clause's body sits one level
+  deeper than the line that opens it, an `Otherwise` sits at the margin
+  of the `If` it continues, and the line after a sentence sits at the
+  level its periods leave open, one level out for each clause they
+  close. Laid out this way, the page reads the
+  way the program runs.
+- Put a blank line where a section ends: between complete top-level
+  constructs, and after a body to end it. A blank line ends the
+  paragraph and every clause open in it (see LANGUAGE.md, The
+  termination rule), so a long body is spaced with a comment line or a
+  blank line after a comma, and keeps its own paragraph.
 - Prefer a named intermediate over a dense expression when the name adds
   meaning: `pi.vox` names `Ist`, `IInd`, `IIIrd` and `product` rather
   than nesting one long formula.
