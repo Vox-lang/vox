@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a call returning a list is refused, as a list variable is.)
+
+To 'pair'.
+    Return a list, [1, 2].
+
+a number called total is 'pair' add 1.

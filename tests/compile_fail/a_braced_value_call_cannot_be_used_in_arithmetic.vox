@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: braces group the call; they do not change its type.)
+
+To 'pick from' with a number called n.
+    Return a value, n.
+
+a number called total is {'pick from' of 3} divide 2.

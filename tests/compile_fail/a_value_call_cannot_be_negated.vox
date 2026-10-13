@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: negation is arithmetic.)
+
+To 'pick'.
+    Return a value, "two".
+
+a number called total is -{'pick'}.

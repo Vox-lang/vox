@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: the call is refused on either side of the operator.)
+
+To 'pick'.
+    Return a value, "two".
+
+a number called total is 10 subtract 'pick'.

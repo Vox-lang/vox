@@ -279,23 +279,38 @@ impl Analyzer {
             );
             return;
         }
-        let Some(ty) = self.arithmetic_operand_type(expr) else {
+        // Bug #147: a call is judged by its function's declared return type,
+        // exactly as a variable of that type is. Unjudged, a call returning a
+        // text, a buffer, a list, a map or a `value` compiled to arithmetic on
+        // the pointer or raw payload it hands back. This is done here only,
+        // not in `arithmetic_operand_type`, whose other callers keep their
+        // "can't prove it, allow it" answer for calls.
+        let ty = match expr {
+            Expr::FunctionCall { name, .. } => self.function_return_type(name),
+            _ => self.arithmetic_operand_type(expr),
+        };
+        let Some(ty) = ty else {
             return;
         };
-        let label = self.operand_label(expr);
+        // A variable is named as "text t"; a call as "the text 'name'
+        // returns", so the message points at the call the author wrote.
+        let subject = |kind: &str| match expr {
+            Expr::FunctionCall { name, .. } => format!("the {} '{}' returns", kind, name),
+            _ => format!("{} {}", kind, self.operand_label(expr)),
+        };
         let msg = match ty {
             Type::String => format!(
-                "Cannot use text {} in arithmetic; cast it first with 'as a number' or 'as a float'.",
-                label
+                "Cannot use {} in arithmetic; cast it first with 'as a number' or 'as a float'.",
+                subject("text")
             ),
             Type::Buffer => format!(
-                "Cannot use buffer {} in arithmetic; cast it with 'as a number' to read its content.",
-                label
+                "Cannot use {} in arithmetic; cast it with 'as a number' to read its content.",
+                subject("buffer")
             ),
-            Type::List(_) => format!("Cannot use list {} in arithmetic.", label),
-            Type::Map(_) => format!("Cannot use map {} in arithmetic.", label),
-            Type::File => format!("Cannot use file {} in arithmetic.", label),
-            Type::Timer => format!("Cannot use timer {} in arithmetic.", label),
+            Type::List(_) => format!("Cannot use {} in arithmetic.", subject("list")),
+            Type::Map(_) => format!("Cannot use {} in arithmetic.", subject("map")),
+            Type::File => format!("Cannot use {} in arithmetic.", subject("file")),
+            Type::Timer => format!("Cannot use {} in arithmetic.", subject("timer")),
             // Deliberately naming no escape hatch, after two rounds of
             // getting this wrong: "check its type with 'is a number'
             // first" was a dead end (a type-predicate guard does not
@@ -314,8 +329,11 @@ impl Analyzer {
             // sounding but unverified alternative is worse than none (that
             // is exactly how the previous two wordings went wrong).
             Type::Value => format!(
-                "Cannot use a value {} in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.",
-                label
+                "Cannot use {} in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.",
+                match expr {
+                    Expr::FunctionCall { .. } => subject("value"),
+                    _ => format!("a value {}", self.operand_label(expr)),
+                }
             ),
             _ => return,
         };

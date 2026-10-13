@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a call that returns a value is refused in arithmetic, like a value variable.)
+
+To 'pick'.
+    Return a value, "two".
+
+a number called total is 'pick' add 1.

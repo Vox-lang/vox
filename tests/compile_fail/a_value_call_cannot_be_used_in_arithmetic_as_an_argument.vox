@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #147: the rule holds wherever the expression stands: here, an argument.)
+
+To 'pick'.
+    Return a value, "two".
+
+To 'show' with a number called count.
+    Print count.
+
+'show' with 'pick' add 1.

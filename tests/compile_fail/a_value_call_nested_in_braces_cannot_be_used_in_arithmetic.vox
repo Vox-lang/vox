@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #147: a call inside a braced group of a larger expression is refused.)
+
+To 'tally'.
+    Return a number, 5.
+
+To 'pick'.
+    Return a value, "two".
+
+a number called total is 'tally' add {'pick' modulo 2}.

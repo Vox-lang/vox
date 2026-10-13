@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a call with arguments is judged by its declared result too.)
+
+To 'pick from' with a number called n.
+    Return a value, n.
+
+a number called total is 'pick from' of 3 multiply 2.
