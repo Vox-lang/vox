@@ -261,14 +261,43 @@ sudo dnf install vox-libs
 ```
 
 Or with cargo, on any platform with a Rust toolchain; the compiler
-carries its own `coreasm` and needs nothing else installed:
+carries its own `coreasm`:
 
 ```bash
 cargo install vox-lang
 ```
 
+Whichever way Vox is installed, compiling a Vox program needs NASM and GNU
+ld from your distribution (the `nasm` and `binutils` packages).
+
 On `zypper`/`urpmi`/`tdnf`-based distros (openSUSE, Mageia, Azure Linux),
 grab the matching repo file from the project page instead.
+
+### Install with mise
+
+[mise](https://mise.jdx.dev) 2026.5.0 or newer installs the latest Vox
+release with one command:
+
+```sh
+mise use -g github:Vox-lang/vox
+vox --version
+```
+
+Releases up to 0.4.15 carry a glibc build,
+`vox-<version>-x86_64-unknown-linux-gnu.tar.gz`, which runs on glibc 2.39 or
+newer: current Arch, Fedora 40 and later, and Ubuntu 24.04 and later. From
+the next release on, mise installs a static build,
+`vox-<version>-x86_64-unknown-linux-musl.tar.gz`, which runs on any x86-64
+Linux distribution.
+
+Compiling a program also needs NASM and GNU ld. Install them from your
+distribution (`sudo apt install nasm binutils`, `sudo dnf install nasm
+binutils`, `sudo pacman -S nasm binutils`), or let mise fetch them in the
+same line:
+
+```sh
+mise use -g github:Vox-lang/vox conda:nasm conda:binutils
+```
 
 ### Nix
 
@@ -292,7 +321,7 @@ nix build .#default
 
 ```sh
 # Build and install system-wide
-make build # Skip this step if installing from .7z 
+make build # Skip this step if installing from vox-<version>-full.7z
 sudo make install
 
 # Uninstall
