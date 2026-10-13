@@ -402,9 +402,9 @@ The `but if` clause is a generic conditional branch over a base action. It is av
 ```
 (FizzBuzz example - print number, but override with word if divisible)
 print each number from 1 to 15,
-    but if the number modulo 6 is equal to 0 print "fizzbuzz",
-    but if the number modulo 2 is equal to 0 print "fizz",
-    but if the number modulo 3 is equal to 0 print "buzz".
+    but if the number modulo 15 is equal to 0 print "FizzBuzz",
+    but if the number modulo 3 is equal to 0 print "Fizz",
+    but if the number modulo 5 is equal to 0 print "Buzz".
 
 (Simple even/odd labeling)
 print each number from 1 to 10,
@@ -3341,9 +3341,9 @@ Use `but if` as a generic conditional branch over any base action, including ins
 ```
 (Print numbers, but override with words for certain values)
 print each number from 1 to 15,
-    but if the number modulo 6 is equal to 0 print "fizzbuzz",
-    but if the number modulo 2 is equal to 0 print "fizz",
-    but if the number modulo 3 is equal to 0 print "buzz".
+    but if the number modulo 15 is equal to 0 print "FizzBuzz",
+    but if the number modulo 3 is equal to 0 print "Fizz",
+    but if the number modulo 5 is equal to 0 print "Buzz".
 
 (Simple even/odd labeling)
 print each number from 1 to 10,
@@ -3593,7 +3593,7 @@ Print <default>, but if <condition> print <value>.
 
 **Chained conditions:**
 ```vox fragment
-Print the number, but if <cond1> print "fizz buzz" but if <cond2> print "fizz" but if <cond3> print "buzz".
+Print the number, but if <cond1> print "FizzBuzz" but if <cond2> print "Fizz" but if <cond3> print "Buzz".
 ```
 
 **Rules:**
@@ -5514,7 +5514,7 @@ While the counter is less than 10, print the counter, increment the counter.
 ```
 To 'check divisibility' with a number called divisor and a number called dividend. Return a boolean, the divisor modulo the dividend is 0.
 
-For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 6 is true print "fizz buzz" but if 'check divisibility' of the number and 2 is true print "fizz" but if 'check divisibility' of the number and 3 is true print "buzz".
+For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 15 is true print "FizzBuzz" but if 'check divisibility' of the number and 3 is true print "Fizz" but if 'check divisibility' of the number and 5 is true print "Buzz".
 ```
 
 ---
