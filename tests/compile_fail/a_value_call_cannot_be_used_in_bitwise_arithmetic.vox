@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: the bitwise operators are arithmetic too.)
+
+To 'pick'.
+    Return a value, "two".
+
+a number called mask is 'pick' bit-and 255.

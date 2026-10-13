@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #147: a call returning a file is refused, as a file variable is.)
+
+To 'hostname file'.
+    open a file for reading called source at "/etc/hostname".
+    Return a file, source.
+
+a number called total is 'hostname file' add 1.

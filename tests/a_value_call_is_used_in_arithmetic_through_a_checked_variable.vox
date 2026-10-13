@@ -1,0 +1,15 @@
+(docs/BUGS_FOUND.md #147: the result of a call that returns a value is used in arithmetic once it sits in a variable whose type has been checked.)
+
+To 'measure' with a number called sensor.
+    If sensor is 0, Return a value, "offline".
+    Return a value, sensor multiply 10.
+
+a value called measurement is 'measure' of 4.
+If measurement is a number, Print "a number".
+measurement is a number.
+a number called total is measurement add 1.
+Print total.
+
+a value called silence is 'measure' of 0.
+If silence is a number, Print "a number".
+Otherwise, Print "not a number".

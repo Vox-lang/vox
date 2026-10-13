@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #147: a call returning a buffer is refused, as a buffer variable is.)
+
+To 'scratch'.
+    a buffer called draft is "ab".
+    Return a buffer, draft.
+
+a number called total is 'scratch' add 1.

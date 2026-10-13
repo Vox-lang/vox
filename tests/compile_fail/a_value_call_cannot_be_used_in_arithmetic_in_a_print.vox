@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: the rule holds wherever the expression stands: here, a print.)
+
+To 'pick'.
+    Return a value, "two".
+
+Print 'pick' add 1.

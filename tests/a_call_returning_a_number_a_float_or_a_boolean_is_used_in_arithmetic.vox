@@ -1,0 +1,27 @@
+(docs/BUGS_FOUND.md #147: a call is judged by its declared return type, so a call returning a number, a float or a boolean is used in arithmetic as a variable of that type is, and a text or buffer call is used once it is cast.)
+
+To 'tally'.
+    Return a number, 5.
+
+To 'half'.
+    Return a float, 0.5.
+
+To 'ready'.
+    Return a boolean, true.
+
+To 'label for' with a number called id.
+    Return a text, "41".
+
+To 'scratch'.
+    a buffer called draft is "9".
+    Return a buffer, draft.
+
+a number called total is 'tally' add 1.
+Print total.
+Print 10 subtract {'tally' multiply 2}.
+a float called share is 'half' multiply 3.0.
+Print share.
+Print 'ready' add 1.
+a number called counted is {'label for' of 7} as a number add 1.
+Print counted.
+Print 'scratch' as a number add 1.
