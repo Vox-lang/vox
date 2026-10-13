@@ -28,6 +28,16 @@ adheres to [Semantic Versioning](https://semver.org/).
   now named `vox-<version>-full.7z`.
 
 ### Fixed
+- **A call in arithmetic is judged by its return type, as a variable of
+  that type is.** `'name' add 1`, with `'name'` returning a text, used to
+  compile and add 1 to the text's address; a call returning a `value`, a
+  buffer, a list, a map or a file did the same with its raw bits. Each is
+  now refused with the error a variable of that type gets, naming the
+  call, for every arithmetic and bitwise operator and for negation,
+  wherever the call stands. A call returning a number, a float or a
+  boolean works as before; cast a text or buffer call with `as a number`,
+  and check a `value` call's result with `is a number` in a variable
+  first. (#147)
 - **FizzBuzz is the real FizzBuzz.** The example, its test and the
   manual print `Fizz` for multiples of 3, `Buzz` for multiples of 5 and
   `FizzBuzz` for multiples of 15.

@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a call returning a map is refused, as a map variable is.)
+
+To 'table'.
+    Return a map, {"a": 1}.
+
+a number called total is -{'table'}.

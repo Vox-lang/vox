@@ -13749,3 +13749,87 @@ Verified on vox 0.4.15 (dfdfc7f), glibc 2.43, GNU ld 2.46.
 **Root cause:** the compiler assembles its output with NASM, which writes a `.note.GNU-stack` section only when the source declares one, and the generated assembly never declared it. `ld` reads an object without that note as one that may need an executable stack, so it leaves the GNU_STACK header out of everything it links from that object.
 
 **Fix direction:** the generated assembly declares `section .note.GNU-stack noalloc noexec nowrite progbits` for every program and library, so `ld` writes GNU_STACK with `RW` flags into both.
+
+---
+
+### 147. Arithmetic on a call that returns a text, a `value` or another type arithmetic refuses computes on raw bits
+
+**Status:** fixed in the next release. Registered 2026-10-13; confirmed by TheJostler 2026-10-13. Regression tests: tests/compile_fail/a_*_call_*.vox, tests/a_value_call_is_used_in_arithmetic_through_a_checked_variable.vox and tests/a_call_returning_a_number_a_float_or_a_boolean_is_used_in_arithmetic.vox
+
+```vox
+To 'name'.
+    Return a text, "two".
+
+a number called total is 'name' add 1.
+Print total.
+```
+```text
+$ vox name.vox -o name && ./name
+4198489
+```
+```vox
+To 'pick'.
+    Return a value, "two".
+
+a number called total is 'pick' add 1.
+Print total.
+```
+```text
+$ vox pick.vox -o pick && ./pick
+4198489
+```
+
+Verified on vox main f06df27.
+
+**Observed:** both programs compile and print `4198489`: the text's address, read as a number, plus 1. With `Return a value, 2` the second prints `3`, which hides the problem. A call that returns a buffer, a list, a map or a file compiles the same way and computes on the address it hands back. The same arithmetic on a variable of each of those types is refused:
+```vox
+a text called word is "two".
+a number called total is word add 1.
+```
+```text
+error: Cannot use text word in arithmetic; cast it first with 'as a number' or 'as a float'.
+```
+```vox
+To 'twice' with a value called v.
+    Print v add 1.
+```
+```text
+error: Cannot use a value v in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.
+```
+
+**Expected:** a call is judged by its function's declared return type, exactly as a variable of that type is, and the error names the call.
+
+**The manual:** LANGUAGE.md "Bare arithmetic on a `value` is still rejected": "Because a `value` might hold a string or a decimal, the compiler refuses to use it directly in arithmetic." TheJostler ruled that arithmetic on a `value` is a compile error by design, and that a call in arithmetic is refused whenever a variable of its return type would be.
+
+**Root cause:** the check on arithmetic operands judged a name by its declared type and a call by nothing at all, so a call answered "type unknown" and was allowed through. Code generation then computed on the pointer or the `value`'s payload as if it were a number.
+
+**Fix direction:** an arithmetic operand that is a call is judged by its function's declared return type, with the error a variable of that type gets, worded for the call: `Cannot use the text 'name' returns in arithmetic; cast it first with 'as a number' or 'as a float'.`, `Cannot use the value 'pick' returns in arithmetic: ...`, and the same for a buffer, a list, a map, a file and a timer. A call that returns a number, a float or a boolean is used in arithmetic as before, as a variable of those types is. This holds for every arithmetic and bitwise operator and for negation, on either side of the operator, with or without arguments, braced or nested, and wherever the expression stands (a declaration, a print, a return, an argument). A text or buffer call is used once it is cast (`'name' as a number add 1`). A `value` call is used through a `value` variable that is checked with `is a number` or retyped with `<name> is a number.` Comparisons are not part of this entry: a `value` variable and a call that returns one are compared the same way today.
+
+---
+
+### 148. A width in a format string is accepted and not applied on a `float` or a `text`
+
+**Status:** Open (planned). Registered 2026-10-13; confirmed by TheJostler 2026-10-13.
+
+```vox
+a number called count is 42.
+a float called price is 3.5.
+a text called name is "Vox".
+Print "[{count:8}] [{price:8}] [{name:8}]".
+```
+```text
+$ vox width.vox -o width && ./width
+[      42] [3.5] [Vox]
+```
+
+Verified on vox main f06df27.
+
+**Observed:** `{count:8}` pads the number to eight characters. `{price:8}` and `{name:8}` are accepted and print the float and the text unpadded.
+
+**Expected:** `{price:8}` prints `     3.5` and `{name:8}` prints `     Vox`, each padded to eight characters as a number is.
+
+**The manual:** LANGUAGE.md "Format Strings": `{var:N}` is "Pad to N characters", and "on a `float` or a `text` the value is rendered and the padding is not applied yet". The manual records the present behaviour and names float and text padding as not yet built.
+
+**Root cause:** the runtime has no routine that pads a float or a text yet. The width is parsed and checked, and code generation then prints the float or the text with its unpadded renderer.
+
+**Fix direction:** TheJostler confirmed that padding a float and a text to a width is planned.

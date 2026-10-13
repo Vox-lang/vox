@@ -1,0 +1,9 @@
+(docs/BUGS_FOUND.md #147: the rule holds wherever the expression stands: here, a return.)
+
+To 'pick'.
+    Return a value, "two".
+
+To 'bump'.
+    Return a number, 'pick' add 1.
+
+Print 'bump'.

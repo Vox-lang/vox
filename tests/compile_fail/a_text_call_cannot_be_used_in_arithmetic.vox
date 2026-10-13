@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a call is judged by its declared return type, as a variable of that type is; a text is refused.)
+
+To 'name'.
+    Return a text, "two".
+
+a number called total is 'name' add 1.

@@ -1,0 +1,1 @@
+Cannot use the buffer 'scratch' returns in arithmetic; cast it with 'as a number' to read its content.

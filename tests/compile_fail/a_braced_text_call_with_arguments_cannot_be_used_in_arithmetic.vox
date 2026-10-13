@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #147: a text call with arguments, braced on the right of the operator, is refused too.)
+
+To 'name for' with a number called id.
+    Return a text, "two".
+
+a number called total is 2 multiply {'name for' of 7}.
