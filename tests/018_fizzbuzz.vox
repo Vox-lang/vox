@@ -2,6 +2,6 @@ To divisible with a number called x and a number called y.
   Return a boolean, x modulo y is equal to 0.
 
 print each number from 1 to 15,
-    but if divisible of the number and 6 is true print "fizzbuzz",
-    but if divisible of the number and 2 is true print "fizz",
-    but if divisible of the number and 3 is true print "buzz".
+    but if divisible of the number and 15 is true print "FizzBuzz",
+    but if divisible of the number and 3 is true print "Fizz",
+    but if divisible of the number and 5 is true print "Buzz".

@@ -78,9 +78,9 @@ Comments can appear:
 
 ### Paragraph Breaks (Blank Lines)
 
-Blank lines (paragraph breaks) organize code into logical sections. They are optional and have no effect on program execution *between two fully-terminated top-level constructs*, for example, between two function definitions or between two complete statements at the top level.
+Vox takes its syntax from written English. In prose, a full stop ends a sentence and a paragraph break ends a section; in Vox, a period ends a clause and a blank line ends a section. The punctuation is the syntax, in exactly the way indentation is the syntax in Python. That leaves layout entirely to the writer. There are no braces and no `end` keywords, and Vox reads no meaning from leading whitespace, so a program can be indented however reads best. The convention is to indent so the layout mirrors the punctuation (see [docs/STYLE.md](docs/STYLE.md)), and the examples below follow it, so the page reads the way it runs.
 
-Inside an open clause they are **not** cosmetic: a blank line force-closes every clause that is still open, including an enclosing function definition. Use a blank line to end a construct deliberately (after a `while`, `for each`, `repeat`, `on error`, or nested `if` body), not to add visual spacing in the middle of a body.
+A blank line is a paragraph break. Between two complete top-level sentences it groups them, the way paragraphs group the thoughts of an essay:
 
 ```
 print "Section 1".
@@ -88,7 +88,19 @@ print "Section 1".
 print "Section 2".
 ```
 
-**Note:** A function definition is closed by a **blank line (paragraph break)**: this is *required*, not a style convention. A period closes only the innermost open clause (rule 1 below), so the period ending a body statement does **not** close the function. Without a blank line after the body, every statement following the signature is absorbed into the function body; since the function is typically not called from within itself, the program then silently does nothing (exit 0, no output). A `To` or `Library` is only ever legal at the top level (see [Definition](#definition)), so one reached ahead of this body's blank line closes it rather than being absorbed like any other statement; reached while some other clause is still open, it is a compile error instead. The compiler warns when a function definition is still open at end of file. See [The termination rule](#the-termination-rule) below.
+Inside a construct, a paragraph break ends it: finishing the paragraph finishes the loop, the condition or the function it holds, along with everything else still open in it. A period ends one clause at a time; a paragraph break ends them all. To space out the actions of a single body, put the blank line after a comma, where the sentence is still going (see [The termination rule](#the-termination-rule)).
+
+A function definition is one paragraph. The period after each body statement ends that statement, and the blank line after the body ends the function:
+
+```
+To greet.
+    Print "hello".
+    Print "welcome".
+
+greet.
+```
+
+This prints `hello` then `welcome`. A function body also ends at a `Return` sentence written at the body's own level, and at the next `To` or `Library`, since a definition is only ever written at the top level (see [Definition](#definition)); a `To` reached while some other clause is still open is a compile error. When the last function in a file runs to the end of the file with no blank line or `Return` to end it, the compiler prints a warning naming that function. A `Library` file, whose last function ends at the end of the file by design, gets no warning.
 
 ### Sentence Consumption
 
@@ -149,64 +161,82 @@ In the example above, the period after the inner `if` closes only that `if`. The
 
 ### The termination rule
 
-Two rules govern where a construct's body ends, and together they explain everything above precisely:
+Python reads structure from indentation, so re-indenting a line moves it into or out of a block. Vox reads structure from punctuation, the way written English does, so a full stop or a paragraph break is what moves a line. Two rules give the whole of it:
 
-1. **A period closes the most recently opened clause**: the innermost one currently open (`if`, `on error`, `for`, `while`, `repeat`), and only that one. This is why the nested `if` example above works: its period closes the `if`, not the `while`. One period closes one level; to close more than one, write more than one; see [Closing more than one level](#closing-more-than-one-level).
-2. **A blank line (paragraph break) force-closes every open clause at once**: including an enclosing function definition. Think of nested HTML `<div>`s: a paragraph boundary closes all of them together, the same way you would never continue a single sentence across a paragraph break in English.
+1. **A period ends the innermost open clause** (`if`, `on error`, `for`, `while`, `repeat`), and only that one. An action's period ends the clause the action belongs to. A nested clause's period ends the nested clause, and the clause around it goes on with its next action, as the first example below shows. One period closes one level; to close more than one, write more than one (see [Closing more than one level](#closing-more-than-one-level)).
+2. **A blank line ends the paragraph, and with it every open clause**, including an enclosing function definition. A paragraph break in a book ends every thought in that paragraph at once, and a blank line in Vox does the same: it is a mark, like a full stop, rather than spacing. A line holding only spaces or tabs is a blank line, and several blank lines in a row make one paragraph break.
+
+**Reading the structure.** Read the periods the way you read full stops in prose: one full stop finishes one thought, two finish two, and a paragraph break finishes the section. To place a line, look at how the sentence before it ended. Indented to the convention, the layout says the same thing on the page.
+
+A period ending a loop:
 
 ```
-(A blank line closes everything still open, not just the nearest thing)
+(The period after "add 1" ends the while, so "done" follows the loop)
 a number called retries is 0.
 While retries is less than 3,
     if retries is equal to 1 then, print "retrying".
     the retries is retries add 1.
+Print "done".
+```
+
+This prints `retrying` once (when `retries` is 1), then `done` once. The `if`'s period ends the `if`, the `while` goes on to its next action, and that action's period ends the `while`.
+
+A blank line ending a section, where the loop's last action is a nested clause:
+
+```
+(The if's period ends the if, and the blank line ends the while)
+a number called retries is 0.
+While retries is less than 3,
+    the retries is retries add 1,
+    if retries is equal to 2 then, print "retrying".
 
 Print "done".
 ```
 
-This prints `retrying` once (when `retries` is 1) then `done` once, after the loop runs its full three iterations: the blank line closes the `while` (rule 2) even though the `if`'s own period already closed the `if` (rule 1); there is nothing special about the `if` being the loop's last action, the blank line would close the loop the same way after any kind of action.
+This prints `retrying` then `done`. After the `if`'s period the `while` is still open for another action, and the blank line ends it. `while`, `for each`, `repeat` and `on error` all end this way.
 
-**This applies uniformly**: `while`, `for each`, `repeat`, and `on error` all terminate their body on a blank line, regardless of what the last body statement was (an ordinary statement, an `if`/`on error`, or another nested loop).
-
-**Caution:** because rule 1 means a nested construct's own period doesn't close its parent, a blank line placed purely for visual readability *inside* a loop body (after a nested `if` or a nested loop, before more of the same loop's actions) will close that loop early, not just add whitespace:
+These two programs differ by one blank line. In both, `print item.` ends the `for each` and leaves the `while` open:
 
 ```
-(This blank line is NOT cosmetic - it ends the outer while)
+(One paragraph: "round done" is the while's next action, and its period ends the while)
 a number called round is 0.
 While round is less than 2,
     the round is round add 1,
-    For each item in batch,
+    For each item from 1 to 2,
+        print item.
+    print "round done".
+```
+
+prints `1 2 round done 1 2 round done`, and
+
+```
+(Two paragraphs: the blank line ends the while, and "round done" follows the loop)
+a number called round is 0.
+While round is less than 2,
+    the round is round add 1,
+    For each item from 1 to 2,
         print item.
 
-    print "batch done".
+print "round done".
 ```
 
-This prints `1 2 1 2 batch done`, not `1 2 batch done 1 2 batch done` as the indentation suggests. `print "batch done".` runs once, after the loop, not once per batch, because the blank line closed the `while` right after the nested `for each` closed itself.
+prints `1 2 1 2 round done`.
 
-**This can hang your program with no error message, if the ejected statement happens to be the loop's own increment:**
+Inside a function, a blank line ends the function's paragraph too. A later statement that reads one of the function's parameters, or a later `Return`, is a compile error, and the message says that a blank line ended the function's body, naming the line where the body ended.
 
-```
-(DON'T DO THIS - infinite loop, no diagnostic, the blank line ejects the increment)
-a number called counter is 1.
-While counter is less than or equal to 2,
-    For each k from 1 to 2,
-        print "inner {k}".
-
-    increment counter.
-Print "end".
-```
-
-`increment counter.` is ejected from the `while` body by the same blank line, so `counter` never changes and the loop never becomes false: it hangs forever, printing `inner 1` / `inner 2` on repeat, and `Print "end".` never runs. There is no error, no warning, and nothing in the output points at the blank line as the cause. If a loop that should terminate hangs instead, check for a blank line inside its body first.
-
-A blank line placed **after a comma** (mid-sentence, more actions still to come) is the one exception; it is still just visual spacing there, since the sentence is explicitly still open:
+A blank line **after a comma** is spacing inside a sentence. The sentence is still going, so nothing closes, and the blank line only spaces the text:
 
 ```
-(Safe: this blank line follows a comma, so it stays cosmetic)
+(This blank line follows a comma, so it spaces the sentence and closes nothing)
+a number called retries is 0.
 While retries is less than 3,
     print "attempt {retries}",
 
     increment retries.
+Print "done".
 ```
+
+This prints `attempt 0`, `attempt 1`, `attempt 2`, then `done`. A comment on a line of its own spaces a body the same way: it is not a blank line, so it closes nothing.
 
 ### Closing more than one level
 
@@ -221,9 +251,9 @@ If n is equal to 1 then,
 print "back at the top".
 ```
 
-This prints `back at the top`. The three periods close the innermost `if`, then the middle one, then the outer one, so `print "back at the top".` runs at the top level. Written with one period or two, it would still be inside an `if` whose condition is false, and would print nothing at all, with no error.
+This prints `back at the top`. The three periods close the innermost `if`, then the middle one, then the outer one, so `print "back at the top".` runs at the top level. Written with one period or two, `print "back at the top".` would belong to an `if` whose condition is false, and would not run.
 
-Indentation is **not** what decides this. Vox ignores leading whitespace entirely, so a program can be minified without changing its meaning; the period count is the only thing that closes a clause.
+Indentation is the writer's to choose. Vox reads no meaning from leading whitespace, so a program can be reindented or minified without changing what it does, and the periods alone say where a clause closes. Indented to the convention, the line after `...` sits back at the left margin, where the three periods put it.
 
 The stacked constructs need not be the same kind. Here two periods close the `if` and the enclosing `For each` together, so the `To` that follows is read at the top level rather than as a nested statement of the loop:
 
@@ -240,35 +270,35 @@ This prints `Text (dynamic)` once. Written with a single period, the `For each` 
 
 #### This is how you choose which `if` an `Otherwise` belongs to
 
-An `Otherwise` (or `But if`) continues the innermost `if` that is still open. Closing that `if` first is therefore how you hand the `Otherwise` to an enclosing one. These two programs differ by a **single character** and behave differently:
+An `Otherwise` (or `But if`) continues the innermost `if` that is still open. Closing that `if` first is therefore how you hand the `Otherwise` to an enclosing one. These two programs differ by one period, and they read differently, the way two sentences do when one of them ends a thought sooner:
 
 ```
-(ONE period: the Otherwise belongs to the INNER if)
+(One period: the Otherwise continues the inner if)
 a number called m is 5.
 If m is equal to 1 then,
     If m is equal to 2 then,
         print "inner then".
     Otherwise,
-        print "outer else".
+        print "inner otherwise".
 
 Print "done".
 ```
 
-prints only `done`. The `Otherwise` continued the inner `if`, so the whole construct sits inside `If m is equal to 1`, which is false: nothing in it runs.
+prints only `done`. The `Otherwise` continues the inner `if`, and the whole construct sits inside `If m is equal to 1`, which is false, so nothing in it runs.
 
 ```
-(TWO periods: the inner if is closed, so the Otherwise belongs to the OUTER one)
+(Two periods: the inner if is finished, so the Otherwise continues the outer one)
 a number called m is 5.
 If m is equal to 1 then,
     If m is equal to 2 then,
         print "inner then"..
-    Otherwise,
-        print "outer else".
+Otherwise,
+    print "outer otherwise".
 
 Print "done".
 ```
 
-prints `outer else` then `done`, which is what the indentation in both versions suggests, but only the second one actually says it.
+prints `outer otherwise` then `done`. The two periods finish the inner `if` and then the outer `if`'s first branch, so the `Otherwise` continues the outer `if`, and the layout puts it at the outer `if`'s margin.
 
 An empty `Otherwise,.` closes an inner chain the same way and is easier to read than a run of periods, since it names the thing being closed instead of asking you to count:
 
@@ -279,15 +309,15 @@ If m is equal to 1 then,
     If m is equal to 2 then,
         print "inner then".
     Otherwise,.
-    Otherwise,
-        print "outer else".
+Otherwise,
+    print "outer otherwise".
 
 Print "done".
 ```
 
-This also prints `outer else` then `done`. The first `Otherwise,.` takes the inner `if`'s else branch and does nothing with it, which closes that chain; the second one is then free to continue the outer `if`.
+This also prints `outer otherwise` then `done`. The first `Otherwise,.` takes the inner `if`'s else branch and does nothing with it, which closes that chain; the second one is then free to continue the outer `if`.
 
-**Get the count wrong and nothing tells you.** Too few periods and the following statements are absorbed into a clause you thought you had left; too many and they escape one you meant to stay in. Either way the program still compiles and still runs. If a branch never seems to execute, or a loop that should finish hangs instead, count the periods between it and the construct it belongs to, and remember the hanging case is the same one described above under rule 2: the absorbed statement is the loop's own increment.
+**The periods are the structure.** Each statement belongs to the clause that the periods before it leave open: one period fewer keeps the next statement inside that clause, one more moves it out a level. Where a run of periods grows long, `Otherwise,.` names the level it closes, and a blank line closes every level at once.
 
 ### Ranges
 
@@ -402,9 +432,9 @@ The `but if` clause is a generic conditional branch over a base action. It is av
 ```
 (FizzBuzz example - print number, but override with word if divisible)
 print each number from 1 to 15,
-    but if the number modulo 6 is equal to 0 print "fizzbuzz",
-    but if the number modulo 2 is equal to 0 print "fizz",
-    but if the number modulo 3 is equal to 0 print "buzz".
+    but if the number modulo 15 is equal to 0 print "FizzBuzz",
+    but if the number modulo 3 is equal to 0 print "Fizz",
+    but if the number modulo 5 is equal to 0 print "Buzz".
 
 (Simple even/odd labeling)
 print each number from 1 to 10,
@@ -662,19 +692,19 @@ If 1 is equal to 2,
   `n` is a `number`) is still rejected by this rule exactly like any other
   mismatched assignment; only a `value`-declared name can be retyped.
 
-**What this doesn't catch.** The check only rejects a mismatch it can prove
+**The check's reach.** The check only rejects a mismatch it can prove
 statically from the value's own shape (a literal, a cast, a read from a
 list/map whose element type is provably uniform, a `'s <property>` read
 whose property has the same type whatever it is read from; every property
 in the tables under [Object Properties](#object-properties) except
 `first`, `last`, `absolute`, `duration` and `elapsed`, whose type follows
-the thing they are read from; ...). A value coming from a function call,
-an unprovable list/map read (a map literal with mixed value types, for
-instance), or anything else the compiler can't classify at compile time is
-allowed through unchecked. This closes a large, concrete class of bugs (a
+the thing they are read from; ...). A value from a function call, an
+unprovable list/map read (a map literal with mixed value types, for
+instance), or anything else the compiler can't classify at compile time
+passes unchecked. This closes a large, concrete class of bugs (a
 variable's compiler-tracked type disagreeing with what it actually holds at
-runtime), not every possible source of type confusion, and it says nothing
-about type agreement across a `.lib` import boundary (a library's declared
+runtime), not every possible source of type confusion, and it does not
+cover type agreement across a `.lib` import boundary (a library's declared
 signature is currently trusted, not verified against its `.so`).
 
 ### Naming Rules
@@ -1314,8 +1344,8 @@ Print nudged of before.
    What a call returns is copied into a point)
 ```
 
-The workaround is the inference form above: declare a scratch slot from
-the call, then print it:
+Use the inference form above: declare a scratch slot from the call, then
+print it:
 
 ```
 A thing called point has
@@ -1852,11 +1882,11 @@ the workaround: pass `start's x` and `start's y` as separate values.
 
 ### Sentence consumption and multi-line definitions
 
-A thing definition is a new place the [sentence consumption](#sentence-consumption)
-rules bite. Its entries are comma-separated, and the construct closes on
+A thing definition follows the [sentence consumption](#sentence-consumption)
+rules too. Its entries are comma-separated, and the construct closes on
 a **period** or a **blank line**, the same termination rules every other
 construct follows: a period closes the entry list, and a blank line
-force-closes it (along with anything else still open). Indenting the
+closes it (along with anything else still open). Indenting the
 entries is conventional but not required: the commas and the terminator
 carry the structure.
 
@@ -2372,7 +2402,7 @@ This prints `a`, `b`, `a`, `b`: two actions per iteration, two iterations.
 
 **Termination.** `Repeat` closes by the same rules as `While` and `For
 each`: a period ends the body (and closes the construct, rule 1), and a
-blank line force-closes it (rule 2). The statements after a closing
+blank line closes it (rule 2). The statements after a closing
 period belong to the surrounding scope, not the loop:
 
 ```vox
@@ -2516,9 +2546,9 @@ supply a type is unaffected: a declared variable, a later assignment to
 one, and an argument landing on a declared parameter all read a result back
 as what the declaration says it is.
 
-Full runtime tag propagation, which would let an opaque call carry its own
-tag the way a `value` does, is stage 1d; see
-`docs/COLLECTIONS_ROADMAP.md` for the roadmap.
+An opaque call carries no tag of its own; a call to a function that
+returns a `value` carries its runtime tag (stage 1d, done; see
+`docs/COLLECTIONS_ROADMAP.md`).
 
 ### Nested Lists
 
@@ -2561,8 +2591,8 @@ Printing is recursive: a nested list prints exactly as written, however
 deep.
 
 **A collection placed inside another collection is a copy**, not a
-shared reference (owner ruling, GitHub #34, 2026-08-29): the parent owns
-its contents. Building a list or map literal with a collection element,
+shared reference: the parent owns its contents. Building a list or map
+literal with a collection element,
 appending a collection to a list, setting a map value to a collection,
 and reading a nested collection back out (`element N of`, `first`/`last`,
 a map value, a `For each` binding) all copy - nothing written afterward
@@ -2712,9 +2742,9 @@ For each position from 1 to holder's length,
 (prints: 1, then 2)
 ```
 
-Two limitations remain for this stage: keys are
-text only (a non-text key is rejected with "Map keys must be text"), and
-there is no entry deletion. See `docs/COLLECTIONS_ROADMAP.md`.
+At this stage, map keys are text only (a non-text key is rejected with
+"Map keys must be text"), and a map has no entry deletion. See
+`docs/COLLECTIONS_ROADMAP.md`.
 
 ### Type Predicates
 
@@ -2748,9 +2778,9 @@ time: `if x is a number` for a declared `a number called x` costs
 nothing and is always true, so the sentence is legal on any value, not
 just mixed ones.
 
-This is the guard idiom that makes mixed lists programmable: with one
-constraint worth stating plainly. The predicate reads the runtime tag; it
-does **not** narrow the static type. Arithmetic still dispatches
+This is the guard idiom that makes mixed lists programmable. The
+predicate reads the runtime tag; it does **not** narrow the static type.
+Arithmetic still dispatches
 statically, so operating on the tested value itself is refused inside the
 guard exactly as it is outside it ("Cannot use a value item in
 arithmetic"). Guarding therefore means getting the element into a
@@ -2770,9 +2800,11 @@ For each position from 1 to mixedbag's length,
 
 (Automatic guarding is a later decision; see the roadmap.) The cast
 expression is *not* a way round this: `item as a number` on a
-dynamically-tagged element is rejected for the same reason ("casting a
-dynamically-tagged value is not currently supported by the compiler: a
-known gap"). `<value> as a <type>` converts a **statically**-typed value;
+dynamically-tagged element is rejected for the same reason ("Cannot cast
+item to a number: item's type is only known at runtime, and casting a
+dynamically-tagged value is not currently supported by the compiler (a
+known gap, not yet resolvable from within the language).").
+`<value> as a <type>` converts a **statically**-typed value;
 see [Type Casting](#type-casting). Use the idiom above instead.
 
 A predicate result is itself a boolean value, so you can store one in a
@@ -2921,12 +2953,12 @@ text.` is only valid when `n` was declared as a `value`; for a `number`
 variable the compiler reports the actual declared type and points at the
 explicit cast (`a text called t is n as text.`) as the correct rewrite.
 
-**Recursion with `value` works.** A `value` parameter threads its tag
+**Recursion with `value`.** A `value` parameter threads its tag
 through every frame, so a recursive walker over mixed data classifies
 correctly at any depth. `value` parameters compose: a `value` passed
 straight to another `value` function round-trips its tag.
 
-**Conditional `value` returns work.** A function whose only returns sit
+**Conditional `value` returns.** A function whose only returns sit
 inside an `If`/`Otherwise` (the *factorial pattern*, with no `Return` on
 the `To` line) carries its declared return type just as the
 single-expression form does, and each branch hands back its own runtime
@@ -2949,13 +2981,14 @@ empty value of its declared type: empty text, zero (`0` / `0.0` /
 empty map `{}`, an empty buffer, the all-defaults instance for a thing,
 or a `value` tagged as the number `0`.
 
-**One limitation to know.** A function whose branches declare *different*
+**Branches that return different types.** A function whose branches
+declare *different*
 types (`Return a text` in one and `Return a number` in the other) has no
 single type for its `To` line to promise, so it declares none and the
 caller reads the result as a number. Declare the same type in every
 branch, or return a `value`, which is exactly the type for a result whose
 shape depends on the branch taken. Conditional `value` *parameters* (the
-factorial pattern with a void return) work as they always have. The
+factorial pattern with a void return) work too. The
 internal ABI that carries the tag is documented in `docs/abi_value.md`;
 the roadmap context is in `docs/COLLECTIONS_ROADMAP.md` (stage 1d).
 
@@ -3318,8 +3351,8 @@ print the right.  (prints 20)
 
 **Zip is not the semantics.** `each x from A and each y from B` is a
 Cartesian product, not a zip, matching comprehension syntax in Haskell,
-Python, and Rust. English's zip marker is `respectively`, which is reserved
-as a possible future marker for a zip mode; it is not parsed today.
+Python, and Rust. English's zip marker, `respectively`, is an ordinary
+identifier in Vox, not parsed as a marker; a zip mode using it is possible.
 
 **Variable shadowing:**
 
@@ -3341,9 +3374,9 @@ Use `but if` as a generic conditional branch over any base action, including ins
 ```
 (Print numbers, but override with words for certain values)
 print each number from 1 to 15,
-    but if the number modulo 6 is equal to 0 print "fizzbuzz",
-    but if the number modulo 2 is equal to 0 print "fizz",
-    but if the number modulo 3 is equal to 0 print "buzz".
+    but if the number modulo 15 is equal to 0 print "FizzBuzz",
+    but if the number modulo 3 is equal to 0 print "Fizz",
+    but if the number modulo 5 is equal to 0 print "Buzz".
 
 (Simple even/odd labeling)
 print each number from 1 to 10,
@@ -3593,7 +3626,7 @@ Print <default>, but if <condition> print <value>.
 
 **Chained conditions:**
 ```vox fragment
-Print the number, but if <cond1> print "fizz buzz" but if <cond2> print "fizz" but if <cond3> print "buzz".
+Print the number, but if <cond1> print "FizzBuzz" but if <cond2> print "Fizz" but if <cond3> print "Buzz".
 ```
 
 **Rules:**
@@ -3936,9 +3969,9 @@ On error print "no-such-file.txt: cannot be opened".
 ```
 → `data.txt: exists` then `no-such-file.txt: cannot be opened`
 
-A path-level `exists` predicate (asked before opening, with no handle
-involved) is a planned future addition; today the `On error` idiom
-above is how a program finds out.
+The path-level existence predicate (asked before opening, with no handle
+involved) is [`is available`](#file-operations); the `On error` idiom
+above is how a program finds out on opening.
 
 #### List Properties (Object Properties)
 
@@ -4481,7 +4514,7 @@ ever reaped.
 `reaped` stays an ordinary identifier: `the reaped status` is consumed only
 as that exact phrase, and `the reaped` followed by anything else is an
 ordinary variable reference. (`tests/102_fork_reap.vox` does
-`Set reaped to reap any child process.` and keeps passing.)
+`Set reaped to reap any child process.` and passes.)
 
 #### Decoding the status
 
@@ -5514,7 +5547,7 @@ While the counter is less than 10, print the counter, increment the counter.
 ```
 To 'check divisibility' with a number called divisor and a number called dividend. Return a boolean, the divisor modulo the dividend is 0.
 
-For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 6 is true print "fizz buzz" but if 'check divisibility' of the number and 2 is true print "fizz" but if 'check divisibility' of the number and 3 is true print "buzz".
+For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 15 is true print "FizzBuzz" but if 'check divisibility' of the number and 3 is true print "Fizz" but if 'check divisibility' of the number and 5 is true print "Buzz".
 ```
 
 ---
@@ -5525,9 +5558,9 @@ For each number from 1 to 15, print the number, but if 'check divisibility' of t
 
 `see` pulls in code from another file. It has two distinct jobs:
 
-- **`see "<path>.vox".`**: include another Vox source file. This works today:
-  the file is parsed as part of your program, so its functions become callable
-  with no linking step. It is how you split a program across files.
+- **`see "<path>.vox".`**: include another Vox source file. The file is
+  parsed as part of your program, so its functions become callable with no
+  linking step. It is how you split a program across files.
 - **`see '<lib>' version "<ver>" from "<path>.lib".`**: consume a shared
   library through its `.lib` interface. This is the library path; see
   [Shared libraries](#shared-libraries) below.
@@ -5557,9 +5590,8 @@ own diagnostic: both name the canonical form `see '<lib>' version "<x.y>" from
 - `/…`: used as-is (absolute).
 - a bare name: `/usr/share/vox/lib/<name>` is checked **first**, and only if
   that does not exist does it fall back to the containing file's directory.
-  Watch this: a bare `see "utils.vox".` can silently pick up a system file in
-  preference to the one sitting next to your source. Write `./utils.vox` when
-  you mean the local one.
+  A bare `see "utils.vox".` can silently pick up a system file in preference
+  to the one next to your source; write `./utils.vox` for the local one.
 
 Those three shapes describe a `.vox` source include. A `.lib` path resolves
 differently: relative or bare, it is tried against the containing file's
@@ -5587,12 +5619,12 @@ at is linked, never read for types. This section covers writing one, the `.lib`
 file, consuming one, putting several libraries in one `.so`, and the symbol
 names a non-Vox caller needs.
 
-> **What runs today.** The whole path runs: building a library with `--shared`
-> produces a self-contained `.so` plus its `.lib` interface, `see` of a `.lib`
-> consumes it from Vox, export names are mangled, and multi-input `--shared`
-> links several libraries (and several versions of one library) into one `.so`.
-> A foreign host can also call the `.so` directly; see
-> [Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
+The whole path runs: building a library with `--shared` produces a
+self-contained `.so` plus its `.lib` interface, `see` of a `.lib` consumes it
+from Vox, export names are mangled, and multi-input `--shared` links several
+libraries (and several versions of one library) into one `.so`. A foreign host
+can also call the `.so` directly; see
+[Calling a library from a non-Vox host](#calling-a-library-from-a-non-vox-host).
 
 #### Writing a library
 
@@ -5791,8 +5823,8 @@ same library can live in one `.so`, kept apart by mangling. A consumer who
 upgrades the library keeps calling `mathkit_1_0_add_two_numbers` after
 `mathkit_2_0_add_two_numbers` ships beside it, with no recompile, both symbols
 are present and independently callable. That version isolation is why the
-whole design looks the way it does, and it is the case to keep in mind when
-the rest of it seems elaborate.
+whole design looks the way it does; keep it in mind when the rest seems
+elaborate.
 
 Duplicate `<library, version>` pairs across inputs are rejected with both
 filenames. Multi-input is `--shared` only; it is rejected for executable

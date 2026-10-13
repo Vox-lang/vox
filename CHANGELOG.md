@@ -28,6 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   now named `vox-<version>-full.7z`.
 
 ### Fixed
+- **FizzBuzz is the real FizzBuzz.** The example, its test and the
+  manual print `Fizz` for multiples of 3, `Buzz` for multiples of 5 and
+  `FizzBuzz` for multiples of 15.
 - **A field is type-checked exactly like a variable, both ways, and a
   text is a number exactly when it is written as one.** Writing a text, a
   float, a number or `nothing` into a number, float, boolean or time field
@@ -52,6 +55,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   `thiserror` dependency is gone, so `Cargo.lock` lists only vox-lang
   and the RPM spec no longer needs a vendor tarball or `bundled(crate(...))`
   declarations.
+- **The manual presents paragraphs and periods as Vox's prose
+  structure:** a sentence ends a clause, a paragraph ends a section.
+- **The manual states its rules plainly:** headings and notes that framed
+  a rule as a limitation, a workaround or a status report now state the rule.
 
 ### Fixed
 - **A device node's major and minor now reach mknod(2) as the standard Linux
@@ -96,6 +103,10 @@ adheres to [Semantic Versioning](https://semver.org/).
   kernel keeps only the low 8 bits, so `Exit 256.` reported success. A
   provable code outside 0 to 255 is a compile error; a computed one exits
   with 255. `quit` and `terminate` follow. (#136)
+- **Four manual statements now match the compiler:** `respectively` is an
+  ordinary identifier, `is available` is the path-level existence check, a
+  call carries its runtime tag only when its function returns a `value`, and
+  the cast diagnostic for a dynamically-tagged value is quoted exactly.
 
 ## [0.4.15] - 2026-09-06
 
