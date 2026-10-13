@@ -18,6 +18,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   binary; the prefix letter may be a capital. (#130)
 
 ### Fixed
+- **FizzBuzz is the real FizzBuzz.** The example, its test and the
+  manual print `Fizz` for multiples of 3, `Buzz` for multiples of 5 and
+  `FizzBuzz` for multiples of 15.
 - **A field is type-checked exactly like a variable, both ways, and a
   text is a number exactly when it is written as one.** Writing a text, a
   float, a number or `nothing` into a number, float, boolean or time field
