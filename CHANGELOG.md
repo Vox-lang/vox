@@ -16,6 +16,16 @@ adheres to [Semantic Versioning](https://semver.org/).
   `nothing` into a text field is refused at the write. (#103)
 - **Octal number literals.** `0o17` is 15, beside `0x` hex and `0b`
   binary; the prefix letter may be a capital. (#130)
+- **`mise use -g github:Vox-lang/vox` installs a static Vox that runs on
+  any x86-64 Linux.** Each release carries
+  `vox-<version>-x86_64-unknown-linux-musl.tar.gz` (with a `.sha256`):
+  `bin/vox`, a static executable that runs whatever the host's C library,
+  with `coreasm/`, the manual page, `LICENSE` and `README.md` beside it;
+  the compiler finds that `coreasm/` on its own. Releases up to 0.4.15
+  carry a glibc build, `vox-<version>-x86_64-unknown-linux-gnu.tar.gz`,
+  which mise installs on glibc 2.39 or newer. Compiling a program needs
+  `nasm` and `ld` as before. The archive with the tests and examples is
+  now named `vox-<version>-full.7z`.
 
 ### Fixed
 - **A field is type-checked exactly like a variable, both ways, and a
