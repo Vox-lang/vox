@@ -1,88 +1,93 @@
-Print "=== Integer Arithmetic ===".
+(Arithmetic in Vox is said in words: add, subtract, multiply, divide and
+ modulo. Each heading below reads the sum aloud, then prints its answer.)
 
-Set num1 to 10.
-Set num2 to 3.
+Print "=== Whole Numbers ===".
 
-Print "num1 = 10, num2 = 3".
+Set apples to 10.
+Set pears to 3.
+
+Print "The bowl holds 10 apples and 3 pears.".
 Print "".
 
-Print "Addition: num1 add num2 =".
-Print num1 add num2.
+Print "Pieces of fruit altogether, apples add pears:".
+Print apples add pears.
 
-Print "Subtraction: num1 subtract num2 =".
-Print num1 subtract num2.
+Print "How many more apples than pears, apples subtract pears:".
+Print apples subtract pears.
 
-Print "Multiplication: num1 multiply num2 =".
-Print num1 multiply num2.
+Print "Ways to pick one apple and one pear, apples multiply pears:".
+Print apples multiply pears.
 
-Print "Division: num1 divide num2 =".
-Print num1 divide num2.
+Print "Apples for each pear, apples divide pears:".
+Print apples divide pears.
 
-Print "Modulo: num1 modulo num2 =".
-Print num1 modulo num2.
-
-Print "".
-Print "=== Float Arithmetic ===".
-
-Set val1 to 10.5.
-Set val2 to 3.2.
-
-Print "val1 = 10.5, val2 = 3.2".
-Print "".
-
-Print "Addition: val1 add val2 =".
-Print val1 add val2.
-
-Print "Subtraction: val1 subtract val2 =".
-Print val1 subtract val2.
-
-Print "Multiplication: val1 multiply val2 =".
-Print val1 multiply val2.
-
-Print "Division: val1 divide val2 =".
-Print val1 divide val2.
+Print "Apples left over, apples modulo pears:".
+Print apples modulo pears.
 
 Print "".
-Print "=== Mixed Operations ===".
+Print "=== Decimals ===".
 
-Set result to 5.0.
-Print "Starting with 5.0".
+Set length to 10.5.
+Set width to 3.2.
 
-Set result to result add 2.5.
-Print "After adding 2.5:".
-Print result.
+Print "The room is 10.5 metres long and 3.2 metres wide.".
+Print "".
 
-Set result to result multiply 2.0.
-Print "After multiplying by 2.0:".
-Print result.
+(A decimal is a 64-bit float, so a sum like 10.5 add 3.2 shows the
+ rounding of its last binary digit)
+Print "Half the way around the walls, length add width:".
+Print length add width.
 
-Set result to result subtract 3.0.
-Print "After subtracting 3.0:".
-Print result.
+Print "How much longer than wide, length subtract width:".
+Print length subtract width.
 
-Set result to result divide 2.0.
-Print "After dividing by 2.0:".
-Print result.
+Print "Floor area, length multiply width:".
+Print length multiply width.
+
+Print "How many widths make the length, length divide width:".
+Print length divide width.
+
+Print "".
+Print "=== One Value, Changed Step by Step ===".
+
+Set flour to 5.0.
+Print "The recipe starts with 5.0 cups of flour.".
+
+Set flour to flour add 2.5.
+Print "After adding 2.5 cups:".
+Print flour.
+
+Set flour to flour multiply 2.0.
+Print "After doubling the recipe:".
+Print flour.
+
+Set flour to flour subtract 3.0.
+Print "After setting 3.0 cups aside:".
+Print flour.
+
+Set flour to flour divide 2.0.
+Print "Shared between two bowls, each bowl holds:".
+Print flour.
 
 Print "".
 Print "=== Comparisons ===".
 
-If 10.5 is greater than 10.0 then, print "10.5 > 10.0: true",
-Otherwise, print "ERROR in comparison".
+If length is greater than 10.0 then, print "The room is more than 10 metres long.".
+Otherwise, print "The room is 10 metres long or less.".
 
-If 3.0 is less than 3.5 then, print "3.0 < 3.5: true",
-Otherwise, print "ERROR in comparison".
+If width is less than 3.5 then, print "It is narrower than 3.5 metres.".
+Otherwise, print "It is 3.5 metres wide or more.".
 
-If 5.0 is equal to 5.0 then, print "5.0 == 5.0: true",
-Otherwise, print "ERROR in comparison".
+If flour is equal to 6.0 then, print "Each bowl holds exactly 6.0 cups.".
+Otherwise, print "The bowls hold something other than 6.0 cups.".
 
 Print "".
-Print "=== Loop with Float Counter ===".
-Print "You should see a sequence of numbers from 0.0 to 4.0".
-Set counter to 0.0.
-While counter is less than 5.0,
-    Print counter,
-    Set counter to counter add 1.0.
+Print "=== Counting with a Decimal ===".
+Print "A five-kilometre walk, one marker at a time:".
+Set kilometres to 0.0.
+While kilometres is less than 5.0,
+    Print kilometres,
+    Set kilometres to kilometres add 1.0.
 
 Print "".
 Print "Done!".

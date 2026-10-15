@@ -43,6 +43,11 @@ adheres to [Semantic Versioning](https://semver.org/).
   wherever the comparison stands. Equality on a `value` works as before.
   To compare one by order, check it with `is a number`, put it in a number
   variable, and compare that.
+- **The examples read as English, with every period in place.** Every
+  statement in `examples/` ends with its period and every clause opens
+  with its comma; `arithmetic.vox`, `greet.vox` and `and_keyword.vox` are
+  rewritten as plain sentences, and placeholder names such as `num1`, `i`
+  and `buf` are now the names of the things they hold.
 
 ### Fixed
 - **A name declared in only some branches of an `If` is reported where it

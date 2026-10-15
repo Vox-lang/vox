@@ -9,11 +9,11 @@ print data.
 a list called child is element 2 of data.
 print child.
 print child's length.
-for each y in child, print y.
+for each number in child, print number.
 
 (Walk the top level, classifying each element.)
-for each item in data
-  if item is a list
-    print "list"
-  otherwise
-    print "scalar"
+for each item in data,
+  if item is a list then,
+    print "list".
+  otherwise,
+    print "scalar".

@@ -156,9 +156,9 @@
 Print "=== Arguments Properties Demo ===".
 
 (Access argument count)
-a number called argc is arguments's count.
+a number called 'argument count' is arguments's count.
 Print "Number of arguments: ".
-Print the argc.
+Print the 'argument count'.
 
 (The program name is arguments's name)
 a text called program is arguments's name.
@@ -167,8 +167,8 @@ Print the program.
 
 (Access first user argument with arguments's first)
 If arguments's count is greater than 1 then,
-    a text called arg1 is arguments's first,
-    Print "First user argument: {arg1}".
+    a text called 'first argument' is arguments's first,
+    Print "First user argument: {first argument}".
 
 (Check if arguments were provided)
 Print "".
@@ -178,9 +178,9 @@ Otherwise,
     Print "User arguments were provided.".
 
 (Access last argument)
-a text called lastarg is arguments's last.
+a text called 'last argument' is arguments's last.
 Print "Last argument: ".
-Print the lastarg.
+Print the 'last argument'.
 
 
 (========================================================================)
@@ -211,14 +211,14 @@ Otherwise,
 
 (Environment variable count)
 Print "".
-a number called envcount is environment's count.
+a number called 'variable count' is environment's count.
 Print "Total environment variables: ".
-Print the envcount.
+Print the 'variable count'.
 
 (First environment variable)
-a text called env1 is environment's first.
+a text called 'first variable' is environment's first.
 Print "First env var: ".
-Print the env1.
+Print the 'first variable'.
 
 
 (========================================================================)
@@ -229,15 +229,15 @@ Print "".
 Print "=== Practical Example ===".
 
 (A program that greets the user, using argument or environment variable)
-a text called greetname is "World".
+a text called 'greeting name' is "World".
 
 (Priority: 1. Command line argument, 2. Environment variable, 3. Default)
 If arguments's count is greater than 1 then,
-    the greetname is arguments's first.
+    the 'greeting name' is arguments's first.
 But if the environment variable "GREET_NAME" exists then,
-    the greetname is environment's "GREET_NAME".
+    the 'greeting name' is environment's "GREET_NAME".
 
 Print "Hello, ".
-Print the greetname.
+Print the 'greeting name'.
 Print "!".
 
