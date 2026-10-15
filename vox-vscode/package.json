@@ -2,7 +2,7 @@
   "name": "vox",
   "displayName": "VoxLang",
   "description": "Syntax highlighting for Vox (sentence-based code) (.vox files)",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "homepage": "https://vox-lang.dev",
   "publisher": "vox-lang",
   "author": "TheJostler",
