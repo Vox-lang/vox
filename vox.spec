@@ -39,7 +39,7 @@
 %bcond_without check
 
 Name:           vox
-Version:        0.4.15
+Version:        0.4.16
 Release:        1%{?dist}
 Summary:        Compiler for a constrained, sentence-based English programming language
 
@@ -168,6 +168,9 @@ cargo test --release --offline
 %{_mandir}/man1/%{name}.1*
 
 %changelog
+* Thu Oct 15 2026 TheJostler <josj@tegosec.com> - 0.4.16-1
+- New upstream release 0.4.16
+
 * Sun Sep 06 2026 TheJostler <josj@tegosec.com> - 0.4.15-1
 - New upstream release 0.4.15
 
