@@ -5576,9 +5576,9 @@ While the counter is less than 10, print the counter, increment the counter.
 ### FizzBuzz
 
 ```
-To 'check divisibility' with a number called divisor and a number called dividend. Return a boolean, the divisor modulo the dividend is 0.
+To 'check divisibility' with a number called dividend and a number called divisor. Return a boolean, dividend modulo divisor is 0.
 
-For each number from 1 to 15, print the number, but if 'check divisibility' of the number and 15 is true print "FizzBuzz" but if 'check divisibility' of the number and 3 is true print "Fizz" but if 'check divisibility' of the number and 5 is true print "Buzz".
+Print each number from 1 to 15, but if 'check divisibility' of the number and 15 is true print "FizzBuzz", but if 'check divisibility' of the number and 3 is true print "Fizz", but if 'check divisibility' of the number and 5 is true print "Buzz".
 ```
 
 ---
