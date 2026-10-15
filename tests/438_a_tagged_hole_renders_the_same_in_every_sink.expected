@@ -8,4 +8,5 @@
 [    10]
 [    10]
 hex: 0xa
-a tagged text ignores a width: [two]
+a tagged text pads to a width: [  two]
+a tagged text pads to a width: [  two]

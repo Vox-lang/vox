@@ -503,7 +503,7 @@ impl Parser {
                 let default = if matches!(self.current(), Token::Is | Token::Equals) {
                     self.advance();
                     self.skip_noise();
-                    Some(self.parse_field_default(thing_name, &field_name)?)
+                    Some(self.parse_field_default(thing_name, &field_name, &field_type)?)
                 } else {
                     None
                 };
@@ -634,7 +634,20 @@ impl Parser {
         &mut self,
         thing_name: &str,
         field_name: &str,
+        field_type: &Type,
     ) -> Result<Expr, Box<CompileError>> {
+        // A list or a map field starts from a literal of its own kind, and a
+        // buffer field from a size or a text, the same forms a variable of
+        // that type is declared with: `is []`, `is {}`, `is 64 bytes in
+        // size`, `is "hello"`.
+        if let Some(expr) = self.parse_collection_field_default(thing_name, field_name, field_type)? {
+            self.skip_noise();
+            if !self.at_thing_terminator() && *self.current() != Token::Comma {
+                return Err(self.err_field_default_not_literal(thing_name, field_name));
+            }
+            return Ok(expr);
+        }
+
         // A leading `-` belongs to the literal it negates; folding it in
         // here keeps `default` a literal rather than a UnaryOp tree that
         // every consumer would have to evaluate.
@@ -692,6 +705,56 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    /// The default of a list, a map or a buffer field, when one is written in
+    /// a form only those types take; None leaves the cursor where it was for
+    /// the scalar literals. A buffer's size is carried as the whole number of
+    /// bytes, since `bytes` is the only way to write one here.
+    fn parse_collection_field_default(
+        &mut self,
+        thing_name: &str,
+        field_name: &str,
+        field_type: &Type,
+    ) -> Result<Option<Expr>, Box<CompileError>> {
+        match (field_type, self.current().clone()) {
+            (Type::List(_) | Type::Map(_), Token::OpenBracket | Token::OpenBrace) => {
+                let literal = self.parse_primary()?;
+                if !is_literal_collection(&literal) {
+                    return Err(self.err_field_default_not_literal(thing_name, field_name));
+                }
+                Ok(Some(literal))
+            }
+            (Type::Buffer, Token::IntegerLiteral(size)) => {
+                self.advance();
+                self.skip_noise();
+                if *self.current() != Token::Bytes {
+                    return Err(self.err(&format!(
+                        "Field '{}' of thing '{}' is a buffer, so its size is written in bytes\n  \
+                         Write `is {} bytes in size`, or give it a text: `is \"hello\"`.",
+                        field_name, thing_name, size
+                    )));
+                }
+                self.advance();
+                self.skip_noise();
+                if *self.current() == Token::In {
+                    self.advance();
+                    self.skip_noise();
+                    if !self.expect_lexeme("size") {
+                        return Err(self.error_expected_token("size", self.current()));
+                    }
+                }
+                if !(MIN_BUFFER_SIZE..=MAX_BUFFER_SIZE).contains(&size) {
+                    return Err(self.err(&format!(
+                        "Field '{}' of thing '{}' asks for {} bytes, and a buffer holds \
+                         from {} to {} bytes",
+                        field_name, thing_name, size, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE
+                    )));
+                }
+                Ok(Some(Expr::IntegerLit(size)))
+            }
+            _ => Ok(None),
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -1018,7 +1081,7 @@ impl Parser {
     /// The same question asked `off` tokens ahead, for the lookaheads that
     /// have to see past a name they have not consumed yet: `a point's` and
     /// `To do the point's` both read the possessive without moving.
-    fn possessive_follows_from(&self, mut off: usize) -> bool {
+    pub(crate) fn possessive_follows_from(&self, mut off: usize) -> bool {
         while matches!(self.peek(off), Token::Newline) {
             off += 1;
         }
@@ -1249,6 +1312,12 @@ impl Parser {
                     // back as written rather than judged here.
                     return Ok(Possessive::Field { path, field_type });
                 }
+                // A list, a map or a buffer field answers its own
+                // possessives (`note's tags's length`, `note's scores's
+                // "ada"`), so the chain ends here and the caller reads them.
+                Type::List(_) | Type::Map(_) | Type::Buffer => {
+                    return Ok(Possessive::Field { path, field_type });
+                }
                 scalar => {
                     if self.possessive_follows() {
                         self.pos = member_pos;
@@ -1403,7 +1472,7 @@ impl Parser {
     }
 
     /// `origin's leg's start` - the chain as written, for a diagnostic.
-    fn render_chain(base: &str, path: &[String]) -> String {
+    pub(crate) fn render_chain(base: &str, path: &[String]) -> String {
         let mut out = base.to_string();
         for step in path {
             out.push_str("'s ");
@@ -1420,9 +1489,41 @@ impl Parser {
         thing: &str,
     ) -> Result<Expr, Box<CompileError>> {
         match self.parse_thing_possessive(&base, thing, PossessivePosition::Value)? {
+            Possessive::Field { path, field_type } if is_collection_field(&field_type) => {
+                let name = Self::render_chain(&base, &path);
+                if self.possessive_follows() {
+                    self.consume_possessive();
+                    self.skip_noise();
+                    return self.parse_possessive_tail(name);
+                }
+                Ok(Expr::Identifier(name))
+            }
             Possessive::Field { path, .. } => Ok(Expr::ThingField { base, path }),
             Possessive::Call(call) => Ok(call),
         }
+    }
+
+    /// The name a list, a map or a buffer field is written to by: the field
+    /// chain as written (`note's tags`), which every collection statement
+    /// takes exactly as it takes a variable's name. A plain name otherwise.
+    pub(crate) fn parse_collection_name(&mut self) -> Result<String, Box<CompileError>> {
+        if let Token::Identifier(base) = self.current().clone() {
+            if let Some(thing) = self.thing_of_variable(&base) {
+                let saved = self.pos;
+                self.advance();
+                if self.possessive_follows() {
+                    if let Possessive::Field { path, field_type } =
+                        self.parse_thing_possessive(&base, &thing, PossessivePosition::WriteTarget)?
+                    {
+                        if is_collection_field(&field_type) {
+                            return Ok(Self::render_chain(&base, &path));
+                        }
+                    }
+                }
+                self.pos = saved;
+            }
+        }
+        self.parse_name()
     }
 
     /// If the cursor sits on `<thing variable>'s <field>...`, consume the
@@ -1445,6 +1546,15 @@ impl Parser {
             return Ok(None);
         }
         match self.parse_thing_possessive(&name, &thing, PossessivePosition::WriteTarget)? {
+            // `Set note's scores's "ada" to 36.` writes into the map the field
+            // holds, which the map statement reads; the field itself is not
+            // the target.
+            Possessive::Field { field_type, .. }
+                if is_collection_field(&field_type) && self.possessive_follows() =>
+            {
+                self.pos = saved;
+                Ok(None)
+            }
             Possessive::Field { path, field_type } => Ok(Some((name, path, field_type))),
             // `WriteTarget` never resolves the sugar, so a call cannot come
             // back from it.
@@ -1997,10 +2107,37 @@ impl Parser {
     ) -> Box<CompileError> {
         self.err(&format!(
             "A field default must be a literal\n  \
-             Field '{}' of thing '{}': write `is 0`, `is 1.5`, `is true`, or \
-             `is \"text\"`.\n  \
+             Field '{}' of thing '{}': write `is 0`, `is 1.5`, `is true`, \
+             `is \"text\"`, `is [1, 2]`, or `is {{}}`.\n  \
              Anything computed belongs in a function that returns the thing.",
             field_name, thing_name
         ))
     }
+}
+
+/// Whether a list or map literal is built from literals all the way down, as
+/// a field default has to be: `[1, "two", [3]]` and `{"ada": 36}` are,
+/// `[count]` is not.
+fn is_literal_collection(value: &Expr) -> bool {
+    match value {
+        Expr::ListLit { elements } => elements.iter().all(is_literal_collection),
+        Expr::MapLit { pairs } => pairs
+            .iter()
+            .all(|(key, value)| matches!(key, Expr::StringLit(_)) && is_literal_collection(value)),
+        Expr::UnaryOp { op: UnaryOperator::Negate, operand } => {
+            matches!(operand.as_ref(), Expr::IntegerLit(_) | Expr::FloatLit(_))
+        }
+        Expr::IntegerLit(_)
+        | Expr::FloatLit(_)
+        | Expr::StringLit(_)
+        | Expr::BoolLit(_)
+        | Expr::NothingLit => true,
+        _ => false,
+    }
+}
+
+/// Whether a field holds a list, a map or a buffer: a collection the
+/// program names through the field chain, as it names a variable.
+pub(crate) fn is_collection_field(field_type: &Type) -> bool {
+    matches!(field_type, Type::List(_) | Type::Map(_) | Type::Buffer)
 }

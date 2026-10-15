@@ -1021,12 +1021,17 @@ Print viewport's width.
 ```
 
 **Field types.** A field may be `number`, `float`, `boolean`, `time`,
-`text`, or any **previously defined** thing (things nest to any depth;
-see [Nesting](#nesting)). A text field follows the same value semantics
-as every other field (below): a copy of the thing never shares its text
-with the original, and a text field with no default holds the empty
-text `""`. `list`, `map`, and `buffer` are not field types: each can be
-changed in place, so two copies of a thing holding one would share it.
+`text`, `list`, `map`, `buffer`, or any **previously defined** thing
+(things nest to any depth; see [Nesting](#nesting)). Every field follows
+the same value semantics (below): a copy of the thing never shares a
+text, a list, a map or a buffer with the original, and a list or map
+read out of a field into a variable is the variable's own copy. A default
+is written as a variable's is (`is ["eggs"]`, `is {}`, `is 64 bytes in
+size`, `is "milk"`); without one a text holds `""`, a list `[]`, a map
+`{}`, and a buffer is empty. A list, map or buffer field is used wherever
+a variable of its type is: `append "bread" to errand's items.`,
+`errand's items's length`. A `file`, a `timer` and a `value` are not
+field types.
 A field's type is fixed by the definition, as a variable's is by its
 declaration: writing a value of another type into a field, or reading a
 field into a variable of another type, is the compile error
@@ -1232,8 +1237,9 @@ Print invitation's postbox's x.
 Print reply's postbox's x.
 ```
 
-A text field is copied the same way. Changing it in one copy, by any
-spelling of assignment, is never seen in the other:
+A text, list, map or buffer field is copied the same way. Changing it in
+one copy, by any spelling of assignment or by `append`, is never seen in
+the other:
 
 ```
 A thing called letter has
@@ -1366,10 +1372,10 @@ Print after.
 `Print p.` walks the fields in definition order and recurses into the
 things they hold, map-style. Every field name is baked into the emitted
 program, so nothing is read from a descriptor and nothing is allocated.
-A quoted field name prints in the quotes it is written with, a text
-field prints its text in double quotes (the way a list or a map prints
-a text), and a function member takes no part; it is the type's API, not
-its state:
+A quoted field name prints in the quotes it is written with, a text or
+buffer field prints its text in double quotes (the way a list or a map
+prints a text), a list or map field prints as it would on its own, and a
+function member takes no part; it is the type's API, not its state:
 
 ```
 A thing called point has
@@ -1429,7 +1435,8 @@ a text called note is "the point is {origin}".
 
 `is` between two values of the same thing compares those same fields at
 the same depth; `is not` is its negation. A text field compares by its
-characters, wherever each copy's text is stored. Like printing, the
+characters, wherever each copy's text is stored; comparing two things
+that hold a list, a map or a buffer field is a compile error. Like printing, the
 comparison is written out by the compiler, so it recurses into nested
 things:
 
@@ -3521,8 +3528,8 @@ itself, then zeros), so `{n:.2}` on `a number called n is 255.` prints
 
 **A specifier has to be one in the table, and one the value's type can answer.** A clause after the colon that is none of them is a compile error naming the valid forms. A width asks
 nothing of a type: every rendering is some number of characters long, so
-`{var:N}` is accepted whatever `var` is (on a `float` or a `text` the value
-is rendered and the padding is not applied yet). The other two do ask
+`{var:N}` is accepted whatever `var` is, and a number, a float, a text and a
+buffer are each padded out to `N` characters. The other two do ask
 something, and asking it of the wrong type is a compile error naming the way
 out, not a wrong answer:
 
@@ -3550,11 +3557,8 @@ it runs, so there is nothing to check.
 
 The two compose: `{var:8.2}` asks for two decimal places, padded out to
 eight characters. The precision decides the digits and the width decides the
-padding, and each is honoured wherever there is something to honour it with:
-the same rule the width follows on its own. So `{n:8.2}` on `a number called
-n is 255.` prints `  255.00`, and `{n:08.2}` prints `00255.00`; on a `float`
-the places are printed and the padding is not, because there is no float
-padder yet, exactly as a bare `{f:8}` prints the float unpadded. (A width
+padding, on a number and a float alike. So `{n:8.2}` on `a number called
+n is 255.` prints `  255.00`, and `{n:08.2}` prints `00255.00`. (A width
 composes with a radix too, which is the `{var:04x}` row above.)
 
 #### Expressions in Format Strings

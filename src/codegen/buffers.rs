@@ -157,6 +157,19 @@ impl CodeGenerator {
     }
 
     pub(crate) fn emit_append_runtime_value_to_buffer_ptr(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
+        // `{price:8}`, `{name:8}` and `{word:8}` (docs/BUGS_FOUND.md #148):
+        // the value is appended by its own arm below, then right-aligned in
+        // place by the one padder a float, a text and a buffer share.
+        if let (Some(width), Some(VarType::Float | VarType::String | VarType::Buffer)) =
+            (fmt.width.filter(|width| *width > 0), &value_type)
+        {
+            let signed = matches!(value_type, Some(VarType::Float));
+            let unpadded = FormatSpec { width: None, zero_pad: false, ..fmt.clone() };
+            self.emit_indent("push qword [rdi + BUF_LENGTH_OFFSET]  ; where the value starts");
+            self.emit_append_runtime_value_to_buffer_ptr(value_type, unpadded);
+            self.emit_buffer_pad_tail(width, pad_fill(&fmt, signed));
+            return;
+        }
         match value_type {
             Some(VarType::Buffer) => {
                 self.uses_buffers = true;
@@ -302,17 +315,33 @@ impl CodeGenerator {
         self.emit_indent(&format!("je {}", map_label));
         self.emit_indent(&format!("cmp r11, {}  ; nothing tag?", TAG_NOTHING));
         self.emit_indent(&format!("je {}", nothing_label));
+        // A tagged text and a tagged float pad to a width as the integer
+        // branch does (docs/BUGS_FOUND.md #148).
+        let padded = fmt.width.filter(|width| *width > 0);
+        let (text_fill, float_fill) = (pad_fill(&fmt, false), pad_fill(&fmt, true));
         // Integer and boolean both render as numbers, matching the Print
         // dispatch and a homogeneous boolean list's `1`/`0`.
         self.emit_append_formatted_int_to_buffer(fmt);
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", str_label));
+        if padded.is_some() {
+            self.emit_indent("push qword [rdi + BUF_LENGTH_OFFSET]  ; where the value starts");
+        }
         self.emit_indent("mov rsi, rax");
         self.emit_indent("call _buffer_append_cstr");
+        if let Some(width) = padded {
+            self.emit_buffer_pad_tail(width, text_fill);
+        }
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", flt_label));
         self.uses_floats = true;
+        if padded.is_some() {
+            self.emit_indent("push qword [rdi + BUF_LENGTH_OFFSET]  ; where the value starts");
+        }
         self.emit_indent("call _buffer_append_float  ; rdi = buffer, rax = float bits");
+        if let Some(width) = padded {
+            self.emit_buffer_pad_tail(width, float_fill);
+        }
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", list_label));
         self.uses_lists = true;
@@ -328,6 +357,18 @@ impl CodeGenerator {
         self.emit_indent(&format!("mov rdx, {}_len", nothing_str));
         self.emit_indent("call _buffer_append_bytes");
         self.emit(&format!("{}:", done_label));
+    }
+
+    /// Right-align what was appended since the start length on the stack
+    /// out to `width` characters; rax holds the buffer the append answered
+    /// with, and holds it again afterwards (docs/BUGS_FOUND.md #148).
+    pub(crate) fn emit_buffer_pad_tail(&mut self, width: i64, fill: i64) {
+        self.uses_buffers = true;
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("pop rsi");
+        self.emit_indent(&format!("mov rdx, {}", width));
+        self.emit_indent(&format!("mov rcx, {}", fill));
+        self.emit_indent("call _buffer_pad_tail");
     }
 
     /// The buffer-slot form of `emit_append_mixed_value_to_buffer_ptr`. Only

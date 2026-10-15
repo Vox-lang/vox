@@ -149,6 +149,25 @@ adheres to [Semantic Versioning](https://semver.org/).
   number. The comparison now reads the element's type first: a text
   element is compared by its characters, and any other element is not
   equal to a text. (#151)
+- **A width pads a float, a text and a buffer, as it pads a number.**
+  `{price:8}` prints `     3.5` and `{name:8}` prints `     Vox` in Print
+  and in every other place a format string renders. A zero-padded float
+  keeps its sign in front (`{loss:08}` is `-00003.5`), `{price:8.2}` takes
+  the places and then the padding, and a list element holding a text or
+  a float pads the same way. A value already as wide as the width is
+  printed as it is. (#148)
+- **A thing can hold list, map and buffer fields.** `a list called items
+  is ["eggs"],`, `a map called counts is {},` and `a buffer called body is
+  64 bytes in size,` are fields like any other, each used through the
+  possessive wherever a variable of its type is: `append "bread" to
+  errand's items.`, `errand's items's length`, `For each item in errand's
+  items`. Every copy of a thing, by assignment, as an argument or as a
+  returned value, copies its lists, maps and buffers, so the copy and the
+  original never share one, and a list or map read out of a field into a
+  variable is the variable's own. A function called above a top-level
+  thing's declaration reads its text, list, map and buffer fields as their
+  defaults. Two things holding one are not compared with `is`; a file, a
+  timer and a `value` are still not field types. (#103)
 
 ### Changed
 - **The compiler now builds with no third-party crates.** The unused

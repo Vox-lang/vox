@@ -2822,8 +2822,9 @@ Otherwise, a number called s is 1, append s to out.\n";
     fn a_radix_on_a_text_prints_the_text_not_its_address() {
         for spec in ["x", "X", "b", "o", "04x"] {
             let asm = emit_one_hole(Some(super::VarType::String), spec);
+            // `04x` carries a width, which pads the text (#148).
             assert!(
-                asm.contains("PRINT_CSTR rdi"),
+                asm.contains("PRINT_CSTR rdi") || asm.contains("call _print_padded_cstr"),
                 "`:{}` on a text must print the string: {}",
                 spec,
                 asm
@@ -3158,10 +3159,9 @@ Otherwise, a number called s is 1, append s to out.\n";
         assert_eq!(fault, None);
     }
 
-    /// A width of zero is a no-op for every type, exactly as any other
-    /// width already is for a type with no padder (#71): it asks nothing
-    /// of the type, so it is dropped by the same silent path a bare `{f:8}`
-    /// or `{t:8}` already takes, not turned into a special case.
+    /// A width of zero is a no-op for every type: it pads nothing, so a
+    /// float and a text print by their plain routines, never through the
+    /// padders a nonzero width takes (#148).
     #[test]
     fn a_zero_width_is_a_no_op_on_a_float_and_a_text() {
         let asm = emit_one_hole(Some(super::VarType::Float), "0");

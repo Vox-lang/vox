@@ -1,0 +1,3 @@
+Field 'anything' of thing 'holder' is a value, which a thing cannot hold
+a value keeps its type beside it, where a field has no room
+a_value_field_is_refused.vox:5:18

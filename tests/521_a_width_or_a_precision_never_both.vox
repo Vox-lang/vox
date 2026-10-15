@@ -9,9 +9,8 @@
  type yet" - so the precision decides the digits and the width decides
  the padding, and each is honoured wherever a primitive for it exists.
 
- The float rows are unpadded on purpose: coreasm has no float padder,
- which is bug #36's recorded residue and not this entry's to close. A
- whole number HAS a padder, so `{n:8.2}` gets both.)
+ A float and a whole number both take the places and the padding, so
+ `{f:8.2}` and `{n:8.2}` are each eight wide (#148).)
 a float called f is 2.5.
 a number called n is 255.
 a text called t is "hi".
@@ -20,8 +19,8 @@ a text called t is "hi".
 Print "[{f:.2}]".
 Print "[{f:.0}]".
 
-(A width and a precision together: the float takes the places and drops
- the padding, exactly as a bare `{f:8}` drops it.)
+(A width and a precision together: the float takes the places, then the
+ padding, exactly as a bare `{f:8}` is padded.)
 Print "[{f:8.2}]".
 
 (A whole number takes BOTH: 255 to two places is `255.00`, eight wide.)

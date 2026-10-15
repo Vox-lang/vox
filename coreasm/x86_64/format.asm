@@ -384,6 +384,59 @@ _fmt_emit_pad:
     ret
 
 
+; Print rsi bytes from rdi right-aligned within a width
+; (docs/BUGS_FOUND.md #148): `{price:8}`, `{name:8}` and a buffer's
+; `{word:8}` in Print position. The fill goes out a page at a time
+; through _fmt_emit_pad, as a number's does, so a large width costs no
+; memory.
+; Args: rdi = bytes, rsi = length, rdx = width, rcx = fill: 0 spaces,
+;       1 zeros, 2 zeros after a leading '-' (the sign comes first, as
+;       _print_int_padded_impl puts a number's).
+; Clobbers rax, rcx, rdx, rsi, rdi, r9, r11.
+; _print_padded_cstr takes a NUL-terminated text in rdi in place of rdi/rsi.
+_print_padded_cstr:
+    xor rsi, rsi
+.count:
+    cmp byte [rdi + rsi], 0
+    je _print_padded_bytes
+    inc rsi
+    jmp .count
+
+_print_padded_bytes:
+    push r12
+    push r13
+    push r14
+    mov r12, rdi                ; bytes
+    mov r13, rsi                ; length
+    mov r14, rdx                ; width
+    mov r9b, ' '
+    test rcx, rcx
+    jz .pad
+    mov r9b, '0'
+    cmp rcx, 2
+    jne .pad
+    test r13, r13
+    jz .pad
+    cmp byte [r12], '-'
+    jne .pad
+    mov rsi, r12
+    mov rdx, 1
+    call _fmt_write_all
+    inc r12
+    dec r13
+    dec r14
+.pad:
+    mov rax, r14
+    sub rax, r13                ; <= 0 writes nothing
+    call _fmt_emit_pad
+    mov rsi, r12
+    mov rdx, r13
+    call _fmt_write_all
+    pop r14
+    pop r13
+    pop r12
+    ret
+
 ; Print integer with minimum width (right-aligned, space-padded)
 ; Args: value, min_width
 %macro PRINT_INT_PADDED 2

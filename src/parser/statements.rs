@@ -1,4 +1,5 @@
 use super::*;
+use super::things::is_collection_field;
 
 impl Parser {
     /// True when the token after the current one (skipping newline noise)
@@ -482,7 +483,7 @@ impl Parser {
             self.skip_noise();
         }
 
-        let name = self.parse_name()?;
+        let name = self.parse_collection_name()?;
 
         Ok(Statement::Free { name })
     }
@@ -499,6 +500,11 @@ impl Parser {
 
         // `increment origin's x.` steps a field (plan 310 §3).
         if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            // A list, a map or a buffer field is named as a variable is, and
+            // refused as stepping one is.
+            if is_collection_field(&field_type) {
+                return Ok(Statement::Increment { name: Self::render_chain(&base, &path) });
+            }
             return Ok(Self::thing_field_step(
                 base,
                 path,
@@ -524,6 +530,11 @@ impl Parser {
 
         // `decrement cistern's 'litres drained'.` steps a field (plan 310 §3).
         if let Some((base, path, field_type)) = self.try_parse_thing_field_target()? {
+            // A list, a map or a buffer field is named as a variable is, and
+            // refused as stepping one is.
+            if is_collection_field(&field_type) {
+                return Ok(Statement::Decrement { name: Self::render_chain(&base, &path) });
+            }
             return Ok(Self::thing_field_step(
                 base,
                 path,

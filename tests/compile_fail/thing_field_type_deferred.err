@@ -1,2 +1,2 @@
-Field 'captions' of thing 'label' is a list
-number, float, boolean, time, text
+Field 'captions' of thing 'label' is a file
+number, float, boolean, time, text, list, map, buffer
