@@ -2022,6 +2022,23 @@ x is 0
 
 Note: `the` is optional before variable names in comparisons.
 
+**An ordering comparison takes a `value` once it is a number.** A
+`value`'s type is only known at runtime, so `is greater than`, `is less
+than`, their `or equal to` forms and their `not` forms are a compile error
+with a `value` on either side, whether it is a variable or a call that
+returns one, as arithmetic on a `value` is. Equality (`is`, `is equal to`,
+`is not`) takes a `value` as it is. To compare a `value` by order, check it
+with `is a number`, put it in a number variable, and compare that:
+
+```
+a value called v is "two".
+a number called n is 0.
+If v is a number, set n to v.
+If n is greater than 1 then, print "greater".
+Otherwise, print "not greater".
+(prints: not greater)
+```
+
 ### Property Checks
 
 ```vox fragment

@@ -1,0 +1,4 @@
+(An ordering comparison on a value is refused, as arithmetic on one is: its type is only known at runtime.)
+
+a value called v is "two".
+If v is greater than 1 then, Print "greater".

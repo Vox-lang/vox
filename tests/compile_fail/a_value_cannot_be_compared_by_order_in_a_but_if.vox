@@ -1,0 +1,5 @@
+(The rule holds in a but if clause.)
+
+a value called limit is 5.
+Print each number from 1 to 3,
+    but if limit is greater than 2 Print "over".

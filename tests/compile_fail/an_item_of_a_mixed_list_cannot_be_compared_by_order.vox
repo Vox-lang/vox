@@ -1,0 +1,5 @@
+(An item of a list holding more than one type is a value, and is refused in an ordering comparison.)
+
+a list called samples is [1, "two", 3].
+For each sample in samples,
+    If sample is greater than 2, Print "high".

@@ -726,6 +726,16 @@ impl Analyzer {
                     self.check_arithmetic_operand(left);
                     self.check_arithmetic_operand(right);
                 }
+                if matches!(
+                    op,
+                    BinaryOperator::Greater
+                        | BinaryOperator::Less
+                        | BinaryOperator::GreaterEqual
+                        | BinaryOperator::LessEqual
+                ) {
+                    self.check_ordering_operand(left);
+                    self.check_ordering_operand(right);
+                }
             }
 
             Expr::UnaryOp { op, operand } => {

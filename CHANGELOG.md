@@ -34,6 +34,16 @@ adheres to [Semantic Versioning](https://semver.org/).
   (standard input) for the rest of the program`. A handle opened by a
   path, and a file parameter, are closed without a warning.
 
+### Changed
+- **An ordering comparison on a `value` is a compile error, as arithmetic
+  on one is.** `If v is greater than 1` with `v` holding the text "two"
+  used to compare the text's address and answer true. `is greater than`,
+  `is less than`, their `or equal to` forms and their `not` forms now
+  refuse a `value` on either side, a variable or a call that returns one,
+  wherever the comparison stands. Equality on a `value` works as before.
+  To compare one by order, check it with `is a number`, put it in a number
+  variable, and compare that.
+
 ### Fixed
 - **A name declared in only some branches of an `If` is reported where it
   is read, with the reason.** The error points at the read after the `If`,

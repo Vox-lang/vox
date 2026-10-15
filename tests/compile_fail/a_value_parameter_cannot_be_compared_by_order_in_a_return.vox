@@ -1,0 +1,6 @@
+(The rule holds wherever the comparison stands: here, a returned boolean.)
+
+To 'is big' with a value called size.
+    Return a boolean, size is greater than 1.
+
+Print 'is big' of 5.

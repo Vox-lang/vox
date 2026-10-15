@@ -1,0 +1,20 @@
+(A value is compared by order once it has been checked with 'is a number' and put in a number variable. Equality on a value is unchanged, and a value retyped in place compares as the number it now holds.)
+
+To 'measure' with a number called sensor.
+    If sensor is 0, Return a value, "offline".
+    Return a value, sensor multiply 10.
+
+a value called measurement is 'measure' of 4.
+a number called level is 0.
+If measurement is a number, Set level to measurement.
+If level is greater than 30 then, Print "high".
+Otherwise, Print "low".
+
+a value called silence is 'measure' of 0.
+If silence is a number, Print "a number".
+Otherwise, Print "not a number".
+If silence is "offline" then, Print "offline".
+
+a value called count is "357".
+count is a number.
+If count is greater than or equal to 300, Print "357 is 300 or more".
