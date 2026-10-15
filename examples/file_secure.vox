@@ -1,10 +1,10 @@
-print "=== Secure File I/O Demo ===".
+Print "=== Secure File I/O Demo ===".
 
-print "Creating a dynamic buffer (no size needed!)".
-a buffer called data.
+Print "Creating a dynamic buffer (no size needed!)".
+A buffer called contents.
 
-print "Writing to file...".
-open a file for writing called output at "./secure_test.txt".
+Print "Writing to file...".
+Open a file for writing called output at "./secure_test.txt".
 Write "Line 1: Hello from secure file I/O!" to output.
 Write a newline to output.
 Write "Line 2: Buffers grow automatically." to output.
@@ -12,15 +12,15 @@ Write a newline to output.
 Write "Line 3: Files auto-close on exit if forgotten." to output.
 Close the output.
 
-print "Reading back...".
-open a file for reading called source at "./secure_test.txt".
-Read from source into data.
+Print "Reading back...".
+Open a file for reading called source at "./secure_test.txt".
+Read from source into contents.
 Close the source.
 
-print "Contents:".
-print data.
+Print "Contents:".
+Print contents.
 
-print "Cleaning up...".
+Print "Cleaning up...".
 Delete the file "./secure_test.txt".
 
-print "Done! All resources auto-cleaned.".
+Print "Done! All resources auto-cleaned.".

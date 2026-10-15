@@ -1,83 +1,70 @@
-(Binary and Hex Operations in English)
-(This example demonstrates working with binary data, hex values, and buffer manipulation)
+(Hex and binary literals, bitwise operations, and a buffer read and
+ written one byte at a time)
 
 Print "=== Hexadecimal Literals ===".
 
-(Numbers can be written in hex using 0x prefix)
-a number called red is 0xFF.
-a number called green is 0x80.
-a number called blue is 0x40.
+A number called red is 0xFF.
+A number called green is 0x80.
+A number called blue is 0x40.
 Print "Red component: {red} ({red:02X})".
 Print "Green component: {green} ({green:02X})".
 Print "Blue component: {blue} ({blue:02X})".
 
-(Combine into RGB value)
-a number called rgb is red multiply 65536 add green multiply 256 add blue.
+(Red is the high byte of a colour and blue the low one)
+A number called rgb is red multiply 65536 add green multiply 256 add blue.
 Print "Combined RGB: {rgb:06X}".
 
 Print "".
 Print "=== Binary Literals ===".
 
-(Numbers can be written in binary using 0b prefix)
-a number called flags is 0b10110100.
+A number called flags is 0b10110100.
 Print "Flags: {flags} (binary: {flags:b})".
 Print "Flags padded: {flags:08b}".
 
 Print "".
 Print "=== Buffer Byte Manipulation ===".
 
-(Create a buffer for binary data)
-Create a buffer called data of size 16.
+Create a buffer called memory of size 16.
 
-(Set individual bytes by position - 1-indexed like natural English)
-Set byte 1 of data to 0x48.
-Set byte 2 of data to 0x65.
-Set byte 3 of data to 0x6C.
-Set byte 4 of data to 0x6C.
-Set byte 5 of data to 0x6F.
+(Bytes are counted from 1, the way a person counts them)
+Set byte 1 of memory to 0x48.
+Set byte 2 of memory to 0x65.
+Set byte 3 of memory to 0x6C.
+Set byte 4 of memory to 0x6C.
+Set byte 5 of memory to 0x6F.
 
-(Read individual bytes)
-a number called 'first byte' is byte 1 of data.
+A number called 'first byte' is byte 1 of memory.
 Print "First byte: {first byte:02X}".
 
-(Print buffer as string - shows "Hello")
 Print "Buffer contents: ".
-Print data.
+Print memory.
 
 Print "".
 Print "=== Modifying Bytes ===".
 
-(Change a specific byte)
-Set byte 5 of data to 0x21.
+Set byte 5 of memory to 0x21.
 Print "After changing byte 5 to '!':".
-Print data.
-
-(Zero out remaining bytes explicitly)
-Set byte 6 of data to 0.
+Print memory.
 
 Print "".
 Print "=== Bitwise Operations ===".
 
-a number called 'high bits' is 0b11110000.
-a number called 'alternate bits' is 0b10101010.
+A number called 'high bits' is 0b11110000.
+A number called 'alternate bits' is 0b10101010.
 
-(Bitwise AND)
-a number called result is 'high bits' bit-and 'alternate bits'.
+A number called result is 'high bits' bit-and 'alternate bits'.
 Print "{high bits:08b} AND {alternate bits:08b} = {result:08b}".
 
-(Bitwise OR)
 Set result to 'high bits' bit-or 'alternate bits'.
 Print "{high bits:08b} OR  {alternate bits:08b} = {result:08b}".
 
-(Bitwise XOR)
 Set result to 'high bits' bit-xor 'alternate bits'.
 Print "{high bits:08b} XOR {alternate bits:08b} = {result:08b}".
 
-(Bitwise NOT - using XOR with all 1s)
+(Exclusive or with a byte of all ones flips every bit, which is NOT)
 Set result to 'high bits' bit-xor 0xFF.
 Print "NOT {high bits:08b} = {result:08b}".
 
-(Bit shifting)
 Set result to 'high bits' bit-shift-left 2.
 Print "{high bits:08b} << 2 = {result:08b}".
 
@@ -87,20 +74,19 @@ Print "{high bits:08b} >> 2 = {result:08b}".
 Print "".
 Print "=== Practical: Simple Hex Dump ===".
 
-(Write some test data)
-Set byte 1 of data to 0xDE.
-Set byte 2 of data to 0xAD.
-Set byte 3 of data to 0xBE.
-Set byte 4 of data to 0xEF.
-Set byte 5 of data to 0xCA.
-Set byte 6 of data to 0xFE.
-Set byte 7 of data to 0xBA.
-Set byte 8 of data to 0xBE.
+Set byte 1 of memory to 0xDE.
+Set byte 2 of memory to 0xAD.
+Set byte 3 of memory to 0xBE.
+Set byte 4 of memory to 0xEF.
+Set byte 5 of memory to 0xCA.
+Set byte 6 of memory to 0xFE.
+Set byte 7 of memory to 0xBA.
+Set byte 8 of memory to 0xBE.
 
 Print "Hex dump of first 8 bytes:".
-a number called position is 1.
+A number called position is 1.
 While position is less than or equal to 8,
-    a number called 'byte value' is byte position of data,
+    a number called 'byte value' is byte position of memory,
     Print "{byte value:02X} " without newline,
     increment position.
 Print "".
@@ -108,37 +94,37 @@ Print "".
 Print "".
 Print "=== Practical: Patching a Binary Value ===".
 
-(Read a 32-bit value from buffer - little endian)
-a number called 'lowest byte' is byte 1 of data.
-a number called 'second byte' is byte 2 of data.
-a number called 'third byte' is byte 3 of data.
-a number called 'highest byte' is byte 4 of data.
-a number called 'stored value' is 'lowest byte' add 'second byte' multiply 256 add 'third byte' multiply 65536 add 'highest byte' multiply 16777216.
+(A 32-bit value is stored lowest byte first, so each byte is worth 256
+ times the one before it)
+A number called 'lowest byte' is byte 1 of memory.
+A number called 'second byte' is byte 2 of memory.
+A number called 'third byte' is byte 3 of memory.
+A number called 'highest byte' is byte 4 of memory.
+A number called 'stored value' is 'lowest byte' add 'second byte' multiply 256 add 'third byte' multiply 65536 add 'highest byte' multiply 16777216.
 Print "32-bit value at offset 0: {stored value:08X}".
 
-(Write a new 32-bit value - little endian)
-a number called 'new value' is 0x12345678.
-Set byte 1 of data to 'new value' bit-and 0xFF.
-Set byte 2 of data to 'new value' bit-shift-right 8 bit-and 0xFF.
-Set byte 3 of data to 'new value' bit-shift-right 16 bit-and 0xFF.
-Set byte 4 of data to 'new value' bit-shift-right 24 bit-and 0xFF.
+A number called 'new value' is 0x12345678.
+Set byte 1 of memory to 'new value' bit-and 0xFF.
+Set byte 2 of memory to 'new value' bit-shift-right 8 bit-and 0xFF.
+Set byte 3 of memory to 'new value' bit-shift-right 16 bit-and 0xFF.
+Set byte 4 of memory to 'new value' bit-shift-right 24 bit-and 0xFF.
 
 Print "After patching with 0x12345678:".
 Set position to 1.
 While position is less than or equal to 4,
-    Set 'byte value' to byte position of data,
+    Set 'byte value' to byte position of memory,
     Print "{byte value:02X} " without newline,
     increment position.
 Print "".
 
 (Declaring one buffer from another copies its bytes, so changing the copy
- leaves data as it was)
-a buffer called 'data copy' is data.
+ leaves memory as it was)
+A buffer called 'the copy' is memory.
 Print "Buffer contents: ".
-Print 'data copy'.
-set byte 1 of 'data copy' to 'A'.
+Print 'the copy'.
+Set byte 1 of 'the copy' to 'A'.
 Print "After setting byte 1 to 'A':".
-Print 'data copy'.
+Print 'the copy'.
 
 Print "".
 Print "=== Done ===".

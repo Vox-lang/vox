@@ -1,52 +1,44 @@
-(map.vox: key/value collections.
+(A map holds values under text keys and keeps them in the order they were
+ added. A missing key does not crash the program; it raises the error that
+ "on error" catches. A map passed as a value keeps its type through the
+ call, so it still prints as a map.)
 
-A map is a JSON-style object: text keys, any-typed values, insertion-
-ordered. Literals use {"key": value, ...}; `map's "key"` reads a value;
-`set map's "key" to value` inserts or replaces; `map's keys`/`values`
-yield fresh lists for iteration; `map's length`/`empty` report the live
-entry count; `is a map` classifies at runtime. Missing keys set the
-error flag (observable via `on error`) rather than crashing.
+To 'print the record' with a value called record.
+    Print record.
 
-This example builds a small record, mutates it, iterates its keys and
-values, nests a list and another map, and round-trips the map through a
-`value` parameter to show the tag survives the call.)
+A map called person is {"name": "Ada", "age": 36, "city": "London"}.
 
-To 'show' with a value called record.
-  print record.
+Print "record:".
+Print person.
 
-a map called person is {"name": "Ada", "age": 36, "city": "London"}.
+Print "name is:".
+Print person's "name".
 
-print "record:".
-print person.
+Set person's "age" to 37.
+Print "after birthday:".
+Print person's "age".
+Print person's length.
 
-print "name is:".
-print person's "name".
+Print "keys:".
+For each key in person's keys,
+    print key.
 
-set person's "age" to 37.
-print "after birthday:".
-print person's "age".
-print person's length.
+Print "values:".
+For each detail in person's values,
+    print detail.
 
-print "keys:".
-for each key in person's keys,
-  print key.
+A map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
+Print "nested:".
+Print nested.
+A list called tags is nested's "tags".
+Print "tags:".
+Print tags.
+A map called meta is nested's "meta".
+Print "meta id:".
+Print meta's "id".
 
-print "values:".
-for each detail in person's values,
-  print detail.
+Print "round-trip through a value param:".
+'print the record' of person.
 
-a map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
-print "nested:".
-print nested.
-a list called tags is nested's "tags".
-print "tags:".
-print tags.
-a map called meta is nested's "meta".
-print "meta id:".
-print meta's "id".
-
-print "round-trip through a value param:".
-'show' of person.
-
-print person's "nope".
-on error print "looked up a missing key".
+Print person's "nope".
+On error print "looked up a missing key".

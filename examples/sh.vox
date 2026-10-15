@@ -1,28 +1,25 @@
-(vsh - a minimal interactive shell)
-(Reads a command line, splits it into whitespace-separated words,
- forks, and executes the command with its arguments. Commands are
- tried as given, then under /bin and /usr/bin. Type "exit" to quit.
+(A small interactive shell, vsh. It reads a command line, splits it into
+ words, and runs the first word as a command with the rest as its
+ arguments, trying it as given, then under /bin and /usr/bin. Type "exit"
+ to leave.
 
- Words are collected byte-by-byte into a scratch buffer, then turned
- into an argv-ready text with a format-string initializer - "{word}"
- materializes the buffer's bytes as a fresh NUL-terminated string, so
- every word owns its own memory and the scratch buffer can be reused.)
+ A word is gathered byte by byte in one buffer and copied out as a text,
+ "{word}", so every word keeps its own copy and the buffer can gather the
+ next one.)
 
-A text called 'Program Version' is "0.1.0".
-
-Open a file at 0 for reading called stdin.
+Open a file at 0 for reading called 'standard input'.
 
 Create a buffer called line.
-a buffer called word is 256 bytes in size.
+A buffer called word is 256 bytes in size.
 
 While true,
     print "vsh $ " without newline,
     clear line,
-    read line from stdin into line,
+    read line from 'standard input' into line,
     if line is empty then, exit 0.
-    (A trailing separator guarantees the last word is finished even if
-     the line arrived without a newline)
-    append " " to line,
+    (A space at the end finishes the last word, even on a line that
+     arrived without a newline)
+    Append " " to line,
 
     a list called 'command arguments' is [],
     a text called command is "",
@@ -35,32 +32,29 @@ While true,
     a boolean called 'the word is finished' is false,
     clear word,
 
-    (Scan the line. Bytes that are not separators accumulate into word;
-     reaching a separator with a non-empty word finishes it. The first
-     word is the command, the rest become its arguments.)
+    (A space, a tab or a newline ends a word; any other byte joins it)
     While position is less than or equal to 'line length',
         set 'this byte' to byte position of line,
         set 'at a separator' to false,
         if 'this byte' is 32 then, set 'at a separator' to true.
-        if 'this byte' is 10 then, set 'at a separator' to true.
-        if 'this byte' is 9 then, set 'at a separator' to true.
-        if not 'at a separator' then, set byte {word's size add 1} of word to 'this byte'.
-        set 'the word is finished' to false,
+        If 'this byte' is 10 then, set 'at a separator' to true.
+        If 'this byte' is 9 then, set 'at a separator' to true.
+        If not 'at a separator' then, set byte {word's size add 1} of word to 'this byte'.
+        Set 'the word is finished' to false,
         if 'at a separator' and word's size is greater than 0 then, set 'the word is finished' to true.
-        if 'the word is finished' then, a text called 'finished word' is "{word}".
-        (Order matters: append while we already have a command, THEN claim
-         the first word as the command - reversing these would also
-         append the command itself to its argument list)
-        if 'the word is finished' and 'we have a command' then, append 'finished word' to 'command arguments'.
-        if 'the word is finished' and not 'we have a command' then, set command to 'finished word', set 'we have a command' to true.
-        if 'the word is finished' then, clear word.
-        increment position.
-    a number called pid is 0,
+        If 'the word is finished' then, a text called 'finished word' is "{word}".
+        (A word joins the arguments only once there is a command, so the
+         command itself never lands in its own argument list)
+        If 'the word is finished' and 'we have a command' then, append 'finished word' to 'command arguments'.
+        If 'the word is finished' and not 'we have a command' then, set command to 'finished word', set 'we have a command' to true.
+        If 'the word is finished' then, clear word.
+        Increment position.
+    A number called pid is 0,
     if command is "exit" then, exit 0.
-    if 'we have a command' then, set pid to fork the process.
-    (Child: execve only returns on failure, so falling through to the
-     next Execute IS the search order: as given, /bin, /usr/bin)
-    if pid is 0 and 'we have a command' then,
+    If 'we have a command' then, set pid to fork the process.
+    (In the child, Execute returns only when it fails, so each failure
+     falls through to the next place to look)
+    If pid is 0 and 'we have a command' then,
         Execute command with arguments 'command arguments',
         a text called 'path in bin' is "/bin/{command}",
         Execute 'path in bin' with arguments 'command arguments',
@@ -68,6 +62,6 @@ While true,
         Execute 'path in usr bin' with arguments 'command arguments',
         print "vsh: {command}: command not found",
         exit 127.
-    (Parent: wait for the child so the prompt returns in order)
-    if pid is greater than 0 then, set 'reaped child' to reap process pid.
-    set 'the word is finished' to false.
+    (The parent waits for the child, so the next prompt comes after its output)
+    If pid is greater than 0 then, set 'reaped child' to reap process pid.
+    Set 'the word is finished' to false.

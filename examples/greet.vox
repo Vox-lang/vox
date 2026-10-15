@@ -3,14 +3,14 @@
 
 Print "=== The Command Line ===".
 
-a number called 'argument count' is arguments's count.
+A number called 'argument count' is arguments's count.
 Print "Arguments, counting the program's own name: {argument count}".
 
-a text called program is arguments's name.
+A text called program is arguments's name.
 Print "This program was started as {program}".
 
 (Greet whoever is named first on the command line, or else the world)
-a text called name is "World".
+A text called name is "World".
 If arguments's count is greater than 1 then,
     the name is arguments's first.
 Print "Hello, {name}!".
@@ -21,29 +21,29 @@ If arguments's empty then,
 Print "".
 Print "=== The Environment ===".
 
-a number called 'variable count' is environment's count.
+A number called 'variable count' is environment's count.
 Print "Environment variables: {variable count}".
 
 (An environment variable is read by its name)
-a text called user is environment's "USER".
+A text called user is environment's "USER".
 Print "You are logged in as {user}.".
 
-a text called home is environment's "HOME".
+A text called home is environment's "HOME".
 Print "Your home directory is {home}.".
 
-a text called 'first variable' is environment's first.
+A text called 'first variable' is environment's first.
 Print "The first entry in the environment is {first variable}.".
 
 Print "".
 Print "=== A Conversation ===".
 
-open a file for writing called screen at "/dev/stdout".
-open a file for reading called keyboard at "/dev/stdin".
-a buffer called answer is 256 bytes in size.
-print "What's your name?".
+Open a file for writing called screen at "/dev/stdout".
+Open a file for reading called keyboard at "/dev/stdin".
+A buffer called answer is 256 bytes in size.
+Print "What's your name?".
 
 (A line read from the keyboard keeps the newline typed after it, so the
  answer ends the greeting's line by itself)
-read line from keyboard into answer.
-a text called 'your name' is answer.
-write "Nice to meet you, {your name}" to screen.
+Read line from keyboard into answer.
+A text called 'your name' is answer.
+Write "Nice to meet you, {your name}" to screen.

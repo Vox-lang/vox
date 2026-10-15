@@ -4,18 +4,18 @@
  that one call runs for every pair.)
 
 To total with a number called first and a number called second.
-  Return a number, first add second.
+    Return a number, first add second.
 
 To volume with a number called length and a number called width and a number called height.
-  Return a number, length multiply width multiply height.
+    Return a number, length multiply width multiply height.
 
 To 'suggest an outfit' with a text called shirt and a text called tie.
-  Print "a {shirt} shirt with a {tie} tie".
+    Print "a {shirt} shirt with a {tie} tie".
 
 Print "=== Joining Two Conditions ===".
-a boolean called sunny is true.
-a boolean called warm is true.
-a boolean called raining is false.
+A boolean called sunny is true.
+A boolean called warm is true.
+A boolean called raining is false.
 If sunny and warm then,
     Print "Perfect weather for a picnic!".
 If sunny and raining then,
@@ -30,28 +30,27 @@ Print total of 3 and 5.
 Print "The volume of a box 2 by 3 by 4:".
 Print volume of 2 and 3 and 4.
 
-a number called 'morning visitors' is 10.
-a number called 'afternoon visitors' is 20.
+A number called 'morning visitors' is 10.
+A number called 'afternoon visitors' is 20.
 Print "Visitors all day:".
 Print total with 'morning visitors' and 'afternoon visitors'.
 
 Print "".
 Print "=== Ending a List of Subjects ===".
-a boolean called engine_on is false.
-a boolean called doors_locked is false.
-a boolean called seatbelt_on is false.
-If engine_on, doors_locked, and seatbelt_on are not true then,
+A boolean called 'engine running' is false.
+A boolean called 'doors locked' is false.
+A boolean called 'seatbelt fastened' is false.
+If 'engine running', 'doors locked', and 'seatbelt fastened' are not true then,
     Print "Everything is off, so it is safe to leave the car.".
-Set engine_on to true.
-Set doors_locked to true.
-Set seatbelt_on to true.
-If engine_on, doors_locked, and seatbelt_on are true then,
+Set 'engine running' to true.
+Set 'doors locked' to true.
+Set 'seatbelt fastened' to true.
+If 'engine running', 'doors locked', and 'seatbelt fastened' are true then,
     Print "Everything is on, so the car is ready to drive.".
 
-(Two subjects make a list too: the comma is what marks it as one)
-a boolean called 'left door shut' is true.
-a boolean called 'right door shut' is true.
-If 'left door shut', and 'right door shut' are true then,
+A boolean called 'left door shut' is true.
+A boolean called 'right door shut' is true.
+If 'left door shut' and 'right door shut' then,
     Print "Both doors are shut.".
 
 Print "".
