@@ -1,0 +1,3 @@
+cannot reap process group 0
+reap_any_child_in_process_group_zero_is_refused.vox:1:56
+note: a process group is numbered from 1 to 2147483647

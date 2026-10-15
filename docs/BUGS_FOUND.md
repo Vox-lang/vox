@@ -13283,7 +13283,7 @@ exit(256)                               = ?
 
 ### 137. A time used to initialise a text variable segfaults
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/compile_fail/a_time_cannot_initialise_a_text.vox, current_time_cannot_initialise_a_text.vox, a_time_from_get_current_time_cannot_initialise_a_text.vox, a_time_cannot_be_assigned_to_a_text.vox, a_time_cannot_be_passed_as_a_text.vox, a_time_cannot_be_returned_as_a_text.vox, a_time_field_cannot_initialise_a_text.vox, a_time_cannot_initialise_a_number.vox, and tests/a_time_is_read_through_its_properties.vox
 
 ```vox
 a time called now is current time.
@@ -13310,15 +13310,28 @@ Print label.
 
 **The manual:** LANGUAGE.md "Type Immutability": "**A variable's type is fixed at its declaration and never changes**". A declaration is checked against the type of its initialiser.
 
-**Root cause:** not yet investigated. A first reading, shared with #129: the lookup that works out an initialiser's type answers "unknown" for a time, and "unknown" is let through, so the time's bits are stored as a text pointer.
+**Root cause:** the analyzer recorded no type for a time. A `time` variable, a `time` parameter, `current time` and a `time` field all answered "unknown" to the lookup that judges a value against the slot it goes into, and "unknown" was let through. `Get current time into now.` recorded `now` as a number. The time's seconds were then stored in a text slot, and the first read used them as a text's address.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 that a time used as a text is a compile error, and that the author writes a property instead, for example `now's hour as text`. Every time property (`hour`, `minute`, `second`, `day`, `month`, `year`, `unix`) is a number. This is one case of the wider ruling recorded under #138: a type the compiler cannot establish is refused, never let through.
+
+**Fix:** a time is recorded as a time wherever one is declared: `a time called`, `Get current time into`, a `time` parameter, `current time` and a `time` field. A time given to a text or a number is refused at a declaration, a `Set`, an argument and a `Return`, and the help names a property to read instead:
+```text
+error: cannot initialise 'label', which is text, with a time
+  --> time_into_text.vox:2:15
+    |
+  2 | a text called label is now.
+    |               ^^^^^ this text is given a time
+    |
+  note: a variable's type is fixed at its declaration, so 'label' can only be initialised with text
+  help: read one part of the time instead, for example `now's hour as text`
+```
+For a time field the help copies the field into a time first, because a field's own properties are not read through the chain. A time given to a time is unchanged.
 
 ---
 
 ### 138. A list parameter's `'s first` and `'s last` read text elements as numbers
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression test: tests/a_list_parameter_reads_first_and_last_by_their_own_type.vox
 
 ```vox
 To 'show ends' of a list called items.
@@ -13345,9 +13358,11 @@ c
 
 **The manual:** LANGUAGE.md "List Properties": `'s first` and `'s last` read the first and last element, and a list parameter is the caller's list.
 
-**Root cause:** not yet investigated. A first reading: inside the function the parameter's element type is not known to the analyzer, so the read is treated as a number instead of following the tag each list slot already carries.
+**Root cause:** every list slot carries a tag that says what the element is. `element N of` reads that tag whenever the list's element type is not known at compile time, as for a list parameter. `'s first` and `'s last` read it only for a list known to be mixed, so on a list parameter they handed the element to `Print`, to a format string or to `append` without its tag, and each took it for a number. A text element printed as its address, and so did a float's bits and a nested list.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 that Vox never prints an address and never lets one reach the program: pointers are abstracted away from the author. Two changes remove the whole family (#129, #130, #137 and this one). A type the compiler cannot establish is a compile error with a helpful message, never a pass. Where only the run time can know (a `value`'s tag, a collection slot's tag), a mismatch sets the error flag and the operation does nothing. Collections dispatch on the slot tags they already carry, so a read of a text element is a text whatever the reader's static type. The mechanism is a small set of assembly macros in coreasm, not new language.
+
+**Fix:** `'s first` and `'s last` read the slot's tag exactly where `element N of` does, so on a list parameter, or on any list whose element type is not known at compile time, the element is a text, a float, a number or a list as it was stored. The repro prints `last: c`, `first: b`, `c`, `c`.
 
 ---
 
@@ -13423,7 +13438,7 @@ second sees: Segmentation fault         (core dumped)
 
 ### 141. A boolean field `as text` gives "1"
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression test: tests/a_boolean_field_as_text_reads_true_or_false.vox
 
 ```vox
 A thing called switch has
@@ -13448,15 +13463,17 @@ true
 
 **The manual:** LANGUAGE.md "Basic Conversions": `true as text` gives `"true"`. LANGUAGE.md "Declarations and field access": "A field is an ordinary expression and an ordinary lvalue everywhere either is allowed".
 
-**Root cause:** not yet investigated. A first reading: the conversion looks at the static type of a variable but finds none for a field, and falls back to the number rendering.
+**Root cause:** the `as text` conversion chooses `true`/`false` when its value is a boolean, and the check that decides that knew a boolean literal, a boolean variable, a comparison and `not`, but not a field. A boolean field took the number rendering.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 to fix this even though it changes existing test expectations. Only `<boolean field> as text` changes, to `true` and `false`. Printing a boolean stays `1` and `0`, as LANGUAGE.md "Mixed-Type Lists" states, so a program that prints a boolean directly, field or variable, is unaffected. The tests that assert the old `as text` output are reviewed and updated one by one with the fix.
+
+**Fix:** a field whose declared type is `boolean` converts as a boolean, at any depth of the chain, in a thing parameter and inside a format string: `origin's ok as text` is `true`. `Print origin's ok.` still prints `1`.
 
 ---
 
 ### 142. `reap process <pid>` with 0 or a negative pid reaps another child
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/reap_process_takes_exactly_the_process_it_names.vox, tests/reap_any_child_in_a_process_group.vox, and tests/compile_fail/reap_process_zero_is_refused.vox, reap_child_negative_is_refused.vox, reap_process_named_constant_zero_is_refused.vox, reap_process_wider_than_32_bits_is_refused.vox, reap_any_child_in_process_group_zero_is_refused.vox
 
 ```vox
 a number called kid is fork the process.
@@ -13479,9 +13496,22 @@ status 1792
 
 **The manual:** LANGUAGE.md "Process Control: fork and reap": "`reap process <pid-expr>` ... `wait4(2)` for a specific PID". The same family as #135.
 
-**Root cause:** not yet investigated. The pid expression is passed to wait4 unchecked, so the kernel's group meanings of 0 and negative values apply.
+**Root cause:** the pid expression was passed to wait4 unchecked, so the kernel's group meanings of 0 and negative values applied, and a pid wider than 32 bits reached the kernel as its low 32 bits. Nothing in the analyzer looked at the pid's value.
 
 **Fix direction:** TheJostler ruled on 2026-10-05, as for #135, that `reap process <pid>` means exactly one process, pid 1 to 2147483647: a provable pid outside that range is a compile error, and one known only at run time sets the error flag and reaps nothing. The kernel's group meanings get plain-English forms in the same release, so nothing Linux can do is taken away. `reap any child process` exists today; the release adds `reap any child in my process group` and `reap any child in process group <g>`.
+
+**Fix:** `reap process <pid>` and `reap child <pid>` take exactly the process numbered `<pid>`, 1 to 2147483647. A number outside that range that the compiler can prove, a literal or a name that holds one number for the whole program, is a compile error:
+```text
+error: cannot reap process 0
+  --> reap_zero.vox:3:37
+    |
+  3 | a number called got is reap process 0.
+    |                                     ^ written here
+    |
+  note: a process is numbered from 1 to 2147483647
+  help: to reap one of several children, say which: 'reap any child process', 'reap any child in my process group' or 'reap any child in process group <g>'
+```
+One known only at run time sets the error flag (`EINVAL`), reaps nothing, and gives -22. Two new forms carry the kernel's group meanings: `reap any child in my process group` (wait4 with 0) and `reap any child in process group <g>` (wait4 with -g, `<g>` in the same range). Each takes `without waiting`. The words `my`, `process` and `group` remain ordinary names everywhere else.
 
 ---
 
@@ -13635,7 +13665,7 @@ Expected: `xs: ["new"]`. The parameter is the caller's list.
 
 ### 144. A call with arguments cannot be the source of `Write` or of `append` to a buffer, even braced
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/a_call_is_the_source_of_write_and_append.vox, and tests/compile_fail/a_number_call_appended_to_a_buffer_is_refused_at_the_append.vox, a_refused_buffer_append_points_at_the_append.vox, a_number_call_written_to_a_file_is_refused.vox, a_text_literal_before_to_in_a_range_is_still_refused.vox, a_text_literal_signal_is_still_refused.vox
 
 ```vox
 To 'greeting for' of a number called id.
@@ -13660,7 +13690,14 @@ error: Expected value to write
   5 | Write {'greeting for' of 0} to log.
     |       ^--- here
 ```
-`append {'greeting for' of 0} to sink.` (with `sink` a buffer) is refused with `error: Buffer append requires a buffer source or format/literal text`.
+`append {'greeting for' of 0} to sink.` (with `sink` a buffer) is refused with `error: Buffer append requires a buffer source or format/literal text`, and the caret points at the buffer's declaration instead of the append:
+```text
+error: Buffer append requires a buffer source or format/literal text
+  --> append_call.vox:4:17
+    |
+  4 | a buffer called sink is "".
+    |                 ^--- here
+```
 
 **Observed:** compile errors on a valid use of a call. A text variable works in both positions:
 ```vox
@@ -13677,15 +13714,25 @@ hi
 
 **The manual:** LANGUAGE.md "Writing": `Write` takes "a text, a buffer, or a format string". LANGUAGE.md "Arithmetic": curly braces group an expression.
 
-**Root cause:** not yet investigated. A first reading: the parsers for the source of `Write` and of `append ... to <buffer>` accept a name, a literal or a format string, and have no arm for a call with arguments.
+**Root cause:** three places. The parser for the source of `Write` took a name, a literal or `the NAME` only, so it stopped at `of` and refused a brace. The check on what may be appended to a buffer accepted a name, a literal and a format string, and refused a call whatever it returned. A text literal standing right before a `to` was refused as a misplaced name, so `'greeting for' of "Ada" to sink` failed even where the call itself parsed. The append refusals located their caret by the first place the buffer's name appears, which is its declaration.
 
 **Fix direction:** TheJostler confirmed on 2026-10-05 that this is a bug. A call that returns a text or a buffer is accepted as the source of `Write` and of `append`, braced or not, and the messages above are replaced by one that names the form the author wrote. Binding the result to a variable first, or interpolating it in a format string, works today.
+
+**Fix:** the source of `Write ... to <file>` and of `append ... to <buffer>` is a call with arguments, braced or not, as well as a name, a literal or a format string; a text literal argument may stand right before the statement's `to`. A call that returns a text or a buffer is written or appended; one that returns a number, a float, a boolean, a list or a map is refused by the rule a variable of that type meets, naming the call:
+```text
+error: Cannot append the number 'count' returns to buffer 'sink': a buffer takes text, another buffer or a format string. Put the call in a format string to append it as text.
+  --> append_count.vox:5:26
+    |
+  5 | append {'count' of 0} to sink.
+    |                          ^--- here
+```
+Every refusal of an append to a buffer points at the append it is about. `Write` writes to a file: with `log` a buffer, the first repro is refused because a buffer is not a file (`Write target must be a file: log`), and with `log` a file it writes `hi`.
 
 ---
 
 ### 145. A list declared with `The X is <list>.` refuses `'s length`, and the message names `size`
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/the_name_is_a_list_declares_a_list.vox and tests/compile_fail/a_refused_property_is_named_as_written.vox
 
 ```vox
 a list called got is [1, 2].
@@ -13707,9 +13754,21 @@ error: Property 'size' requires a buffer, list, map, or file variable: other
 
 **The manual:** LANGUAGE.md "Two Canonical Forms": `the NAME is VALUE.` brings NAME into being "with VALUE's type".
 
-**Root cause:** not yet investigated. A first reading: `length` is an alias of `size`, and the declaration `The X is <list>.` records no collection type for `other`, so the property check that runs under the name `size` refuses it. The alias and the new declaration form collide here.
+**Root cause:** a declaration that names no type, `The other is got.` or `Set other to got.`, recorded a type for a number, a float, a boolean or a text value and none for a list or a map, so the property check found no collection called `other` and refused it. `length` and `size` are one property inside the compiler, and the refusal printed that property's one name, `size`, with the caret on the first place the name appears instead of on the read.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 to keep it simple: `The X is <list>.` gives `X` the list type, so `'s length` and `'s size` both work, and a refusal on a property names the property the author wrote.
+
+**Fix:** a declaration that names no type takes the list or map type of its value, exactly as `a list called other is got.` does, from a list or map variable, a literal or a call. A refusal of `'s length` or `'s size` names the word the author wrote and points at the read:
+```text
+error: Property 'length' requires a buffer, list, map, or file variable: name
+  --> length_of_text.vox:2:7
+    |
+  2 | Print name's length.
+    |       ^--- here
+```
+
+---
+
 ### 146. A shared library asks for an executable stack, so a C host cannot `dlopen` it
 
 **Status:** fixed in the next release. Regression test: tests/bugs_found_146_stack_is_not_executable.rs
@@ -13833,3 +13892,87 @@ Verified on vox main f06df27.
 **Root cause:** the runtime has no routine that pads a float or a text yet. The width is parsed and checked, and code generation then prints the float or the text with its unpadded renderer.
 
 **Fix direction:** TheJostler confirmed that padding a float and a text to a width is planned.
+
+---
+
+### 149. Dividing the most negative number by -1 stops the program
+
+**Status:** **fixed** (unreleased). Verified on vox main 2f90858; confirmed by TheJostler 2026-10-15. Regression test: tests/dividing_the_most_negative_number_by_minus_one.vox
+
+```vox
+a number called lowest is -9223372036854775808.
+a number called divisor is -1.
+Print lowest divide divisor.
+```
+```text
+$ vox lowest.vox -o lowest && ./lowest
+Floating point exception   (core dumped)
+[exit 136]
+```
+
+**Observed:** the program is stopped by the kernel (SIGFPE) at the division. `lowest modulo divisor` stops it the same way, and so does the literal form `Print -9223372036854775808 divide -1.`
+
+**Expected:** the program runs on. A remainder by -1 is 0 for every number. The quotient of the most negative number by -1, 9223372036854775808, is one more than the largest number, so it is refused the way a zero divisor is: the error flag is set and the result is 0.
+
+**The manual:** LANGUAGE.md "Arithmetic" lists `divide` and `modulo` on numbers; LANGUAGE.md "Error Handling": "Operations that can fail ... set an error flag."
+
+**Root cause:** `divide` and `modulo` compile to the processor's signed division, which raises a divide error when the quotient does not fit in 64 bits. The runtime checked the divisor for 0 only, and the most negative number divided by -1 is the one other case that does not fit.
+
+**Fix:** a divisor of -1 never reaches the division instruction. `divide` by -1 negates the number, and for the most negative number it sets the error flag and gives 0, as a zero divisor does. `modulo` by -1 gives 0 and clears the flag. The compiler does not fold divisions at compile time, so the literal form takes the same path. The manual's "Arithmetic" section states the rule in one sentence.
+
+---
+
+### 150. An ordering comparison on a text, a list, a map or a buffer compares memory addresses
+
+**Status:** **fixed** (unreleased). Verified on vox main 2f90858; confirmed by TheJostler 2026-10-15. Regression tests: tests/compile_fail/two_texts_cannot_be_compared_by_order.vox, a_text_variable_cannot_be_compared_by_order.vox, a_text_call_cannot_be_compared_by_order.vox, a_list_cannot_be_compared_by_order.vox, a_list_literal_cannot_be_compared_by_order.vox, a_map_cannot_be_compared_by_order_in_a_not_form.vox, a_buffer_cannot_be_compared_by_order_in_a_while.vox, and tests/texts_and_collections_compare_by_equality_and_length.vox
+
+```vox
+If "abc" is less than "b" then, Print "abc first".
+If "b" is less than "abc" then, Print "b first".
+```
+```text
+$ vox text_order.vox -o text_order && ./text_order
+[exit 0]
+```
+
+**Observed:** neither line prints: each text is "less than" the other, or neither is. With two text variables the answer follows the order the two were declared in. The same comparison on two lists, two maps or two buffers compiles and answers the same way.
+
+**Expected:** a compile error. A text, a list, a map and a buffer have no order in Vox.
+
+**The manual:** LANGUAGE.md "Comparisons" refuses an ordering comparison on a `value` and gives none for a text, a list, a map or a buffer. TheJostler ruled on 2026-10-15 that an ordering comparison with a text, a list, a map or a buffer on either side is a compile error, as it is for a `value`.
+
+**Root cause:** an ordering comparison compiles to a comparison of the two operands as numbers. A text, a list, a map and a buffer are each held as the address of their contents, so the comparison was between two addresses.
+
+**Fix:** `is greater than`, `is less than`, their `or equal to` forms and their `not` forms refuse a text, a list, a map or a buffer on either side, as a variable, a literal or a call that returns one, wherever the comparison stands. The check is the one that refuses a `value`, and the message names the comparison that works for the type:
+```text
+error: Cannot compare text "abc" by order: texts have no order. Use 'is' to test whether two texts are equal.
+error: Cannot compare list xs by order: lists have no order. Compare their lengths instead.
+```
+Equality is unchanged. The manual's "Comparisons" section states the rule.
+
+---
+
+### 151. Comparing a list element that holds a number with a text segfaults
+
+**Status:** **fixed** (unreleased). Verified on vox main 2f90858; confirmed by TheJostler 2026-10-15. Regression test: tests/a_tagged_element_that_is_not_a_text_is_not_equal_to_one.vox
+
+```vox
+a list called mixed is [1, "two", 3.5].
+If element 1 of mixed is "c" then, Print "equal".
+Print "compared a number element with a text".
+```
+```text
+$ vox element_is_text.vox -o element_is_text && ./element_is_text
+Segmentation fault         (core dumped)
+[exit 139]
+```
+
+**Observed:** the program dies at the comparison. A float element (`element 3 of mixed`) does the same, and so does `items's last is "c"` inside a function whose list parameter holds numbers.
+
+**Expected:** the comparison answers. A number is not a text, so `is` is false and `is not` is true.
+
+**The manual:** LANGUAGE.md "Comparisons": `lhs is equal to rhs`, `x is 0`; LANGUAGE.md "Mixed-Type Lists": each element keeps its own type.
+
+**Root cause:** an element of a list whose element type is not known at compile time carries its type in a tag beside it. An equality with a text on the other side compared the two as texts without reading that tag, so a number's value or a float's bits were followed as the address of characters.
+
+**Fix:** the comparison reads the tag first. An element, a `value` or a map read whose tag says text is compared by its characters, with a text or a buffer on the other side; anything else is not equal to a text, and nothing is dereferenced. The error flag is left as it was.

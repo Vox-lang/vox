@@ -1,0 +1,5 @@
+To 'count' of a number called id.
+    Return a number, id.
+
+Open a file for appending called screen at "/dev/stdout".
+Write 'count' of 0 to screen.

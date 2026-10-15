@@ -1,0 +1,3 @@
+cannot initialise 'label', which is text, with a time
+a_time_field_cannot_initialise_a_text.vox:4:15
+help: copy the field into a time first - `a time called taken is photo's taken.` - then read one part of it, for example `taken's hour as text`

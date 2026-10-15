@@ -1,1 +1,2 @@
-Property 'size' requires a buffer, list, map, or file variable: name
+Property 'length' requires a buffer, list, map, or file variable: name
+013_property_access_wrong_type.vox:2:7

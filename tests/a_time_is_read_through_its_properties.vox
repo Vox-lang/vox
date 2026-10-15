@@ -1,0 +1,13 @@
+a time called now is current time.
+a text called label is now's hour as text.
+If label is not "" then, Print "hour read as text".
+A thing called stamp has
+  a time called taken.
+a stamp called photo.
+Set photo's taken to now.
+a time called taken is photo's taken.
+If taken's unix is now's unix then, Print "field copied into a time".
+Get current time into later.
+If later's year is greater than 2000 then, Print "year read as a number".
+a time called again is now.
+If again's unix is now's unix then, Print "time copied into a time".

@@ -2978,11 +2978,18 @@ impl CodeGenerator {
                         }
                     }
                     _ => {
-                        // For other expressions, generate and write
+                        // For other expressions, generate and write. A call
+                        // that returns a buffer hands back the buffer itself,
+                        // written by its length (docs/BUGS_FOUND.md #144).
                         self.emit_indent("push rdi");  // save fd
                         self.generate_expr(value);
                         self.emit_indent("pop rdi");   // restore fd
-                        self.emit_indent("FILE_WRITE_STR rdi, rax");
+                        if self.infer_expr_type(value) == Some(VarType::Buffer) {
+                            self.emit_indent("mov rsi, rax");
+                            self.emit_indent("FILE_WRITE_BUF rdi, rsi");
+                        } else {
+                            self.emit_indent("FILE_WRITE_STR rdi, rax");
+                        }
                     }
                 }
                 // Every write macro records its syscall's outcome in

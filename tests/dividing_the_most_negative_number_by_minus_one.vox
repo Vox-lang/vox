@@ -1,0 +1,17 @@
+a number called lowest is -9223372036854775808.
+a number called divisor is -1.
+Print lowest divide divisor.
+On error Print "the most negative number divided by -1 sets the error flag".
+Print lowest modulo divisor.
+On error Print "unexpected: a remainder by -1 is exact".
+Print -9223372036854775808 divide -1.
+On error Print "the literal form sets the error flag too".
+Print -9223372036854775808 modulo -1.
+Print 7 divide divisor.
+Print -7 divide divisor.
+Print 7 modulo divisor.
+Print -7 modulo 2.
+Print 7 divide 0.
+On error Print "a zero divisor still sets the error flag".
+a number called total is 9223372036854775807.
+Print total divide divisor.

@@ -340,6 +340,11 @@ pub(crate) enum VarTarget {
 }
 
 
+/// Bug #151: whether comparing a value whose slot tag is not text with a text
+/// sets the error flag. Either way the answer is "not equal" (`is` false,
+/// `is not` true) and nothing is dereferenced; this one line is the choice.
+const NON_TEXT_AGAINST_TEXT_SETS_THE_ERROR_FLAG: bool = false;
+
 // Per-slot list type tags. Must match LIST_TAG_* in coreasm/*/list.asm.
 // 0 is integer so zero-filled (mmap'd) tag regions default correctly.
 const TAG_INTEGER: u8 = 0;

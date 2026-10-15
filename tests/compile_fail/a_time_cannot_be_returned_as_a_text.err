@@ -1,0 +1,2 @@
+cannot return a time from a function that returns text
+help: read one part of the time instead, for example `now's hour as text`

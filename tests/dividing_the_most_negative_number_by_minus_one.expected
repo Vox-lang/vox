@@ -1,0 +1,13 @@
+0
+the most negative number divided by -1 sets the error flag
+0
+0
+the literal form sets the error flag too
+0
+-7
+7
+0
+-1
+0
+a zero divisor still sets the error flag
+-9223372036854775807

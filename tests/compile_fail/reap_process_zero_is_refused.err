@@ -1,0 +1,4 @@
+cannot reap process 0
+reap_process_zero_is_refused.vox:3:37
+note: a process is numbered from 1 to 2147483647
+help: to reap one of several children, say which: 'reap any child process', 'reap any child in my process group' or 'reap any child in process group <g>'

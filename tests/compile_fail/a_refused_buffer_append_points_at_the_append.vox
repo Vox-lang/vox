@@ -1,0 +1,5 @@
+a buffer called sink is "".
+a number called n is 7.
+
+append -5 to sink.
+append n to sink.

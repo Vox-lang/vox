@@ -1,0 +1,9 @@
+a number element is not a text
+a text element equals its text
+and differs from another
+a text element equals a buffer holding it
+text on the left works too
+last is not c
+last is c
+a returned comparison matches a text element
+a value holding the text 5 equals it

@@ -1,0 +1,16 @@
+a number called kid is fork the process.
+If kid is 0 then, Exit 3.
+a number called got is reap any child in my process group.
+If got is kid then, Print "reaped a child in my process group".
+Print "status {the reaped status}".
+Set got to reap any child in process group 2147483647.
+On error Print "no child in process group 2147483647".
+a number called second is fork the process.
+If second is 0 then, Exit 4.
+Set got to reap any child process in my process group.
+If got is second then, Print "reaped the second child".
+Print "status {the reaped status}".
+a number called group is 3.
+a number called process is 2.
+a number called my is 1.
+Print group add process add my.

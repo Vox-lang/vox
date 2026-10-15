@@ -75,6 +75,17 @@ impl Parser {
     /// for the enclosing check (plan 270 G1 regression). Restores the prior
     /// suppression state unconditionally, including on error, so a caller
     /// higher up the stack that also suppressed a connector is unaffected.
+    /// The source of `Write ... to <file>` or `append ... to <name>`: one
+    /// primary with `to` reserved for the statement, in which a text literal
+    /// argument may end right at that `to` (docs/BUGS_FOUND.md #144).
+    pub(crate) fn parse_statement_source(&mut self) -> Result<Expr, Box<CompileError>> {
+        let saved = self.literal_may_end_at_to;
+        self.literal_may_end_at_to = true;
+        let result = self.parse_primary_reserving(true, false);
+        self.literal_may_end_at_to = saved;
+        result
+    }
+
     pub(crate) fn parse_primary_reserving(&mut self, to: bool, of: bool) -> Result<Expr, Box<CompileError>> {
         let saved_to = self.suppress_to_connector;
         let saved_of = self.suppress_of_connector;

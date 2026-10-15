@@ -95,6 +95,10 @@ impl CodeGenerator {
             Expr::BoolLit(_) => true,
             Expr::Identifier(name) => self.variable_types.get(name) == Some(&VarType::Boolean),
             Expr::Cast { target_type, .. } => matches!(target_type, Type::Boolean),
+            // Bug #141: a boolean field converts as a boolean variable does.
+            Expr::ThingField { base, path } => {
+                matches!(self.thing_field_type(base, path), Some(Type::Boolean))
+            }
             Expr::UnaryOp { op: UnaryOperator::Not, .. } => true,
             Expr::BinaryOp { op, .. } => {
                 matches!(op,
@@ -114,6 +118,16 @@ impl CodeGenerator {
     /// Result in rax: 1 = equal, 0 = not equal.
     pub(crate) fn emit_stringy_equality(&mut self, left: &Expr, right: &Expr) {
         self.uses_strings = true;
+        // Bug #151: a side whose type only its slot tag knows (a mixed list
+        // element, a list parameter's element, a `value`, a map read) is
+        // compared as text only when the tag says text.
+        let left_tagged = !self.is_stringy_expr(left) && self.runtime_tag_source(left).is_some();
+        let right_tagged = !self.is_stringy_expr(right) && self.runtime_tag_source(right).is_some();
+        if left_tagged != right_tagged {
+            let (tagged, text) = if left_tagged { (left, right) } else { (right, left) };
+            self.emit_tagged_text_equality(tagged, text);
+            return;
+        }
         let left_is_buf = self.is_buffer_expr(left);
         let right_is_buf = self.is_buffer_expr(right);
 
@@ -181,6 +195,58 @@ impl CodeGenerator {
             self.emit_indent("pop rsi  ; right operand");
             self.emit_indent("call _str_eq");
         }
+    }
+
+    /// Bug #151: equality between a runtime-tagged value and a text or a
+    /// buffer. The tag is read before anything is dereferenced: a text is
+    /// compared by its characters, and anything else is not equal to a text
+    /// (`NON_TEXT_AGAINST_TEXT_SETS_THE_ERROR_FLAG` decides the flag). Result
+    /// in rax: 1 = equal, 0 = not equal.
+    fn emit_tagged_text_equality(&mut self, tagged: &Expr, text: &Expr) {
+        let not_text = self.new_label("eq_not_text");
+        let done = self.new_label("eq_done");
+        let source = self.runtime_tag_source(tagged);
+        self.generate_expr(tagged);
+        if let Some(operand) = source.and_then(|s| s.shadow_operand()) {
+            self.emit_indent(&format!("movzx r11, byte {}  ; value's runtime type tag", operand));
+        }
+        self.emit_indent(&format!("cmp r11b, {}  ; is it a text?", TAG_STRING));
+        self.emit_indent(&format!("jne {}", not_text));
+        self.emit_indent("push rax  ; the tagged text");
+        if self.is_buffer_expr(text) {
+            self.generate_expr(text);
+            self.emit_indent("push rax           ; buffer struct ptr");
+            self.emit_indent("mov rdi, rax");
+            self.emit_indent("call _buffer_length");
+            self.emit_indent("push rax           ; len2 = buffer length");
+            self.emit_indent("mov rdi, [rsp+8]");
+            self.emit_indent("call _buffer_data");
+            self.emit_indent("mov rsi, rax       ; ptr2 = buffer data");
+            self.emit_indent("pop rcx            ; len2");
+            self.emit_indent("pop rax            ; drop buffer struct ptr");
+            self.emit_indent("pop rdi            ; ptr1 = the tagged text");
+            self.emit_indent("push rsi");
+            self.emit_indent("push rcx");
+            self.emit_indent("push rdi");
+            self.emit_indent("call _str_len");
+            self.emit_indent("mov rdx, rax       ; len1");
+            self.emit_indent("pop rdi");
+            self.emit_indent("pop rcx");
+            self.emit_indent("pop rsi");
+            self.emit_indent("call _mem_eq");
+        } else {
+            self.generate_cstr_expr(text);
+            self.emit_indent("mov rsi, rax  ; right operand");
+            self.emit_indent("pop rdi  ; the tagged text");
+            self.emit_indent("call _str_eq");
+        }
+        self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", not_text));
+        self.emit_indent("xor eax, eax  ; not a text, so not equal to one");
+        if NON_TEXT_AGAINST_TEXT_SETS_THE_ERROR_FLAG {
+            self.emit_indent("SET_LAST_ERROR 1  ; a tag mismatch is an error");
+        }
+        self.emit(&format!("{}:", done));
     }
 
     // Check if operands involve floats (for choosing comparison instructions)
@@ -1380,8 +1446,10 @@ impl CodeGenerator {
                             let ok_label = self.new_label("list_first_ok");
                             let error_label = self.new_label("list_first_err");
                             let done_label = self.new_label("list_first_done");
-                            let is_mixed = self.mixed_lists.contains(object)
-                                || self.list_element_types.get(object) == Some(&VarType::Mixed);
+                            // Bug #138: a list with no proven element type (a
+                            // list parameter) is read by its slot tag, as
+                            // `element N of` reads it.
+                            let is_mixed = self.list_expr_is_mixed(&Expr::Identifier(object.clone()));
                             self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
@@ -1426,8 +1494,10 @@ impl CodeGenerator {
                             let ok_label = self.new_label("list_last_ok");
                             let error_label = self.new_label("list_last_err");
                             let done_label = self.new_label("list_last_done");
-                            let is_mixed = self.mixed_lists.contains(object)
-                                || self.list_element_types.get(object) == Some(&VarType::Mixed);
+                            // Bug #138: a list with no proven element type (a
+                            // list parameter) is read by its slot tag, as
+                            // `element N of` reads it.
+                            let is_mixed = self.list_expr_is_mixed(&Expr::Identifier(object.clone()));
                             self.emit_indent("mov rbx, [rax + 8]  ; length (offset 8)");
                             self.emit_indent("test rbx, rbx");
                             self.emit_indent(&format!("jnz {}  ; non-empty list, safe to access", ok_label));
@@ -2056,16 +2126,36 @@ impl CodeGenerator {
                 self.emit_indent("FORK");
             }
 
-            Expr::ReapChild { pid, no_hang } => {
+            Expr::ReapChild { target, no_hang } => {
                 self.uses_files = true;
                 self.uses_proc = true;  // REAP_CHILD macro lives in proc.asm
-                match pid {
-                    None => {
-                        self.emit_indent("mov rdi, -1  ; wait for any child");
+                // wait4(2) reads its pid as a 32-bit int and gives 0 and
+                // negatives group meanings, so a pid or group outside 1 to
+                // 2147483647 reaps nothing and sets the flag (EINVAL),
+                // yielding -22 as a failed wait4 would. The analyzer has
+                // already refused every value it could prove (#142).
+                let refused = self.new_label("reap_refused");
+                let done = self.new_label("reap_done");
+                let mut checked = false;
+                match target {
+                    ReapTarget::AnyChild => {
+                        self.emit_indent("mov rdi, -1  ; wait4(-1): any child");
                     }
-                    Some(pid_expr) => {
-                        self.generate_expr(pid_expr);
-                        self.emit_indent("mov rdi, rax  ; wait for this specific pid");
+                    ReapTarget::MyProcessGroup => {
+                        self.emit_indent("xor edi, edi  ; wait4(0): any child in the caller's group");
+                    }
+                    ReapTarget::Process(pid) | ReapTarget::ProcessGroup(pid) => {
+                        self.generate_expr(pid);
+                        self.emit_indent("mov rdi, rax");
+                        if constant_integer(pid).is_none() {
+                            self.emit_indent("lea rax, [rdi-1]");
+                            self.emit_indent(&format!("cmp rax, {}  ; pid 1..{}, unsigned so 0 and negatives fail too", MAX_PROCESS_ID - 1, MAX_PROCESS_ID));
+                            self.emit_indent(&format!("ja {}", refused));
+                            checked = true;
+                        }
+                        if matches!(target, ReapTarget::ProcessGroup(_)) {
+                            self.emit_indent("neg rdi  ; wait4(-group): any child in that group");
+                        }
                     }
                 }
                 // plan 311: WNOHANG (1) for non-blocking reap, 0 for blocking.
@@ -2078,6 +2168,13 @@ impl CodeGenerator {
                 } else {
                     self.emit_indent("; wait4() - reap a child, returns its pid (or -1 on error)");
                     self.emit_indent("REAP_CHILD 0");
+                }
+                if checked {
+                    self.emit_indent(&format!("jmp {}", done));
+                    self.emit(&format!("{}:", refused));
+                    self.emit_indent("SET_LAST_ERROR 22  ; EINVAL: nothing reaped");
+                    self.emit_indent("mov rax, -22");
+                    self.emit(&format!("{}:", done));
                 }
             }
 

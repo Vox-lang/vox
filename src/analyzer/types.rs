@@ -43,6 +43,7 @@ impl Analyzer {
             | Expr::EnvironmentVariableCount => Some(Type::Integer),
             Expr::FloatLit(_) => Some(Type::Float),
             Expr::BoolLit(_) => Some(Type::Boolean),
+            Expr::CurrentTime => Some(Type::Time),
             Expr::StringLit(s) => {
                 // A quoted name may reference a variable; otherwise this is a
                 // bare text literal, which is not valid in arithmetic.
@@ -164,12 +165,16 @@ impl Analyzer {
             Expr::ByteAccess { .. } => Some(Type::Integer),
             // A field read has its field's declared type, exactly as a
             // variable read has the variable's: a text field is refused in
-            // arithmetic and into a number, a number field into a text. A
-            // time field answers None, as a time variable does, and a
-            // nested thing is judged by `check_thing_copy` instead.
+            // arithmetic and into a number, a number field into a text, a
+            // time field into either (bug #137). A nested thing is judged by
+            // `check_thing_copy` instead.
             Expr::ThingField { .. } => match self.field_value_type(expr) {
                 Some(
-                    field @ (Type::Integer | Type::Float | Type::Boolean | Type::String),
+                    field @ (Type::Integer
+                    | Type::Float
+                    | Type::Boolean
+                    | Type::String
+                    | Type::Time),
                 ) => Some(field),
                 _ => None,
             },
@@ -361,14 +366,46 @@ impl Analyzer {
     /// true. The operand is judged exactly as an arithmetic operand is, so a
     /// retyped `value` (`v is a number.`) compares as the number it now is.
     /// Equality (`is`, `is equal to`, `is not`) is not judged here.
+    ///
+    /// Bug #150, TheJostler's ruling: a text, a list, a map and a buffer
+    /// have no order either. Their operand is a pointer, so `"abc" is less
+    /// than "b"` compared two addresses. Each is refused here, naming the
+    /// comparison that does work for that type.
     pub(crate) fn check_ordering_operand(&mut self, expr: &Expr) {
-        if !matches!(self.judged_operand_type(expr), Some(Type::Value)) {
-            return;
-        }
-        let msg = format!(
-            "Cannot compare {} by order: its type is only known at runtime. Check it with 'is a number', put it in a number variable, and compare that.",
-            self.value_operand_subject(expr)
-        );
+        let judged = self.judged_operand_type(expr).or_else(|| match expr {
+            Expr::ListLit { .. } => Some(Type::List(Box::new(Type::Unknown))),
+            Expr::MapLit { .. } => Some(Type::Map(Box::new(Type::Unknown))),
+            _ => None,
+        });
+        // The way out names only what works: `is` compares two texts and
+        // two buffers by their contents, and a list, a map and a buffer
+        // have a length.
+        let (kind, kinds, way_out) = match judged {
+            Some(Type::Value) => {
+                let msg = format!(
+                    "Cannot compare {} by order: its type is only known at runtime. Check it with 'is a number', put it in a number variable, and compare that.",
+                    self.value_operand_subject(expr)
+                );
+                self.push_error(msg, None);
+                return;
+            }
+            Some(Type::String) => ("text", "texts", "Use 'is' to test whether two texts are equal."),
+            Some(Type::List(_)) => ("list", "lists", "Compare their lengths instead."),
+            Some(Type::Map(_)) => ("map", "maps", "Compare their lengths instead."),
+            Some(Type::Buffer) => (
+                "buffer",
+                "buffers",
+                "Use 'is' to test whether two buffers are equal, or compare their lengths.",
+            ),
+            _ => return,
+        };
+        let unnamed = !matches!(expr, Expr::FunctionCall { .. }) && self.operand_label(expr) == "this value";
+        let subject = if unnamed {
+            format!("this {}", kind)
+        } else {
+            self.operand_subject(expr, kind)
+        };
+        let msg = format!("Cannot compare {} by order: {} have no order. {}", subject, kinds, way_out);
         self.push_error(msg, None);
     }
 
@@ -1025,6 +1062,8 @@ yields the number 0 and sets the error flag",
             Expr::MapAccess { map, key } => {
                 format!("{}'s {}", map, self.render_value_hint(key))
             }
+            Expr::CurrentTime => "current time".to_string(),
+            Expr::ThingField { base, path } => things::render_chain(base, path),
             _ => "<value>".to_string(),
         }
     }
@@ -1496,6 +1535,33 @@ explicitly:  a {} called {} is {} as {}.",
         documented.then(|| self.typed_phrase(to))
     }
 
+    /// Bug #137: a time is read through its properties, every one of them
+    /// a number (LANGUAGE.md "Time Properties"), so the way out of a time
+    /// given to a text or a number is a property, never a cast.
+    pub(crate) fn time_property_help(&self, value: &Expr, declared: &Type) -> String {
+        let part = |time: &str| match declared {
+            Type::String => format!("{}'s hour as text", time),
+            Type::Integer | Type::Float => format!("{}'s unix", time),
+            _ => format!("{}'s hour", time),
+        };
+        // A field's own properties are not read through the chain, so a
+        // time field is copied into a time variable first.
+        if let Expr::ThingField { path, .. } = value {
+            let field = path.last().map(String::as_str).unwrap_or("moment");
+            return format!(
+                "copy the field into a time first - `a time called {} is {}.` - then read one part of it, for example `{}`",
+                field,
+                self.render_value_hint(value),
+                part(field)
+            );
+        }
+        let hint = self.render_value_hint(value);
+        if hint.contains("<value>") {
+            return "read one part of the time instead, such as its hour or its unix".to_string();
+        }
+        format!("read one part of the time instead, for example `{}`", part(&hint))
+    }
+
     /// Bug #65 at a declaration: `a text called n is 5.` - a concretely
     /// typed slot initialised with a provable value of another type.
     ///
@@ -1559,7 +1625,9 @@ explicitly:  a {} called {} is {} as {}.",
             self.typed_phrase(declared)
         ));
         let hint = self.render_value_hint(value);
-        let help = if hint.contains("<value>") {
+        let help = if matches!(actual, Type::Time) {
+            self.time_property_help(value, declared)
+        } else if hint.contains("<value>") {
             format!("declare '{}' as {}", name, self.typed_phrase(&actual))
         } else {
             let redeclare = format!(
@@ -1635,6 +1703,7 @@ explicitly:  a {} called {} is {} as {}.",
         ));
         let hint = self.render_value_hint(arg);
         let help = match self.documented_cast_phrase(&actual, param_type) {
+            _ if matches!(actual, Type::Time) => self.time_property_help(arg, param_type),
             Some(cast) if !hint.contains("<value>") => format!(
                 "convert it at the call site - `{} as {}` - or declare '{}' as {}",
                 hint,
@@ -1696,6 +1765,7 @@ explicitly:  a {} called {} is {} as {}.",
             .documented_cast_phrase(&actual, declared)
             .filter(|_| self.literal_cast_problem(value, declared, 0).is_none());
         let help = match cast {
+            _ if matches!(actual, Type::Time) => self.time_property_help(value, declared),
             Some(cast) if !hint.contains("<value>") => format!(
                 "convert it explicitly:  Return {}, {} as {}.",
                 self.typed_phrase(declared),
@@ -1861,8 +1931,11 @@ explicitly:  a {} called {} is {} as {}.",
         } else {
             format!("a {}", self.type_name(&declared))
         };
-        // A text the cast would refuse (`"hello" as a number`) is no way out.
-        if self.literal_cast_problem(value, &declared, 0).is_none() {
+        // A text the cast would refuse (`"hello" as a number`) is no way out,
+        // and neither is a cast of a time (bug #137).
+        if matches!(actual, Type::Time) {
+            err = err.with_help_line(&self.time_property_help(value, &declared));
+        } else if self.literal_cast_problem(value, &declared, 0).is_none() {
             err = err.with_help_line(&format!(
                 "convert it explicitly:  {} is {} as {}.",
                 name,
@@ -1902,6 +1975,14 @@ explicitly:  a {} called {} is {} as {}.",
     /// determined statically leaves the name untracked, exactly as the
     /// checks that read it are permissive there.
     pub(crate) fn bind_untyped_declaration_type(&mut self, name: &str, value: &Expr) {
+        // Bug #145: `The other is got.` with `got` a list makes `other` a
+        // list, as `a list called other is got.` does; a map the same.
+        if !self.is_list_variable(name) && !self.is_map_variable(name) {
+            if let Some(collection @ (Type::List(_) | Type::Map(_))) = self.provable_value_type(value) {
+                self.scalar_types.remove(name);
+                self.declare_collection(name, &collection, Some(value));
+            }
+        }
         if self.is_buffer_variable(name)
             || self.is_list_variable(name)
             || self.is_map_variable(name)
@@ -1926,6 +2007,47 @@ explicitly:  a {} called {} is {} as {}.",
             if let Some(loc) = self.find_declaration_location(name) {
                 self.declared_locations.insert(name.to_string(), loc);
             }
+        }
+    }
+
+    /// Record `name` as a list or a map, with what its literal initialiser
+    /// proves about the elements. Shared by the typed declaration and by an
+    /// untyped one whose value is a collection (bug #145).
+    pub(crate) fn declare_collection(&mut self, name: &str, collection: &Type, value: Option<&Expr>) {
+        match collection {
+            Type::List(_) => {
+                self.list_variables.insert(name.to_string());
+                // Plan 294 finding 18: a `for each` loop variable over a list
+                // this proves heterogeneous must be dynamically typed (see the
+                // ForEach arm) rather than silently allowing arithmetic that
+                // only some elements support.
+                if let Some(Expr::ListLit { elements }) = value {
+                    if self.list_literal_is_mixed(elements) {
+                        self.list_mixed.insert(name.to_string());
+                    }
+                    // Bug #54: a homogeneous list literal's element type is
+                    // provable, which makes a read of an element into a
+                    // differently-typed variable a statically-detectable
+                    // type-lock violation instead of the segfault it used to
+                    // compile to.
+                    if let Some(t) = self.list_literal_element_type(elements) {
+                        self.list_element_type.insert(name.to_string(), t);
+                    }
+                }
+            }
+            Type::Map(_) => {
+                self.map_variables.insert(name.to_string());
+                // Plan 294 findings 4, 14: a homogeneous map literal's value
+                // type is provable, which makes a mismatched read from it a
+                // statically-detectable type-lock violation instead of a
+                // silently-allowed "can't prove it" case.
+                if let Some(Expr::MapLit { pairs }) = value {
+                    if let Some(t) = self.map_literal_value_type(pairs) {
+                        self.map_value_type.insert(name.to_string(), t);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

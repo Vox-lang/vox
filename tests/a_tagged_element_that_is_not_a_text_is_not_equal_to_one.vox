@@ -1,0 +1,30 @@
+a list called mixed is [1, "two", 3.5].
+If element 1 of mixed is "c" then, Print "unexpected: a number equals a text".
+If element 1 of mixed is not "c" then, Print "a number element is not a text".
+On error Print "unexpected: the comparison set the error flag".
+If element 3 of mixed is "c" then, Print "unexpected: a float equals a text".
+If element 2 of mixed is "two" then, Print "a text element equals its text".
+If element 2 of mixed is not "three" then, Print "and differs from another".
+a buffer called word is "two".
+If element 2 of mixed is word then, Print "a text element equals a buffer holding it".
+If element 1 of mixed is word then, Print "unexpected: a number equals a buffer".
+If "c" is element 3 of mixed then, Print "unexpected: text on the left".
+If "two" is element 2 of mixed then, Print "text on the left works too".
+
+To 'starts with' of a list called items and a text called word.
+    Return a boolean, element 1 of items is word.
+
+To 'check' of a list called items.
+    If items's last is "c" then, Print "last is c".
+    Otherwise, Print "last is not c".
+
+a list called counts is [1, 2].
+'check' of counts.
+a list called letters is ["b", "c"].
+'check' of letters.
+If 'starts with' of mixed and "1" then, Print "unexpected: a returned comparison matched a number".
+If 'starts with' of letters and "b" then, Print "a returned comparison matches a text element".
+a value called anything is 5.
+If anything is "5" then, Print "unexpected: a value holding 5 equals a text".
+Set anything to "5".
+If anything is "5" then, Print "a value holding the text 5 equals it".

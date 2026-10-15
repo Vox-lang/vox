@@ -892,7 +892,12 @@ impl Parser {
                 // diagnostic. (Map key access on a *real* identifier —
                 // `person's "name"` — is handled in the Identifier arm below,
                 // where the string literal is the key, not the object.)
-                if matches!(self.current(), Token::Of | Token::To | Token::With | Token::On | Token::Apostrophe) {
+                // The `to` of `Write 'f' of "x" to log.` ends the literal
+                // instead (docs/BUGS_FOUND.md #144).
+                let to_is_a_connector = !(self.suppress_to_connector && self.literal_may_end_at_to);
+                if matches!(self.current(), Token::Of | Token::With | Token::On | Token::Apostrophe)
+                    || (to_is_a_connector && *self.current() == Token::To)
+                {
                     return Err(self.err_string_as_name(&s_owned));
                 }
 
@@ -1090,8 +1095,9 @@ impl Parser {
                                 break;
                             }
                         }
+                        let target = self.parse_reap_group()?;
                         let no_hang = parse_no_hang(self)?;
-                        return Ok(Expr::ReapChild { pid: None, no_hang });
+                        return Ok(Expr::ReapChild { target, no_hang });
                     }
                 }
 
@@ -1104,7 +1110,7 @@ impl Parser {
                 }
                 let pid = self.parse_primary()?;
                 let no_hang = parse_no_hang(self)?;
-                Ok(Expr::ReapChild { pid: Some(Box::new(pid)), no_hang })
+                Ok(Expr::ReapChild { target: ReapTarget::Process(Box::new(pid)), no_hang })
             }
 
             Token::Identifier(name) => {
@@ -1603,4 +1609,32 @@ impl Parser {
         })
     }
 
+    /// After `reap any child`: `in my process group` (wait4(0)) or `in
+    /// process group <g>` (wait4(-g)), the kernel's group meanings in plain
+    /// English (docs/BUGS_FOUND.md #142). Without either it is any child.
+    /// `my`, `process` and `group` belong to the reap only in these shapes.
+    fn parse_reap_group(&mut self) -> Result<ReapTarget, Box<CompileError>> {
+        let word_is = |token: &Token, word: &str| {
+            matches!(token, Token::Identifier(ref id) if id.eq_ignore_ascii_case(word))
+        };
+        if *self.current() != Token::In {
+            return Ok(ReapTarget::AnyChild);
+        }
+        if word_is(self.peek(1), "my") && word_is(self.peek(2), "process") && word_is(self.peek(3), "group") {
+            for _ in 0..4 {
+                self.advance();
+            }
+            self.skip_noise();
+            return Ok(ReapTarget::MyProcessGroup);
+        }
+        if word_is(self.peek(1), "process") && word_is(self.peek(2), "group") {
+            for _ in 0..3 {
+                self.advance();
+            }
+            self.skip_noise();
+            let group = self.parse_primary()?;
+            return Ok(ReapTarget::ProcessGroup(Box::new(group)));
+        }
+        Ok(ReapTarget::AnyChild)
+    }
 }

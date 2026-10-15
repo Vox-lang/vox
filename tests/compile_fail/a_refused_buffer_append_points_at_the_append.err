@@ -1,0 +1,4 @@
+Buffer append requires a buffer source or format/literal text
+a_refused_buffer_append_points_at_the_append.vox:4:14
+Buffer append requires a buffer source: n
+a_refused_buffer_append_points_at_the_append.vox:5:13

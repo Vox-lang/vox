@@ -1,0 +1,2 @@
+Cannot compare text "abc" by order: texts have no order. Use 'is' to test whether two texts are equal.
+Cannot compare text "b" by order: texts have no order.

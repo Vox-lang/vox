@@ -1,0 +1,3 @@
+a list called xs is [1].
+a list called ys is [1, 2].
+If xs is less than ys then, Print "shorter".

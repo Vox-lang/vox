@@ -1,0 +1,24 @@
+A thing called switch has
+  a boolean called ok is true,
+  a boolean called shut.
+A thing called panel has
+  a switch called main.
+
+To 'describe' of a switch called lamp.
+    Print lamp's ok as text.
+
+a switch called origin.
+a panel called board.
+Print origin's ok as text.
+Print origin's shut as text.
+Print board's main's ok as text.
+a text called word is origin's shut as text.
+Print word.
+Print "{origin's ok as text}".
+'describe' of origin.
+a boolean called ready is true.
+Print ready as text.
+Print origin's ok.
+Print origin's shut.
+Set origin's ok to false.
+Print origin's ok as text.
