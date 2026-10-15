@@ -12,7 +12,7 @@ To volume with a number called length and a number called width and a number cal
 To 'suggest an outfit' with a text called shirt and a text called tie.
     Print "a {shirt} shirt with a {tie} tie".
 
-Print "=== Joining Two Conditions ===".
+Print "Joining two conditions".
 A boolean called sunny is true.
 A boolean called warm is true.
 A boolean called raining is false.
@@ -24,19 +24,16 @@ Otherwise,
     Print "No rainbow today.".
 
 Print "".
-Print "=== Listing Parameters and Arguments ===".
-Print "The total of 3 and 5:".
-Print total of 3 and 5.
-Print "The volume of a box 2 by 3 by 4:".
-Print volume of 2 and 3 and 4.
+Print "Listing parameters and arguments".
+Print "The total of 3 and 5: {total of 3 and 5}".
+Print "The volume of a box 2 by 3 by 4: {volume of 2 and 3 and 4}".
 
 A number called 'morning visitors' is 10.
 A number called 'afternoon visitors' is 20.
-Print "Visitors all day:".
-Print total with 'morning visitors' and 'afternoon visitors'.
+Print "Visitors all day: {total with 'morning visitors' and 'afternoon visitors'}".
 
 Print "".
-Print "=== Ending a List of Subjects ===".
+Print "Ending a list of subjects".
 A boolean called 'engine running' is false.
 A boolean called 'doors locked' is false.
 A boolean called 'seatbelt fastened' is false.
@@ -54,13 +51,12 @@ If 'left door shut' and 'right door shut' then,
     Print "Both doors are shut.".
 
 Print "".
-Print "=== Several Uses in One Sentence ===".
+Print "Several uses in one sentence".
 If sunny and warm then,
-    Print "Picnic baskets for the morning and afternoon visitors:",
-    Print total of 'morning visitors' and 'afternoon visitors'.
+    Print "Picnic baskets for the morning and afternoon visitors: {total of 'morning visitors' and 'afternoon visitors'}".
 
 Print "".
-Print "=== Joining Two Each Clauses ===".
+Print "Joining two each clauses".
 Print "Every shirt with every tie:".
 'suggest an outfit' of each shirt from ["white", "blue"] and each tie from ["red", "green"].
 

@@ -27,8 +27,10 @@ To 'the state at' with a number called row and a number called column.
 To 'alive neighbors' with a number called row and a number called column.
     A number called tally is 0.
     For each 'row step' from -1 to 1,
+        a number called 'neighbor row' is wrap of row and 'row step' and height,
         For each 'column step' from -1 to 1,
-            the tally is tally add 'the state at' of {wrap of row and 'row step' and height} and {wrap of column and 'column step' and width}..
+            a number called 'neighbor column' is wrap of column and 'column step' and width,
+            the tally is tally add 'the state at' of 'neighbor row' and 'neighbor column'..
     Return a number, tally subtract 'the state at' of row and column.
 
 (A row is built up in one buffer and printed once, so it comes out as one line)
@@ -52,7 +54,7 @@ To 'step cell' with a number called row and a number called column.
     Set byte {'cell index' of row and column} of 'next grid' to 'next state'.
 
 To 'run generation' with a number called generation.
-    Print "-- Generation {generation} of {generations} --".
+    Print "Generation {generation} of {generations}:".
     'print row' of each row from 1 to height.
     'step cell' of each row from 1 to height and each column from 1 to width.
     Copy 'next grid' to grid.
@@ -72,10 +74,7 @@ To 'run generation' with a number called generation.
 'bring to life' of 4 and 3.
 'bring to life' of 4 and 4.
 
-Print "========================================".
-Print "  VOX -- Conway's Game of Life".
-Print "  40x20 toroidal grid, R-pentomino + glider".
-Print "========================================".
+Print "Conway's Game of Life on a 40 by 20 board whose edges wrap, seeded with an R-pentomino and a glider".
 
 Create a timer called clock.
 Start the clock.
@@ -83,7 +82,5 @@ Start the clock.
 'run generation' of each generation from 1 to generations.
 
 Stop the clock.
-Print "========================================".
-Print "Ran {generations} generations on an 800-cell grid in:".
-Print the clock's duration in milliseconds.
-Print "milliseconds -- native assembly, no VM, no GC, no interpreter.".
+A number called 'time taken' is the clock's duration in milliseconds.
+Print "Ran {generations} generations on an 800-cell grid in {time taken} milliseconds, as native machine code.".

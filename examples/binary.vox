@@ -1,7 +1,7 @@
 (Hex and binary literals, bitwise operations, and a buffer read and
  written one byte at a time)
 
-Print "=== Hexadecimal Literals ===".
+Print "Hexadecimal literals".
 
 A number called red is 0xFF.
 A number called green is 0x80.
@@ -15,14 +15,14 @@ A number called rgb is red multiply 65536 add green multiply 256 add blue.
 Print "Combined RGB: {rgb:06X}".
 
 Print "".
-Print "=== Binary Literals ===".
+Print "Binary literals".
 
 A number called flags is 0b10110100.
 Print "Flags: {flags} (binary: {flags:b})".
 Print "Flags padded: {flags:08b}".
 
 Print "".
-Print "=== Buffer Byte Manipulation ===".
+Print "Working with the bytes of a buffer".
 
 Create a buffer called memory of size 16.
 
@@ -36,18 +36,16 @@ Set byte 5 of memory to 0x6F.
 A number called 'first byte' is byte 1 of memory.
 Print "First byte: {first byte:02X}".
 
-Print "Buffer contents: ".
-Print memory.
+Print "Buffer contents: {memory}".
 
 Print "".
-Print "=== Modifying Bytes ===".
+Print "Changing a byte".
 
 Set byte 5 of memory to 0x21.
-Print "After changing byte 5 to '!':".
-Print memory.
+Print "After changing byte 5 to '!': {memory}".
 
 Print "".
-Print "=== Bitwise Operations ===".
+Print "Bitwise operations".
 
 A number called 'high bits' is 0b11110000.
 A number called 'alternate bits' is 0b10101010.
@@ -72,7 +70,7 @@ Set result to 'high bits' bit-shift-right 2.
 Print "{high bits:08b} >> 2 = {result:08b}".
 
 Print "".
-Print "=== Practical: Simple Hex Dump ===".
+Print "A simple hex dump".
 
 Set byte 1 of memory to 0xDE.
 Set byte 2 of memory to 0xAD.
@@ -92,7 +90,7 @@ While position is less than or equal to 8,
 Print "".
 
 Print "".
-Print "=== Practical: Patching a Binary Value ===".
+Print "Patching a binary value".
 
 (A 32-bit value is stored lowest byte first, so each byte is worth 256
  times the one before it)
@@ -120,11 +118,9 @@ Print "".
 (Declaring one buffer from another copies its bytes, so changing the copy
  leaves memory as it was)
 A buffer called 'the copy' is memory.
-Print "Buffer contents: ".
-Print 'the copy'.
+Print "Buffer contents: {'the copy'}".
 Set byte 1 of 'the copy' to 'A'.
-Print "After setting byte 1 to 'A':".
-Print 'the copy'.
+Print "After setting byte 1 to 'A': {'the copy'}".
 
 Print "".
-Print "=== Done ===".
+Print "Done.".

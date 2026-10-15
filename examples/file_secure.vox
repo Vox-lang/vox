@@ -1,6 +1,6 @@
-Print "=== Secure File I/O Demo ===".
+Print "Secure file I/O".
 
-Print "Creating a dynamic buffer (no size needed!)".
+Print "Creating a buffer with no fixed size, which grows to fit what it reads.".
 A buffer called contents.
 
 Print "Writing to file...".

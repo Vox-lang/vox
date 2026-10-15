@@ -1,9 +1,8 @@
-Print "=================================================================================".
 Print "This program demonstrates how a simple control system can be written in English.".
-Print "The door will open if: door is not open, elevator not moving, and  lift is not full.".
+Print "The door will open if: door is not open, elevator not moving, and lift is not full.".
 
 Print "".
-Print "================================== Conditions ===================================".
+Print "Conditions:".
 A boolean called 'door open' is true.
 A boolean called 'lift moving' is true.
 A boolean called 'lift full' is true.
@@ -22,7 +21,7 @@ Otherwise,
     Print "Elevator is not full.".
 
 Print "".
-Print "==================================== Action =====================================".
+Print "Action:".
 If 'door open', 'lift moving', and 'lift full' are not true then,
     Print "Opening the Door.".
 Otherwise,
