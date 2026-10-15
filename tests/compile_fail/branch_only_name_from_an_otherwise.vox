@@ -1,0 +1,6 @@
+A boolean called ready is false.
+If ready then,
+    Print "ready".
+Otherwise,
+    a text called reason is "not ready".
+Print reason.

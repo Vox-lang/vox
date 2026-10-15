@@ -291,12 +291,15 @@ impl Analyzer {
                         }
                         let key = (name.clone(), imp.lib.clone(), imp.version.clone());
                         if warned.insert(key) {
-                            self.warnings.push(format!(
-                                "'{}' is defined in this program and also exported by \
-                                 library \"{}\" version \"{}\"; the local definition wins — \
-                                 calls to '{}' resolve to it, not to the library.",
-                                name, imp.lib, imp.version, name
-                            ));
+                            self.warnings.push(
+                                CompileError::new(&format!(
+                                    "'{}' is defined in this program and also exported by \
+                                     library \"{}\" version \"{}\"; the local definition wins — \
+                                     calls to '{}' resolve to it, not to the library.",
+                                    name, imp.lib, imp.version, name
+                                ))
+                                .as_warning(),
+                            );
                         }
                     }
                 }
@@ -458,6 +461,74 @@ impl Analyzer {
             }
             _ => {}
         }
+    }
+
+    /// Remember whether `name` now holds a borrowed descriptor (LANGUAGE.md
+    /// "Opening Files": a numeric `at` borrows the descriptor instead of
+    /// opening a path), for `warn_on_borrowed_close`. A path open outside
+    /// any branch replaces the handle outright; one inside a branch only
+    /// means a borrowed descriptor may not be what the handle holds.
+    fn record_file_open(&mut self, name: &str, path: &Expr) {
+        let literal = self.expr_integer_literal_value(path);
+        let borrows = literal.is_some() || self.provable_value_type(path) == Some(Type::Integer);
+        let in_a_branch = self.block_depth > 0;
+        if borrows {
+            if !in_a_branch {
+                self.files_opened_by_path_in_a_branch.remove(name);
+            }
+            let on_every_path = !self.files_opened_by_path_in_a_branch.contains(name)
+                && (!in_a_branch
+                    || self.borrowed_files.get(name).map_or(true, |b| b.on_every_path));
+            self.borrowed_files.insert(
+                name.to_string(),
+                BorrowedDescriptor { descriptor: literal, on_every_path },
+            );
+        } else if in_a_branch {
+            self.files_opened_by_path_in_a_branch.insert(name.to_string());
+            if let Some(borrowed) = self.borrowed_files.get_mut(name) {
+                borrowed.on_every_path = false;
+            }
+        } else {
+            self.borrowed_files.remove(name);
+            self.files_opened_by_path_in_a_branch.remove(name);
+        }
+    }
+
+    /// `Close` on a handle opened with a numeric `at` closes the descriptor
+    /// itself, which is right when the program is done with it (ending a
+    /// pipe, handing a descriptor off) and a surprise when it is standard
+    /// output or standard error in a helper. It compiles; the warning makes
+    /// sure it is seen.
+    fn warn_on_borrowed_close(&mut self, file: &str) {
+        let occurrence = *self.closes_seen.get(file).unwrap_or(&0);
+        self.closes_seen.insert(file.to_string(), occurrence + 1);
+        let Some(borrowed) = self.borrowed_files.get(file).cloned() else {
+            return;
+        };
+        let descriptor = match borrowed.descriptor {
+            Some(0) => "borrowed descriptor 0 (standard input)".to_string(),
+            Some(1) => "borrowed descriptor 1 (standard output)".to_string(),
+            Some(2) => "borrowed descriptor 2 (standard error)".to_string(),
+            Some(number) => format!("borrowed descriptor {}", number),
+            None => "the borrowed descriptor it was opened at".to_string(),
+        };
+        let message = if borrowed.on_every_path {
+            format!("closing '{}' closes {} for the rest of the program", file, descriptor)
+        } else {
+            format!(
+                "closing '{}' closes {} for the rest of the program when '{}' was opened at that number",
+                file, descriptor, file
+            )
+        };
+        let mut warning = CompileError::new(&message).with_help_line(&format!(
+            "'{}' was opened with a numeric `at`, so it borrows the descriptor; \
+             keep the Close if the program is done with that descriptor, or leave it out",
+            file
+        ));
+        if let Some(location) = self.find_close_location(file, occurrence) {
+            warning = warning.with_location(location);
+        }
+        self.warnings.push(warning.as_warning());
     }
 
     pub(crate) fn analyze_statement(&mut self, stmt: &Statement) {
@@ -1003,12 +1074,17 @@ impl Analyzer {
                 let branch_env = self.current_env();
                 let mut continuing_envs: Vec<AnalysisEnv> = Vec::new();
 
+                // Every branch's own result, continuing or not, for naming
+                // the branch a missing name was declared in (below).
+                let mut branch_results: Vec<(BranchKind, AnalysisEnv)> = Vec::new();
+
                 let guard_key = Self::simple_guard_key(condition);
                 let (then_env, then_terminates) = self.analyze_block_in_scope(
                     then_block,
                     &branch_env,
                     guard_key.as_deref(),
                 );
+                branch_results.push((BranchKind::Then, then_env.clone()));
                 if !then_terminates {
                     continuing_envs.push(then_env);
                 }
@@ -1019,6 +1095,7 @@ impl Analyzer {
                     self.analyze_expr(cond);
                     self.apply_env(&saved_env);
                     let (elif_env, elif_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
+                    branch_results.push((BranchKind::ButIf, elif_env.clone()));
                     if !elif_terminates {
                         continuing_envs.push(elif_env);
                     }
@@ -1026,6 +1103,7 @@ impl Analyzer {
 
                 if let Some(block) = else_block {
                     let (else_env, else_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
+                    branch_results.push((BranchKind::Otherwise, else_env.clone()));
                     if !else_terminates {
                         continuing_envs.push(else_env);
                     }
@@ -1035,6 +1113,22 @@ impl Analyzer {
                 }
 
                 let merged_env = self.merge_continuing_envs(&continuing_envs, &branch_env);
+
+                // A name a branch declared that does not survive the merge
+                // exists only on that branch's path (LANGUAGE.md
+                // "Declarations in Branches"). A read of it after the `If`
+                // is told so, at the read (`push_branch_only_use`).
+                let has_otherwise = else_block.is_some();
+                for (kind, env) in &branch_results {
+                    for name in &env.always {
+                        if !branch_env.always.contains(name) && !merged_env.always.contains(name) {
+                            self.branch_declarations
+                                .entry(name.clone())
+                                .or_insert(BranchDeclaration { kind: *kind, has_otherwise });
+                        }
+                    }
+                }
+
                 self.apply_env(&merged_env);
             }
             
@@ -1384,6 +1478,8 @@ impl Analyzer {
                 let saved_list_variables = self.list_variables.clone();
                 let saved_map_variables = self.map_variables.clone();
                 let saved_file_variables = self.file_variables.clone();
+                let saved_borrowed_files = self.borrowed_files.clone();
+                let saved_files_opened_by_path = self.files_opened_by_path_in_a_branch.clone();
                 let saved_timer_variables = self.timer_variables.clone();
                 let saved_allocated_variables = self.allocated_variables.clone();
                 let saved_value_typed_names = self.value_typed_names.clone();
@@ -1414,6 +1510,11 @@ impl Analyzer {
                     // would resolve against a shape this parameter does not
                     // have. The thing arm below puts back the ones that do.
                     self.thing_vars.remove(param_name);
+                    // A file parameter holds whatever the caller passes, not
+                    // a same-named global handle: whether it is borrowed is
+                    // not known here, so its Close is not warned about.
+                    self.borrowed_files.remove(param_name);
+                    self.files_opened_by_path_in_a_branch.remove(param_name);
                     match param_type {
                         Type::Thing(thing) => {
                             // A thing parameter holds a copy of the caller's
@@ -1450,6 +1551,8 @@ impl Analyzer {
                 self.list_variables = saved_list_variables;
                 self.map_variables = saved_map_variables;
                 self.file_variables = saved_file_variables;
+                self.borrowed_files = saved_borrowed_files;
+                self.files_opened_by_path_in_a_branch = saved_files_opened_by_path;
                 self.timer_variables = saved_timer_variables;
                 self.allocated_variables = saved_allocated_variables;
                 self.value_typed_names = saved_value_typed_names;
@@ -1772,6 +1875,7 @@ impl Analyzer {
                 self.file_variables.insert(name.clone());
                 self.analyze_expr(path);
                 self.validate_file_open_path(path);
+                self.record_file_open(name, path);
                 self.deps.uses_io = true;
             }
             
@@ -1860,6 +1964,7 @@ impl Analyzer {
                         Some(file),
                     );
                 }
+                self.warn_on_borrowed_close(file);
                 self.deps.uses_io = true;
             }
             

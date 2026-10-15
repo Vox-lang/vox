@@ -1,4 +1,4 @@
-Unknown variable: y
+'y' only exists when the condition on line 2 is true
 091_unknown_variable_cross_condition_caret.vox:4:7
-declared only in some branches of an `if`/`otherwise`
-declare it in every branch, or before the `if`
+note: 'y' is declared at line 3, in only some branches of the If, so it does not exist after the If
+help: declare 'y' in an Otherwise branch too, or before the If

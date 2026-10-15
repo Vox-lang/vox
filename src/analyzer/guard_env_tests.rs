@@ -48,8 +48,8 @@
             analyzer
                 .errors
                 .iter()
-                .any(|e| e.message.contains("Unknown variable: line number")),
-            "expected unknown-variable error, got: {:?}",
+                .any(|e| e.message.contains("'line number' only exists when the condition on line 2 is true")),
+            "expected the branch-only error for 'line number', got: {:?}",
             analyzer.errors
         );
     }

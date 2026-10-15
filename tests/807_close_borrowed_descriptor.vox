@@ -1,0 +1,12 @@
+(A handle opened at a number borrows that descriptor, and Close closes the
+descriptor itself. The compiler warns at each Close below; the program still
+compiles and runs exactly as written.)
+
+Open a file for reading called keyboard at 0.
+Close keyboard.
+Print "standard output is still open".
+
+Open a file for writing called screen at 1.
+Write "written before the close\n" to screen.
+Close screen.
+Print "not shown: standard output is closed now".
