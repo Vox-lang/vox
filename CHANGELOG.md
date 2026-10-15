@@ -26,6 +26,13 @@ adheres to [Semantic Versioning](https://semver.org/).
   which mise installs on glibc 2.39 or newer. Compiling a program needs
   `nasm` and `ld` as before. The archive with the tests and examples is
   now named `vox-<version>-full.7z`.
+- **Closing a borrowed descriptor gives a warning.** A handle opened at a
+  number borrows that descriptor, and `Close` on it closes the descriptor
+  for the rest of the program. The program compiles and runs as written;
+  the compiler now warns at the `Close`, naming the handle and, for a
+  literal, the descriptor: `closing 'keyboard' closes borrowed descriptor 0
+  (standard input) for the rest of the program`. A handle opened by a
+  path, and a file parameter, are closed without a warning.
 
 ### Changed
 - **An ordering comparison on a `value` is a compile error, as arithmetic
@@ -38,6 +45,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   variable, and compare that.
 
 ### Fixed
+- **A name declared in only some branches of an `If` is reported where it
+  is read, with the reason.** The error points at the read after the `If`,
+  says when the name exists (`'kept' only exists when the condition on
+  line 2 is true`), names the line that declares it, and gives the two
+  ways to make it exist afterwards: declare it in every branch, or before
+  the `If`. A name close to a keyword, such as `kept`, used to be reported
+  as an unknown identifier at its declaration with a keyword suggestion. A
+  name declared nowhere is reported as unknown, as before.
 - **A call in arithmetic is judged by its return type, as a variable of
   that type is.** `'name' add 1`, with `'name'` returning a text, used to
   compile and add 1 to the text's address; a call returning a `value`, a

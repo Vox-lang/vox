@@ -1,0 +1,4 @@
+'kept' only exists when the condition on line 2 is true
+branch_only_name_read_after_the_if.vox:4:7
+note: 'kept' is declared at line 3, in only some branches of the If, so it does not exist after the If
+help: declare 'kept' in an Otherwise branch too, or before the If

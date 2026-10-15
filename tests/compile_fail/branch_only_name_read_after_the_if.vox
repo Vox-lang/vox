@@ -1,0 +1,4 @@
+A boolean called condition is false.
+If condition is true then,
+    a number called kept is 1.
+Print kept.

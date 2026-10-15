@@ -1,0 +1,4 @@
+'reason' only exists when the Otherwise on line 4 runs
+branch_only_name_from_an_otherwise.vox:6:7
+note: 'reason' is declared at line 5
+help: declare 'reason' in every branch of the If too, or before the If
