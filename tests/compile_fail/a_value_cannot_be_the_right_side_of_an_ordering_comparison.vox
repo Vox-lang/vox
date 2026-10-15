@@ -1,0 +1,4 @@
+(The value is refused on either side of the comparison.)
+
+a value called v is "two".
+If 1 is less than v then, Print "less".

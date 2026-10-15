@@ -1,0 +1,5 @@
+(The rule holds in an Otherwise if.)
+
+a value called v is 5.
+If v is 0 then, Print "zero".
+Otherwise if v is greater than or equal to 3 then, Print "three or more".

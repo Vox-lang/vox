@@ -1,0 +1,6 @@
+(A call that returns a value is refused in an ordering comparison, like a value variable.)
+
+To 'pick'.
+    Return a value, "two".
+
+If 'pick' is greater than 1 then, Print "greater".

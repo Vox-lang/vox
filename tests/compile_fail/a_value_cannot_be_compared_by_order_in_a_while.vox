@@ -1,0 +1,4 @@
+(The rule holds in a While condition, and for the or-equal-to forms.)
+
+a value called v is 5.
+While v is less than or equal to 1, Print "small".

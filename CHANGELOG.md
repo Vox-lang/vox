@@ -27,6 +27,16 @@ adheres to [Semantic Versioning](https://semver.org/).
   `nasm` and `ld` as before. The archive with the tests and examples is
   now named `vox-<version>-full.7z`.
 
+### Changed
+- **An ordering comparison on a `value` is a compile error, as arithmetic
+  on one is.** `If v is greater than 1` with `v` holding the text "two"
+  used to compare the text's address and answer true. `is greater than`,
+  `is less than`, their `or equal to` forms and their `not` forms now
+  refuse a `value` on either side, a variable or a call that returns one,
+  wherever the comparison stands. Equality on a `value` works as before.
+  To compare one by order, check it with `is a number`, put it in a number
+  variable, and compare that.
+
 ### Fixed
 - **A call in arithmetic is judged by its return type, as a variable of
   that type is.** `'name' add 1`, with `'name'` returning a text, used to

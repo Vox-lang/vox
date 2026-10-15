@@ -279,25 +279,10 @@ impl Analyzer {
             );
             return;
         }
-        // Bug #147: a call is judged by its function's declared return type,
-        // exactly as a variable of that type is. Unjudged, a call returning a
-        // text, a buffer, a list, a map or a `value` compiled to arithmetic on
-        // the pointer or raw payload it hands back. This is done here only,
-        // not in `arithmetic_operand_type`, whose other callers keep their
-        // "can't prove it, allow it" answer for calls.
-        let ty = match expr {
-            Expr::FunctionCall { name, .. } => self.function_return_type(name),
-            _ => self.arithmetic_operand_type(expr),
-        };
-        let Some(ty) = ty else {
+        let Some(ty) = self.judged_operand_type(expr) else {
             return;
         };
-        // A variable is named as "text t"; a call as "the text 'name'
-        // returns", so the message points at the call the author wrote.
-        let subject = |kind: &str| match expr {
-            Expr::FunctionCall { name, .. } => format!("the {} '{}' returns", kind, name),
-            _ => format!("{} {}", kind, self.operand_label(expr)),
-        };
+        let subject = |kind: &str| self.operand_subject(expr, kind);
         let msg = match ty {
             Type::String => format!(
                 "Cannot use {} in arithmetic; cast it first with 'as a number' or 'as a float'.",
@@ -330,13 +315,60 @@ impl Analyzer {
             // is exactly how the previous two wordings went wrong).
             Type::Value => format!(
                 "Cannot use {} in arithmetic: its type is only known at runtime, and arithmetic on a dynamically-tagged value is not currently supported.",
-                match expr {
-                    Expr::FunctionCall { .. } => subject("value"),
-                    _ => format!("a value {}", self.operand_label(expr)),
-                }
+                self.value_operand_subject(expr)
             ),
             _ => return,
         };
+        self.push_error(msg, None);
+    }
+
+    /// The type an operand is judged by, in arithmetic and in an ordering
+    /// comparison alike. Bug #147: a call is judged by its function's
+    /// declared return type, exactly as a variable of that type is.
+    /// Unjudged, a call returning a text, a buffer, a list, a map or a
+    /// `value` compiled to arithmetic on the pointer or raw payload it hands
+    /// back. This is done here only, not in `arithmetic_operand_type`, whose
+    /// other callers keep their "can't prove it, allow it" answer for calls.
+    fn judged_operand_type(&self, expr: &Expr) -> Option<Type> {
+        match expr {
+            Expr::FunctionCall { name, .. } => self.function_return_type(name),
+            _ => self.arithmetic_operand_type(expr),
+        }
+    }
+
+    /// A variable is named as "text t"; a call as "the text 'name'
+    /// returns", so the message points at the call the author wrote.
+    fn operand_subject(&self, expr: &Expr, kind: &str) -> String {
+        match expr {
+            Expr::FunctionCall { name, .. } => format!("the {} '{}' returns", kind, name),
+            _ => format!("{} {}", kind, self.operand_label(expr)),
+        }
+    }
+
+    /// A `value` reads "a value v" as a variable, "the value 'pick' returns"
+    /// as a call.
+    fn value_operand_subject(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::FunctionCall { .. } => self.operand_subject(expr, "value"),
+            _ => format!("a value {}", self.operand_label(expr)),
+        }
+    }
+
+    /// TheJostler ruled that an ordering comparison (`is greater than`, `is
+    /// less than`, and their `or equal to` and `not` forms) on a `value` is
+    /// a compile error, as arithmetic on one is. A `value` holding a text
+    /// compared its pointer, so `v is greater than 1` with v = "two" was
+    /// true. The operand is judged exactly as an arithmetic operand is, so a
+    /// retyped `value` (`v is a number.`) compares as the number it now is.
+    /// Equality (`is`, `is equal to`, `is not`) is not judged here.
+    pub(crate) fn check_ordering_operand(&mut self, expr: &Expr) {
+        if !matches!(self.judged_operand_type(expr), Some(Type::Value)) {
+            return;
+        }
+        let msg = format!(
+            "Cannot compare {} by order: its type is only known at runtime. Check it with 'is a number', put it in a number variable, and compare that.",
+            self.value_operand_subject(expr)
+        );
         self.push_error(msg, None);
     }
 

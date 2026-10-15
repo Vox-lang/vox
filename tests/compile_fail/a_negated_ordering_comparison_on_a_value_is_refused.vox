@@ -1,0 +1,4 @@
+(`is not greater than` is an ordering comparison too.)
+
+a value called v is 5.
+If v is not greater than 9 then, Print "nine or less".
