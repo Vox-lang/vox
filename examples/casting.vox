@@ -1,50 +1,43 @@
 (The word "as" turns a value into another type: "the pi as a number".)
 
-Print "=== Number and Float Conversions ===".
+Print "Number and float conversions".
 
 (A float becomes a number by dropping everything after the point)
 A float called pi is 3.14159.
 A number called 'pi truncated' is the pi as a number.
-Print "3.14159 as number: ".
-Print the 'pi truncated'.
+Print "3.14159 as a number: {pi truncated}".
 
 A number called quantity is 42.
 A float called 'quantity as a float' is the quantity as a float.
-Print "42 as float: ".
-Print the 'quantity as a float'.
+Print "42 as a float: {'quantity as a float'}".
 
 (Adding a half before truncating rounds to the nearest whole number; the
  braces make the sum happen before the cast)
 A float called measurement is 3.7.
 A number called rounded is {the measurement add 0.5} as a number.
-Print "3.7 rounded: ".
-Print the rounded.
+Print "3.7 rounded: {rounded}".
 
 Print "".
-Print "=== Number and Text Conversions ===".
+Print "Number and text conversions".
 
 A number called age is 25.
-Print "Age: ".
-Print the age as text.
+A text called 'age as text' is the age as text.
+Print "Age: {'age as text'}".
 
 Print "".
-Print "=== Boolean and Number Conversions ===".
+Print "Boolean and number conversions".
 
 A boolean called 'switched on' is true.
 A number called 'on as a number' is the 'switched on' as a number.
-Print "true as number: ".
-Print the 'on as a number'.
+Print "true as a number: {'on as a number'}".
 
 A boolean called 'switched off' is false.
 A number called 'off as a number' is the 'switched off' as a number.
-Print "false as number: ".
-Print the 'off as a number'.
+Print "false as a number: {'off as a number'}".
 
 Print "".
-Print "=== Inline Casting ===".
-
-Print "Direct cast 3.99 as number: ".
+Print "3.99, cast to a number where it is printed:".
 Print 3.99 as a number.
 
 Print "".
-Print "=== Done ===".
+Print "Done.".

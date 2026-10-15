@@ -3,7 +3,6 @@
 (π = 3 + 4/(2×3×4) - 4/(4×5×6) + 4/(6×7×8) - ...)
 
 Print "The Quest for Pi".
-Print "================".
 Print "".
 Print "Using the Nilakantha series, we shall approximate".
 Print "the most famous constant in mathematics...".
@@ -24,13 +23,13 @@ An int steps is 0.
 (The beautiful dance of convergence)
 While steps is less than 500000,
     (Calculate the three consecutive numbers for this term)
-    a float called Ist is the denominator,
-    a float called IInd is the denominator add 1.0,
-    a float called IIIrd is the denominator add 2.0,
+    a float called smallest is the denominator,
+    a float called middle is the denominator add 1.0,
+    a float called largest is the denominator add 2.0,
 
     (The denominator is their product)
-    a float called product is the Ist times the IInd,
-    the product is the product times the IIIrd,
+    a float called product is the smallest times the middle,
+    the product is the product times the largest,
 
     (Calculate this term of the series)
     a float term is 4.0 divide product,
@@ -49,10 +48,7 @@ While steps is less than 500000,
 Print "".
 Print "After 500,000 terms of the series:".
 Print "".
-Print "  Calculated pi:".
-Print pi.
-Print "".
-Print "  Actual pi:".
-Print "  3.14159265358979323846...".
+Print "  Calculated pi: {pi}".
+Print "  Actual pi:     3.14159265358979323846...".
 Print "".
 Print "(64-bit floats give us about 15 digits of precision)".

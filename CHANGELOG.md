@@ -50,8 +50,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   and `buf` are now the names of the things they hold.
   `fizzbuzz.vox` and the manual's FizzBuzz use the one-sentence form,
   `Print each number from 1 to 15, but if ...`, and every example names
-  its things in plain words, opens each sentence with a capital, and keeps
-  one indent width.
+  its things in plain words, opens each sentence with a capital, keeps
+  one indent width, and builds each printed line from one format string.
 
 ### Fixed
 - **A name declared in only some branches of an `If` is reported where it

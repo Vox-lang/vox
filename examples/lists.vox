@@ -1,4 +1,4 @@
-Print "=== Lists Demo ===".
+Print "Lists".
 Print "Integer list [10, 20, 30]:".
 A list called 'the numbers' is [10, 20, 30].
 For each number in 'the numbers',
@@ -6,8 +6,7 @@ For each number in 'the numbers',
 Print "".
 
 (Elements are counted from 1, the way a person counts them)
-Print "Second element of numbers: ".
-Print element 2 of 'the numbers'.
+Print "Second element of the numbers: {element 2 of 'the numbers'}".
 
 Print "Boolean list [true, true, false]:".
 A list called answers is [true, true, false].
@@ -15,13 +14,9 @@ For each answer in answers,
     print the answer.
 Print "".
 
-Print "First element: ".
-Print answers's first.
-
-Print "Last element: ".
-Print answers's last.
-
-Print answers's size.
+Print "First answer: {answers's first}".
+Print "Last answer: {answers's last}".
+Print "Number of answers: {answers's size}".
 
 Print "You should see an error below".
 (Reading past the end is what raises the error caught on the next line)

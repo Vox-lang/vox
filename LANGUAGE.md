@@ -150,14 +150,14 @@ error at the comma, not two prints.
 - After an inner `if` ends, the outer sentence may continue with more actions.
 
 ```
-While content is not empty,
-    if number_lines then,
-        print "{line}: " without newline.
-    write content to output,
-    read line from source into content.
+a number called 'line number' is 1.
+While 'line number' is less than 4,
+    if 'line number' is 3 then, print "last: " without newline.
+    print "line {line number}",
+    increment the 'line number'.
 ```
 
-In the example above, the period after the inner `if` closes only that `if`. The `while` body continues with `write` and `read`.
+In the example above, the period after the inner `if` closes only that `if`, so the `while` body continues with `print` and `increment`, and the program prints `line 1`, `line 2` and `last: line 3`.
 
 ### The termination rule
 

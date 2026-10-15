@@ -27,16 +27,14 @@ If the verbose then,
 For each 'source file' in the 'source files',
     Print "Compiling: {source file}".
 
-Print "=== Arguments Properties Demo ===".
+Print "Arguments".
 
 (The count includes the program's own name, which arguments's name reads)
 A number called 'argument count' is arguments's count.
-Print "Number of arguments: ".
-Print the 'argument count'.
+Print "Number of arguments: {argument count}".
 
 A text called program is arguments's name.
-Print "Program name: ".
-Print the program.
+Print "Program name: {program}".
 
 If arguments's count is greater than 1 then,
     a text called 'first argument' is arguments's first,
@@ -49,24 +47,20 @@ Otherwise,
     Print "User arguments were provided.".
 
 A text called 'last argument' is arguments's last.
-Print "Last argument: ".
-Print the 'last argument'.
+Print "Last argument: {last argument}".
 
 Print "".
-Print "=== Environment Properties Demo ===".
+Print "Environment".
 
 (An environment variable is read by its name)
 A text called home is environment's "HOME".
-Print "Home directory: ".
-Print the home.
+Print "Home directory: {home}".
 
 A text called user is environment's "USER".
-Print "Current user: ".
-Print the user.
+Print "Current user: {user}".
 
 A text called shell is environment's "SHELL".
-Print "Shell: ".
-Print the shell.
+Print "Shell: {shell}".
 
 If the environment variable "DEBUG" exists then,
     Print "Debug mode is enabled via environment.".
@@ -75,15 +69,13 @@ Otherwise,
 
 Print "".
 A number called 'variable count' is environment's count.
-Print "Total environment variables: ".
-Print the 'variable count'.
+Print "Total environment variables: {variable count}".
 
 A text called 'first variable' is environment's first.
-Print "First env var: ".
-Print the 'first variable'.
+Print "First environment variable: {first variable}".
 
 Print "".
-Print "=== Practical Example ===".
+Print "Greeting".
 
 (A name given on the command line wins over GREET_NAME in the
  environment, and either one wins over the world)
@@ -93,6 +85,4 @@ If arguments's count is greater than 1 then,
 But if the environment variable "GREET_NAME" exists then,
     the 'greeting name' is environment's "GREET_NAME".
 
-Print "Hello, ".
-Print the 'greeting name'.
-Print "!".
+Print "Hello, {greeting name}!".

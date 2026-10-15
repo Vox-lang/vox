@@ -1,7 +1,7 @@
 (A greeter. It reads its own command line and environment through the 's
  property syntax, then asks for your name and answers you.)
 
-Print "=== The Command Line ===".
+Print "The command line".
 
 A number called 'argument count' is arguments's count.
 Print "Arguments, counting the program's own name: {argument count}".
@@ -19,7 +19,7 @@ If arguments's empty then,
     Print "(Nothing was given after the program's name.)".
 
 Print "".
-Print "=== The Environment ===".
+Print "The environment".
 
 A number called 'variable count' is environment's count.
 Print "Environment variables: {variable count}".
@@ -35,7 +35,7 @@ A text called 'first variable' is environment's first.
 Print "The first entry in the environment is {first variable}.".
 
 Print "".
-Print "=== A Conversation ===".
+Print "A conversation".
 
 Open a file for writing called screen at "/dev/stdout".
 Open a file for reading called keyboard at "/dev/stdin".

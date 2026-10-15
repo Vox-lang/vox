@@ -129,7 +129,7 @@ constraint earns its place.
   termination rule), so a long body is spaced with a comment line or a
   blank line after a comma, and keeps its own paragraph.
 - Prefer a named intermediate over a dense expression when the name adds
-  meaning: `pi.vox` names `Ist`, `IInd`, `IIIrd` and `product` rather
+  meaning: `pi.vox` names `smallest`, `middle`, `largest` and `product` rather
   than nesting one long formula.
 - Let messages be complete sentences: `"{Program}: {filename}: No such
   file or directory"` beats `"err: ENOENT"`.

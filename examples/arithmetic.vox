@@ -1,7 +1,7 @@
 (Arithmetic in Vox is said in words: add, subtract, multiply, divide and
- modulo. Each heading below reads the sum aloud, then prints its answer.)
+ modulo. Each line below reads the sum aloud, then works it out in braces.)
 
-Print "=== Whole Numbers ===".
+Print "Whole numbers".
 
 Set apples to 10.
 Set pears to 3.
@@ -9,23 +9,18 @@ Set pears to 3.
 Print "The bowl holds 10 apples and 3 pears.".
 Print "".
 
-Print "Pieces of fruit altogether, apples add pears:".
-Print apples add pears.
+Print "Pieces of fruit altogether, apples add pears: {apples add pears}".
 
-Print "How many more apples than pears, apples subtract pears:".
-Print apples subtract pears.
+Print "How many more apples than pears, apples subtract pears: {apples subtract pears}".
 
-Print "Ways to pick one apple and one pear, apples multiply pears:".
-Print apples multiply pears.
+Print "Ways to pick one apple and one pear, apples multiply pears: {apples multiply pears}".
 
-Print "Apples for each pear, apples divide pears:".
-Print apples divide pears.
+Print "Apples for each pear, apples divide pears: {apples divide pears}".
 
-Print "Apples left over, apples modulo pears:".
-Print apples modulo pears.
+Print "Apples left over, apples modulo pears: {apples modulo pears}".
 
 Print "".
-Print "=== Decimals ===".
+Print "Decimals".
 
 Set length to 10.5.
 Set width to 3.2.
@@ -35,42 +30,34 @@ Print "".
 
 (A decimal is a 64-bit float, so a sum like 10.5 add 3.2 shows the
  rounding of its last binary digit)
-Print "Half the way around the walls, length add width:".
-Print length add width.
+Print "Half the way around the walls, length add width: {length add width}".
 
-Print "How much longer than wide, length subtract width:".
-Print length subtract width.
+Print "How much longer than wide, length subtract width: {length subtract width}".
 
-Print "Floor area, length multiply width:".
-Print length multiply width.
+Print "Floor area, length multiply width: {length multiply width}".
 
-Print "How many widths make the length, length divide width:".
-Print length divide width.
+Print "How many widths make the length, length divide width: {length divide width}".
 
 Print "".
-Print "=== One Value, Changed Step by Step ===".
+Print "One value, changed step by step".
 
 Set flour to 5.0.
 Print "The recipe starts with 5.0 cups of flour.".
 
 Set flour to flour add 2.5.
-Print "After adding 2.5 cups:".
-Print flour.
+Print "After adding 2.5 cups: {flour}".
 
 Set flour to flour multiply 2.0.
-Print "After doubling the recipe:".
-Print flour.
+Print "After doubling the recipe: {flour}".
 
 Set flour to flour subtract 3.0.
-Print "After setting 3.0 cups aside:".
-Print flour.
+Print "After setting 3.0 cups aside: {flour}".
 
 Set flour to flour divide 2.0.
-Print "Shared between two bowls, each bowl holds:".
-Print flour.
+Print "Shared between two bowls, each bowl holds: {flour}".
 
 Print "".
-Print "=== Comparisons ===".
+Print "Comparisons".
 
 If length is greater than 10.0 then, print "The room is more than 10 metres long.".
 Otherwise, print "The room is 10 metres long or less.".
@@ -82,7 +69,7 @@ If flour is equal to 6.0 then, print "Each bowl holds exactly 6.0 cups.".
 Otherwise, print "The bowls hold something other than 6.0 cups.".
 
 Print "".
-Print "=== Counting with a Decimal ===".
+Print "Counting with a decimal".
 Print "A five-kilometre walk, one marker at a time:".
 Set kilometres to 0.0.
 While kilometres is less than 5.0,

@@ -1,44 +1,40 @@
 (A map holds values under text keys and keeps them in the order they were
- added. A missing key does not crash the program; it raises the error that
- "on error" catches. A map passed as a value keeps its type through the
- call, so it still prints as a map.)
+ added. Looking up a missing key raises the error that "on error" catches.
+ A map passed as a value keeps its type through the call, so it still
+ prints as a map.)
 
 To 'print the record' with a value called record.
     Print record.
 
 A map called person is {"name": "Ada", "age": 36, "city": "London"}.
 
-Print "record:".
-Print person.
+Print "The record: {person}".
 
-Print "name is:".
-Print person's "name".
+A text called name is person's "name".
+Print "The name is {name}.".
 
 Set person's "age" to 37.
-Print "after birthday:".
-Print person's "age".
-Print person's length.
+A number called age is person's "age".
+Print "After a birthday the age is {age}, and the record holds {person's length} entries.".
 
-Print "keys:".
+Print "Keys:".
 For each key in person's keys,
     print key.
 
-Print "values:".
+Print "Values:".
 For each detail in person's values,
     print detail.
 
 A map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
-Print "nested:".
-Print nested.
+Print "Nested: {nested}".
 A list called tags is nested's "tags".
-Print "tags:".
-Print tags.
+Print "Tags: {tags}".
 A map called meta is nested's "meta".
-Print "meta id:".
-Print meta's "id".
+A number called id is meta's "id".
+Print "The meta id is {id}.".
 
-Print "round-trip through a value param:".
+Print "The record, printed by a function that takes any value:".
 'print the record' of person.
 
 Print person's "nope".
-On error print "looked up a missing key".
+On error print "Looked up a missing key.".
