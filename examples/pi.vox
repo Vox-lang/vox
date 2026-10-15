@@ -10,16 +10,16 @@ Print "the most famous constant in mathematics...".
 Print "".
 
 (Our approximation begins with three)
-a float pi is 3.0.
+A float pi is 3.0.
 
 (The denominator starts at two and grows by two each step)
-a float denominator is 2.0.
+A float denominator is 2.0.
 
 (We alternate between adding and subtracting)
-a float direction is 1.0.
+A float direction is 1.0.
 
 (Count our iterations)
-a int steps is 0.
+An int steps is 0.
 
 (The beautiful dance of convergence)
 While steps is less than 500000,
