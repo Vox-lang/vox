@@ -48,6 +48,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   with its comma; `arithmetic.vox`, `greet.vox` and `and_keyword.vox` are
   rewritten as plain sentences, and placeholder names such as `num1`, `i`
   and `buf` are now the names of the things they hold.
+  `fizzbuzz.vox` and the manual's FizzBuzz use the one-sentence form,
+  `Print each number from 1 to 15, but if ...`.
 
 ### Fixed
 - **A name declared in only some branches of an `If` is reported where it
