@@ -42,7 +42,7 @@ const registry = new vsctm.Registry({
 (async () => {
   const grammar = await registry.loadGrammar('source.vox');
   if (!grammar) {
-    console.error('FAILED to load grammar — invalid, or scopeName is not source.vox');
+    console.error('FAILED to load grammar - invalid, or scopeName is not source.vox');
     process.exit(2);
   }
   const text = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);

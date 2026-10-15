@@ -21,9 +21,9 @@
   ],
   "folding": {
     "markers": {
-      "start": "^\\s*To\\s+\"",
+      "start": "^\\s*(?:To\\s+\\S|A\\s+thing\\s+called\\s+\\S)",
       "end": "^\\s*$"
     }
   },
-  "wordPattern": "(-?\\d*\\.\\d+)|(-?\\d+)|([A-Za-z_][A-Za-z0-9_']*)"
+  "wordPattern": "(-?\\d*\\.\\d+)|(-?0[xXbBoO][0-9a-fA-F]+)|(-?\\d+)|(bit-(?:shift-left|shift-right|and|or|xor|not))|([A-Za-z_][A-Za-z0-9_']*)"
 }

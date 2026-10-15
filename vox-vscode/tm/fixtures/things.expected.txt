@@ -12,14 +12,14 @@
   5: "function"  ->  storage.type.vox
   5: "called"  ->  punctuation.definition.vox
   5: "'placed at'"  ->  variable.other.vox
-  5: ","  ->  (none)
+  5: ","  ->  punctuation.separator.comma.vox
   6: "a"  ->  punctuation.definition.vox
   6: "number"  ->  storage.type.vox
   6: "called"  ->  punctuation.definition.vox
   6: "x"  ->  variable.other.vox
   6: "is"  ->  keyword.operator.vox
   6: "0"  ->  constant.numeric.integer.vox
-  6: ","  ->  (none)
+  6: ","  ->  punctuation.separator.comma.vox
   7: "a"  ->  punctuation.definition.vox
   7: "number"  ->  storage.type.vox
   7: "called"  ->  punctuation.definition.vox
@@ -33,7 +33,7 @@
   9: "point"  ->  storage.type.vox
   9: "'s"  ->  punctuation.accessor.vox
   9: "'placed at'"  ->  entity.name.function.vox
-  9: ", "  ->  (none)
+  9: ","  ->  punctuation.separator.comma.vox
   9: "with"  ->  punctuation.definition.vox
   9: "a"  ->  punctuation.definition.vox
   9: "number"  ->  storage.type.vox
@@ -60,7 +60,7 @@
  12: "Return"  ->  keyword.control.vox
  12: "a"  ->  punctuation.definition.vox
  12: "point"  ->  variable.other.vox
- 12: ", "  ->  (none)
+ 12: ","  ->  punctuation.separator.comma.vox
  12: "plotted"  ->  variable.other.vox
  12: "."  ->  (none)
  14: "a"  ->  punctuation.definition.vox

@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+The VS Code extension highlights octal literals, `isn't` and `aren't`, character escapes and the current library headers.
+
+- VS Code extension: `0o17` and `0O755` scope as octal numbers; `isn't` and `aren't` scope as one operator; character literals take `\n`, `\\` and `\'`; `Library` and `See` headers take a bare or single-quoted name; words that are no longer reserved (`count`, `first`, `size`, `automatic`, `enable` and the like) render as ordinary names, and still scope as properties after a possessive. Folding starts at a `To` or thing definition, and the extension's licence is stated as GPL-3.0-or-later.
+
 ## [0.4.16] - 2026-10-15
 
 Vox now installs with one mise command, as a single static binary that runs on any x86-64 Linux.

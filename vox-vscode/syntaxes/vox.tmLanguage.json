@@ -7,11 +7,13 @@
     { "include": "#on-error" },
     { "include": "#reaped-status" },
     { "include": "#reap-no-hang" },
+    { "include": "#contraction" },
     { "include": "#library-declaration" },
     { "include": "#see-import" },
     { "include": "#thing-definition" },
     { "include": "#member-definition" },
     { "include": "#function-definition" },
+    { "include": "#properties" },
     { "include": "#function-call" },
     { "include": "#strings" },
     { "include": "#types" },
@@ -32,7 +34,6 @@
     { "include": "#time-keywords" },
     { "include": "#operators" },
     { "include": "#property-keywords" },
-    { "include": "#properties" },
     { "include": "#type-possessive" },
     { "include": "#declared-type" },
     { "include": "#articles" },
@@ -54,31 +55,41 @@
       "match": "(?<![\\w-])(?i:on)\\s+(?i:error)(?![\\w-])"
     },
     "reaped-status": {
-      "comment": "plan 311: 'the reaped status' - the raw wait4 status word from the most recent successful reap. A fixed three-word phrase with no expression inside, so it is matched as one construct. 'the reaped' followed by anything else falls through to the article + bare-identifier rules and stays an ordinary variable reference, so 'reaped' remains usable as a name.",
+      "comment": "'the reaped status' - the raw wait4 status word from the most recent successful reap. A fixed three-word phrase with no expression inside, so it is matched as one construct. 'the reaped' followed by anything else falls through to the article + bare-identifier rules and stays an ordinary variable reference, so 'reaped' remains usable as a name.",
       "name": "support.function.vox",
       "match": "(?<![\\w-])(?i:the)\\s+(?i:reaped)\\s+(?i:status)(?![\\w-])"
     },
     "reap-no-hang": {
-      "comment": "plan 311: 'without waiting' - the WNOHANG suffix on a reap. Matched as a two-word phrase so 'waiting' is coloured only here, not claimed as a global keyword; it stays an ordinary identifier everywhere else (the spec requires this). 'without' alone is already an action keyword for 'print ... without newline'; this lifts the pair to a control modifier when they appear together.",
+      "comment": "'without waiting' - the WNOHANG suffix on a reap. Matched as a two-word phrase so 'waiting' is coloured only here, not claimed as a global keyword; it stays an ordinary identifier everywhere else (the spec requires this). 'without' alone is already an action keyword for 'print ... without newline'; this lifts the pair to a control modifier when they appear together.",
       "name": "keyword.control.vox",
       "match": "(?<![\\w-])(?i:without)\\s+(?i:waiting)(?![\\w-])"
     },
+    "contraction": {
+      "comment": "The contractions isn't and aren't are single operator tokens (the lexer joins them). Matched before the bare-name and quoted-name rules so the apostrophe never opens a quoted name.",
+      "name": "keyword.operator.vox",
+      "match": "(?<![\\w-])(?i:(isn't|aren't))(?![\\w'-])"
+    },
     "library-declaration": {
-      "comment": "Library declaration: Library \"name\" version \"x.y\"",
-      "match": "(?<![\\w-])(?i:(library|lib))\\s+(\"[^\"]*\")\\s+(?i:(version|ver))\\s+(\"[^\"]*\")",
+      "comment": "Library declaration: Library <name> version \"x.y\". The name is a bare word or a single-quoted name.",
+      "match": "(?<![\\w-])(?i:(library|lib))\\s+('[^']+'|[A-Za-z_][A-Za-z0-9_]*)\\s+(?i:(version|ver))\\s+(\"[^\"]*\")",
       "captures": {
         "1": { "name": "keyword.control.import.vox" },
-        "2": { "name": "string.quoted.double.vox" },
+        "2": { "name": "entity.name.namespace.vox" },
         "3": { "name": "keyword.control.import.vox" },
         "4": { "name": "string.quoted.double.vox" }
       }
     },
     "see-import": {
-      "comment": "Source include / library import: see \"name\" [version \"x\"] [from \"path\"]",
-      "match": "(?<![\\w-])(?i:(see|import|include|require))\\s+(\"[^\"]*\")(?:\\s+(?i:(version|ver))\\s+(\"[^\"]*\"))?(?:\\s+(?i:(from|starting))\\s+(\"[^\"]*\"))?",
+      "comment": "Library import: See <name> [version \"x\"] [from \"path\"]; source include: see \"path\". The name is a bare word or a single-quoted name; the include form takes a double-quoted path.",
+      "match": "(?<![\\w-])(?i:(see|import|include|require))\\s+(\"[^\"]*\"|'[^']+'|[A-Za-z_][A-Za-z0-9_]*)(?:\\s+(?i:(version|ver))\\s+(\"[^\"]*\"))?(?:\\s+(?i:(from|starting))\\s+(\"[^\"]*\"))?",
       "captures": {
         "1": { "name": "keyword.control.import.vox" },
-        "2": { "name": "string.quoted.double.vox" },
+        "2": {
+          "patterns": [
+            { "name": "string.quoted.double.vox", "match": "\".*\"" },
+            { "name": "entity.name.namespace.vox", "match": ".+" }
+          ]
+        },
         "3": { "name": "keyword.control.import.vox" },
         "4": { "name": "string.quoted.double.vox" },
         "5": { "name": "keyword.control.import.vox" },
@@ -126,7 +137,7 @@
       }
     },
     "type-possessive": {
-      "comment": "Positional type highlighting: in 'a <word>'s' (the type possessive that calls a maker), the <word> is a type name. The instance possessive 'origin's' has no leading 'a', so it is NOT matched here and stays a variable — only the type possessive gets the type scope. Runs before #articles.",
+      "comment": "Positional type highlighting: in 'a <word>'s' (the type possessive that calls a maker), the <word> is a type name. The instance possessive 'origin's' has no leading 'a', so it is NOT matched here and stays a variable - only the type possessive gets the type scope. Runs before #articles.",
       "match": "(?i)(?<![\\w-])(a)\\s+('[^']{2,}'|[A-Za-z_][A-Za-z0-9_]*)('s(?![A-Za-z0-9_]))",
       "captures": {
         "1": { "name": "punctuation.definition.vox" },
@@ -145,9 +156,9 @@
     "strings": {
       "patterns": [
         {
-          "comment": "Character literal: exactly one char between single quotes ('A'). A one-character quoted token is never a name.",
+          "comment": "Character literal: one character, or one backslash escape, between single quotes ('A', '\\n', '\\\\', '\\''). A one-character quoted token is never a name.",
           "name": "constant.character.vox",
-          "match": "'[^']'"
+          "match": "'(?:\\\\.|[^'\\\\])'"
         },
         {
           "comment": "Possessive marker on a bare name: person's length. Must run BEFORE the quoted-identifier rule, or its greedy [^']+ would swallow from this apostrophe to the next single quote anywhere later in the line.",
@@ -208,6 +219,10 @@
           "match": "-?\\b0[bB][01]+\\b"
         },
         {
+          "name": "constant.numeric.integer.octal.vox",
+          "match": "-?\\b0[oO][0-7]+\\b"
+        },
+        {
           "name": "constant.numeric.float.vox",
           "match": "-?\\b\\d+\\.\\d+\\b"
         },
@@ -256,19 +271,19 @@
       "match": "(?<![\\w-])(?i:(otherwise|returns|return|terminate|continue|repeat|break|while|when|then|else|exit|quit|skip|give|times|for|if))(?![\\w-])"
     },
     "import-keywords": {
-      "comment": "Library/import keywords: see, library, version (stray occurrences; the library-declaration and see-import patterns colour them in context).",
+      "comment": "Library/import keywords: see, library (stray occurrences; the library-declaration and see-import patterns colour them in context).",
       "name": "keyword.control.import.vox",
-      "match": "(?<![\\w-])(?i:(library|lib|version|ver|include|require|import|see))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(library|lib|ver|include|require|import|see))(?![\\w-])"
     },
     "action-keywords": {
       "comment": "Statement-level action verbs and modifiers.",
       "name": "keyword.other.vox",
-      "match": "(?<![\\w-])(?i:(automatic|deallocate|disabled|enabled|decrement|increment|display|prints|allocate|release|default|required|without|element|append|create|define|assign|enable|disable|parse|print|push|copy|clear|show|store|free|auto|flag|error|make|set))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(deallocate|decrement|increment|display|prints|allocate|release|default|required|without|element|append|create|define|assign|parse|print|push|copy|clear|show|store|free|flag|error|make|set))(?![\\w-])"
     },
     "argument-keywords": {
-      "comment": "Arguments and environment: argument(s), environment, variable, count, raw and their aliases.",
+      "comment": "Arguments and environment: argument(s), environment, variable and their aliases.",
       "name": "keyword.other.vox",
-      "match": "(?<![\\w-])(?i:(arguments|argument|parameters|parameter|params|param|environment|variable|args|arg|env|var|count|raw))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(arguments|argument|parameters|parameter|params|param|environment|variable|args|arg|env|var))(?![\\w-])"
     },
     "io-keywords": {
       "comment": "File I/O actions and stream modes.",
@@ -286,25 +301,24 @@
       "match": "(?<![\\w-])(?i:(bit-shift-right|bit-shift-left|bit-xor|bit-and|bit-or|bit-not|modulo|treating|remainder|equals|greater|smaller|subtract|multiply|divide|treat|bigger|larger|fewer|minus|equal|than|not|and|add|plus|mod|less|more|are|is|or|as))(?![\\w-])"
     },
     "property-keywords": {
-      "comment": "Standalone property/predicate keywords (reserved words, always the keyword): 'is empty', 'is zero', 'of size 16', etc.",
+      "comment": "Standalone property/predicate words that are reserved: 'is empty', 'is zero', 'is even', etc. Contextual property names (first, last, size, length, capacity, type, count, all) are ordinary names and are coloured only after a possessive (see #properties).",
       "name": "variable.other.property.vox",
-      "match": "(?<![\\w-])(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|type|values|zero|abs|fd|odd))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(absolute|permissions|accessed|descriptor|readable|writable|modified|negative|positive|perms|empty|even|full|keys|sign|values|zero|abs|fd|odd))(?![\\w-])"
     },
     "properties": {
-      "comment": "Possessive property access: X's capacity / X's first / X's all / X's count.",
-      "match": "('s)\\s*(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|type|values|zero|count|all|abs|fd|odd))(?![\\w-])",
+      "comment": "Possessive property access: X's capacity / X's first / X's all / X's count. The property word is coloured by what precedes it (an apostrophe-s, bare or after a quoted name), so contextual words such as first, size and count stay ordinary names everywhere else. Runs before #strings so it sees the apostrophe-s first.",
+      "match": "(?<='[sS])\\s*(?i:(absolute|permissions|accessed|capacity|descriptor|readable|writable|modified|negative|positive|perms|empty|even|first|full|keys|last|length|sign|size|type|values|zero|count|all|abs|fd|odd))(?![\\w-])",
       "captures": {
-        "1": { "name": "punctuation.accessor.vox" },
-        "2": { "name": "variable.other.property.vox" }
+        "1": { "name": "variable.other.property.vox" }
       }
     },
     "articles": {
       "comment": "Grammatical particles and range markers (articles, prepositions, collection quantifiers) - muted so they do not compete with real keywords. Lexer groups these as Range/Collection.",
       "name": "punctuation.definition.vox",
-      "match": "(?<![\\w-])(?i:(inside|into|within|with|starting|between|called|named|from|the|all|an|at|on|of|up|to|in|a))(?![\\w-])"
+      "match": "(?<![\\w-])(?i:(inside|into|within|with|starting|between|called|named|from|the|an|at|on|of|up|to|in|a))(?![\\w-])"
     },
     "function-call-bare": {
-      "comment": "Bare function call in expression position: addup of 3. Runs AFTER every keyword rule, so the only bare words that reach it are identifiers — keywords (element, byte, first, length, ...) are already consumed. The negative lookbehind still guards the two element-access idioms whose INDEX is a bare identifier: 'element N of list' and 'byte i of buffer'. Without it, N/i would be mis-coloured as a function call. Placed before #bare-identifier so a real callee takes the function-call scope, not the variable scope.",
+      "comment": "Bare function call in expression position: addup of 3. Runs AFTER every keyword rule, so the only bare words that reach it are identifiers; reserved words (element, byte, ...) are already consumed. The negative lookbehind still guards the two element-access idioms whose INDEX is a bare identifier: 'element N of list' and 'byte i of buffer'. Without it, N/i would be mis-coloured as a function call. Placed before #bare-identifier so a real callee takes the function-call scope, not the variable scope.",
       "match": "(?<!(?i:element|byte)\\s+)([A-Za-z_][A-Za-z0-9_]*)\\s+(?i:(of|on))(?![\\w-])",
       "captures": {
         "1": { "name": "entity.name.function.call.vox" },
@@ -312,7 +326,7 @@
       }
     },
     "bare-identifier": {
-      "comment": "Catch-all for bare identifiers (variables, bare callees without of/on, indices): total in 'called total', addup in 'print addup.', N in 'element N of list'. Runs LAST so every lexer keyword (the grammar covers all of them — check-grammar.sh enforces 0 missing) is matched by its own rule first; only leftover bare words are identifiers. This is what makes the common case — bare names, 767 of 788 after migration — render as names instead of grey, matching the quoted form's variable.other.vox scope.",
+      "comment": "Catch-all for bare identifiers (variables, bare callees without of/on, indices): total in 'called total', addup in 'print addup.', N in 'element N of list'. Runs LAST so every reserved word (check-grammar.sh enforces 0 missing) is matched by its own rule first; only leftover bare words are identifiers, including the contextual words that are not reserved. This is what makes the common case - bare names, 767 of 788 after migration - render as names instead of grey, matching the quoted form's variable.other.vox scope.",
       "name": "variable.other.vox",
       "match": "(?<![\\w-])[A-Za-z_][A-Za-z0-9_]*(?![\\w-])"
     }

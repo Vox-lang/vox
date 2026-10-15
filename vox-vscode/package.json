@@ -1,10 +1,11 @@
 {
   "name": "vox",
   "displayName": "VoxLang",
-  "description": "Syntax highlighting for Vox (sentence based code) (.vox files)",
+  "description": "Syntax highlighting for Vox (sentence-based code) (.vox files)",
   "version": "0.4.2",
   "homepage": "https://vox-lang.dev",
   "publisher": "vox-lang",
+  "author": "TheJostler",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -133,7 +134,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vox-lang/vox"
+    "url": "https://github.com/Vox-lang/vox"
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }
