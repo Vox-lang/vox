@@ -6,16 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-10-15
+
+Vox now installs with one mise command, as a single static binary that runs on any x86-64 Linux.
+
 ### Added
-- **A thing can hold text fields.** `a text called name is "Ada",` is a
-  field like any other: it takes a text default (or holds the empty text
-  without one), reads, writes, prints in double quotes, interpolates,
-  compares by its characters, and nests at any depth. A copy of a thing
-  never shares its text with the original, so changing a text field in
-  one copy is never seen in another. A write of a number, a boolean or
-  `nothing` into a text field is refused at the write. (#103)
-- **Octal number literals.** `0o17` is 15, beside `0x` hex and `0b`
-  binary; the prefix letter may be a capital. (#130)
 - **`mise use -g github:Vox-lang/vox` installs a static Vox that runs on
   any x86-64 Linux.** Each release carries
   `vox-<version>-x86_64-unknown-linux-musl.tar.gz` (with a `.sha256`):
@@ -26,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/).
   which mise installs on glibc 2.39 or newer. Compiling a program needs
   `nasm` and `ld` as before. The archive with the tests and examples is
   now named `vox-<version>-full.7z`.
+- **Octal number literals.** `0o17` is 15, beside `0x` hex and `0b`
+  binary; the prefix letter may be a capital. (#130)
 - **Closing a borrowed descriptor gives a warning.** A handle opened at a
   number borrows that descriptor, and `Close` on it closes the descriptor
   for the rest of the program. The program compiles and runs as written;
@@ -34,26 +31,22 @@ adheres to [Semantic Versioning](https://semver.org/).
   (standard input) for the rest of the program`. A handle opened by a
   path, and a file parameter, are closed without a warning.
 
-### Changed
-- **An ordering comparison on a `value` is a compile error, as arithmetic
-  on one is.** `If v is greater than 1` with `v` holding the text "two"
-  used to compare the text's address and answer true. `is greater than`,
-  `is less than`, their `or equal to` forms and their `not` forms now
-  refuse a `value` on either side, a variable or a call that returns one,
-  wherever the comparison stands. Equality on a `value` works as before.
-  To compare one by order, check it with `is a number`, put it in a number
-  variable, and compare that.
-- **The examples read as English, with every period in place.** Every
-  statement in `examples/` ends with its period and every clause opens
-  with its comma; `arithmetic.vox`, `greet.vox` and `and_keyword.vox` are
-  rewritten as plain sentences, and placeholder names such as `num1`, `i`
-  and `buf` are now the names of the things they hold.
-  `fizzbuzz.vox` and the manual's FizzBuzz use the one-sentence form,
-  `Print each number from 1 to 15, but if ...`, and every example names
-  its things in plain words, opens each sentence with a capital, keeps
-  one indent width, and builds each printed line from one format string.
-
 ### Fixed
+- **A thing can hold text, list, map and buffer fields.** `a text called
+  name is "Ada",`, `a list called items is ["eggs"],`, `a map called
+  counts is {},` and `a buffer called body is 64 bytes in size,` are
+  fields like any other, each used through the possessive wherever a
+  variable of its type is: `append "bread" to errand's items.`, `errand's
+  items's length`, `For each item in errand's items`. Every copy of a
+  thing, by assignment, as an argument or as a returned value, copies its
+  texts, lists, maps and buffers, so the copy and the original never share
+  one, and a list or map read out of a field into a variable is the
+  variable's own. A write of a number, a boolean or `nothing` into a text
+  field is refused at the write. A function called above a top-level
+  thing's declaration reads its fields as their defaults, where a text
+  field used to crash the program. Comparing two things that hold a list,
+  a map or a buffer is a compile error; a file, a timer and a `value` are
+  not field types. (#103)
 - **A name declared in only some branches of an `If` is reported where it
   is read, with the reason.** The error points at the read after the `If`,
   says when the name exists (`'kept' only exists when the condition on
@@ -156,30 +149,6 @@ adheres to [Semantic Versioning](https://semver.org/).
   the places and then the padding, and a list element holding a text or
   a float pads the same way. A value already as wide as the width is
   printed as it is. (#148)
-- **A thing can hold list, map and buffer fields.** `a list called items
-  is ["eggs"],`, `a map called counts is {},` and `a buffer called body is
-  64 bytes in size,` are fields like any other, each used through the
-  possessive wherever a variable of its type is: `append "bread" to
-  errand's items.`, `errand's items's length`, `For each item in errand's
-  items`. Every copy of a thing, by assignment, as an argument or as a
-  returned value, copies its lists, maps and buffers, so the copy and the
-  original never share one, and a list or map read out of a field into a
-  variable is the variable's own. A function called above a top-level
-  thing's declaration reads its text, list, map and buffer fields as their
-  defaults. Two things holding one are not compared with `is`; a file, a
-  timer and a `value` are still not field types. (#103)
-
-### Changed
-- **The compiler now builds with no third-party crates.** The unused
-  `thiserror` dependency is gone, so `Cargo.lock` lists only vox-lang
-  and the RPM spec no longer needs a vendor tarball or `bundled(crate(...))`
-  declarations.
-- **The manual presents paragraphs and periods as Vox's prose
-  structure:** a sentence ends a clause, a paragraph ends a section.
-- **The manual states its rules plainly:** headings and notes that framed
-  a rule as a limitation, a workaround or a status report now state the rule.
-
-### Fixed
 - **A device node's major and minor now reach mknod(2) as the standard Linux
   device number, so a minor above 255 is no longer cut short.** The two were
   packed in the old 16-bit layout (major shifted by 8, minor added on top), so
@@ -226,6 +195,33 @@ adheres to [Semantic Versioning](https://semver.org/).
   ordinary identifier, `is available` is the path-level existence check, a
   call carries its runtime tag only when its function returns a `value`, and
   the cast diagnostic for a dynamically-tagged value is quoted exactly.
+
+### Changed
+- **An ordering comparison on a `value` is a compile error, as arithmetic
+  on one is.** `If v is greater than 1` with `v` holding the text "two"
+  used to compare the text's address and answer true. `is greater than`,
+  `is less than`, their `or equal to` forms and their `not` forms now
+  refuse a `value` on either side, a variable or a call that returns one,
+  wherever the comparison stands. Equality on a `value` works as before.
+  To compare one by order, check it with `is a number`, put it in a number
+  variable, and compare that.
+- **The examples read as English, with every period in place.** Every
+  statement in `examples/` ends with its period and every clause opens
+  with its comma; `arithmetic.vox`, `greet.vox` and `and_keyword.vox` are
+  rewritten as plain sentences, and placeholder names such as `num1`, `i`
+  and `buf` are now the names of the things they hold.
+  `fizzbuzz.vox` and the manual's FizzBuzz use the one-sentence form,
+  `Print each number from 1 to 15, but if ...`, and every example names
+  its things in plain words, opens each sentence with a capital, keeps
+  one indent width, and builds each printed line from one format string.
+- **The compiler now builds with no third-party crates.** The unused
+  `thiserror` dependency is gone, so `Cargo.lock` lists only vox-lang
+  and the RPM spec no longer needs a vendor tarball or `bundled(crate(...))`
+  declarations.
+- **The manual presents paragraphs and periods as Vox's prose
+  structure:** a sentence ends a clause, a paragraph ends a section.
+- **The manual states its rules plainly:** headings and notes that framed
+  a rule as a limitation, a workaround or a status report now state the rule.
 
 ## [0.4.15] - 2026-09-06
 
