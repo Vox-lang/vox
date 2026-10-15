@@ -1,0 +1,5 @@
+(A buffer field is declared as a buffer variable is, by a size in bytes or
+ by a text; a bare number names neither.)
+
+A thing called note has
+  a buffer called body is 64.

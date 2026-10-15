@@ -74,6 +74,7 @@ impl CodeGenerator {
         // than the zero it starts life with. Emitted after the walk, when
         // every function has said which globals it had to look ahead for.
         self.emit_forward_global_defaults();
+        self.emit_global_thing_defaults();
         let defaults_code = std::mem::take(&mut self.output);
         self.output = defaults_code + &body_code;
 
@@ -292,9 +293,10 @@ impl CodeGenerator {
         result
     }
 
-    fn generate_statement(&mut self, stmt: &Statement) {
+    pub(crate) fn generate_statement(&mut self, stmt: &Statement) {
         let outer_marker = self.begin_cast_failure_marker(stmt);
         self.generate_statement_body(stmt);
+        self.copy_out_of_collection_field(stmt);
         self.cast_failure_marker = outer_marker;
     }
 
@@ -1338,8 +1340,7 @@ impl CodeGenerator {
                             "mov rdi, [rbp-{}]  ; the caller's destination",
                             slot
                         ));
-                        let size = self.thing_storage_size(&thing);
-                        self.emit_thing_copy(size, &format!("the returned {}", thing));
+                        self.emit_thing_copy_of(&thing, &format!("the returned {}", thing));
                     }
                 }
                 self.emit_indent(&format!(
@@ -1369,6 +1370,16 @@ impl CodeGenerator {
                         self.generate_expr_as_text(v);
                     } else {
                         self.generate_expr(v); // leaves return payload in RAX
+                        // A list or a map field handed back is the caller's
+                        // own copy; the field stays the thing's (#103).
+                        if let Expr::Identifier(source) = v {
+                            if let Some(collection @ (Type::List(_) | Type::Map(_))) =
+                                self.collection_fields.get(source).cloned()
+                            {
+                                self.emit_indent("mov rdi, rax");
+                                self.emit_collection_copy(&collection);
+                            }
+                        }
                     }
                     // #91: `Return a text, element 5 of xs.` hands the caller's
                     // text slot the miss's 0 unless it is re-typed here.
@@ -1549,6 +1560,7 @@ impl CodeGenerator {
                         self.stack_offset += self.thing_storage_size(thing) as i64;
                         self.variables.insert(param_name.clone(), self.stack_offset);
                         self.thing_vars.insert(param_name.clone(), thing.clone());
+                        self.register_collection_fields(param_name, thing);
                     } else {
                         self.alloc_var(param_name);
                     }
@@ -1820,8 +1832,7 @@ impl CodeGenerator {
                 for (thing, offset) in things_to_copy {
                     self.emit_indent(&format!("mov rsi, [rbp-{}]  ; the caller's {}", offset, thing));
                     self.emit_indent(&format!("lea rdi, [rbp-{}]", offset));
-                    let size = self.thing_storage_size(&thing);
-                    self.emit_thing_copy(size, &format!("a {} parameter", thing));
+                    self.emit_thing_copy_of(&thing, &format!("a {} parameter", thing));
                 }
 
                 // Frame setup for docs/BUGS_FOUND.md #25 (plan 318 §1):

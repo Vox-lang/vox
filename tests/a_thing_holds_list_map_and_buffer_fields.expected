@@ -1,0 +1,32 @@
+{title: "shopping", items: ["eggs"], done: [], counts: {"eggs": 6}, prices: {}, body: "milk", scratch: ""}
+the scratch buffer holds four bytes
+{title: "shopping", items: ["eggs", "bread"], done: [3.5], counts: {"eggs": 6, "bread": 1}, prices: {"milk": 2}, body: "milk and honey", scratch: "abcd"}
+2
+eggs
+bread
+bread
+duck eggs
+bread
+eggs
+bread
+6
+109
+Milk and honey
+14
+something done
+items ["duck eggs", "bread"] and counts {"eggs": 6, "bread": 1}
+body Milk and honey, 2 items
+[1, 2]
+[1, 2, 3]
+{title: "shopping", items: ["duck eggs", "bread"], done: [1, 2], counts: {"eggs": 6, "bread": 1}, prices: {"tea": 4}, body: "shopping!", scratch: "abcd"}
+{title: "shopping", items: ["duck eggs", "bread"], done: [1, 2], counts: {"eggs": 6, "bread": 1}, prices: {"tea": 4}, body: "shopping!", scratch: "abcd"}
+["duck eggs", "bread", "only taken"]
+{"eggs": 6, "bread": 1, "only counted": 0}
+shopping!?
+["duck eggs", "bread"]
+["duck eggs", "bread", "only returned"]
+22
+[]
+a freed list refuses an append
+a second Free sets the error flag
+0

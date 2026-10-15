@@ -1,0 +1,2 @@
+Field 'items' of thing 'note' is a list, but its default is a number
+a_list_field_takes_a_list_default.vox:5:17

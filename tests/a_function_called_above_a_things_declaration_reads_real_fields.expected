@@ -1,0 +1,3 @@
+{title: "shopping", items: ["eggs"], counts: {}, body: "milk"}
+["eggs", "bread"]
+{title: "shopping", items: ["eggs"], counts: {}, body: "milk"}

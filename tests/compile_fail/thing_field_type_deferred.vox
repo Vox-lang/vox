@@ -1,8 +1,8 @@
-(Compile-fail: plan 310 §6 - a field may be a number, float, boolean,
- time, text, or any previously defined thing. A list can be changed in
- place, so sharing one between two copies of a thing would be visible;
- a list field is rejected at the definition rather than declared as
- eight bytes two copies would share.)
+(Compile-fail: a field may be a number, float, boolean, time, text, list,
+ map, buffer, or any previously defined thing. A file is a handle on
+ something outside the program, which a copy of the thing cannot
+ duplicate, so a file field is rejected at the definition rather than
+ declared as eight bytes two copies would share.)
 
 A thing called label has
-  a list called captions.
+  a file called captions.

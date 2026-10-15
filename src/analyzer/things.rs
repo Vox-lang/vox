@@ -256,8 +256,54 @@ pub(crate) fn find_cycle(defs: &ThingRegistry, name: &str) -> Option<Vec<String>
     walk(defs, name, &mut Vec::new())
 }
 
+/// Every list, map and buffer field of `thing`, through nesting, in layout
+/// order: the field chain that names it (`tags`, `leg's stops`), its byte
+/// offset, and the field. A thing owns these collections: a declaration
+/// makes each one, and a copy of the thing copies each one (docs/BUGS_FOUND.md
+/// #103).
+pub(crate) fn collection_fields(defs: &ThingRegistry, thing: &str) -> Vec<(Vec<String>, u64, FieldDef)> {
+    fn walk(
+        defs: &ThingRegistry,
+        name: &str,
+        base: u64,
+        prefix: &mut Vec<String>,
+        stack: &mut Vec<String>,
+        out: &mut Vec<(Vec<String>, u64, FieldDef)>,
+    ) {
+        if stack.iter().any(|n| n == name) {
+            return;
+        }
+        let Some(def) = defs.get(name) else {
+            return;
+        };
+        stack.push(name.to_string());
+        let mut cursor = base;
+        for field in &def.fields {
+            prefix.push(field.name.clone());
+            match &field.field_type {
+                Type::Thing(inner) => {
+                    walk(defs, inner, cursor, prefix, stack, out);
+                    cursor += size_with(defs, inner, &mut Vec::new());
+                }
+                Type::List(_) | Type::Map(_) | Type::Buffer => {
+                    out.push((prefix.clone(), cursor, field.clone()));
+                    cursor += SLOT_BYTES;
+                }
+                _ => cursor += SLOT_BYTES,
+            }
+            prefix.pop();
+        }
+        stack.pop();
+    }
+
+    let mut out = Vec::new();
+    walk(defs, thing, 0, &mut Vec::new(), &mut Vec::new(), &mut out);
+    out
+}
+
 /// Whether a field type is one a thing can hold (plan 310 §6): number,
-/// float, boolean, time, text, and any previously defined thing.
+/// float, boolean, time, text, list, map, buffer, and any previously defined
+/// thing.
 ///
 /// A text field is one slot holding the text's pointer, like a text
 /// variable. Copying the slot shares the bytes, and that sharing cannot be
@@ -268,12 +314,16 @@ pub(crate) fn find_cycle(defs: &ThingRegistry, name: &str) -> Option<Vec<String>
 /// #108), and `collect_freeable_texts` counts a field write as a retaining
 /// read, so a string a field holds is never one of those.
 ///
-/// The excluded types are deferred by §6, not forgotten: buffer/list/map
-/// (plus the file/timer/value handles, which are the same
-/// reference-carrying shape) can be changed in place, so sharing one
-/// between two copies would be visible and reopens the aliasing question
-/// §5's value semantics deliberately avoid. A definition using one is
-/// rejected rather than silently declared and read as garbage.
+/// A list, a map and a buffer field are one slot holding the collection's
+/// pointer, and the thing owns what it points at: every copy of the thing
+/// copies the collection too, so two copies never share one
+/// (docs/BUGS_FOUND.md #103).
+///
+/// A file, a timer and a `value` are not field types: a file and a timer
+/// are handles on something outside the program, which a copy cannot
+/// duplicate, and a `value` carries its type in a tag beside it, which a
+/// field has no place for. A definition using one is rejected rather than
+/// silently declared and read as garbage.
 pub(crate) fn v1_field_type_supported(field_type: &Type) -> bool {
     matches!(
         field_type,
@@ -282,6 +332,9 @@ pub(crate) fn v1_field_type_supported(field_type: &Type) -> bool {
             | Type::Boolean
             | Type::Time
             | Type::String
+            | Type::List(_)
+            | Type::Map(_)
+            | Type::Buffer
             | Type::Thing(_)
     )
 }
@@ -427,11 +480,11 @@ impl Analyzer {
                 if !v1_field_type_supported(&field.field_type) {
                     self.push_error(
                         format!(
-                            "Field '{}' of thing '{}' is a {}, which a thing cannot hold yet\n  \
-                             A field's type may be number, float, boolean, time, text, or any \
-                             thing defined earlier (plan 310 §6).\n  \
-                             buffer, list, map, file, timer, and value carry references, which \
-                             value semantics (§5) deliberately keep out.",
+                            "Field '{}' of thing '{}' is a {}, which a thing cannot hold\n  \
+                             A field's type may be number, float, boolean, time, text, list, \
+                             map, buffer, or any thing defined earlier.\n  \
+                             A file and a timer are handles a copy cannot duplicate, and a \
+                             value keeps its type beside it, where a field has no room.",
                             field.name,
                             def.name,
                             self.type_name(&field.field_type)
@@ -478,6 +531,32 @@ impl Analyzer {
     /// local is known inside that function.
     pub(crate) fn declare_thing_variable(&mut self, name: &str, thing: &str) {
         self.thing_vars.insert(name.to_string(), thing.to_string());
+        self.declare_collection_fields(name, thing, false);
+    }
+
+    /// Make each list, map and buffer field of the thing `name` holds a name
+    /// in its own right (`note's tags`), typed as a variable of its type, so
+    /// every statement that reads or changes a collection takes the field as
+    /// it takes a variable. `global` puts the names in the whole program's
+    /// scope, as a top-level declaration's own name is.
+    pub(crate) fn declare_collection_fields(&mut self, name: &str, thing: &str, global: bool) {
+        for (path, _, field) in collection_fields(&self.things, thing) {
+            let alias = render_chain(name, &path);
+            if global {
+                self.global_variables.insert(alias.clone());
+            } else {
+                self.declare_variable_in_current_scope(&alias);
+            }
+            match &field.field_type {
+                Type::Buffer => {
+                    self.buffer_variables.insert(alias);
+                }
+                collection => {
+                    let collection = collection.clone();
+                    self.declare_collection(&alias, &collection, field.default.as_ref());
+                }
+            }
+        }
     }
 
     /// Validate a field chain and return the type it lands on, which may be
@@ -719,6 +798,8 @@ impl Analyzer {
                 Type::Integer => "; 0 is the empty one",
                 Type::Float => "; 0.0 is the empty one",
                 Type::Boolean => "; false is the empty one",
+                Type::List(_) => "; [] is the empty one",
+                Type::Map(_) => "; {} is the empty one",
                 _ => "",
             };
             format!(
@@ -740,7 +821,12 @@ impl Analyzer {
             if matches!(actual, Type::Value | Type::Void | Type::Unknown) {
                 return;
             }
-            if matches!(declared, Type::String) && matches!(actual, Type::Buffer) {
+            // A text and a buffer each take the other's bytes, as `copy`
+            // puts them in.
+            if matches!(
+                (declared, &actual),
+                (Type::String, Type::Buffer) | (Type::Buffer, Type::String)
+            ) {
                 return;
             }
             if self.treating_types_compatible(declared, &actual)
@@ -858,8 +944,33 @@ impl Analyzer {
         }
         match (&left_thing, &right_thing) {
             // The feature: the same thing on both sides, compared field by
-            // field and recursing through whatever those fields nest.
-            (Some(left_thing), Some(right_thing)) if left_thing == right_thing => {}
+            // field and recursing through whatever those fields nest. The
+            // manual says how a text field compares and not how a list, a map
+            // or a buffer field does, so a thing holding one is refused
+            // rather than compared by a rule nobody wrote.
+            (Some(left_thing), Some(right_thing)) if left_thing == right_thing => {
+                if let Some((path, _, field)) =
+                    collection_fields(&self.things, left_thing).into_iter().next()
+                {
+                    self.push_error(
+                        format!(
+                            "'{}' and '{}' cannot be compared with `is`, because a {} holds \
+                             a {} ('{}')\n  \
+                             `is` compares two things field by field, and a list, a map or a \
+                             buffer field is not one it compares.\n  \
+                             Compare the fields you need instead - {}'s fields are: {}",
+                            render_thing_operand(left),
+                            render_thing_operand(right),
+                            left_thing,
+                            self.type_name(&field.field_type),
+                            path.join("'s "),
+                            left_thing,
+                            self.fields_of(left_thing)
+                        ),
+                        Some(thing_operand_symbol(left)),
+                    );
+                }
+            }
             (Some(left_thing), Some(right_thing)) => {
                 self.push_error(
                     format!(
@@ -1028,13 +1139,18 @@ pub(crate) enum ThingSource {
 /// Whether a field's literal default can be stored as the field's declared
 /// type. A whole number is accepted for a float (`is 0` reads naturally for
 /// one, and the widening is exact); everything else must match.
+///
+/// A buffer takes a text, or its size in bytes, which the parser reads into
+/// the whole number this sees (only `is 64 bytes in size` writes one).
 fn default_matches_field_type(default: &Expr, field_type: &Type) -> bool {
     matches!(
         (default, field_type),
-        (Expr::IntegerLit(_), Type::Integer | Type::Float | Type::Time)
+        (Expr::IntegerLit(_), Type::Integer | Type::Float | Type::Time | Type::Buffer)
             | (Expr::FloatLit(_), Type::Float)
             | (Expr::BoolLit(_), Type::Boolean)
-            | (Expr::StringLit(_), Type::String)
+            | (Expr::StringLit(_), Type::String | Type::Buffer)
+            | (Expr::ListLit { .. }, Type::List(_))
+            | (Expr::MapLit { .. }, Type::Map(_))
     )
 }
 
@@ -1045,6 +1161,8 @@ fn literal_type_name(default: &Expr) -> &'static str {
         Expr::FloatLit(_) => "float",
         Expr::BoolLit(_) => "boolean",
         Expr::StringLit(_) => "text",
+        Expr::ListLit { .. } => "list",
+        Expr::MapLit { .. } => "map",
         Expr::NothingLit => "nothing",
         // `parse_field_default` accepts only the literals above.
         _ => "value",
@@ -1300,14 +1418,14 @@ mod tests {
             Type::Boolean,
             Type::Time,
             Type::String,
+            Type::Buffer,
+            Type::List(Box::new(Type::Unknown)),
+            Type::Map(Box::new(Type::Unknown)),
             Type::Thing("point".into()),
         ] {
             assert!(v1_field_type_supported(&ok), "{:?} is a v1 field", ok);
         }
         for deferred in [
-            Type::Buffer,
-            Type::List(Box::new(Type::Unknown)),
-            Type::Map(Box::new(Type::Unknown)),
             Type::File,
             Type::Timer,
             Type::Value,

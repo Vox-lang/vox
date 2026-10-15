@@ -1,0 +1,62 @@
+(A width pads a float, a text and a buffer out to that many characters,
+ exactly as it pads a number, in every place a format string renders.)
+
+To 'announce the line' with a text called line.
+  Print line.
+
+a number called count is 42.
+a number called debt is -42.
+a float called price is 3.5.
+a float called loss is -3.5.
+a text called name is "Vox".
+a buffer called word is "hi".
+
+(Print position.)
+Print "[{count:8}] [{price:8}] [{name:8}] [{word:8}]".
+Print "[{debt:08}] [{loss:08}] [{price:08}] [{name:08}]".
+Print "[{count:8.2}] [{price:8.2}] [{loss:08.2}]".
+
+(A value as wide as the width, or wider, is printed as it is.)
+Print "[{price:3}] [{price:2}] [{name:3}] [{name:1}] [{price:0}] [{name:0}]".
+
+(A text, a buffer, a file and a call argument render the same characters.)
+a text called line is "[{count:8}] [{price:8}] [{name:8}] [{word:8}]".
+Print line.
+a text called signed is "[{loss:08}] [{price:08}] [{name:08}] [{loss:08.2}]".
+Print signed.
+a buffer called report is 64 bytes in size.
+copy "[{price:6}]" to report.
+append "[{name:6}]" to report.
+Print report.
+'announce the line' of "[{price:7.1}] [{name:7}]".
+open a file for writing called record at "./a_width_pads_a_float.txt".
+Write "[{price:6}] [{name:6}]\n" to record.
+Close record.
+open a file for reading called stored at "./a_width_pads_a_float.txt".
+a buffer called 'stored line' is 64 bytes in size.
+Read line from stored into 'stored line'.
+Print 'stored line' without newline.
+Close stored.
+Delete the file "./a_width_pads_a_float.txt".
+
+(A list element whose type is known only when the program runs.)
+a list called mixed is [1, "two", 3.5].
+Print "[{element 2 of mixed:5}] [{element 3 of mixed:5}]".
+a text called tagged is "[{element 2 of mixed:5}] [{element 3 of mixed:5}]".
+Print tagged.
+
+(The same hole, every time round a loop.)
+For each number from 1 to 3,
+  Print "[{price:5}{name:5}]".
+
+(A padded value that does not fit a fixed buffer keeps what fits.)
+a buffer called small is 6 bytes in size.
+copy "[{name:9}]" to small.
+On error Print "the padded name does not fit in six bytes".
+Print small.
+
+(A float longer than a page is padded too: 4200 characters, ten of them fill.)
+a buffer called long is 8192 bytes in size.
+copy "{price:4200.4188}" to long.
+Print long's length.
+Print "{price:4200.4188}".

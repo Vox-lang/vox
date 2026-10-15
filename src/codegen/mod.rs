@@ -248,6 +248,9 @@ pub struct CodeGenerator {
     /// around a function body like `declared_types`, so a function's own
     /// locals do not leak into what is generated after it.
     thing_vars: HashMap<String, String>,
+    // The name of each list, map and buffer field of a thing variable
+    // (`note's tags`), and the field's type (docs/BUGS_FOUND.md #103).
+    collection_fields: HashMap<String, Type>,
     /// Every text variable name `collect_freeable_texts` has proven, for the
     /// WHOLE program, is (a) declared only ever as `a text` (never a buffer,
     /// a `value`, a parameter, a for-each/for-range loop variable) and (b)
@@ -383,7 +386,7 @@ use flags::FlagSchemaRuntime;
 mod syscalls;
 mod buffers;
 mod format;
-pub(crate) use format::{read_format_spec, read_format_spec_ask, FormatSpecAsk, FormatSpecFault, FORMAT_MAX_COUNT};
+pub(crate) use format::{pad_fill, read_format_spec, read_format_spec_ask, FormatSpecAsk, FormatSpecFault, FORMAT_MAX_COUNT};
 mod vars;
 use vars::list_literal_element_vartype;
 mod functions;
@@ -613,6 +616,7 @@ impl CodeGenerator {
             target_arch: "x86_64".to_string(),
             things: HashMap::new(),
             thing_vars: HashMap::new(),
+            collection_fields: HashMap::new(),
             freeable_texts: std::collections::HashSet::new(),
             global_text_owned_labels: HashMap::new(),
         }

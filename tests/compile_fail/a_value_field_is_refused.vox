@@ -1,0 +1,5 @@
+(A `value` keeps its type in a tag beside it, which a field has no place
+ for, so a value field is refused at the definition.)
+
+A thing called holder has
+  a value called anything.

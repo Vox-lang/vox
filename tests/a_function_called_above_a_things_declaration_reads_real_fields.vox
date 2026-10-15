@@ -1,0 +1,18 @@
+(A function may read a top-level thing declared below the call. Before
+ the declaration runs, its text, list, map and buffer fields already hold
+ their defaults; the declaration then gives the thing its defaults again.)
+
+A thing called note has
+  a text called title is "shopping",
+  a list called items is ["eggs"],
+  a map called counts,
+  a buffer called body is "milk".
+
+To 'look at the note'.
+  Print errand.
+  append "bread" to errand's items.
+  Print errand's items.
+
+'look at the note'.
+a note called errand.
+Print errand.

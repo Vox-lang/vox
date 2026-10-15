@@ -11556,7 +11556,11 @@ type is `list` with `value: None`. The conditional-defaults path
 
 ### 103. A thing with a disallowed field type gets two errors, the first garbled — and the field-type surface itself is narrower than it should be
 
-**Status:** Open, text fields delivered (tests 720-738); list, map and buffer fields await the owner's design ruling.
+**Status:** **fixed** (unreleased). Text fields delivered first (tests 720-738); list, map and buffer fields delivered
+after TheJostler's rulings of 2026-10-05. Regression tests: tests/a_thing_holds_list_map_and_buffer_fields.vox,
+tests/a_copy_of_a_thing_never_shares_its_lists_maps_or_buffers.vox,
+tests/a_function_called_above_a_things_declaration_reads_real_fields.vox, and tests/compile_fail/two_things_holding_a_list_cannot_be_compared.vox,
+a_list_field_takes_a_list_default.vox, a_buffer_field_size_is_written_in_bytes.vox, a_value_field_is_refused.vox.
 Registered 2026-08-25 (GitHub #243). Severity: **diagnostic
 bug + owner-declared design gap**. Verified on vox 0.4.13 (873daf8),
 2026-08-25.
@@ -11612,6 +11616,33 @@ type IS supported still gets the default-mismatch error when its literal
 default doesn't match (pinned by `tests/compile_fail/274`). Only the
 diagnostic ordering changed — the field-type surface itself is untouched, per
 scope.
+
+**Owner rulings (TheJostler, 2026-10-05).** Lists and maps inside things copy with the thing: a thing is a value, so
+copying a thing copies its list and map fields, and the copy and the original never share a collection. Freeing a
+collection frees the collections it holds.
+
+**Fix: list, map and buffer fields.** The field-type surface is now number, float, boolean, time, text, list, map,
+buffer and any thing defined earlier:
+- A list, a map or a buffer field is one slot holding the collection, and the thing owns it. Each declaration of a
+  thing makes a fresh one from the field's default, written as a variable's is: `is ["eggs"]`, `is {"eggs": 6}`,
+  `is 64 bytes in size`, `is "milk"`; with no default, an empty list, an empty map or an empty growing buffer.
+- The field chain names the collection wherever a variable of its type is named: `append "bread" to errand's
+  items.`, `Set errand's counts's "bread" to 1.`, `copy "abc" to errand's body.`, `Set element 1 of ...`, `Set byte 1
+  of ...`, `Free errand's items.`, `For each item in errand's items`, `errand's items's length`, `errand's counts's
+  "eggs"`, interpolation, and a list parameter, which grows the field as it grows a variable.
+- Every copy of a thing (a declaration from another, a bare or `Set` assignment, a thing parameter, a returned
+  thing, a nested thing written whole) copies each list, map and buffer field after the bytes are copied, so the
+  copy and the original never share one, at any depth. A list, a map or a buffer written into a field is copied in,
+  and a list or a map read out of a field into a variable, or returned, is a copy.
+- `Print` shows a list or a map field as it shows the collection on its own, and a buffer field's text in double
+  quotes, as a text field's.
+- A top-level thing's text, list, map and buffer fields hold their defaults from the program's first statement, so a
+  function called above the declaration reads real ones; the declaration writes its defaults again when it is
+  reached. (A text field read this way used to be a null pointer, and printing it segfaulted.)
+- `is` between two things holding a list, a map or a buffer field is a compile error: the manual says how a text
+  field compares and does not say how these do.
+- A file, a timer and a `value` stay refused, each with one message that says why: a file and a timer are handles
+  a copy cannot duplicate, and a `value` keeps its type in a tag beside it, which a field has no place for.
 
 ---
 
@@ -13868,7 +13899,7 @@ error: Cannot use a value v in arithmetic: its type is only known at runtime, an
 
 ### 148. A width in a format string is accepted and not applied on a `float` or a `text`
 
-**Status:** Open (planned). Registered 2026-10-13; confirmed by TheJostler 2026-10-13.
+**Status:** **fixed** (unreleased). Registered 2026-10-13; confirmed by TheJostler 2026-10-13. Regression test: tests/a_width_pads_a_float_a_text_and_a_buffer.vox
 
 ```vox
 a number called count is 42.
@@ -13892,6 +13923,8 @@ Verified on vox main f06df27.
 **Root cause:** the runtime has no routine that pads a float or a text yet. The width is parsed and checked, and code generation then prints the float or the text with its unpadded renderer.
 
 **Fix direction:** TheJostler confirmed that padding a float and a text to a width is planned.
+
+**Fix:** a float, a text and a buffer are padded out to the width with the fill the specifier names, exactly as a number is. In every sink but Print the value is appended by its own routine and then moved right inside the destination, with the fill written in front of it (`_buffer_pad_tail`). Print writes straight to standard output, so a text is counted and printed behind its fill, and a float is first rendered into a reused buffer by the routine every other sink uses, then counted and printed the same way (`_print_padded_bytes`). The rules a number follows hold for all three: a value as wide as the width or wider is printed as it is, a width of 0 pads nothing, a zero fill goes after a float's minus sign (`{loss:08}` is `-00003.5`, as `{debt:08}` is `-0000042`), `{price:8.2}` takes the places and then the padding, and a padded value that does not fit a fixed buffer keeps what fits and sets the error flag. A list element whose type is known only at run time pads by its type the same way. The manual's "Format Strings" section states the rule.
 
 ---
 

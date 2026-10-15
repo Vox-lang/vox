@@ -7,10 +7,11 @@
 // garbled sibling is GONE; this test spawns the compiler and asserts the
 // "but its default is" template is absent, so exactly one error survives.
 //
-// Text became a field type later in #103's life, so the rejected case now
-// uses a buffer field (still not a field type) with the same text default,
-// which reaches the same two templates; the register's original repro is
-// pinned separately as the program that now compiles.
+// Text, and then list, map and buffer, became field types later in #103's
+// life, so the rejected case now uses a timer field (not a field type) with
+// the same text default, which reaches the same two templates; the
+// register's original repro is pinned separately as the program that now
+// compiles.
 
 use std::fs;
 use std::process::{Command, Stdio};
@@ -71,11 +72,11 @@ fn rejected_field_type_reports_exactly_one_error() {
     let (ok, stderr) = compile_stderr(
         &work,
         "A thing called 'file report' has\n  \
-           a buffer called filename is \"\",\n  \
+           a timer called filename is \"\",\n  \
            a number called lines is 0.\n",
     );
 
-    assert!(!ok, "a thing with a buffer field must still be rejected");
+    assert!(!ok, "a thing with a timer field must still be rejected");
     assert_eq!(
         stderr.matches("error:").count(),
         1,
@@ -83,7 +84,7 @@ fn rejected_field_type_reports_exactly_one_error() {
         stderr
     );
     assert!(
-        stderr.contains("which a thing cannot hold yet"),
+        stderr.contains("is a timer, which a thing cannot hold"),
         "the surviving error must be the field-type rejection; got:\n{}",
         stderr
     );
