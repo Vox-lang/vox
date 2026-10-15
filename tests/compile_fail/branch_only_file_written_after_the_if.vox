@@ -1,0 +1,4 @@
+A boolean called verbose is true.
+If verbose then,
+    Open a file for writing called report at 1.
+Write "done\n" to report.

@@ -231,6 +231,44 @@ impl Analyzer {
             .or_else(|| self.find_symbol_location(symbol, occurrence))
     }
 
+    /// Where the `occurrence`-th `Close [the] <file>` statement is, in code
+    /// (never a comment or a text literal), for the borrowed-descriptor
+    /// warning. The caret goes on the handle's name.
+    pub(crate) fn find_close_location(&self, file: &str, occurrence: usize) -> Option<SourceLocation> {
+        let source = self.source_file.as_ref()?;
+        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let mut seen = 0usize;
+        for (idx, line) in source.content.lines().enumerate() {
+            let line_no = idx + 1;
+            let lower = line.to_ascii_lowercase();
+            let bytes = line.as_bytes();
+            let mut search_from = 0usize;
+            while let Some(rel) = lower[search_from..].find("close ") {
+                let verb = search_from + rel;
+                search_from = verb + 1;
+                if verb > 0 && is_word(bytes[verb - 1]) {
+                    continue;
+                }
+                let mut name_col = verb + "close ".len();
+                if lower[name_col..].starts_with("the ") {
+                    name_col += "the ".len();
+                }
+                let name_end = name_col + file.len();
+                if line.get(name_col..name_end) != Some(file)
+                    || bytes.get(name_end).map_or(false, |b| is_word(*b))
+                    || source.region_of(line_no, name_col, name_end) != SourceRegion::Code
+                {
+                    continue;
+                }
+                if seen == occurrence {
+                    return Some(SourceLocation::new(&source.filename, line_no, name_col + 1, line));
+                }
+                seen += 1;
+            }
+        }
+        None
+    }
+
     /// Like `find_write_site_location`, for a statement that *binds* `name`
     /// through some construct-specific syntax rather than `is`/`to`
     /// (a for-range/for-each loop header, `open ... called X`, `Allocate N
@@ -370,6 +408,15 @@ impl Analyzer {
                 self.push_used_before_declaration(name);
                 return;
             }
+            // The same for "Unknown file/buffer/list/...: X" when X was
+            // declared in only some branches of an `If`: the read is on a
+            // path where X does not exist, which is the thing to say.
+            if message.starts_with("Unknown ")
+                && !self.is_variable_available(name)
+                && self.push_branch_only_use(name)
+            {
+                return;
+            }
         }
         let mut err = CompileError::new(&message);
         if let Some(name) = symbol {
@@ -436,24 +483,153 @@ impl Analyzer {
             } else {
                 None
             }
-        }).or_else(|| {
-            // `declared_locations` records EVERY declaration this walk has
-            // seen, including a some-branches-only one that didn't survive
-            // the if/otherwise merge (LANGUAGE.md "Declarations in
-            // Branches") - so its presence here, when nothing else
-            // explains the error, means `name` isn't a typo: it exists,
-            // just not on every path that reaches this read.
-            self.declared_locations.get(name).map(|_| format!(
-                "`{}` is declared only in some branches of an `if`/`otherwise`, so it is not in scope after it - declare it in every branch, or before the `if`",
-                name
-            ))
         });
+        // A name declared in only some branches of an `If` is not unknown:
+        // it exists on that branch's path and nowhere after the `If`
+        // (LANGUAGE.md "Declarations in Branches"). Say that, at the read.
+        if hint.is_none() && self.push_branch_only_use(name) {
+            return;
+        }
         // Anchor on the actual failing read, not the (textually earlier)
         // declaration that happens to contain the same name (plan 318 §3).
         let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
         let location = self.find_use_site_location(name, occurrence);
         self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
         self.push_error_with_hint_at(format!("Unknown variable: {}", name), location, hint.as_deref());
+    }
+
+    /// Whether an unavailable `name` should be left to `check_for_typos` as
+    /// a possibly misspelled keyword. A name this program declares is no
+    /// typo, however close it sits to a keyword: `kept` was declared, and
+    /// "did you mean `set`?" at its declaration hides the real reason the
+    /// read failed.
+    pub(crate) fn may_be_a_keyword_typo(&self, name: &str) -> bool {
+        find_similar_keyword(name, ENGLISH_KEYWORDS).is_some()
+            && !self.is_branch_only(name)
+            && !self.declared_locations.contains_key(name)
+    }
+
+    /// Whether `name` was declared in only some branches of an `If`, and so
+    /// is missing here for that reason rather than for being misspelled.
+    pub(crate) fn is_branch_only(&self, name: &str) -> bool {
+        self.branch_declarations.contains_key(name)
+    }
+
+    /// The diagnostic for a read of a name declared in only some branches of
+    /// an `If` (LANGUAGE.md "Declarations in Branches"): the caret on the
+    /// read, the message saying when the name exists, a note giving its
+    /// declaration, and the two ways to make it exist after the `If`.
+    /// Returns false, pushing nothing, for a name no `If` declared.
+    pub(crate) fn push_branch_only_use(&mut self, name: &str) -> bool {
+        let Some(branch) = self.branch_declarations.get(name).copied() else {
+            return false;
+        };
+        let declaration = self.declared_locations.get(name).cloned();
+        let head_line = declaration
+            .as_ref()
+            .and_then(|loc| self.find_branch_head_line(loc, branch.kind));
+        let message = match (branch.kind, head_line) {
+            (BranchKind::Otherwise, Some(line)) => format!(
+                "'{}' only exists when the Otherwise on line {} runs",
+                name, line
+            ),
+            (_, Some(line)) => format!(
+                "'{}' only exists when the condition on line {} is true",
+                name, line
+            ),
+            (_, None) => format!(
+                "'{}' only exists inside the branch of the If that declares it",
+                name
+            ),
+        };
+        let occurrence = *self.symbol_error_counts.get(name).unwrap_or(&0);
+        let location = self.find_use_site_location(name, occurrence);
+        self.symbol_error_counts.insert(name.to_string(), occurrence + 1);
+
+        let mut err = CompileError::new(&message);
+        if let Some(loc) = location {
+            err = err.with_location(loc);
+        }
+        if let Some(loc) = &declaration {
+            err = err.with_note_line(&format!(
+                "'{}' is declared at line {}, in only some branches of the If, \
+                 so it does not exist after the If",
+                name, loc.line
+            ));
+        }
+        err = err.with_help_line(&if branch.has_otherwise {
+            format!("declare '{}' in every branch of the If too, or before the If", name)
+        } else {
+            format!("declare '{}' in an Otherwise branch too, or before the If", name)
+        });
+        self.errors.push(err);
+        true
+    }
+
+    /// The line of the branch head (`If`/`When`, `But if`/`Otherwise if`,
+    /// `Otherwise`/`Else`) that governs a declaration at `declaration`, of
+    /// the kind the analyzer saw. The AST carries no spans, so this reads
+    /// the source: the nearest such head before the declaration, in code,
+    /// that is on the declaration's own line or indented less than it.
+    /// None when no head of that kind is found; the caller then names the
+    /// declaration's line instead of guessing.
+    fn find_branch_head_line(&self, declaration: &SourceLocation, kind: BranchKind) -> Option<usize> {
+        let source = self.source_file.as_ref()?;
+        let lines: Vec<&str> = source.content.lines().collect();
+        let indent = |line: &str| line.len() - line.trim_start().len();
+        let declaration_indent = indent(lines.get(declaration.line - 1)?);
+
+        // Every code word up to the declaration, in order, with its line.
+        let mut words: Vec<(usize, String)> = Vec::new();
+        for (idx, line) in lines.iter().enumerate().take(declaration.line) {
+            let line_no = idx + 1;
+            let limit = if line_no == declaration.line {
+                declaration.column.saturating_sub(1).min(line.len())
+            } else {
+                line.len()
+            };
+            let bytes = line.as_bytes();
+            let mut start = None;
+            for col in 0..=limit {
+                let in_word = col < limit && bytes[col].is_ascii_alphabetic();
+                match (start, in_word) {
+                    (None, true) => start = Some(col),
+                    (Some(from), false) => {
+                        if source.region_of(line_no, from, col) == SourceRegion::Code {
+                            words.push((line_no, line[from..col].to_ascii_lowercase()));
+                        }
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let opens_alternative = |word: &str| matches!(word, "but" | "otherwise" | "else");
+        for i in (0..words.len()).rev() {
+            let (line_no, word) = (&words[i].0, words[i].1.as_str());
+            let previous = if i > 0 { Some(words[i - 1].1.as_str()) } else { None };
+            let next = words.get(i + 1).map(|w| w.1.as_str());
+            let found = match kind {
+                BranchKind::Then => {
+                    matches!(word, "if" | "when") && !previous.map_or(false, opens_alternative)
+                }
+                BranchKind::ButIf => {
+                    matches!(word, "if" | "when") && previous.map_or(false, opens_alternative)
+                }
+                BranchKind::Otherwise => {
+                    matches!(word, "otherwise" | "else") && !matches!(next, Some("if" | "when"))
+                }
+            };
+            if !found {
+                continue;
+            }
+            let on_its_line = *line_no == declaration.line;
+            if on_its_line || declaration_indent == 0 || indent(lines[line_no - 1]) < declaration_indent {
+                return Some(*line_no);
+            }
+        }
+        None
     }
 
     pub(crate) fn current_env(&self) -> AnalysisEnv {

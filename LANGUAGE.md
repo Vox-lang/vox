@@ -4194,6 +4194,20 @@ Close the source.
 Close output.
 ```
 
+Closing a handle opened at a number closes that descriptor itself, for the
+rest of the program. This is how a program tells a pipe reader it has
+finished, or lets go of a descriptor it was handed:
+
+```
+open a file for reading called keyboard at 0.
+Close keyboard.
+```
+
+After this `Close`, standard input is closed. The compiler gives a warning
+at each `Close` of a handle opened at a number, naming the handle and the
+descriptor, so closing standard output or standard error is always a
+visible choice.
+
 ### File Operations
 
 Check if a file (or any path) is available:

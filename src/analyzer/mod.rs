@@ -231,10 +231,26 @@ pub struct Analyzer {
     /// (exactly one exporting <lib,version>), then ambiguity (two imports
     /// exporting the same name — an error by design, never a pick).
     imports: Vec<crate::lib_file::ImportedFunction>,
-    /// Non-fatal diagnostics (currently: local-definitions-shadow-imports).
-    /// Printed by the driver with a `warning:` prefix; they never stop a
-    /// build, but shadowing is never silent either.
-    pub warnings: Vec<String>,
+    /// Non-fatal diagnostics: a local definition shadowing an import, and a
+    /// `Close` of a borrowed descriptor. Each is a `CompileError` marked
+    /// `as_warning`, so the driver prints it with its own `warning:` header
+    /// and, where the analyzer found one, the line it is about; they never
+    /// stop a build.
+    pub warnings: Vec<CompileError>,
+    /// Handles opened with a numeric `at` (LANGUAGE.md "Opening Files": a
+    /// borrowed file descriptor), so their `Close` can be warned about.
+    borrowed_files: HashMap<String, BorrowedDescriptor>,
+    /// Handles opened by a path inside a branch: a later numeric open of the
+    /// same name inside another branch only MAY hold a borrowed descriptor.
+    files_opened_by_path_in_a_branch: HashSet<String>,
+    /// How many `Close` statements of each handle the walk has reached, so
+    /// a warning points at the right one of several.
+    closes_seen: HashMap<String, usize>,
+    /// Names declared in only some branches of an `If` (LANGUAGE.md
+    /// "Declarations in Branches"), and which branch, so a read after the
+    /// `If` is told why the name is missing there rather than that it is
+    /// unknown.
+    branch_declarations: HashMap<String, BranchDeclaration>,
     /// Every thing defined in the program (plan 310), keyed by name. Layout,
     /// sizes, and field offsets are all read from here - see
     /// `analyzer::things`.
@@ -255,6 +271,31 @@ pub struct Analyzer {
     /// - where the return type is declared - is the place the author has to
     /// change (bug #57).
     current_function_name: Option<String>,
+}
+
+/// What the analyzer knows about a handle opened with a numeric `at`.
+#[derive(Clone)]
+pub(crate) struct BorrowedDescriptor {
+    /// The descriptor, when the `at` was a literal number.
+    descriptor: Option<i64>,
+    /// False when some branch opens the same name by a path instead, so
+    /// the handle only sometimes holds the borrowed descriptor.
+    on_every_path: bool,
+}
+
+/// Which branch of an `If` declared a name that does not exist after it.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum BranchKind {
+    Then,
+    ButIf,
+    Otherwise,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BranchDeclaration {
+    kind: BranchKind,
+    /// Whether the `If` has an `Otherwise` at all: the advice differs.
+    has_otherwise: bool,
 }
 
 #[derive(Clone, Default)]
@@ -313,6 +354,10 @@ impl Analyzer {
             pending_return_truncation: None,
             imports: Vec::new(),
             warnings: Vec::new(),
+            borrowed_files: HashMap::new(),
+            files_opened_by_path_in_a_branch: HashSet::new(),
+            closes_seen: HashMap::new(),
+            branch_declarations: HashMap::new(),
             things: HashMap::new(),
             thing_vars: HashMap::new(),
             current_function_return_type: None,

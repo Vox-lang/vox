@@ -676,7 +676,7 @@ impl Analyzer {
                     }
                     self.track_identifier(name);
                     if !self.is_variable_available(name) && name != "_iter" {
-                        if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                        if !self.may_be_a_keyword_typo(name) {
                             self.push_unknown_variable(name);
                         } else {
                             self.track_typo_candidate(name);
@@ -1108,7 +1108,7 @@ impl Analyzer {
                         // Bugs #62/#63: the bare-name call form, in the same
                         // value position as the `of`-form arm above.
                         self.reject_void_call_result(name);
-                    } else if find_similar_keyword(name, ENGLISH_KEYWORDS).is_none() {
+                    } else if !self.may_be_a_keyword_typo(name) {
                         // Don't report as unknown variable if it might be a
                         // keyword typo (that will be caught by check_for_typos)
                         self.push_unknown_variable(name);

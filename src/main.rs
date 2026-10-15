@@ -633,10 +633,12 @@ fn main() {
         .with_imports(all_imported_functions.clone());
     analyzer.analyze(&mut program);
 
-    // Stage A4 warnings (a local definition shadowing an imported name) are
-    // non-fatal but never silent: print them whether or not errors follow.
+    // Analyzer warnings (a local definition shadowing an imported name, a
+    // `Close` of a borrowed descriptor) are non-fatal but never silent: print
+    // them whether or not errors follow. Each carries its own `warning:`
+    // header, like the parser's.
     for warning in &analyzer.warnings {
-        eprintln!("warning: {}", warning);
+        eprintln!("{}", warning);
     }
 
     if !analyzer.errors.is_empty() {

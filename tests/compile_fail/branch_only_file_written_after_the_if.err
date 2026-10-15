@@ -1,0 +1,3 @@
+'report' only exists when the condition on line 2 is true
+branch_only_file_written_after_the_if.vox:4:19
+help: declare 'report' in an Otherwise branch too, or before the If
