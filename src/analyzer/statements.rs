@@ -701,37 +701,8 @@ impl Analyzer {
                 if let Some(Type::Buffer) = var_type {
                     self.buffer_variables.insert(name.clone());
                 }
-                if let Some(Type::List(_)) = var_type {
-                    self.list_variables.insert(name.clone());
-                    // Plan 294 finding 18: a `for each` loop variable over
-                    // a list this proves heterogeneous must be dynamically
-                    // typed (see the ForEach arm) rather than silently
-                    // allowing arithmetic that only some elements support.
-                    if let Some(Expr::ListLit { elements }) = value {
-                        if self.list_literal_is_mixed(elements) {
-                            self.list_mixed.insert(name.clone());
-                        }
-                        // Bug #54: a homogeneous list literal's element type
-                        // is provable, which makes a read of an element into
-                        // a differently-typed variable a statically-detectable
-                        // type-lock violation instead of the segfault it used
-                        // to compile to.
-                        if let Some(t) = self.list_literal_element_type(elements) {
-                            self.list_element_type.insert(name.clone(), t);
-                        }
-                    }
-                }
-                if let Some(Type::Map(_)) = var_type {
-                    self.map_variables.insert(name.clone());
-                    // Plan 294 findings 4, 14: a homogeneous map literal's
-                    // value type is provable, which makes a mismatched read
-                    // from it a statically-detectable type-lock violation
-                    // instead of a silently-allowed "can't prove it" case.
-                    if let Some(Expr::MapLit { pairs }) = value {
-                        if let Some(t) = self.map_literal_value_type(pairs) {
-                            self.map_value_type.insert(name.clone(), t);
-                        }
-                    }
+                if let Some(collection @ (Type::List(_) | Type::Map(_))) = var_type {
+                    self.declare_collection(name, collection, value.as_ref());
                 }
                 if let Some(Type::Value) = var_type {
                     // A declared `a value called x` is dynamic, like a value
@@ -866,6 +837,11 @@ impl Analyzer {
                             } else {
                                 self.scalar_types.remove(name);
                             }
+                        }
+                        // Bug #137: a time is a type of its own, so a text
+                        // or a number initialised from it is refused.
+                        Type::Time => {
+                            self.scalar_types.insert(name.clone(), Type::Time);
                         }
                         _ => {}
                     }
@@ -1526,7 +1502,7 @@ impl Analyzer {
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }
                         Type::Map(_) => { self.map_variables.insert(param_name.clone()); }
                         Type::File => { self.file_variables.insert(param_name.clone()); }
-                        Type::Integer | Type::Float | Type::String | Type::Boolean => {
+                        Type::Integer | Type::Float | Type::String | Type::Boolean | Type::Time => {
                             self.scalar_types.insert(param_name.clone(), param_type.clone());
                         }
                         Type::Value => {
@@ -1772,19 +1748,39 @@ impl Analyzer {
                             } else if !self.is_buffer_variable(source)
                                 && self.named_value_type(source) != Some(Type::String)
                             {
-                                self.push_error(
+                                let location = self.find_append_site_location(list);
+                                self.push_error_with_hint_at(
                                     format!("Buffer append requires a buffer source: {}", source),
-                                    Some(source),
+                                    location,
+                                    None,
                                 );
                             }
                         }
                         Expr::StringLit(_) | Expr::FormatString { .. } => {
                             // Allowed: append text/format output into destination buffer.
                         }
+                        // Bug #144: a call is judged by the type it returns,
+                        // braced or not, with arguments or without.
+                        Expr::FunctionCall { name, .. } => match self.function_return_type(name) {
+                            Some(Type::String | Type::Buffer) => {}
+                            Some(other) if !matches!(other, Type::Void | Type::Unknown) => {
+                                let location = self.find_append_site_location(list);
+                                let message = format!(
+                                    "Cannot append the {} '{}' returns to buffer '{}': a buffer takes text, another buffer or a format string. Put the call in a format string to append it as text.",
+                                    self.type_name(&other),
+                                    name,
+                                    list
+                                );
+                                self.push_error_with_hint_at(message, location, None);
+                            }
+                            _ => {}
+                        },
                         _ => {
-                            self.push_error(
+                            let location = self.find_append_site_location(list);
+                            self.push_error_with_hint_at(
                                 "Buffer append requires a buffer source or format/literal text".to_string(),
-                                Some(list),
+                                location,
+                                None,
                             );
                         }
                     }
@@ -2133,8 +2129,9 @@ impl Analyzer {
             
             Statement::GetTime { into } => {
                 self.variables.insert(into.clone());
-                // The variable now holds a unix timestamp.
-                self.scalar_types.insert(into.clone(), Type::Integer);
+                // The variable is a time (LANGUAGE.md "Getting Current
+                // Time"), read through its properties (bug #137).
+                self.scalar_types.insert(into.clone(), Type::Time);
             }
         }
     }

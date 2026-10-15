@@ -1,0 +1,4 @@
+Property 'length' requires a buffer, list, map, or file variable: name
+a_refused_property_is_named_as_written.vox:2:7
+Property 'size' requires a buffer, list, map, or file variable: name
+a_refused_property_is_named_as_written.vox:3:7

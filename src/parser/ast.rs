@@ -211,7 +211,7 @@ pub enum Expr {
     CurrentTime,                // current time value
     Fork,                       // fork() - 0 in child, child pid in parent, negative on error
     ReapChild {                 // wait4() - reap a child process, returns its pid (or -1 on error)
-        pid: Option<Box<Expr>>, // None = any child (pid -1); Some(expr) = a specific pid
+        target: ReapTarget,     // which children the reap may take
         no_hang: bool,          // plan 311: true = WNOHANG (non-blocking); false = blocking
     },
     // plan 311: the raw wait4 status word from the most recent successful reap.
@@ -704,6 +704,21 @@ pub enum SignalTarget {
     MyProcessGroup,
     /// `to every process`: every process the caller may signal, kill(-1).
     EveryProcess,
+}
+
+/// Which children a `reap` may take, each one a plain-English form so the
+/// kernel's 0 and negative pid meanings are never reached by a number that
+/// happens to be 0 or below (docs/BUGS_FOUND.md #142).
+#[derive(Debug, Clone)]
+pub enum ReapTarget {
+    /// `reap any child process`: any child, wait4(-1).
+    AnyChild,
+    /// `reap process <pid>` / `reap child <pid>`: exactly one, wait4(pid).
+    Process(Box<Expr>),
+    /// `reap any child in process group <g>`: a child in group g, wait4(-g).
+    ProcessGroup(Box<Expr>),
+    /// `reap any child in my process group`: a child in the caller's group, wait4(0).
+    MyProcessGroup,
 }
 
 /// The highest signal number Linux defines (SIGRTMAX); 0 is the existence check.
@@ -1587,7 +1602,10 @@ pub fn collect_freeable_texts(stmts: &[Statement]) -> std::collections::HashSet<
                 find_nested_retains(index, retaining);
             }
             Expr::MapAccess { key, .. } => find_nested_retains(key, retaining),
-            Expr::ReapChild { pid: Some(pid), .. } => find_nested_retains(pid, retaining),
+            Expr::ReapChild {
+                target: ReapTarget::Process(pid) | ReapTarget::ProcessGroup(pid),
+                ..
+            } => find_nested_retains(pid, retaining),
             Expr::FormatString { parts } => {
                 for part in parts {
                     if let FormatPart::Expression { expr, .. } = part {

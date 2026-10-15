@@ -444,8 +444,14 @@ impl Parser {
             }
         }
         
-        // Parse value to write (string literal or identifier)
+        // Parse value to write: a literal, a name, a braced expression or a
+        // call with arguments (docs/BUGS_FOUND.md #144). `to` is reserved
+        // for the statement, so a call stops before its target.
+        let calls_with_arguments = matches!(self.current(), Token::Identifier(_))
+            && matches!(self.peek(1), Token::Of | Token::With);
         let mut value = match self.current().clone() {
+            Token::OpenBrace => self.parse_statement_source()?,
+            Token::Identifier(_) if calls_with_arguments => self.parse_statement_source()?,
             Token::StringLiteral(s) => { self.advance(); self.string_value_expr(s) }
             Token::Identifier(n) => { self.advance(); Expr::Identifier(n) }
             Token::The => {

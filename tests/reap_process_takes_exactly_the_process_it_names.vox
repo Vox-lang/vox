@@ -1,0 +1,15 @@
+a number called kid is fork the process.
+If kid is 0 then, Exit 7.
+a number called nobody is kid minus kid.
+a number called got is reap process nobody.
+On error Print "reap process 0 is refused".
+Print got.
+Set nobody to 0 minus 1.
+Set got to reap child nobody without waiting.
+On error Print "reap child -1 is refused".
+Set nobody to 4294967296 add kid.
+Set got to reap process nobody.
+On error Print "a pid wider than 32 bits is refused".
+Set got to reap process kid.
+If got is kid then, Print "reap process kid reaped the child".
+Print "status {the reaped status}".

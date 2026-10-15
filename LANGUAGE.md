@@ -2010,6 +2010,7 @@ Note: `the` is optional before variable names in expressions.
 For complex arithmetic subexpressions, use curly braces `{...}` to group each subexpression.
 A cast (`as a <type>`) binds tighter than arithmetic and applies to the expression immediately to its left, so `s as a number add 1` casts `s` and then adds 1. To cast a whole arithmetic expression, brace it: `{a add b} as a number`.
 Comma-separated arithmetic continuation (for example `..., add ...`) is not valid syntax.
+Dividing by 0, a `modulo` by 0, and dividing the most negative number by -1 each set the error flag and give 0.
 
 ### Comparisons
 
@@ -2026,7 +2027,9 @@ Note: `the` is optional before variable names in comparisons.
 `value`'s type is only known at runtime, so `is greater than`, `is less
 than`, their `or equal to` forms and their `not` forms are a compile error
 with a `value` on either side, whether it is a variable or a call that
-returns one, as arithmetic on a `value` is. Equality (`is`, `is equal to`,
+returns one, as arithmetic on a `value` is. A text, a list, a map and a
+buffer have no order, so the same forms refuse them; compare two texts with
+`is`, and a list, a map or a buffer by its `length`. Equality (`is`, `is equal to`,
 `is not`) takes a `value` as it is. To compare a `value` by order, check it
 with `is a number`, put it in a number variable, and compare that:
 
@@ -4492,8 +4495,13 @@ is valid (typically the right-hand side of `Set`/`a number called ... is`).
   parent, or a negative value on error. Sets the error flag on failure.
 - `reap any child process` - `wait4(2)` with `pid = -1`, waiting for any
   child. Returns the reaped child's PID, or a negative value on error.
-- `reap process <pid-expr>` / `reap child <pid-expr>` - `wait4(2)` for a
-  specific PID.
+  `reap any child in my process group` and `reap any child in process
+  group <group-expr>` wait for any child in that one process group.
+- `reap process <pid-expr>` / `reap child <pid-expr>` - `wait4(2)` for
+  exactly the process numbered `<pid-expr>`. A process and a process group
+  are numbered from 1 to 2147483647; a number outside that the compiler can
+  prove is a compile error, and one known only at run time sets the error
+  flag (`EINVAL`) and reaps nothing.
 
 Both set the error flag on failure (e.g. `On error` after `reap process 999999`
 catches `ECHILD` when the PID is not actually your child).
@@ -4752,7 +4760,7 @@ a time called now is current time.
 
 ### Time Properties
 
-Access components of a time value using the `'s` property syntax:
+A time is read through its properties, each a number, with `'s`; a time itself is not a text or a number:
 
 | Property | Description | Type |
 |----------|-------------|------|

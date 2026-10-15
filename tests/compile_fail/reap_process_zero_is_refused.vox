@@ -1,0 +1,4 @@
+a number called kid is fork the process.
+If kid is 0 then, Exit 7.
+a number called got is reap process 0.
+Print got.

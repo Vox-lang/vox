@@ -1,0 +1,27 @@
+To 'show ends' of a list called items.
+    Print "last: {items's last}".
+    Print "first: {items's first}".
+    Print items's last.
+    Print element 2 of items.
+
+To 'keep the first' of a list called items.
+    a text called word is items's first.
+    Print word.
+    a list called gathered is [].
+    append items's last to gathered.
+    Print gathered.
+
+a list called letters is ["b", "c"].
+'show ends' of letters.
+'keep the first' of letters.
+a list called mixed is [1, "two", 3.5].
+'show ends' of mixed.
+a list called nested is [[1, 2], [3]].
+'show ends' of nested.
+a list called grown is [].
+append "x" to grown.
+append "y" to grown.
+Print grown's first.
+Print "{grown's last}".
+a list called blank is [].
+'show ends' of blank.

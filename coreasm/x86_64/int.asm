@@ -16,14 +16,25 @@ section .text
     imul rax, rbx
 %endmacro
 
+; A divisor of -1 never reaches idiv: the most negative number divided by
+; -1 has no 64-bit answer and idiv raises #DE on it (docs/BUGS_FOUND.md #149).
+; Dividing by -1 negates, and that one quotient sets the error flag and gives
+; 0, as a zero divisor does; a remainder by -1 is always 0.
 %macro INT_DIV 0
     test rbx, rbx
-    jz %%div_zero
+    jz %%div_fail
+    cmp rbx, -1
+    je %%div_minus_one
     mov qword [rel _last_error], 0
     cqo
     idiv rbx
     jmp %%div_done
-%%div_zero:
+%%div_minus_one:
+    neg rax
+    jo %%div_fail                  ; only the most negative number overflows
+    mov qword [rel _last_error], 0
+    jmp %%div_done
+%%div_fail:
     xor rax, rax
     mov qword [rel _last_error], 1
 %%div_done:
@@ -33,9 +44,14 @@ section .text
     test rbx, rbx
     jz %%mod_zero
     mov qword [rel _last_error], 0
+    cmp rbx, -1
+    je %%mod_minus_one
     cqo
     idiv rbx
     mov rax, rdx
+    jmp %%mod_done
+%%mod_minus_one:
+    xor eax, eax                   ; every number divides evenly by -1
     jmp %%mod_done
 %%mod_zero:
     xor rax, rax

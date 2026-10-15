@@ -74,6 +74,11 @@ pub struct Parser {
     // itself - see `parse_primary_reserving`.
     suppress_to_connector: bool,
     suppress_of_connector: bool,
+    // True while parsing the source of `Write ... to` or `append ... to`: a
+    // text literal argument may then stand right before that `to`
+    // (`Write 'greeting for' of "Ada" to log.`, docs/BUGS_FOUND.md #144).
+    // Everywhere else a literal before `to` is still refused.
+    literal_may_end_at_to: bool,
     // True while parsing the body of one `but if`/`otherwise` branch.  The
     // branch is already inside the outer conditional-sugar chain, so any
     // `but if` suffix on the branch statement itself must be ignored; the
@@ -230,6 +235,7 @@ impl Parser {
             source_file: None,
             suppress_to_connector: false,
             suppress_of_connector: false,
+            literal_may_end_at_to: false,
             suppress_conditional_suffix: false,
             shared_mode: false,
             saw_library_decl: false,

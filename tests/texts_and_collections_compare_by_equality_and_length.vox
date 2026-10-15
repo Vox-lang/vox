@@ -1,0 +1,10 @@
+a text called early is "abc".
+a text called later is "b".
+If early is later then, Print "unexpected: two different texts are equal".
+If early is not later then, Print "abc is not b".
+a list called short is [1].
+a list called long is [1, 2].
+If short's length is less than long's length then, Print "the short list has fewer elements".
+a buffer called note is "hi".
+a buffer called echo is "hi".
+If note is echo then, Print "two buffers holding hi are equal".

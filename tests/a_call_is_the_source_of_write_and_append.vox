@@ -1,0 +1,29 @@
+To 'greeting for' of a number called id.
+    Return a text, "hi {id}".
+
+To 'framed' of a text called word.
+    a buffer called frame is "[".
+    append word to frame.
+    append "]" to frame.
+    Return a buffer, frame.
+
+Open a file for writing called notes at "./call_write_source.txt".
+Write 'greeting for' of 1 to notes.
+Write a newline to notes.
+Write {'greeting for' of 2} to notes.
+Write a newline to notes.
+Write 'framed' of "x" to notes.
+Write a newline to notes.
+Close notes.
+Open a file for reading called written at "./call_write_source.txt".
+a buffer called contents is 1024 bytes in size.
+Read from written into contents.
+Close written.
+Delete "./call_write_source.txt".
+Print contents without newline.
+a buffer called sink is "".
+append {'greeting for' of 3} to sink.
+append 'greeting for' of 4 to sink.
+append 'framed' of "y" to sink.
+append {'framed' of "z"} to sink.
+Print sink.

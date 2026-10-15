@@ -103,7 +103,7 @@ impl Parser {
             | Token::Element
             | Token::Byte
             | Token::Identifier(_)
-            | Token::The => self.parse_primary_reserving(true, false),
+            | Token::The => self.parse_statement_source(),
             _ => Err(self.err("Expected value to append")),
         }
     }

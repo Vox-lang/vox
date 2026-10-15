@@ -1,0 +1,15 @@
+a list called got is [1, 2].
+The other is got.
+Print other's length.
+Print other's size.
+append 3 to other.
+Print other.
+The alphabet is ["a", "b"].
+Print alphabet's length.
+For each letter in alphabet, Print letter.
+Set scores to [4, 5, 6].
+Print scores's length.
+a map called ages is {"bo": 3}.
+The people is ages.
+Print people's size.
+Print people's "bo".

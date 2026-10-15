@@ -1,0 +1,2 @@
+Cannot append the number 'count' returns to buffer 'sink': a buffer takes text, another buffer or a format string. Put the call in a format string to append it as text.
+a_number_call_appended_to_a_buffer_is_refused_at_the_append.vox:5:26

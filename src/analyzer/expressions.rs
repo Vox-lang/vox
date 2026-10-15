@@ -812,6 +812,22 @@ impl Analyzer {
                         // regardless of its declared type, reports its type as
                         // text. No further validation needed.
                         ObjectProperty::Type => {}
+                        ObjectProperty::Size
+                            if !is_buf && !is_list && !is_map && !is_file
+                                && !self.is_used_before_its_declaration(object) =>
+                        {
+                            match self.find_property_read(object, &["length", "size"]) {
+                                Some((loc, word)) => self.push_error_with_hint_at(
+                                    format!("Property '{}' requires a buffer, list, map, or file variable: {}", word, object),
+                                    Some(loc),
+                                    None,
+                                ),
+                                None => self.push_error(
+                                    format!("Property 'size' requires a buffer, list, map, or file variable: {}", object),
+                                    Some(object),
+                                ),
+                            }
+                        }
                         ObjectProperty::Size | ObjectProperty::Empty => {
                             if !is_buf && !is_list && !is_map && !is_file {
                                 self.push_error(
@@ -1256,11 +1272,17 @@ impl Analyzer {
                 self.analyze_expr(path);
             }
 
-            Expr::ReapChild { pid, .. } => {
-                if let Some(p) = pid {
-                    self.analyze_expr(p);
+            Expr::ReapChild { target, .. } => match target {
+                ReapTarget::Process(pid) => {
+                    self.analyze_expr(pid);
+                    self.check_reap_process(pid, false);
                 }
-            }
+                ReapTarget::ProcessGroup(group) => {
+                    self.analyze_expr(group);
+                    self.check_reap_process(group, true);
+                }
+                ReapTarget::AnyChild | ReapTarget::MyProcessGroup => {}
+            },
 
             _ => {}
         }

@@ -1,0 +1,3 @@
+cannot initialise 'label', which is text, with a time
+current_time_cannot_initialise_a_text.vox:1:15
+help: read one part of the time instead, for example `current time's hour as text`

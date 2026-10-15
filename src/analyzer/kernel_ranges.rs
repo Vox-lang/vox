@@ -1,8 +1,9 @@
 //! Numbers the kernel reads narrower than a Vox number: a signal, a pid or
 //! process group, an exit status. Each has a range the statement promises
-//! (LANGUAGE.md "Send a signal" and "Program Termination"); a value the
-//! compiler can prove is outside it is refused here, and codegen guards
-//! every value it cannot prove at run time (docs/BUGS_FOUND.md #135, #136).
+//! (LANGUAGE.md "Send a signal", "fork and reap" and "Program Termination");
+//! a value the compiler can prove is outside it is refused here, and codegen
+//! guards every value it cannot prove at run time (docs/BUGS_FOUND.md #135,
+//! #136, #142).
 
 use super::*;
 
@@ -92,6 +93,43 @@ impl Analyzer {
         );
         self.push_kernel_range_error(
             format!("cannot send a signal to {} {}", what, value),
+            &written,
+            &patterns,
+            value,
+            &format!("a {} is numbered from 1 to {}", what, MAX_PROCESS_ID),
+            help,
+        );
+    }
+
+    /// `reap process <pid>` waits for exactly one process, and `reap any
+    /// child in process group <g>` for a child in exactly one group: both
+    /// are numbered 1 to 2147483647 (docs/BUGS_FOUND.md #142). A 0 or a
+    /// negative pid is refused in favour of the forms that say what the
+    /// kernel would do with it.
+    pub(crate) fn check_reap_process(&mut self, pid: &Expr, group: bool) {
+        let Some((value, written)) = self.provable_kernel_number(pid) else {
+            return;
+        };
+        if (1..=MAX_PROCESS_ID).contains(&value) {
+            return;
+        }
+        let (what, patterns) = if group {
+            ("process group", vec![format!("group {}", written), written.clone()])
+        } else {
+            (
+                "process",
+                vec![
+                    format!("process {}", written),
+                    format!("child {}", written),
+                    written.clone(),
+                ],
+            )
+        };
+        let help = (!group && value <= 0).then_some(
+            "to reap one of several children, say which: 'reap any child process', 'reap any child in my process group' or 'reap any child in process group <g>'",
+        );
+        self.push_kernel_range_error(
+            format!("cannot reap {} {}", what, value),
             &written,
             &patterns,
             value,

@@ -1,0 +1,2 @@
+cannot pass a time to 'words', which 'show' declares as text
+help: read one part of the time instead, for example `now's hour as text`

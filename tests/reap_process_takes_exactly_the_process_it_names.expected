@@ -1,0 +1,6 @@
+reap process 0 is refused
+-22
+reap child -1 is refused
+a pid wider than 32 bits is refused
+reap process kid reaped the child
+status 1792

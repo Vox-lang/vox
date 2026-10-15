@@ -268,11 +268,11 @@ impl Analyzer {
             Expr::EnvironmentVariable { name } | Expr::EnvironmentVariableExists { name } => {
                 self.resolve_in_expr(name, variables)
             }
-            Expr::ReapChild { pid, .. } => {
-                if let Some(pid) = pid {
-                    self.resolve_in_expr(pid, variables);
-                }
-            }
+            Expr::ReapChild {
+                target: ReapTarget::Process(pid) | ReapTarget::ProcessGroup(pid),
+                ..
+            } => self.resolve_in_expr(pid, variables),
+            Expr::ReapChild { .. } => {}
             Expr::FileAvailable { path } => self.resolve_in_expr(path, variables),
             Expr::IntegerLit(_)
             | Expr::FloatLit(_)

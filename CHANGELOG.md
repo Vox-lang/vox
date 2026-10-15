@@ -93,6 +93,62 @@ adheres to [Semantic Versioning](https://semver.org/).
   GNU_STACK header with `RW` flags. A `--shared` library used to carry no
   such header: glibc 2.43 refused to `dlopen` it, and a C program linked
   against it ran with an executable stack. (#146)
+- **A time given to a text or a number is a compile error that names a
+  property to read instead.** `a text called label is now.`, with `now` a
+  time, used to compile and segfault at the first read of `label`; a
+  `Set`, an argument and a `Return` let a time into a text the same way,
+  and a time given to a number stored its seconds. Each is now refused, for a time variable,
+  `current time`, a time parameter and a time field, and the help gives
+  the form that works: `now's hour as text`. A time given to a time works
+  as before. (#137)
+- **A boolean field converts to text as `true` or `false`, as a boolean
+  variable does.** `origin's ok as text` used to give `1`. Printing a
+  boolean, field or variable, still prints `1` or `0`. (#141)
+- **`reap process <pid>` reaps exactly the process it names, and the
+  process group forms have their own words.** `reap process 0` used to
+  reap any child in the program's process group, and a negative pid any
+  child or any child in another group. A pid outside 1 to 2147483647 is
+  now a compile error when the compiler can prove it, and otherwise sets
+  the error flag and reaps nothing. `reap any child in my process group`
+  and `reap any child in process group <g>` say the group forms in
+  English, beside `reap any child process`. (#142)
+- **`The other is got.`, with `got` a list or a map, declares a list or a
+  map.** `other's length` used to be refused as if `other` were not a
+  collection; the same held for `Set other to got.` and for a literal.
+  A refused `'s length` or `'s size` now names the word the author wrote
+  and points at the read, where it used to say `size` at the name's
+  declaration. (#145)
+- **`'s first` and `'s last` on a list parameter read each element as
+  what it is.** On a list passed into a function, `items's first` used to
+  print a text element's address, a float's raw bits or a nested list's
+  address, and `append items's last to` another list stored that number.
+  Both now follow the type each slot records, as `element N of` already
+  did. (#138)
+- **A call with arguments is the source of `Write` and of `append` to a
+  buffer, braced or not.** `Write 'greeting for' of 0 to log.` and
+  `append {'greeting for' of 0} to sink.` used to be refused; a call that
+  returns a text or a buffer is now written or appended, and one that
+  returns another type is refused with a message naming the call. A
+  refused append to a buffer points at the append, where it used to point
+  at the buffer's declaration. (#144)
+- **Dividing the most negative number by -1 sets the error flag instead of
+  stopping the program.** `-9223372036854775808 divide -1` and
+  `modulo -1` used to end the program with SIGFPE (exit 136). The
+  division now gives 0 with the error flag set, as a zero divisor does,
+  and `modulo -1` gives 0. (#149)
+- **An ordering comparison on a text, a list, a map or a buffer is a
+  compile error.** `"abc" is less than "b"` used to compare the two
+  addresses, so the answer followed where each text happened to be
+  stored. `is greater than`, `is less than` and their `or equal to` and
+  `not` forms now refuse these types, as they refuse a `value`, and the
+  message names `is` for texts and buffers and `length` for lists, maps
+  and buffers. (#150)
+- **Comparing a list element that holds a number or a float with a text
+  answers instead of crashing.** `element 1 of [1, "two", 3.5] is "c"`
+  used to segfault, as did a list parameter's `'s last` holding a
+  number. The comparison now reads the element's type first: a text
+  element is compared by its characters, and any other element is not
+  equal to a text. (#151)
 
 ### Changed
 - **The compiler now builds with no third-party crates.** The unused

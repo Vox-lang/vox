@@ -432,6 +432,60 @@ impl Analyzer {
         self.errors.push(err);
     }
 
+    /// The `append ... to <buffer>` statement a refused append is about, so
+    /// the caret is on the statement the author wrote and not on the
+    /// buffer's declaration (docs/BUGS_FOUND.md #144). Appends are taken in
+    /// source order, one per refusal for this buffer.
+    pub(crate) fn find_append_site_location(&mut self, buffer: &str) -> Option<SourceLocation> {
+        let key = format!("append to {}", buffer);
+        let occurrence = *self.symbol_error_counts.get(&key).unwrap_or(&0);
+        self.symbol_error_counts.insert(key, occurrence + 1);
+        let patterns = [format!("to {}", buffer), format!("to the {}", buffer)];
+        self.find_pattern_location(buffer, &patterns, occurrence, None, true, false)
+            .or_else(|| self.find_symbol_location(buffer, 0))
+    }
+
+    /// The `<object>'s <word>` read a refused property is about, and the
+    /// word written there, for the property that has two spellings: `length`
+    /// and `size` are one property, and the refusal names the one the author
+    /// wrote, at the read rather than at the name's declaration
+    /// (docs/BUGS_FOUND.md #145). Reads are taken in source order, one per
+    /// refusal of this object.
+    pub(crate) fn find_property_read(&mut self, object: &str, words: &[&str]) -> Option<(SourceLocation, String)> {
+        let key = format!("{}'s", object);
+        let occurrence = *self.symbol_error_counts.get(&key).unwrap_or(&0);
+        self.symbol_error_counts.insert(key.clone(), occurrence + 1);
+        let source = self.source_file.as_ref()?;
+        let mut seen = 0usize;
+        for (idx, line) in source.content.lines().enumerate() {
+            let line_no = idx + 1;
+            let mut search_from = 0usize;
+            while let Some(rel) = line[search_from..].find(key.as_str()) {
+                let name_col = search_from + rel;
+                search_from = name_col + 1;
+                let left_ok = name_col == 0 || {
+                    let prev = line.as_bytes()[name_col - 1];
+                    !(prev.is_ascii_alphanumeric() || prev == b'_')
+                };
+                let rest = line[name_col + key.len()..].trim_start();
+                let word: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+                let written = words.iter().any(|w| w.eq_ignore_ascii_case(&word));
+                let in_code = matches!(
+                    source.region_of(line_no, name_col, name_col + object.len()),
+                    SourceRegion::Code
+                );
+                if left_ok && written && in_code {
+                    if seen == occurrence {
+                        let loc = SourceLocation::new(&source.filename, line_no, name_col + 1, line);
+                        return Some((loc, word.to_ascii_lowercase()));
+                    }
+                    seen += 1;
+                }
+            }
+        }
+        None
+    }
+
     /// Same as `push_error_with_hint`, but for a caller that already has a
     /// real `SourceLocation` in hand (from parser state, not a textual
     /// symbol search) - e.g. `Statement::Return`'s "only valid inside a

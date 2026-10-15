@@ -1,0 +1,2 @@
+cannot initialise 'label', which is text, with a time
+a_time_from_get_current_time_cannot_initialise_a_text.vox:2:15

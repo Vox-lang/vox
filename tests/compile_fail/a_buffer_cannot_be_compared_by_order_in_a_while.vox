@@ -1,0 +1,2 @@
+a buffer called note is "x".
+While note is less than or equal to "y", Print "loop".

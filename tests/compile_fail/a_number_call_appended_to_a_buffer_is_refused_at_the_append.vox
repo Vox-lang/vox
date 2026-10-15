@@ -1,0 +1,6 @@
+To 'count' of a number called id.
+    Return a number, id.
+
+a buffer called sink is "".
+append {'count' of 0} to sink.
+Print sink.

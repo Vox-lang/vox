@@ -828,8 +828,8 @@ impl CodeGenerator {
             Expr::PropertyAccess { object, property }
                 if matches!(property, ObjectProperty::First | ObjectProperty::Last) =>
             {
-                self.mixed_lists.contains(object)
-                    || self.list_element_types.get(object) == Some(&VarType::Mixed)
+                // Bug #138: the same answer the read itself gives.
+                self.list_expr_is_mixed(&Expr::Identifier(object.clone()))
             }
             Expr::TreatingAs { value, match_value, replacement } => {
                 self.treating_dispatches_on_runtime_tag(value, match_value, replacement)
