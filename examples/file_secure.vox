@@ -4,18 +4,18 @@ print "Creating a dynamic buffer (no size needed!)".
 a buffer called data.
 
 print "Writing to file...".
-open a file for writing called out at "./secure_test.txt".
-Write "Line 1: Hello from secure file I/O!" to out.
-Write a newline to out.
-Write "Line 2: Buffers grow automatically." to out.
-Write a newline to out.
-Write "Line 3: Files auto-close on exit if forgotten." to out.
-Close the out.
+open a file for writing called output at "./secure_test.txt".
+Write "Line 1: Hello from secure file I/O!" to output.
+Write a newline to output.
+Write "Line 2: Buffers grow automatically." to output.
+Write a newline to output.
+Write "Line 3: Files auto-close on exit if forgotten." to output.
+Close the output.
 
 print "Reading back...".
-open a file for reading called src at "./secure_test.txt".
-Read from src into data.
-Close the src.
+open a file for reading called source at "./secure_test.txt".
+Read from source into data.
+Close the source.
 
 print "Contents:".
 print data.

@@ -1,6 +1,6 @@
-To 'check divisibility' with a number called x and a number called y.
+To 'check divisibility' with a number called dividend and a number called divisor.
   Return a boolean,
-    x modulo y is 0.
+    dividend modulo divisor is 0.
     
 For each number from 1 to 15,
   print the number,

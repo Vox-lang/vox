@@ -1,4 +1,4 @@
-(Example: map.vox — key/value collections.
+(map.vox: key/value collections.
 
 A map is a JSON-style object: text keys, any-typed values, insertion-
 ordered. Literals use {"key": value, ...}; `map's "key"` reads a value;
@@ -11,41 +11,41 @@ This example builds a small record, mutates it, iterates its keys and
 values, nests a list and another map, and round-trips the map through a
 `value` parameter to show the tag survives the call.)
 
-To 'show' with a value called v.
-  print v.
+To 'show' with a value called record.
+  print record.
 
 a map called person is {"name": "Ada", "age": 36, "city": "London"}.
 
-print "record:"
+print "record:".
 print person.
 
-print "name is:"
+print "name is:".
 print person's "name".
 
 set person's "age" to 37.
-print "after birthday:"
+print "after birthday:".
 print person's "age".
 print person's length.
 
-print "keys:"
-for each key in person's keys
+print "keys:".
+for each key in person's keys,
   print key.
 
-print "values:"
-for each v in person's values
-  print v.
+print "values:".
+for each detail in person's values,
+  print detail.
 
 a map called nested is {"tags": ["a", "b"], "meta": {"id": 1}}.
-print "nested:"
+print "nested:".
 print nested.
-a list called taglist is nested's "tags".
-print "tags:"
-print taglist.
+a list called tags is nested's "tags".
+print "tags:".
+print tags.
 a map called meta is nested's "meta".
-print "meta id:"
+print "meta id:".
 print meta's "id".
 
-print "round-trip through a value param:"
+print "round-trip through a value param:".
 'show' of person.
 
 print person's "nope".

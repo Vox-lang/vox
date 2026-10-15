@@ -1,58 +1,49 @@
-(A simple greeter that demonstrates command-line arguments and environment variables)
-(Uses the 's property syntax for accessing argument and environment properties)
+(A greeter. It reads its own command line and environment through the 's
+ property syntax, then asks for your name and answers you.)
 
-Print "=== Argument Properties Demo ===".
+Print "=== The Command Line ===".
 
-a number called argc is arguments's count.
-Print "Argument count: ".
-Print the argc.
+a number called 'argument count' is arguments's count.
+Print "Arguments, counting the program's own name: {argument count}".
 
 a text called program is arguments's name.
-Print "Program name: ".
-Print the program.
+Print "This program was started as {program}".
 
-(Greet using argument or default)
+(Greet whoever is named first on the command line, or else the world)
 a text called name is "World".
-
 If arguments's count is greater than 1 then,
     the name is arguments's first.
-
 Print "Hello, {name}!".
-Print the name.
-Print "!".
 
-(Check if arguments were provided)
 If arguments's empty then,
-    Print "(No user arguments provided)".
+    Print "(Nothing was given after the program's name.)".
 
 Print "".
-Print "=== Environment Properties Demo ===".
+Print "=== The Environment ===".
 
-a number called 'env count' is environment's count.
-Print "Environment variable count: ".
-Print the env count.
+a number called 'variable count' is environment's count.
+Print "Environment variables: {variable count}".
 
-(Access environment variable by name using 's syntax)
+(An environment variable is read by its name)
 a text called user is environment's "USER".
-Print "Current user: ".
-Print the user.
+Print "You are logged in as {user}.".
 
 a text called home is environment's "HOME".
-Print "Home directory: ".
-Print the home.
+Print "Your home directory is {home}.".
 
-(Show first environment variable)
-a text called env1 is environment's first.
-Print "First env var: ".
-Print the env1.
+a text called 'first variable' is environment's first.
+Print "The first entry in the environment is {first variable}.".
 
-open a file for writing called output at "/dev/stdout".
-open a file for reading called stdinput at "/dev/stdin".
-a buffer called userbuf.
-print "What's your name? ".
-read from stdinput into userbuf.
-a text called username is userbuf.
-print "".
-write "Hi, {username}!" to output.
-(write userbuf to output.
-write "!" to output.)
+Print "".
+Print "=== A Conversation ===".
+
+open a file for writing called screen at "/dev/stdout".
+open a file for reading called keyboard at "/dev/stdin".
+a buffer called answer is 256 bytes in size.
+print "What's your name?".
+
+(A line read from the keyboard keeps the newline typed after it, so the
+ answer ends the greeting's line by itself)
+read line from keyboard into answer.
+a text called 'your name' is answer.
+write "Nice to meet you, {your name}" to screen.

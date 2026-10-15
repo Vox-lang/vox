@@ -1,4 +1,4 @@
-(Example: menu.vox — every combination, in one sentence.
+(menu.vox: every combination, in one sentence.
 
 An argument list may chain any number of `each <name> from <collection>`
 clauses joined by `and`. The action then runs once for every combination

@@ -37,8 +37,8 @@ Set byte 4 of data to 0x6C.
 Set byte 5 of data to 0x6F.
 
 (Read individual bytes)
-a number called first_byte is byte 1 of data.
-Print "First byte: {first_byte:02X}".
+a number called 'first byte' is byte 1 of data.
+Print "First byte: {first byte:02X}".
 
 (Print buffer as string - shows "Hello")
 Print "Buffer contents: ".
@@ -58,31 +58,31 @@ Set byte 6 of data to 0.
 Print "".
 Print "=== Bitwise Operations ===".
 
-a number called val_a is 0b11110000.
-a number called val_b is 0b10101010.
+a number called 'high bits' is 0b11110000.
+a number called 'alternate bits' is 0b10101010.
 
 (Bitwise AND)
-a number called result is val_a bit-and val_b.
-Print "{val_a:08b} AND {val_b:08b} = {result:08b}".
+a number called result is 'high bits' bit-and 'alternate bits'.
+Print "{high bits:08b} AND {alternate bits:08b} = {result:08b}".
 
 (Bitwise OR)
-Set result to val_a bit-or val_b.
-Print "{val_a:08b} OR  {val_b:08b} = {result:08b}".
+Set result to 'high bits' bit-or 'alternate bits'.
+Print "{high bits:08b} OR  {alternate bits:08b} = {result:08b}".
 
 (Bitwise XOR)
-Set result to val_a bit-xor val_b.
-Print "{val_a:08b} XOR {val_b:08b} = {result:08b}".
+Set result to 'high bits' bit-xor 'alternate bits'.
+Print "{high bits:08b} XOR {alternate bits:08b} = {result:08b}".
 
 (Bitwise NOT - using XOR with all 1s)
-Set result to val_a bit-xor 0xFF.
-Print "NOT {val_a:08b} = {result:08b}".
+Set result to 'high bits' bit-xor 0xFF.
+Print "NOT {high bits:08b} = {result:08b}".
 
 (Bit shifting)
-Set result to val_a bit-shift-left 2.
-Print "{val_a:08b} << 2 = {result:08b}".
+Set result to 'high bits' bit-shift-left 2.
+Print "{high bits:08b} << 2 = {result:08b}".
 
-Set result to val_a bit-shift-right 2.
-Print "{val_a:08b} >> 2 = {result:08b}".
+Set result to 'high bits' bit-shift-right 2.
+Print "{high bits:08b} >> 2 = {result:08b}".
 
 Print "".
 Print "=== Practical: Simple Hex Dump ===".
@@ -98,46 +98,47 @@ Set byte 7 of data to 0xBA.
 Set byte 8 of data to 0xBE.
 
 Print "Hex dump of first 8 bytes:".
-a number called i is 1.
-While i is less than or equal to 8,
-    a number called byte_val is byte i of data,
-    Print "{byte_val:02X} " without newline,
-    increment i.
+a number called position is 1.
+While position is less than or equal to 8,
+    a number called 'byte value' is byte position of data,
+    Print "{byte value:02X} " without newline,
+    increment position.
 Print "".
 
 Print "".
 Print "=== Practical: Patching a Binary Value ===".
 
 (Read a 32-bit value from buffer - little endian)
-a number called b0 is byte 1 of data.
-a number called b1 is byte 2 of data.
-a number called b2 is byte 3 of data.
-a number called b3 is byte 4 of data.
-a number called value32 is b0 add b1 multiply 256 add b2 multiply 65536 add b3 multiply 16777216.
-Print "32-bit value at offset 0: {value32:08X}".
+a number called 'lowest byte' is byte 1 of data.
+a number called 'second byte' is byte 2 of data.
+a number called 'third byte' is byte 3 of data.
+a number called 'highest byte' is byte 4 of data.
+a number called 'stored value' is 'lowest byte' add 'second byte' multiply 256 add 'third byte' multiply 65536 add 'highest byte' multiply 16777216.
+Print "32-bit value at offset 0: {stored value:08X}".
 
 (Write a new 32-bit value - little endian)
-a number called newval is 0x12345678.
-Set byte 1 of data to newval bit-and 0xFF.
-Set byte 2 of data to newval bit-shift-right 8 bit-and 0xFF.
-Set byte 3 of data to newval bit-shift-right 16 bit-and 0xFF.
-Set byte 4 of data to newval bit-shift-right 24 bit-and 0xFF.
+a number called 'new value' is 0x12345678.
+Set byte 1 of data to 'new value' bit-and 0xFF.
+Set byte 2 of data to 'new value' bit-shift-right 8 bit-and 0xFF.
+Set byte 3 of data to 'new value' bit-shift-right 16 bit-and 0xFF.
+Set byte 4 of data to 'new value' bit-shift-right 24 bit-and 0xFF.
 
 Print "After patching with 0x12345678:".
-Set i to 1.
-While i is less than or equal to 4,
-    Set byte_val to byte i of data,
-    Print "{byte_val:02X} " without newline,
-    increment i.
+Set position to 1.
+While position is less than or equal to 4,
+    Set 'byte value' to byte position of data,
+    Print "{byte value:02X} " without newline,
+    increment position.
 Print "".
 
-a buffer called buf is data.
+(Declaring one buffer from another copies its bytes, so changing the copy
+ leaves data as it was)
+a buffer called 'data copy' is data.
 Print "Buffer contents: ".
-Print buf.
-set byte 1 of buf to 'A'. (Add security restraints, CANNOT access out of bounds, should be impossible)
-(If the user tries to access out of bounds, throw an error to be caught by 'on error')
+Print 'data copy'.
+set byte 1 of 'data copy' to 'A'.
 Print "After setting byte 1 to 'A':".
-Print buf. (should be Aata, not 0 indexed)
+Print 'data copy'.
 
 Print "".
 Print "=== Done ===".

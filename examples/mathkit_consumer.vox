@@ -1,4 +1,4 @@
-(Consumes the mathkit library through its `.lib` — the Vox consumption path.
+(Consumes the mathkit library through its `.lib`: the Vox consumption path.
 Builds and runs against the finished compiler: `see` of a `.lib` resolves the
 library, `add two numbers` is type-checked against the `.lib` table of
 contents, and the call links against the `.so`. See LANGUAGE.md, "Consuming a
