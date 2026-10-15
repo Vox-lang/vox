@@ -54,7 +54,7 @@
  10: "Return"  ->  keyword.control.vox
  10: "a"  ->  punctuation.definition.vox
  10: "number"  ->  storage.type.vox
- 10: ", "  ->  (none)
+ 10: ","  ->  punctuation.separator.comma.vox
  10: "x"  ->  variable.other.vox
  10: "add"  ->  keyword.operator.vox
  10: "y"  ->  variable.other.vox
@@ -109,6 +109,6 @@
  18: "print"  ->  keyword.other.vox
  18: "list"  ->  storage.type.vox
  18: "of"  ->  punctuation.definition.vox
- 18: "size"  ->  variable.other.property.vox
+ 18: "size"  ->  variable.other.vox
  18: "16"  ->  constant.numeric.integer.vox
  18: "."  ->  (none)

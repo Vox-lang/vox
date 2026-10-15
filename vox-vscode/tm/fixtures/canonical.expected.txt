@@ -49,7 +49,7 @@
  10: "Return"  ->  keyword.control.vox
  10: "a"  ->  punctuation.definition.vox
  10: "number"  ->  storage.type.vox
- 10: ", "  ->  (none)
+ 10: ","  ->  punctuation.separator.comma.vox
  10: "the"  ->  punctuation.definition.vox
  10: "'first one'"  ->  variable.other.vox
  10: "add"  ->  keyword.operator.vox
@@ -64,22 +64,16 @@
  11: "4"  ->  constant.numeric.integer.vox
  11: "."  ->  (none)
  13: "Library"  ->  keyword.control.import.vox
- 13: "'math kit'"  ->  variable.other.vox
+ 13: "'math kit'"  ->  entity.name.namespace.vox
  13: "version"  ->  keyword.control.import.vox
- 13: "\""  ->  string.quoted.double.vox
- 13: "1.0"  ->  string.quoted.double.vox
- 13: "\""  ->  string.quoted.double.vox
+ 13: "\"1.0\""  ->  string.quoted.double.vox
  13: "."  ->  (none)
  14: "see"  ->  keyword.control.import.vox
- 14: "'math kit'"  ->  variable.other.vox
+ 14: "'math kit'"  ->  entity.name.namespace.vox
  14: "version"  ->  keyword.control.import.vox
- 14: "\""  ->  string.quoted.double.vox
- 14: "1.0"  ->  string.quoted.double.vox
- 14: "\""  ->  string.quoted.double.vox
- 14: "from"  ->  punctuation.definition.vox
- 14: "\""  ->  string.quoted.double.vox
- 14: "./libmathkit.lib"  ->  string.quoted.double.vox
- 14: "\""  ->  string.quoted.double.vox
+ 14: "\"1.0\""  ->  string.quoted.double.vox
+ 14: "from"  ->  keyword.control.import.vox
+ 14: "\"./libmathkit.lib\""  ->  string.quoted.double.vox
  14: "."  ->  (none)
  15: "see"  ->  keyword.control.import.vox
  15: "\"./utils.vox\""  ->  string.quoted.double.vox
@@ -89,15 +83,16 @@
  17: "called"  ->  punctuation.definition.vox
  17: "person"  ->  variable.other.vox
  17: "is"  ->  keyword.operator.vox
- 17: " {"  ->  (none)
+ 17: "{"  ->  punctuation.section.braces.begin.vox
  17: "\""  ->  string.quoted.double.vox
  17: "name"  ->  string.quoted.double.vox
  17: "\""  ->  string.quoted.double.vox
- 17: ": "  ->  (none)
+ 17: ":"  ->  punctuation.separator.key-value.vox
  17: "\""  ->  string.quoted.double.vox
  17: "Ada"  ->  string.quoted.double.vox
  17: "\""  ->  string.quoted.double.vox
- 17: "}."  ->  (none)
+ 17: "}"  ->  punctuation.section.braces.end.vox
+ 17: "."  ->  (none)
  18: "print"  ->  keyword.other.vox
  18: "person"  ->  variable.other.vox
  18: "'s"  ->  punctuation.accessor.vox

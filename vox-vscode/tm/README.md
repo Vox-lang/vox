@@ -1,4 +1,4 @@
-# vox-vscode/tm — real-engine grammar tokenizer
+# vox-vscode/tm - real-engine grammar tokenizer
 
 Verification, not simulation. `vscode-textmate` + `vscode-oniguruma` are exactly
 what VS Code runs internally, so the scopes printed here are the scopes the

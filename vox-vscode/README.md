@@ -1,10 +1,10 @@
-# Vox — VS Code Extension
+# Vox: VS Code Extension
 
 > **Syntax highlighting for Vox (sentence-based code)**
 
-[Vox](https://github.com/vox-lang/vox) is a systems-level programming language with a constrained, sentence-based English syntax. This extension provides syntax highlighting, bracket/comment configuration, and code folding for `.vox` files.
+[Vox](https://github.com/Vox-lang/vox) is a systems-level programming language with a constrained, sentence-based English syntax. This extension provides syntax highlighting, bracket/comment configuration, and code folding for `.vox` files.
 
-Website and full language reference: **[vox-lang.dev](https://vox-lang.dev)** — the browsable manual is at [vox-lang.dev/docs/](https://vox-lang.dev/docs/), generated from the compiler's `LANGUAGE.md`.
+Website and full language reference: **[vox-lang.dev](https://vox-lang.dev)**. The browsable manual is at [vox-lang.dev/docs/](https://vox-lang.dev/docs/), generated from the compiler's `LANGUAGE.md`.
 
 ## Installation
 
@@ -15,10 +15,10 @@ For manual installation during development, see [Manual Installation](#manual-in
 ## Features
 
 - **Syntax highlighting** for Vox language constructs.
-- **Comment support** — parenthetical comments `(like this)` with nesting.
-- **Auto-closing pairs** for brackets, parentheses, and quotes.
-- **Code folding** for function definitions and block constructs.
-- **Format-string interpolation** — `{variable}` inside double-quoted strings gets distinct highlighting.
+- **Comment support**: parenthetical comments `(like this)` with nesting.
+- **Auto-closing pairs** for brackets, parentheses, and double quotes.
+- **Code folding** from a `To` definition or a thing definition to the next blank line.
+- **Format-string interpolation**: `{variable}` inside double-quoted strings gets distinct highlighting.
 - **Distinct colors** for unique Vox constructs:
   - `each` (loop expansion)
   - `but` (conditional branching)
@@ -35,7 +35,7 @@ The extension also registers the aliases `Vox`, `vox`, `VoxLang`, and `voxlang` 
 
 | Element                  | Example Vox syntax                                  | Scope token                              |
 |--------------------------|-----------------------------------------------------|------------------------------------------|
-| `each` keyword           | `Open ... at each filename from arguments's all`    | `entity.name.tag.each.vox`               |
+| `each` keyword           | `... at each filename from arguments's all`        | `entity.name.tag.each.vox`               |
 | `but` keyword            | `but if x is greater than 10 then, ...`             | `support.type.vox`                       |
 | Format interpolation     | `"Hello {name}!"`                                   | `variable.other.interpolation.vox`       |
 | Control keywords         | `If`, `While`, `For`, `Return`, `Otherwise`, `then` | `keyword.control.vox`                    |
@@ -43,14 +43,14 @@ The extension also registers the aliases `Vox`, `vox`, `VoxLang`, and `voxlang` 
 | Import keywords          | `see`, `library`, `version`, `from`                 | `keyword.control.import.vox`             |
 | I/O keywords             | `Open`, `Read`, `Write`, `Close`                    | `support.function.vox`                   |
 | Types                    | `number`, `text`, `boolean`, `buffer`, `float`      | `storage.type.vox`                       |
-| Strings                  | `"Hello, World!"`                                     | `string.quoted.double.vox`               |
-| Numbers                  | `42`, `3.14`, `-5`, `0xFF`, `0b1010`                | `constant.numeric.*.vox`                 |
+| Strings                  | `"Hello, World!"`                                   | `string.quoted.double.vox`               |
+| Numbers                  | `42`, `3.14`, `-5`, `0xFF`, `0b1010`, `0o17`      | `constant.numeric.*.vox`                 |
 | Booleans                 | `true`, `false`                                     | `constant.language.boolean.vox`          |
 | Null literal             | `nothing`                                           | `constant.language.null.vox`             |
 | Comments                 | `(this is a comment)`                               | `comment.block.vox`                      |
-| Function definitions     | `To 'add two numbers'`                                | `entity.name.function.definition.vox`    |
+| Function definitions     | `To 'add two numbers'`                              | `entity.name.function.definition.vox`    |
 | Function calls           | `'add two numbers' of 3 and 4`                      | `entity.name.function.call.vox`          |
-| Properties               | `buf's length`, `arguments's all`                   | `variable.other.property.vox`          |
+| Properties               | `buf's length`, `arguments's all`                   | `variable.other.property.vox`            |
 | Articles / particles     | `a`, `an`, `the`, `called`, `of`, `from`            | `punctuation.definition.vox`             |
 
 Colors are provided as defaults in `package.json` under `contributes.configurationDefaults.editor.tokenColorCustomizations`. Your theme may override them.
@@ -119,7 +119,7 @@ windsurf --install-extension vox-<version>.vsix
 ## Verifying Installation
 
 1. Open any `.vox` file.
-2. Check the language mode in the bottom-right corner — it should say **Vox**.
+2. Check the language mode in the bottom-right corner; it should say **Vox**.
 3. If it says **Plain Text**, click it and select **Vox** from the list.
 
 ---
@@ -153,7 +153,7 @@ vox-vscode/
 │   └── fixtures/                # Canonical .vox samples and expected scopes
 ├── images/
 │   └── icon.png                 # Extension icon
-├── LICENSE                      # MIT
+├── LICENSE                      # GPL-3.0
 └── README.md                    # This file
 ```
 
@@ -181,4 +181,4 @@ To update expected fixture output after an intentional grammar change:
 
 ## License
 
-MIT
+GPL-3.0, the same licence as the Vox compiler. The full text is in the LICENSE file.

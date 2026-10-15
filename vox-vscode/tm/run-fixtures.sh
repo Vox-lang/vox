@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# run-fixtures.sh — tokenize every fixture under fixtures/ with the real
+# run-fixtures.sh - tokenize every fixture under fixtures/ with the real
 # TextMate engine and diff against the committed .expected.txt. Fails on
 # drift, so a grammar change that silently changes highlighting is caught.
 #
@@ -16,7 +16,7 @@ update=false
 [ "${1:-}" = "--update" ] && update=true
 
 if [ ! -d node_modules ]; then
-  echo "run-fixtures: node_modules missing — run 'npm install' in $(pwd)" >&2
+  echo "run-fixtures: node_modules missing - run 'npm install' in $(pwd)" >&2
   exit 2
 fi
 
@@ -30,7 +30,7 @@ for vox in fixtures/*.vox; do
     continue
   fi
   if [ ! -f "$expected" ]; then
-    echo "run-fixtures: $expected missing — run with --update to create it" >&2
+    echo "run-fixtures: $expected missing - run with --update to create it" >&2
     status=1
     continue
   fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# check-grammar.sh — catch drift between the Vox lexer's keywords and the
+# check-grammar.sh - catch drift between the Vox lexer's keywords and the
 # VS Code grammar's highlighted keywords.
 #
 # The extension's grammar (syntaxes/vox.tmLanguage.json) is hand-maintained
@@ -155,7 +155,7 @@ for c in canon:
 # Allow-list: articles / particles that are real lexer tokens but would be
 # noise if highlighted. Keep this list small and deliberate; adding a word
 # here means "we never require the grammar to highlight it". This is a
-# judgement, not an omission — if the grammar chooses to highlight one of
+# judgement, not an omission - if the grammar chooses to highlight one of
 # these (the current grammar does, via the "articles" pattern), that is fine;
 # the checker simply does not enforce it.
 # ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ def collect_from_pattern(pat):
                 if k < n and pat[k] == ':':
                     inner_start = k + 1
                     j = inner_start
-                # else: a bare flag group like (?i) — inner stays after '?'
+                # else: a bare flag group like (?i) - inner stays after '?'
             jj = j
             while jj < n and depth > 0:
                 cc = pat[jj]
@@ -288,7 +288,7 @@ print("  grammar-only:       %d" % len(extras))
 
 if missing:
     print("")
-    print("MISSING — lexer keywords the grammar does not highlight:")
+    print("MISSING - lexer keywords the grammar does not highlight:")
     for kw in missing:
         spellings = sorted(canon_to_spellings[kw])
         if spellings == [kw]:
@@ -298,7 +298,7 @@ if missing:
 
 if extras:
     print("")
-    print("GRAMMAR-ONLY — highlighted by the grammar but not a lexer keyword")
+    print("GRAMMAR-ONLY - highlighted by the grammar but not a lexer keyword")
     print("(informational; may be stale grammar, does not fail this check):")
     for kw in extras:
         print("  " + kw)

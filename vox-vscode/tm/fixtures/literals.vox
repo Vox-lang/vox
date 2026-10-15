@@ -1,0 +1,23 @@
+a number called mode is 0o17.
+a number called 'file mode' is 0O755.
+a number called mask is 0xFF.
+a number called flags is 0b1010.
+a character called newline is '\n'.
+a character called slash is '\\'.
+a character called quote is '\''.
+a character called letter is 'A'.
+If v1 isn't v2 then, print "different".
+If the items aren't empty then, print "full".
+Library mathkit version "1.0".
+Library 'math kit' version "1.0".
+See mathkit version "1.0" from "./libmathkit.lib".
+See 'math kit' version "1.0" from "./libmathkit.lib".
+see "./utils.vox".
+a number called count is 3.
+a number called first is count.
+a number called size is first.
+print the thing's size.
+print arguments's all.
+print 'my list's first.
+To greet.
+  print "hi".
