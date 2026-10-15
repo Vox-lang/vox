@@ -48,6 +48,9 @@ section .bss
     buf_count: resq 1
     ; Scratch buffer for _buffer_append_formatted_int (backwards decimal conversion)
     fmt_i64_buf: resb 128
+    ; The buffer `Print` renders a padded float into before padding it
+    ; (_fmt_scratch_buffer below); 0 until the first such Print.
+    _fmt_pad_scratch: resq 1
 
 section .text
 ; Allocate a new dynamic buffer
@@ -1033,6 +1036,143 @@ _buffer_append_cstr:
     pop rcx
     ret
 
+; Right-align the value just appended to a buffer within a width
+; (docs/BUGS_FOUND.md #148): `{price:8}` and `{name:8}` in a text, a
+; buffer, a `write` or any other sink but Print. The value is appended
+; first by its own routine, then moved right and the fill written in
+; front of it, so a float, a text and a buffer share one padder.
+; Args: rdi = buffer, rsi = the buffer's length before the value was
+;       appended, rdx = width, rcx = fill: 0 spaces, 1 zeros, 2 zeros
+;       after a leading '-' (the sign comes first, as a number's does).
+; Returns: rax = the buffer (possibly reallocated). A value already as
+; wide as the width is left as it is. Where the padded value does not fit
+; (a fixed buffer, or memory that cannot grow) what fits is kept and the
+; error flag is set, as an append does.
+global _buffer_pad_tail
+_buffer_pad_tail:
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi                    ; buffer
+    mov r13, rsi                    ; where the value starts
+    mov r14, [r12 + BUF_LENGTH]
+    sub r14, r13                    ; the value's length
+    mov r8b, ' '
+    test rcx, rcx
+    jz .pad_fill_known
+    mov r8b, '0'
+    cmp rcx, 2
+    jne .pad_fill_known
+    test r14, r14
+    jz .pad_fill_known
+    cmp byte [r12 + BUF_DATA + r13], '-'
+    jne .pad_fill_known
+    inc r13                         ; the sign stays in front of the zeros
+    dec r14
+    dec rdx
+.pad_fill_known:
+    mov r15, rdx
+    sub r15, r14                    ; fill characters owed
+    jle .pad_done
+
+    ; r9 = the length once padded. A width past 2^46 cannot be held in
+    ; memory, and the sum would overflow before the capacity test.
+    mov rax, 1 << 46
+    cmp r15, rax
+    ja .pad_short
+    mov r9, [r12 + BUF_LENGTH]
+    add r9, r15
+    cmp r9, [r12 + BUF_CAPACITY]
+    jle .pad_have_room
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
+    jnz .pad_short
+    mov rdi, r12
+    mov rsi, r9
+    call _grow_buffer
+    mov r12, rax
+    cmp r9, [r12 + BUF_CAPACITY]    ; a failed growth hands back the old one
+    jle .pad_have_room
+.pad_short:
+    mov qword [rel _last_error], 1
+    mov r9, [r12 + BUF_CAPACITY]
+
+.pad_have_room:
+    ; Move the value's bytes that still fit after the fill, last byte first
+    ; (the two ranges overlap).
+    mov rcx, r9
+    sub rcx, r13
+    sub rcx, r15
+    cmp rcx, r14
+    jle .pad_move_counted
+    mov rcx, r14
+.pad_move_counted:
+    test rcx, rcx
+    jle .pad_fill
+    lea rsi, [r12 + BUF_DATA + r13 - 1]
+    add rsi, rcx
+    lea rdi, [rsi + r15]
+    std
+    rep movsb
+    cld
+
+.pad_fill:
+    mov rcx, r9
+    sub rcx, r13
+    cmp rcx, r15
+    jle .pad_fill_counted
+    mov rcx, r15
+.pad_fill_counted:
+    lea rdi, [r12 + BUF_DATA + r13]
+    movzx eax, r8b
+    rep stosb
+    mov [r12 + BUF_LENGTH], r9
+    mov byte [r12 + BUF_DATA + r9], 0
+
+.pad_done:
+    mov rax, r12
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+; The buffer `Print` renders a padded float into, emptied (#148): Print
+; writes straight to stdout, so the float's characters are counted here
+; before the fill goes out in front of them. Allocated on the first such
+; Print and reused by every later one; it is tracked like every buffer and
+; freed at exit.
+; Returns: rdi = the empty scratch buffer. Every other register is kept.
+global _fmt_scratch_buffer
+_fmt_scratch_buffer:
+    push rax
+    mov rdi, [rel _fmt_pad_scratch]
+    test rdi, rdi
+    jnz .scratch_ready
+    call _alloc_buffer
+    mov [rel _fmt_pad_scratch], rax
+    mov rdi, rax
+.scratch_ready:
+    mov qword [rdi + BUF_LENGTH], 0
+    mov byte [rdi + BUF_DATA], 0
+    pop rax
+    ret
+
 ; Append formatted integer into destination buffer
 ; Args:
 ;   rdi = destination buffer
@@ -1324,6 +1464,41 @@ _buffer_copy:
     pop rdx
     pop rcx
     pop rbx
+    ret
+
+; A new buffer holding the same bytes as the one in rdi (docs/BUGS_FOUND.md
+; #103): what a thing's buffer field becomes in a copy of the thing, so the
+; copy and the original never share one. A fixed buffer's copy is fixed at
+; the same capacity; any other is a growing buffer.
+; Args: rdi = buffer. Returns: rax = the new buffer, or the shared released
+; header with the error flag set when no memory could be had for it.
+global _buffer_duplicate
+_buffer_duplicate:
+    push rdi
+    push rsi
+    push r12
+    mov r12, rdi
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
+    jz .duplicate_growing
+    mov rdi, [r12 + BUF_CAPACITY]
+    call _alloc_buffer_sized
+    jmp .duplicate_allocated
+.duplicate_growing:
+    call _alloc_buffer
+.duplicate_allocated:
+    test rax, rax
+    jnz .duplicate_fill
+    mov qword [rel _last_error], 1
+    lea rax, [rel _released_buffer_header]
+    jmp .duplicate_done
+.duplicate_fill:
+    mov rdi, rax
+    mov rsi, r12
+    call _buffer_copy
+.duplicate_done:
+    pop r12
+    pop rsi
+    pop rdi
     ret
 
 ; Clear buffer contents

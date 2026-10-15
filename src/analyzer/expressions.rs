@@ -458,9 +458,8 @@ impl Analyzer {
     /// cannot answer.
     ///
     /// A width asks nothing of a type - every rendering is some number of
-    /// characters long - and v0.4.7 settled that a width on a float or a
-    /// text renders the value and drops the padding (#36). The other two
-    /// specifiers do ask something:
+    /// characters long, and a number, a float, a text and a buffer are all
+    /// padded out to it (#148). The other two specifiers do ask something:
     ///
     /// - `{v:.N}` names N places in a NUMBER's decimal expansion. A text or
     ///   a buffer has no expansion, so there is no such thing as one of its

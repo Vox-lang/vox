@@ -1,0 +1,84 @@
+(A thing is a value: every copy of it, by assignment, by a parameter or by
+ a return, copies its list, map and buffer fields too, so changing one in
+ the copy never changes the original, and the reverse.)
+
+A thing called note has
+  a list called items is ["eggs"],
+  a map called counts is {"eggs": 6},
+  a buffer called body is "milk".
+
+A thing called folder has
+  a note called front,
+  a list called labels.
+
+To 'show both' with a note called left and a note called right.
+  Print left.
+  Print right.
+
+(Declared from another, then each changed.)
+a note called original.
+a note called duplicate is original.
+append "duplicate only" to duplicate's items.
+Set duplicate's counts's "eggs" to 12.
+append "!" to duplicate's body.
+append "original only" to original's items.
+'show both' with original and duplicate.
+
+(Assigned over an existing thing, by each spelling.)
+a note called later.
+Set later to original.
+append "later only" to later's items.
+the later is original.
+Set original's counts's "later" to 0.
+'show both' with original and later.
+
+(Passed to a function, which changes its own copy.)
+To 'scribble on' with a note called given.
+  append "scribbled" to given's items.
+  Set given's counts's "eggs" to 0.
+  copy "ink" to given's body.
+  Print given.
+
+'scribble on' with original.
+Print original.
+
+(Returned from a function: the result is the caller's own.)
+To 'a fresh note'.
+  a note called made.
+  append "made" to made's items.
+  Return a note, made.
+
+To 'the same note' with a note called given.
+  Return a note, given.
+
+a note called 'first made' is 'a fresh note'.
+a note called 'second made' is 'a fresh note'.
+append "second only" to 'second made''s items.
+'show both' with 'first made' and 'second made'.
+The returned is 'the same note' of original.
+append "returned only" to returned's items.
+'show both' with original and returned.
+
+(A nested thing's collections are copied with the thing that holds it.)
+a folder called drawer.
+append "drawer" to drawer's labels.
+a folder called spare is drawer.
+append "spare" to spare's front's items.
+append "spare" to spare's labels.
+Set drawer's front's counts's "drawer" to 1.
+Print drawer.
+Print spare.
+Set spare's front to drawer's front.
+append "front copy" to spare's front's items.
+Print drawer's front's items.
+Print spare's front's items.
+
+(The same holds for a thing that lives inside a function.)
+To 'copy a local'.
+  a note called here.
+  a note called there is here.
+  append "there" to there's items.
+  Print here's items.
+  Print there's items.
+
+'copy a local'.

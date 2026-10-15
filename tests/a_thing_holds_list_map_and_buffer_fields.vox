@@ -1,0 +1,88 @@
+(A thing holds a list, a map and a buffer as fields. Each is declared with
+ the literal a variable of its type is declared with, and is read, changed,
+ walked and printed through the possessive the way the variable would be.)
+
+A thing called note has
+  a text called title is "shopping",
+  a list called items is ["eggs"],
+  a list called done,
+  a map called counts is {"eggs": 6},
+  a map called prices,
+  a buffer called body is "milk",
+  a buffer called scratch is 4 bytes in size.
+
+a note called errand.
+Print errand.
+
+append "bread" to errand's items.
+append 3.5 to errand's done.
+Set errand's counts's "bread" to 1.
+Set errand's prices's "milk" to 2.
+append " and honey" to errand's body.
+copy "abcdef" to errand's scratch.
+On error Print "the scratch buffer holds four bytes".
+Print errand.
+
+Print errand's items's length.
+Print errand's items's first.
+Print errand's items's last.
+Print element 2 of errand's items.
+Set element 1 of errand's items to "duck eggs".
+For each item in errand's items, Print item.
+For each key in errand's counts's keys, Print key.
+a number called eggs is errand's counts's "eggs".
+Print eggs.
+Print byte 1 of errand's body.
+Set byte 1 of errand's body to 'M'.
+Print errand's body.
+Print errand's body's size.
+If errand's done is empty then, Print "nothing done". Otherwise, Print "something done".
+Print "items {errand's items} and counts {errand's counts}".
+a text called summary is "body {errand's body}, {errand's items's length} items".
+Print summary.
+
+(A field written whole takes its own copy of what it is given.)
+a list called fresh is [1, 2].
+Set errand's done to fresh.
+append 3 to fresh.
+Print errand's done.
+Print fresh.
+errand's prices is {"tea": 4}.
+Set errand's body to "{errand's title}!".
+Print errand.
+
+(A field read out whole into a variable is the variable's own copy.)
+a list called taken is errand's items.
+append "only taken" to taken.
+a map called counted is errand's counts.
+Set counted's "only counted" to 0.
+a buffer called copied is errand's body.
+append "?" to copied.
+Print errand.
+Print taken.
+Print counted.
+Print copied.
+To 'the items'.
+  Return a list, errand's items.
+
+a list called returned is 'the items'.
+append "only returned" to returned.
+Print errand's items.
+Print returned.
+
+(A list parameter is the caller's list, so a field grows through one.)
+To 'stock up' with a list called shelf.
+  append each count from 1 to 20 to shelf.
+
+'stock up' with errand's done.
+Print errand's done's length.
+
+(Free releases a field's list or buffer, which reads empty afterwards.)
+Free errand's items.
+Print errand's items.
+append "after" to errand's items.
+On error Print "a freed list refuses an append".
+Free errand's body.
+Free errand's body.
+On error Print "a second Free sets the error flag".
+Print errand's body's size.

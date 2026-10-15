@@ -1,0 +1,5 @@
+(A field's default is a literal of the field's own type: a list field
+ takes a list literal.)
+
+A thing called note has
+  a list called items is 5.

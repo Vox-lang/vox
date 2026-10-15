@@ -258,7 +258,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let buffer = self.parse_name()?;
+            let buffer = self.parse_collection_name()?;
             self.skip_noise();
             self.skip_noise();
             if *self.current() != Token::To {
@@ -281,7 +281,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let list = self.parse_name()?;
+            let list = self.parse_collection_name()?;
             self.skip_noise();
             if *self.current() != Token::To {
                 return Err(self.err("Expected 'to' after list name"));

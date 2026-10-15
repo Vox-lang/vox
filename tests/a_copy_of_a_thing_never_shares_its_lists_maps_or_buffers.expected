@@ -1,0 +1,16 @@
+{items: ["eggs", "original only"], counts: {"eggs": 6}, body: "milk"}
+{items: ["eggs", "duplicate only"], counts: {"eggs": 12}, body: "milk!"}
+{items: ["eggs", "original only"], counts: {"eggs": 6, "later": 0}, body: "milk"}
+{items: ["eggs", "original only"], counts: {"eggs": 6}, body: "milk"}
+{items: ["eggs", "original only", "scribbled"], counts: {"eggs": 0, "later": 0}, body: "ink"}
+{items: ["eggs", "original only"], counts: {"eggs": 6, "later": 0}, body: "milk"}
+{items: ["eggs", "made"], counts: {"eggs": 6}, body: "milk"}
+{items: ["eggs", "made", "second only"], counts: {"eggs": 6}, body: "milk"}
+{items: ["eggs", "original only"], counts: {"eggs": 6, "later": 0}, body: "milk"}
+{items: ["eggs", "original only", "returned only"], counts: {"eggs": 6, "later": 0}, body: "milk"}
+{front: {items: ["eggs"], counts: {"eggs": 6, "drawer": 1}, body: "milk"}, labels: ["drawer"]}
+{front: {items: ["eggs", "spare"], counts: {"eggs": 6}, body: "milk"}, labels: ["drawer", "spare"]}
+["eggs"]
+["eggs", "front copy"]
+["eggs"]
+["eggs", "there"]

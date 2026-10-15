@@ -37,10 +37,15 @@ impl CodeGenerator {
         // global holds one quadword: a scalar's value, or a pointer to a
         // buffer/list/map allocated elsewhere.
         match self.thing_global_size(name) {
-            Some(size) => self.bss_section.push_str(&format!(
-                "    {}: resb {}  ; {} is a thing\n",
-                label, size, name
-            )),
+            Some(size) => {
+                self.bss_section.push_str(&format!(
+                    "    {}: resb {}  ; {} is a thing\n",
+                    label, size, name
+                ));
+                if let Some(thing) = self.thing_of_variable(name) {
+                    self.register_collection_fields(name, &thing);
+                }
+            }
             None => self.bss_section.push_str(&format!("    {}: resq 1\n", label)),
         }
     }

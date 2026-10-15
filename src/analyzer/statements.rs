@@ -208,6 +208,17 @@ impl Analyzer {
         // conflict itself, which the linear walk below reports once, at the
         // second declaration.
         self.conflicted_globals = collect_conflicted_globals(&program.statements);
+        // A top-level thing's list, map and buffer fields are globals too:
+        // a function reads `note's tags` wherever `note` is declared.
+        let global_things: Vec<(String, String)> = self
+            .thing_vars
+            .iter()
+            .filter(|(name, _)| self.global_variables.contains(*name))
+            .map(|(name, thing)| (name.clone(), thing.clone()))
+            .collect();
+        for (name, thing) in global_things {
+            self.declare_collection_fields(&name, &thing, true);
+        }
 
         // Track the library identity as we walk so each function is filed under
         // its OWN `<lib>_<ver>_<func>` key (a local, not `self.current_library`,
@@ -554,7 +565,10 @@ impl Analyzer {
                         | Type::Float
                         | Type::Boolean
                         | Type::Time
-                        | Type::String),
+                        | Type::String
+                        | Type::List(_)
+                        | Type::Map(_)
+                        | Type::Buffer),
                     ) => {
                         // A value that already named its own problem (a
                         // text field in arithmetic, which is what
@@ -1497,6 +1511,7 @@ impl Analyzer {
                             // thing in this frame (plan 310 §5), so its
                             // fields read exactly like a local declaration's.
                             self.thing_vars.insert(param_name.clone(), thing.clone());
+                            self.declare_collection_fields(param_name, thing, false);
                         }
                         Type::Buffer => { self.buffer_variables.insert(param_name.clone()); }
                         Type::List(_) => { self.list_variables.insert(param_name.clone()); }

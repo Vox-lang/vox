@@ -1,7 +1,7 @@
 use super::*;
 use crate::analyzer::things::{
-    collect_thing_vars, field_offset, registry, resolve_field_path, scalar_slots, thing_size,
-    SLOT_BYTES,
+    collect_thing_vars, collection_fields, field_offset, registry, resolve_field_path,
+    scalar_slots, thing_size, SLOT_BYTES,
 };
 
 /// How many 8-byte slots a copy unrolls before it is worth the string move
@@ -28,6 +28,36 @@ impl CodeGenerator {
     /// Which thing a variable holds, if it holds one.
     pub(crate) fn thing_of_variable(&self, name: &str) -> Option<String> {
         self.thing_vars.get(name).cloned()
+    }
+
+    /// Give each list, map and buffer field of the thing variable `name` a
+    /// name of its own (`note's tags`) whose storage is the field's slot, so
+    /// every collection statement reads and writes the field exactly as it
+    /// does a variable of that type (docs/BUGS_FOUND.md #103). Call once the
+    /// variable's own storage is known: a frame slot, or its `.bss` label.
+    pub(crate) fn register_collection_fields(&mut self, name: &str, thing: &str) {
+        for (path, offset, field) in collection_fields(&self.things, thing) {
+            let alias = render_chain(name, &path);
+            self.collection_fields.insert(alias.clone(), field.field_type.clone());
+            if let Some(slot) = self.get_var(name) {
+                self.variables.insert(alias.clone(), slot - offset as i64);
+            } else if let Some(label) = self.global_var_label(name).cloned() {
+                let place = if offset == 0 { label } else { format!("{}+{}", label, offset) };
+                self.global_var_labels.insert(alias.clone(), place);
+                self.global_var_types.insert(alias.clone(), field.field_type.clone());
+                if matches!(field.field_type, Type::List(_)) {
+                    self.global_list_element_types.insert(alias.clone(), VarType::Mixed);
+                }
+            }
+            self.variable_types
+                .insert(alias.clone(), super::vars::declared_vartype(&field.field_type));
+            self.declared_types.insert(alias.clone(), field.field_type.clone());
+            // Every element of a list carries its own tag, and a field's list
+            // is read by those tags, never by a type guessed from one append.
+            if matches!(field.field_type, Type::List(_)) {
+                self.list_element_types.insert(alias, VarType::Mixed);
+            }
+        }
     }
 
     /// Size in bytes to reserve for a thing variable's global label, or None
@@ -94,6 +124,7 @@ impl CodeGenerator {
             self.stack_offset += size as i64;
             self.variables.insert(name.to_string(), self.stack_offset);
         }
+        self.register_collection_fields(name, thing);
 
         self.emit_indent(&format!(
             "; {} is a {} ({} bytes{})",
@@ -127,11 +158,86 @@ impl CodeGenerator {
         }
     }
 
+    /// Write every top-level thing's defaults before the program's first
+    /// statement, so a function called above the declaration reads a thing
+    /// whose text, list, map and buffer fields are real ones, never the null
+    /// pointers `.bss` starts with. The declaration writes its defaults again
+    /// when it is reached, as it always has.
+    pub(crate) fn emit_global_thing_defaults(&mut self) {
+        let mut globals: Vec<(String, String)> = self
+            .thing_vars
+            .iter()
+            .filter(|(name, _)| self.global_var_label(name).is_some())
+            .map(|(name, thing)| (name.clone(), thing.clone()))
+            .collect();
+        globals.sort();
+        for (name, thing) in globals {
+            for (offset, field) in scalar_slots(&self.things, &thing) {
+                if !matches!(
+                    field.field_type,
+                    Type::String | Type::List(_) | Type::Map(_) | Type::Buffer
+                ) {
+                    continue;
+                }
+                let Some(operand) = self.thing_field_operand_at(&name, offset) else {
+                    continue;
+                };
+                let rendered = self.emit_field_default(&field);
+                self.emit_indent(&format!(
+                    "mov qword {}, rax  ; {}'s {} starts as {}",
+                    operand, name, field.name, rendered
+                ));
+            }
+        }
+    }
+
     /// Leave a field's declared default in rax, and say how to spell it in
     /// the emitted comment. A text default is the address of its string
     /// constant; a text field with no default holds the empty text, never a
     /// null pointer, because every read of it is a read of text.
     fn emit_field_default(&mut self, field: &FieldDef) -> String {
+        // A list, a map and a buffer field are made fresh for every thing,
+        // so no two things ever start out sharing one.
+        match (&field.field_type, &field.default) {
+            (Type::List(_), Some(literal @ Expr::ListLit { .. }))
+            | (Type::Map(_), Some(literal @ Expr::MapLit { .. })) => {
+                self.uses_heap = true;
+                self.generate_expr(literal);
+                return "a new collection".to_string();
+            }
+            (Type::List(_), _) => {
+                self.emit_empty_value_for(VarType::List);
+                return "[]".to_string();
+            }
+            (Type::Map(_), _) => {
+                self.emit_empty_value_for(VarType::Map);
+                return "{}".to_string();
+            }
+            (Type::Buffer, default) => {
+                self.uses_buffers = true;
+                match default {
+                    Some(Expr::IntegerLit(size)) => {
+                        self.emit_indent(&format!("mov rdi, {}", size));
+                        self.emit_indent("call _alloc_buffer_sized");
+                        return format!("{} bytes in size", size);
+                    }
+                    Some(Expr::StringLit(text)) => {
+                        let label = self.add_string(text);
+                        self.emit_indent("call _alloc_buffer");
+                        self.emit_indent("mov rdi, rax");
+                        self.emit_indent(&format!("lea rsi, [rel {}]", label));
+                        self.emit_indent(&format!("mov rdx, {}_len", label));
+                        self.emit_indent("call _buffer_append_bytes");
+                        return format!("{:?}", text);
+                    }
+                    _ => {
+                        self.emit_indent("call _alloc_buffer");
+                        return "an empty buffer".to_string();
+                    }
+                }
+            }
+            _ => {}
+        }
         if matches!(field.field_type, Type::String) {
             let text = match &field.default {
                 Some(Expr::StringLit(text)) => text.clone(),
@@ -162,7 +268,10 @@ impl CodeGenerator {
     /// `rax` for the caller exactly as the un-defaulted version did.
     pub(crate) fn emit_thing_defaults_through_r10(&mut self, thing: &str) {
         for (offset, field) in scalar_slots(&self.things, thing) {
+            // Making a collection is a call, which is free to change r10.
+            self.emit_indent("push r10");
             let rendered = self.emit_field_default(&field);
+            self.emit_indent("pop r10");
             self.emit_indent(&format!(
                 "mov qword [r10+{}], rax  ; fell off the end: {}'s default is {}",
                 offset, field.name, rendered
@@ -255,7 +364,77 @@ impl CodeGenerator {
         }
         self.emit_indent("mov rsi, rax  ; the thing being copied");
         self.emit_indent(&format!("lea rdi, {}", destination));
+        self.emit_thing_copy_of(thing, what);
+    }
+
+    /// Copy a whole `thing` from the address in rsi to the address in rdi,
+    /// then give the copy collections of its own: each list, map and buffer
+    /// field is replaced by a copy of the one it was copied from, so the
+    /// copy and the original never share a collection (docs/BUGS_FOUND.md
+    /// #103).
+    pub(crate) fn emit_thing_copy_of(&mut self, thing: &str, what: &str) {
+        let collections = collection_fields(&self.things, thing);
+        if !collections.is_empty() {
+            self.emit_indent("push rdi  ; the copy, which gets collections of its own below");
+        }
         self.emit_thing_copy(thing_size(&self.things, thing), what);
+        if collections.is_empty() {
+            return;
+        }
+        for (path, offset, field) in collections {
+            self.emit_indent("mov rax, [rsp]");
+            self.emit_indent(&format!(
+                "mov rdi, [rax+{}]  ; {}'s {}",
+                offset,
+                what,
+                path.join("'s ")
+            ));
+            self.emit_collection_copy(&field.field_type);
+            self.emit_indent("mov rcx, [rsp]");
+            self.emit_indent(&format!("mov [rcx+{}], rax", offset));
+        }
+        self.emit_indent("add rsp, 8");
+    }
+
+    /// `a list called taken is note's tags.` - a list or a map read out of a
+    /// field into a variable is a copy, as one read out of a list is: the
+    /// field stays the thing's own. The statement stores the field's
+    /// collection, then the stored one is replaced by its copy. A buffer
+    /// variable copies its source already.
+    pub(crate) fn copy_out_of_collection_field(&mut self, stmt: &Statement) {
+        let (Statement::VarDecl { name, value: Some(Expr::Identifier(source)), .. }
+        | Statement::Assignment { name, value: Expr::Identifier(source) }) = stmt
+        else {
+            return;
+        };
+        let Some(collection @ (Type::List(_) | Type::Map(_))) =
+            self.collection_fields.get(source).cloned()
+        else {
+            return;
+        };
+        if self.emit_load_named_var_addr(name) {
+            self.emit_indent(&format!("mov rdi, rax  ; {} takes a copy of {}", name, source));
+            self.emit_collection_copy(&collection);
+            self.emit_store_back_after_realloc(name, "rax");
+        }
+    }
+
+    /// Leave in rax a copy of the list, map or buffer in rdi.
+    pub(crate) fn emit_collection_copy(&mut self, collection: &Type) {
+        match collection {
+            Type::List(_) => {
+                self.uses_lists = true;
+                self.emit_indent("call _copy_list");
+            }
+            Type::Map(_) => {
+                self.uses_maps = true;
+                self.emit_indent("call _copy_map");
+            }
+            _ => {
+                self.uses_buffers = true;
+                self.emit_indent("call _buffer_duplicate");
+            }
+        }
     }
 
     /// Copy `size` bytes from the address in rsi to the address in rdi.
@@ -344,7 +523,7 @@ impl CodeGenerator {
                     // map prints the texts it holds. The opening quote is
                     // written before the field is loaded: writing it uses
                     // rdi.
-                    if matches!(field_type, Type::String) {
+                    if matches!(field_type, Type::String | Type::Buffer) {
                         self.emit_print_literal("\"");
                     }
                     let operand = place.operand(at);
@@ -355,6 +534,15 @@ impl CodeGenerator {
                     if matches!(field_type, Type::String) {
                         self.emit_indent("PRINT_CSTR rdi");
                         self.emit_print_literal("\"");
+                    } else if matches!(field_type, Type::Buffer) {
+                        self.emit_indent("PRINT_BUF rdi");
+                        self.emit_print_literal("\"");
+                    } else if matches!(field_type, Type::List(_)) {
+                        self.uses_lists = true;
+                        self.emit_indent("call _list_print");
+                    } else if matches!(field_type, Type::Map(_)) {
+                        self.uses_maps = true;
+                        self.emit_indent("call _map_print");
                     } else if matches!(field_type, Type::Float) {
                         self.emit_indent("movq xmm0, rdi");
                         self.emit_indent("PRINT_FLOAT");
@@ -494,10 +682,30 @@ impl CodeGenerator {
         // A text field takes what a text variable takes: a buffer arrives as
         // a fresh copy of its bytes, never as the buffer itself, so writing
         // the buffer later cannot reach the field.
-        if matches!(self.thing_field_type(base, path), Some(Type::String)) {
+        let field_type = self.thing_field_type(base, path);
+        // A buffer field takes what `copy ... to` puts in a buffer, into the
+        // field's own buffer.
+        if matches!(field_type, Some(Type::Buffer)) {
+            self.generate_statement(&Statement::BufferCopy {
+                source: value.clone(),
+                destination: render_chain(base, path),
+            });
+            return;
+        }
+        if matches!(field_type, Some(Type::String)) {
             self.generate_expr_as_text(value);
         } else {
             self.generate_expr(value);
+        }
+        // A list, a map or a buffer written into a field is copied in, as
+        // one placed inside a list is: the thing owns what its field holds,
+        // so a later change through the source's own name never reaches it.
+        // A literal is already new, and is the field's as it stands.
+        if let Some(collection @ (Type::List(_) | Type::Map(_) | Type::Buffer)) = &field_type {
+            if !matches!(value, Expr::ListLit { .. } | Expr::MapLit { .. }) {
+                self.emit_indent("mov rdi, rax");
+                self.emit_collection_copy(collection);
+            }
         }
         if let Some(operand) = self.thing_field_operand(base, path) {
             if matches!(self.thing_field_type(base, path), Some(Type::Float)) {

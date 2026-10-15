@@ -390,11 +390,9 @@ impl CodeGenerator {
     /// the one sink LANGUAGE.md's "Format Strings Everywhere" promise was
     /// still missing, and #86's shape one type over.
     ///
-    /// Only the INTEGER branch takes the spec, exactly as the buffer twin
-    /// does: a tagged text has no width primitive and a tagged float has no
-    /// float-padding primitive (#36's recorded residue), so both render by
-    /// their tag and ignore the spec, and a list, a map and `nothing` render
-    /// through their own routines.
+    /// The integer branch takes the whole spec, a tagged text and a tagged
+    /// float take its width (#148), exactly as the buffer twin does, and a
+    /// list, a map and `nothing` render through their own routines.
     pub(crate) fn emit_mixed_print_dispatch_spec(&mut self, tag_reg: &str, fmt: FormatSpec) {
         let str_label = self.new_label("mixp_str");
         let flt_label = self.new_label("mixp_flt");
@@ -424,15 +422,17 @@ impl CodeGenerator {
         // boolean lists, which print 1/0 today) - through the formatter, so a
         // width or a radix written in the hole is honoured here exactly as it
         // is in the buffer twin (#81).
-        self.emit_formatted_value(Some(VarType::Integer), fmt);
+        self.emit_formatted_value(Some(VarType::Integer), fmt.clone());
         self.emit_indent(&format!("jmp {}", done_label));
+        // A tagged text and a tagged float pad to a width as the integer
+        // branch does (docs/BUGS_FOUND.md #148); a precision stays the
+        // integer branch's alone, as it is in the buffer twin.
+        let width_only = FormatSpec { precision: None, base: IntegerBase::Decimal, ..fmt };
         self.emit(&format!("{}:", str_label));
-        self.emit_indent("PRINT_CSTR rdi");
+        self.emit_formatted_value(Some(VarType::String), width_only.clone());
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", flt_label));
-        self.emit_indent("movq xmm0, rdi");
-        self.emit_indent("PRINT_FLOAT");
-        self.uses_floats = true;
+        self.emit_formatted_value(Some(VarType::Float), width_only);
         self.emit_indent(&format!("jmp {}", done_label));
         self.emit(&format!("{}:", list_label));
         self.emit_indent("call _list_print  ; rdi = child list pointer");

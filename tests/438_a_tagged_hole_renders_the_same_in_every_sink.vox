@@ -44,9 +44,8 @@ Delete the file "./test_bug68_write.txt".
  NUMBER - a mixed list's integer element, a map read - carries its own
  runtime tag, and the buffer sinks have applied the hole's format spec to
  it since #68. Print's twin took no spec at all, so the same hole padded in
- a text and did not pad on screen. Both now agree. A tagged TEXT still
- ignores a width: there is no text-padding primitive behind the tag
- dispatch, which is #36's recorded residue and not this entry's to close.)
+ a text and did not pad on screen. Both now agree. A tagged TEXT pads to
+ a width the same way in both sinks (#148).)
 a list called sizes is [1, "two"].
 a map called scores is {"ada": 10}.
 
@@ -59,4 +58,6 @@ Print keyed.
 Print "[{scores's \"ada\":6}]".
 
 Print "hex: {scores's \"ada\":x}".
-Print "a tagged text ignores a width: [{element 2 of sizes:5}]".
+Print "a tagged text pads to a width: [{element 2 of sizes:5}]".
+a text called 'padded text' is "a tagged text pads to a width: [{element 2 of sizes:5}]".
+Print 'padded text'.

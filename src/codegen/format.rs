@@ -289,36 +289,64 @@ impl CodeGenerator {
     pub(crate) fn emit_formatted_value(&mut self, value_type: Option<VarType>, fmt: FormatSpec) {
         match value_type {
             Some(VarType::Float) => {
+                self.uses_floats = true;
+                if let Some(width) = fmt.width.filter(|width| *width > 0) {
+                    // `{price:8}` and `{price:8.2}` (docs/BUGS_FOUND.md
+                    // #148). Print writes straight to stdout, so the float
+                    // is rendered into a scratch buffer by the routine every
+                    // other sink uses, counted, and printed behind its fill.
+                    self.uses_buffers = true;
+                    self.uses_format = true;
+                    self.emit_indent("mov rax, rdi");
+                    self.emit_indent("call _fmt_scratch_buffer");
+                    if let Some(precision) = fmt.precision {
+                        self.uses_io = true;
+                        self.emit_indent(&format!("mov rsi, {}", precision));
+                        self.emit_indent("call _buffer_append_float_precision");
+                    } else {
+                        self.emit_indent("call _buffer_append_float");
+                    }
+                    // A long rendering may have moved the scratch buffer.
+                    self.emit_indent("mov [rel _fmt_pad_scratch], rax");
+                    self.emit_indent("mov rdi, rax");
+                    self.emit_indent("mov rsi, [rdi + BUF_LENGTH_OFFSET]");
+                    self.emit_indent("BUFFER_DATA_ADDR rdi");
+                    self.emit_print_padded_call(width, pad_fill(&fmt, true), "_print_padded_bytes");
+                    return;
+                }
                 self.emit_indent("movq xmm0, rdi");
                 if let Some(precision) = fmt.precision {
                     self.emit_indent(&format!("mov rdi, {}", precision));
                     self.emit_indent("call _print_float_precision");
                     self.uses_format = true;
                 } else {
-                    // A width or a radix on a float is not applied: there is
-                    // no float padding primitive in coreasm (#36's residue),
-                    // and a radix is refused before it gets here. The VALUE
-                    // is what matters and it is now always right.
+                    // A radix on a float is refused before it gets here.
                     self.emit_indent("PRINT_FLOAT");
                 }
-                self.uses_floats = true;
                 return;
             }
             Some(VarType::String) => {
-                self.emit_indent("PRINT_CSTR rdi");
+                match fmt.width.filter(|width| *width > 0) {
+                    Some(width) => {
+                        self.uses_format = true;
+                        self.emit_print_padded_call(width, pad_fill(&fmt, false), "_print_padded_cstr");
+                    }
+                    None => self.emit_indent("PRINT_CSTR rdi"),
+                }
                 return;
             }
             Some(VarType::Buffer) => {
                 // The two callers differ, deliberately. With a spec present
                 // print.rs has already advanced rdi to the buffer's DATA
-                // area, which is NUL-terminated, so it prints as a C string;
-                // the struct-pointer macro PRINT_BUF would read the header
-                // as bytes. With no spec at all rdi is still the struct
-                // pointer and PRINT_BUF is the length-bounded, correct one.
-                if fmt.width.is_none()
-                    && fmt.precision.is_none()
-                    && matches!(fmt.base, IntegerBase::Decimal)
-                {
+                // area, so a width pads the bytes the buffer's own length
+                // counts, read back from the header just before the data.
+                // With no spec at all rdi is still the struct pointer and
+                // PRINT_BUF is the length-bounded, correct one.
+                if let Some(width) = fmt.width.filter(|width| *width > 0) {
+                    self.uses_format = true;
+                    self.emit_indent("mov rsi, [rdi - BUF_DATA_OFFSET + BUF_LENGTH_OFFSET]  ; the buffer's length");
+                    self.emit_print_padded_call(width, pad_fill(&fmt, false), "_print_padded_bytes");
+                } else if fmt.precision.is_none() && matches!(fmt.base, IntegerBase::Decimal) {
                     self.emit_indent("PRINT_BUF rdi");
                 } else {
                     self.emit_indent("PRINT_CSTR rdi");
@@ -469,6 +497,27 @@ impl CodeGenerator {
         }
     }
 
+    /// Print the rendering rdi points at behind its fill, out to `width`
+    /// characters: `_print_padded_cstr` counts a text's characters itself,
+    /// `_print_padded_bytes` takes the count in rsi (docs/BUGS_FOUND.md
+    /// #148).
+    pub(crate) fn emit_print_padded_call(&mut self, width: i64, fill: i64, routine: &str) {
+        self.emit_indent(&format!("mov rdx, {}", width));
+        self.emit_indent(&format!("mov rcx, {}", fill));
+        self.emit_indent(&format!("call {}", routine));
+    }
+}
+
+/// The fill a width pads with, in the encoding the coreasm padders take:
+/// 0 spaces, 1 zeros, 2 zeros after a leading `-`. A float's sign comes
+/// before its zeros, as a number's does (`-0003.5`, like `-000042`); a text
+/// and a buffer are padded as they are, character for character.
+pub(crate) fn pad_fill(fmt: &FormatSpec, signed: bool) -> i64 {
+    match (fmt.zero_pad, signed) {
+        (false, _) => 0,
+        (true, false) => 1,
+        (true, true) => 2,
+    }
 }
 
 /// The largest count a `{value:SPEC}` clause can name. A width is a number
@@ -485,9 +534,7 @@ pub(crate) const FORMAT_MAX_COUNT: i64 = i64::MAX;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum FormatSpecAsk {
     /// No specifier, or a width alone. A width is a count of characters,
-    /// which any rendering has, so it asks nothing of the type - v0.4.7
-    /// settled that a width on a float or a text renders the value and
-    /// drops the padding rather than reinterpreting anything (#36).
+    /// which any rendering has, so it asks nothing of the type (#148).
     AnyType,
     /// `{v:.N}` - N decimal places. A decimal place is a place in a
     /// NUMBER's expansion; a text has none.
@@ -643,23 +690,16 @@ pub(crate) fn read_format_spec(fmt: Option<&str>) -> (FormatSpec, Option<FormatS
     // and the width was not applied to the float either
     // (docs/BUGS_FOUND.md #85, #36).
     //
-    // Both halves are now READ and both are kept. They compose under the
-    // rule #71 already states for the width: "the width is the one
-    // exception - it applies to any value and is ignored where no padding
-    // exists for that type yet". So the precision decides the DIGITS and
-    // the width decides the PADDING, and each is honoured wherever its own
-    // primitive exists:
+    // Both halves are now READ and both are kept: the precision decides
+    // the DIGITS and the width decides the PADDING.
     //
     // - a whole number: the digits are rendered to M places by #71's
     //   integer-precision path, and the result padded out to N - both.
-    // - a float: rendered to M places by `_print_float_precision`; the
-    //   width is dropped, because coreasm has no float padder (#36's
-    //   recorded residue), exactly as a bare `{f:8}` already drops it.
-    // - a text: neither applies, and a bare `{t:8}` already drops the
-    //   width for the same reason.
+    // - a float: rendered to M places by `_print_float_precision`, and the
+    //   result padded out to N (#148).
+    // - a text: a precision is refused (`check_format_spec_against_type`).
     //
-    // No diagnostic: a width that finds no padder is silence by #71's
-    // rule, not an error, and refusing the pair turned a quarter of the
+    // No diagnostic: refusing the pair turned a quarter of the
     // fuzzer's legal-looking programs into compile errors. A specifier
     // asked of a type that cannot answer it at all is still refused - that
     // is #71's check and it is untouched.

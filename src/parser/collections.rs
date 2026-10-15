@@ -177,13 +177,13 @@ impl Parser {
             self.skip_noise();
             
             let list_name = match self.current().clone() {
-                Token::Identifier(n) => { self.advance(); n }
+                Token::Identifier(_) => self.parse_collection_name()?,
                 Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                 Token::The => {
                     self.advance();
                     self.skip_noise();
                     match self.current().clone() {
-                        Token::Identifier(n) => { self.advance(); n }
+                        Token::Identifier(_) => self.parse_collection_name()?,
                         Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                         _ => return Err(self.err("Expected list name after 'the'")),
                     }
@@ -276,13 +276,13 @@ impl Parser {
         
         // Get list name
         let list = match self.current().clone() {
-            Token::Identifier(n) => { self.advance(); n }
+            Token::Identifier(_) => self.parse_collection_name()?,
             Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
-                    Token::Identifier(n) => { self.advance(); n }
+                    Token::Identifier(_) => self.parse_collection_name()?,
                     Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected list name after 'the'")),
                 }
@@ -298,8 +298,14 @@ impl Parser {
         self.advance(); // consume 'copy'
         self.skip_noise();
 
-        // Parse just the source value, preserving `to` as separator.
-        let source = match self.current().clone() {
+        // Parse just the source value, preserving `to` as separator. A field
+        // of a thing is read as the expression it is (`copy note's word to
+        // spare.`).
+        let field_source = matches!(self.current(), Token::Identifier(name)
+            if self.thing_of_variable(name).is_some() && self.possessive_follows_from(1));
+        let source = if field_source {
+            self.parse_primary()?
+        } else { match self.current().clone() {
             Token::IntegerLiteral(n) => {
                 self.advance();
                 Expr::IntegerLit(n)
@@ -343,7 +349,7 @@ impl Parser {
                 }
             }
             _ => return Err(self.err("Expected source value after 'copy'")),
-        };
+        } };
 
         self.skip_noise();
         if *self.current() != Token::To {
@@ -353,19 +359,13 @@ impl Parser {
         self.skip_noise();
 
         let destination = match self.current().clone() {
-            Token::Identifier(n) => {
-                self.advance();
-                n
-            }
+            Token::Identifier(_) => self.parse_collection_name()?,
             Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
-                    Token::Identifier(n) => {
-                        self.advance();
-                        n
-                    }
+                    Token::Identifier(_) => self.parse_collection_name()?,
                     Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected destination buffer name after 'the'")),
                 }
@@ -382,19 +382,13 @@ impl Parser {
         self.skip_noise();
 
         let name = match self.current().clone() {
-            Token::Identifier(n) => {
-                self.advance();
-                n
-            }
+            Token::Identifier(_) => self.parse_collection_name()?,
             Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
             Token::The => {
                 self.advance();
                 self.skip_noise();
                 match self.current().clone() {
-                    Token::Identifier(n) => {
-                        self.advance();
-                        n
-                    }
+                    Token::Identifier(_) => self.parse_collection_name()?,
                     Token::StringLiteral(n) => return Err(self.err_string_as_name(&n)),
                     _ => return Err(self.err("Expected buffer name after 'the'")),
                 }
