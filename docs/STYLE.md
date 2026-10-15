@@ -70,8 +70,8 @@ If 'failed to open a file' then,          (good)
 If help_flag is true then,                (weaker: noun, plus a redundant test)
 ```
 
-`controller.vox` shows the pattern at its plainest: `door_open`,
-`lift_moving`, `lift_full`: each reads as a statement of fact in the
+`controller.vox` shows the pattern at its plainest: `'door open'`,
+`'lift moving'`, `'lift full'`: each reads as a statement of fact in the
 condition.
 
 ## Function names read at the call site

@@ -1,31 +1,25 @@
-(walker.vox: the first end-to-end mixed-data program.
-
-A `value` parameter carries a runtime type tag alongside its payload, so a
-single function can accept a number, a text, or a decimal and ask `is a ...`
-to find out which at runtime. A `value` return carries that tag back out, so
-forwarding and re-collecting preserve the type.
-
-This example feeds each element of a flat mixed list through a classifier,
-then round-trips them through a value-returning function to show the tag
-survives the call in both directions.)
+(A value parameter carries a type alongside its contents, so one function
+ can take a number, a text or a decimal and ask which it was given. A
+ value returned from a function carries its type back out, so it survives
+ the trip in both directions.)
 
 To describe with a value called item.
-  If item is a number, print "number".
-  Otherwise if item is a text, print "text".
-  Otherwise print "decimal".
+    If item is a number, print "number".
+    Otherwise if item is a text, print "text".
+    Otherwise print "decimal".
 
 To echo with a value called item. Return a value, item.
 
-a list called data is [42, "hello", 3.14].
+A list called samples is [42, "hello", 3.14].
 
-print "Classifying each element:".
-For each item in data,
-  describe of item.
+Print "Classifying each element:".
+For each item in samples,
+    describe of item.
 
-a list called echoed is [].
-For each item in data,
-  append echo of item to echoed.
+A list called echoed is [].
+For each item in samples,
+    append echo of item to echoed.
 
-print "After round-trip through echo, still:".
+Print "After round-trip through echo, still:".
 For each item in echoed,
-  describe of item.
+    describe of item.

@@ -1,76 +1,71 @@
-(Format Strings in English)
-(This example demonstrates all the ways to use formatted output)
+(A name in braces inside a string prints its value there, and a colon
+ after the name says how to lay the value out)
 
 Print "=== Basic String Interpolation ===".
 
-(Variables can be embedded in strings using curly braces)
-a text called name is "Alice".
-a number called age is 25.
+A text called name is "Alice".
+A number called age is 25.
 Print "Hello, {name}! You are {age} years old.".
 
-(Multiple variables in one string)
-a text called city is "London".
+A text called city is "London".
 Print "{name} lives in {city} and is {age}.".
 
 Print "".
 Print "=== Number Formatting ===".
 
-(Floating point precision - specify decimal places)
-a float called pi is 3.14159265358979.
+(A point and a count give the number of decimal places)
+A float called pi is 3.14159265358979.
 Print "Pi to 2 decimals: {pi:.2}".
 Print "Pi to 4 decimals: {pi:.4}".
 Print "Pi to 0 decimals: {pi:.0}".
 
-(Padding)
-a number called small is 42.
-Print "Padded to 6 chars: [{small:6}]".
-Print "Zero-padded: [{small:06}]".
+(A width pads with spaces, or with zeros when it starts with 0)
+A number called score is 42.
+Print "Padded to 6 chars: [{score:6}]".
+Print "Zero-padded: [{score:06}]".
 
 Print "".
 Print "=== Different Number Bases ===".
 
-a number called value is 255.
+(Hexadecimal and octal always carry their 0x and 0o, and a width counts
+ only the digits after it)
+A number called value is 255.
 Print "Decimal: {value}".
 Print "Hexadecimal: {value:x}".
 Print "Hex uppercase: {value:X}".
 Print "Binary: {value:b}".
 Print "Octal: {value:o}".
 
-(Hex with 0x prefix)
-Print "With prefix: {value:x}"(outputs: 0xff).
-Print "Padded hex: {value:04x}"(outputs: 0x00ff).
+Print "With prefix: {value:x}".
+Print "Padded hex: {value:04x}".
 
 Print "".
 Print "=== Escape Sequences ===".
 
-(Literal braces using double braces)
+(Doubled braces print as braces, not as a value)
 Print "Use {{braces}} for literal braces.".
 
-(Common escape sequences in strings)
 Print "Tab:\there".
 Print "Newline in string:\nSecond line".
 
 Print "".
 Print "=== Formatting Expressions ===".
 
-(Format inline calculations)
-a number called x is 10.
-a number called y is 3.
+(Arithmetic works inside the braces too)
+A number called x is 10.
+A number called y is 3.
 Print "x + y = {x add y}".
 Print "x * y = {x multiply y}".
 
-(Property access in format strings)
 Print "Argument count: {arguments's count}".
 
 Print "".
 Print "=== Practical Examples ===".
 
-(Currency formatting)
-a float called price is 19.99.
+A float called price is 19.99.
 Print "Total: ${price:.2}".
 
-(Percentage)
-a float called ratio is 0.756.
+A float called ratio is 0.756.
 Print "Progress: {ratio multiply 100:.1}%".
 
 Print "".

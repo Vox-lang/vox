@@ -1,52 +1,48 @@
-(Type Casting Examples - using 'as' keyword)
-(The 'as' keyword converts a value to a different type)
+(The word "as" turns a value into another type: "the pi as a number".)
 
 Print "=== Number and Float Conversions ===".
 
-(Float to number - truncates decimal part)
-a float called pi is 3.14159.
-a number called 'pi truncated' is the pi as a number.
+(A float becomes a number by dropping everything after the point)
+A float called pi is 3.14159.
+A number called 'pi truncated' is the pi as a number.
 Print "3.14159 as number: ".
 Print the 'pi truncated'.
 
-(Number to float)
-a number called quantity is 42.
-a float called 'quantity as a float' is the quantity as a float.
+A number called quantity is 42.
+A float called 'quantity as a float' is the quantity as a float.
 Print "42 as float: ".
 Print the 'quantity as a float'.
 
-(Rounding - explicit cast after adding 0.5)
-a float called measurement is 3.7.
-a number called rounded is the measurement add 0.5 as a number.
+(Adding a half before truncating rounds to the nearest whole number; the
+ braces make the sum happen before the cast)
+A float called measurement is 3.7.
+A number called rounded is {the measurement add 0.5} as a number.
 Print "3.7 rounded: ".
 Print the rounded.
 
 Print "".
 Print "=== Number and Text Conversions ===".
 
-(Number to text)
-a number called age is 25.
+A number called age is 25.
 Print "Age: ".
-Print the age.
+Print the age as text.
 
 Print "".
 Print "=== Boolean and Number Conversions ===".
 
-(Boolean to number)
-a boolean called 'switched on' is true.
-a number called 'on as a number' is the 'switched on' as a number.
+A boolean called 'switched on' is true.
+A number called 'on as a number' is the 'switched on' as a number.
 Print "true as number: ".
 Print the 'on as a number'.
 
-a boolean called 'switched off' is false.
-a number called 'off as a number' is the 'switched off' as a number.
+A boolean called 'switched off' is false.
+A number called 'off as a number' is the 'switched off' as a number.
 Print "false as number: ".
 Print the 'off as a number'.
 
 Print "".
 Print "=== Inline Casting ===".
 
-(Cast within print statement)
 Print "Direct cast 3.99 as number: ".
 Print 3.99 as a number.
 

@@ -1,133 +1,76 @@
-(======================================================================)
-(  VOX // CONWAY'S GAME OF LIFE  --  written as English sentences,     )
-(======================================================================)
+(Conway's Game of Life on a board whose edges wrap around, so a glider
+ that leaves on one side comes back on the other)
 
-a number called WIDTH is 40.
-a number called HEIGHT is 20.
-a number called GENERATIONS is 14.
+A number called width is 40.
+A number called height is 20.
+A number called generations is 14.
 
-a buffer called grid is 800 bytes in size.
-a buffer called 'next grid' is 800 bytes in size.
+A buffer called grid is 800 bytes in size.
+A buffer called 'next grid' is 800 bytes in size.
 
 (Step off one edge of the board and come back on at the opposite edge)
 To wrap with a number called position and a number called step and a number called 'board size'.
-  Return a number, {{{position subtract 1} add step add 'board size'} modulo 'board size'} add 1.
+    Return a number, {{{position subtract 1} add step add 'board size'} modulo 'board size'} add 1.
 
 To 'cell index' with a number called row and a number called column.
-  Return a number, {{row subtract 1} multiply WIDTH} add column.
+    Return a number, {{row subtract 1} multiply width} add column.
 
+To 'bring to life' with a number called row and a number called column.
+    Set byte {'cell index' of row and column} of grid to 1.
+
+(A living cell holds 1 and an empty one 0, so adding up states counts the living)
+To 'the state at' with a number called row and a number called column.
+    Return a number, byte {'cell index' of row and column} of grid.
+
+(The three-by-three square around a cell holds its eight neighbours and the
+ cell itself, so the cell's own state comes off the total)
 To 'alive neighbors' with a number called row and a number called column.
-  a number called tally is 0.
-  a number called 'neighbor row' is 0.
-  a number called 'neighbor column' is 0.
-  a number called state is 0.
-  a number called 'neighbor index' is 0.
-  the 'neighbor row' is wrap of row and -1 and HEIGHT.
-  the 'neighbor column' is wrap of column and -1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and -1 and HEIGHT.
-  the 'neighbor column' is wrap of column and 0 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and -1 and HEIGHT.
-  the 'neighbor column' is wrap of column and 1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and 0 and HEIGHT.
-  the 'neighbor column' is wrap of column and -1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and 0 and HEIGHT.
-  the 'neighbor column' is wrap of column and 1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and 1 and HEIGHT.
-  the 'neighbor column' is wrap of column and -1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and 1 and HEIGHT.
-  the 'neighbor column' is wrap of column and 0 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  the 'neighbor row' is wrap of row and 1 and HEIGHT.
-  the 'neighbor column' is wrap of column and 1 and WIDTH.
-  the 'neighbor index' is 'cell index' of 'neighbor row' and 'neighbor column'.
-  the state is byte 'neighbor index' of grid.
-  If state is equal to 1 then, the tally is tally add 1.
-  Return a number, tally.
+    A number called tally is 0.
+    For each 'row step' from -1 to 1,
+        For each 'column step' from -1 to 1,
+            the tally is tally add 'the state at' of {wrap of row and 'row step' and height} and {wrap of column and 'column step' and width}..
+    Return a number, tally subtract 'the state at' of row and column.
 
-(print row is single-argument (row) -- a loop-expansion candidate.)
-(Each cell is appended into a line buffer, then the whole row is printed)
-(as a single line. Building one buffer and printing it once lays the row)
-(out as a line in one step.)
-
+(A row is built up in one buffer and printed once, so it comes out as one line)
 To 'print row' with a number called row.
-  a buffer called line is 64 bytes in size.
-  For each column from 1 to WIDTH,
-      a number called index is 'cell index' of row and column,
-      a number called state is byte index of grid,
-      a text called mark is ".",
-      If state is equal to 1 then, the mark is "#".
-      Append mark to line.
-  Print line.
+    A buffer called line is 64 bytes in size.
+    For each column from 1 to width,
+        a text called mark is ".",
+        If 'the state at' of row and column is 1 then, the mark is "#".
+        Append mark to line.
+    Print line.
 
-(step cell takes a row and a column, because no cell's fate depends on)
-(any other cell in its row. One chained expansion then walks the whole)
-(grid: the row clause is the outer loop, the column clause the inner.)
-
+(Every cell's next state is worked out from the current grid alone, into
+ the next grid, so the cells can be stepped in any order)
 To 'step cell' with a number called row and a number called column.
-  a number called index is 'cell index' of row and column.
-  a number called neighbors is 'alive neighbors' of row and column.
-  a number called state is byte index of grid.
-  a number called 'next state' is 0.
-  If state is equal to 1 and neighbors is equal to 2 then, the 'next state' is 1.
-  If state is equal to 1 and neighbors is equal to 3 then, the 'next state' is 1.
-  If state is equal to 0 and neighbors is equal to 3 then, the 'next state' is 1.
-  Set byte index of 'next grid' to 'next state'.
-
-(run generation is single-argument (generation) -- folds header/render/step/copy)
-(into one homemade function, which is what lets the entire simulation)
-(drive loop collapse into a single loop-expansion statement below.)
+    A number called neighbors is 'alive neighbors' of row and column.
+    A number called state is 'the state at' of row and column.
+    A number called 'next state' is 0.
+    If state is 1 and neighbors is 2 then, the 'next state' is 1.
+    If state is 1 and neighbors is 3 then, the 'next state' is 1.
+    If state is 0 and neighbors is 3 then, the 'next state' is 1.
+    Set byte {'cell index' of row and column} of 'next grid' to 'next state'.
 
 To 'run generation' with a number called generation.
-  Print "-- Generation {generation} of {GENERATIONS} --".
-  'print row' of each row from 1 to HEIGHT.
-  'step cell' of each row from 1 to HEIGHT and each column from 1 to WIDTH.
-  copy 'next grid' to grid.
+    Print "-- Generation {generation} of {generations} --".
+    'print row' of each row from 1 to height.
+    'step cell' of each row from 1 to height and each column from 1 to width.
+    Copy 'next grid' to grid.
 
-a number called 'seed index' is 0.
+(An R-pentomino: five cells that stay restless for about 1100 generations
+ on a board without edges)
+'bring to life' of 9 and 20.
+'bring to life' of 9 and 21.
+'bring to life' of 10 and 19.
+'bring to life' of 10 and 20.
+'bring to life' of 11 and 20.
 
-(--- Seed: an R-pentomino (chaotic for ~1100 gens in an infinite grid) ---)
-the 'seed index' is 'cell index' of 9 and 20.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 9 and 21.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 10 and 19.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 10 and 20.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 11 and 20.
-Set byte 'seed index' of grid to 1.
-
-(--- Seed: a glider drifting diagonally in the corner ---)
-the 'seed index' is 'cell index' of 2 and 3.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 3 and 4.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 4 and 2.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 4 and 3.
-Set byte 'seed index' of grid to 1.
-the 'seed index' is 'cell index' of 4 and 4.
-Set byte 'seed index' of grid to 1.
+(A glider, which drifts diagonally away from the top corner)
+'bring to life' of 2 and 3.
+'bring to life' of 3 and 4.
+'bring to life' of 4 and 2.
+'bring to life' of 4 and 3.
+'bring to life' of 4 and 4.
 
 Print "========================================".
 Print "  VOX -- Conway's Game of Life".
@@ -137,13 +80,10 @@ Print "========================================".
 Create a timer called clock.
 Start the clock.
 
-(The entire simulation drive loop, collapsed to one line: loop expansion)
-(calling a homemade function once per generation, no manual counter.)
-
-'run generation' of each generation from 1 to GENERATIONS.
+'run generation' of each generation from 1 to generations.
 
 Stop the clock.
 Print "========================================".
-Print "Ran {GENERATIONS} generations on an 800-cell grid in:".
+Print "Ran {generations} generations on an 800-cell grid in:".
 Print the clock's duration in milliseconds.
 Print "milliseconds -- native assembly, no VM, no GC, no interpreter.".

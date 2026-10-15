@@ -1,237 +1,93 @@
-(
-    Example: Accessing Command-Line Arguments and Environment Variables
-    
-    This file demonstrates the 's property syntax for accessing:
-    1. Command-line arguments passed to the program
-    2. Environment variables from the shell
-    
-    Usage: ./args_and_env Alice 42
-)
+(A program reads its command line and its environment through the 's
+ property syntax. Run it as: ./args_and_env -v -o out.bin main.vox)
 
-(========================================================================)
-(                    DECLARATIVE FLAG PARSING                            )
-(========================================================================)
-(
-    Vox supports declarative flag definitions that automatically parse
-    command-line arguments.
-    
-    Syntax examples:
-    
-    a flag called "numbering" is "-n" or "--number", it is a boolean.
-    a flag called "iterations" is "-i" or "--iterations", it is a number and is required.
-    a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
-    a flag called "config" is "-c" or "--config", it is a text.
-    a flag called "threads" is "-t" or "--threads", it is a number with default 4.
-    
-    Benefits:
-    - Flags are automatically parsed from arguments
-    - arguments's all returns only positional arguments (flags removed)
-    - Type validation happens automatically
-    - Required flags cause error if missing
-    - Boolean flags don't consume next argument
-    - Default values are used when flag is not provided
-    
-    ========================================================================
-    COMPREHENSIVE USAGE EXAMPLES
-    ========================================================================
-    
-    Example 1: Simple boolean flag
-    ------------------------------
-    Command: ./program -n file.txt
-    )
-    (a flag called "numbering" is "-n" or "--number", it is a boolean.
+(A flag is declared once, and Parse flags takes every declared flag off
+ the command line, so arguments's all holds only what is left: here, the
+ files to compile. A boolean flag takes no value; any other flag takes
+ the word after it, and when a flag is given twice the last one wins. A
+ lone -- ends the flags, so every word after it is positional.)
+A flag called optimize is "-O" or "--optimize", it is a boolean with default false.
+A flag called output is "-o" or "--output", it is a text with default "a.out".
+A flag called jobs is "-j" or "--jobs", it is a number with default 1.
+A flag called verbose is "-v" or "--verbose", it is a boolean with default false.
+A flag called debug is "-g" or "--debug", it is a boolean with default false.
+Parse flags.
 
-    If the numbering then,
-        Print "Numbering is enabled.".)
-    (
-    Result: numbering = true, arguments's all = ["file.txt"]
-    
-    Example 2: Flag with required value
-    ------------------------------------
-    Command: ./program --iterations 10 input.txt output.txt
-    )
-    (a flag called "iterations" is "-i" or "--iterations", it is a number and is required.
-    
-    Print "Running {iterations} iterations".)
-    (
-    Result: iterations = 10, arguments's all = ["input.txt", "output.txt"]
-    Error case: ./program input.txt  (missing required --iterations, program exits with error)
-    
-    Example 3: Flag with default value
-    -----------------------------------
-    Command: ./program process data.csv
-    )
-    (a flag called "output" is "-o" or "--output", it is a text with default "out.txt".
-    a flag called "threads" is "-t" or "--threads", it is a number with default 4.
-    
-    Print "Output file: {output}".
-    Print "Using threads: {threads}".)
-    (
-    Result: output = "out.txt", threads = 4, arguments's all = ["process", "data.csv"]
-    
-    Example 4: Mixed flags and positional arguments
-    -------------------------------------------------
-    Command: ./program -v --config settings.json -t 8 build src/ dist/
-    )
-    (a flag called "verbose" is "-v" or "--verbose", it is a boolean with default false.
-    a flag called "config" is "-c" or "--config", it is a text.
-    a flag called "threads" is "-t" or "--threads", it is a number with default 4.
-    
-    If the verbose then,
-        Print "Verbose mode enabled.".
-    
-    If the config is not empty then,
-        Print "Loading config from: {config}".
-    
-    a list called "positional" is arguments's all.
-    Print "Command: {positional's first}".
-    Print "Source: {positional's at 2}".
-    Print "Destination: {positional's at 3}".)
-    (
-    Result: verbose = true, config = "settings.json", threads = 8
-            arguments's all = ["build", "src/", "dist/"]
-    
-    Example 5: Combining short flags
-    ---------------------------------
-    Command: ./program -nv file.txt
-    )
-    (a flag called "numbering" is "-n" or "--number", it is a boolean.
-    a flag called "verbose" is "-v" or "--verbose", it is a boolean.)
-    (
-    Result: numbering = true, verbose = true, arguments's all = ["file.txt"]
-    
-    Example 6: Flag appearing multiple times (last wins)
-    -----------------------------------------------------
-    Command: ./program -o first.txt -o second.txt data.csv
-    )
-    (a flag called "output" is "-o" or "--output", it is a text.)
-    (
-    Result: output = "second.txt", arguments's all = ["data.csv"]
-    
-    Example 7: Using -- to stop flag parsing
-    -----------------------------------------
-    Command: ./program -v -- -n --help file.txt
-    )
-    (a flag called "verbose" is "-v" or "--verbose", it is a boolean.
-    a flag called "numbering" is "-n" or "--number", it is a boolean.)
-    (
-    Result: verbose = true, numbering = false
-            arguments's all = ["-n", "--help", "file.txt"]
-    
-    Example 8: Complete CLI application
-    ------------------------------------
-    Command: ./compiler --optimize -o output.bin -j 16 main.en lib.en
-    )
-    a flag called optimize is "-O" or "--optimize", it is a boolean with default false.
-    a flag called output is "-o" or "--output", it is a text with default "a.out".
-    a flag called jobs is "-j" or "--jobs", it is a number with default 1.
-    a flag called verbose is "-v" or "--verbose", it is a boolean with default false.
-    a flag called debug is "-g" or "--debug", it is a boolean with default false.
-    Parse flags.
-    
-    a list called source_files is arguments's all.
-    
-    If source_files's empty then,
-        Print "Error: No source files provided.",
-        Exit with 1.
-    
-    If the verbose then,
-        Print "Compiling with optimization: {the optimize}",
-        Print "Output: {the output}",
-        Print "Parallel jobs: {the jobs}".
-    
-    For each source_file in the source_files,
-        Print "Compiling: {source_file}".
-    (
-    Result: optimize = true, output = "output.bin", jobs = 16
-            verbose = false, debug = false
-            arguments's all = ["main.en", "lib.en"]
-    )
+A list called 'source files' is arguments's all.
 
-(========================================================================)
-(                    COMMAND-LINE ARGUMENTS                              )
-(========================================================================)
+If 'source files' is empty then,
+    Print "Error: No source files provided.",
+    Exit with 1.
+
+If the verbose then,
+    Print "Compiling with optimization: {the optimize}",
+    Print "Output: {the output}",
+    Print "Parallel jobs: {the jobs}".
+
+For each 'source file' in the 'source files',
+    Print "Compiling: {source file}".
 
 Print "=== Arguments Properties Demo ===".
 
-(Access argument count)
-a number called 'argument count' is arguments's count.
+(The count includes the program's own name, which arguments's name reads)
+A number called 'argument count' is arguments's count.
 Print "Number of arguments: ".
 Print the 'argument count'.
 
-(The program name is arguments's name)
-a text called program is arguments's name.
+A text called program is arguments's name.
 Print "Program name: ".
 Print the program.
 
-(Access first user argument with arguments's first)
 If arguments's count is greater than 1 then,
     a text called 'first argument' is arguments's first,
     Print "First user argument: {first argument}".
 
-(Check if arguments were provided)
 Print "".
 If arguments's empty then,
     Print "No user arguments provided.".
 Otherwise,
     Print "User arguments were provided.".
 
-(Access last argument)
-a text called 'last argument' is arguments's last.
+A text called 'last argument' is arguments's last.
 Print "Last argument: ".
 Print the 'last argument'.
-
-
-(========================================================================)
-(                    ENVIRONMENT VARIABLES                               )
-(========================================================================)
 
 Print "".
 Print "=== Environment Properties Demo ===".
 
-(Access environment variable by name using 's syntax)
-a text called home is environment's "HOME".
+(An environment variable is read by its name)
+A text called home is environment's "HOME".
 Print "Home directory: ".
 Print the home.
 
-a text called user is environment's "USER".
+A text called user is environment's "USER".
 Print "Current user: ".
 Print the user.
 
-a text called shell is environment's "SHELL".
+A text called shell is environment's "SHELL".
 Print "Shell: ".
 Print the shell.
 
-(Check if variable exists)
 If the environment variable "DEBUG" exists then,
     Print "Debug mode is enabled via environment.".
 Otherwise,
     Print "DEBUG environment variable not set.".
 
-(Environment variable count)
 Print "".
-a number called 'variable count' is environment's count.
+A number called 'variable count' is environment's count.
 Print "Total environment variables: ".
 Print the 'variable count'.
 
-(First environment variable)
-a text called 'first variable' is environment's first.
+A text called 'first variable' is environment's first.
 Print "First env var: ".
 Print the 'first variable'.
-
-
-(========================================================================)
-(                    PRACTICAL EXAMPLE: A GREETER                        )
-(========================================================================)
 
 Print "".
 Print "=== Practical Example ===".
 
-(A program that greets the user, using argument or environment variable)
-a text called 'greeting name' is "World".
-
-(Priority: 1. Command line argument, 2. Environment variable, 3. Default)
+(A name given on the command line wins over GREET_NAME in the
+ environment, and either one wins over the world)
+A text called 'greeting name' is "World".
 If arguments's count is greater than 1 then,
     the 'greeting name' is arguments's first.
 But if the environment variable "GREET_NAME" exists then,
@@ -240,4 +96,3 @@ But if the environment variable "GREET_NAME" exists then,
 Print "Hello, ".
 Print the 'greeting name'.
 Print "!".
-
