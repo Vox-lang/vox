@@ -3,7 +3,7 @@
  value returned from a function carries its type back out, so it survives
  the trip in both directions.)
 
-To describe with a value called item.
+To 'name the type' with a value called item.
     If item is a number, print "number".
     Otherwise if item is a text, print "text".
     Otherwise print "decimal".
@@ -14,7 +14,7 @@ A list called samples is [42, "hello", 3.14].
 
 Print "Classifying each element:".
 For each item in samples,
-    describe of item.
+    'name the type' of item.
 
 A list called echoed is [].
 For each item in samples,
@@ -22,4 +22,4 @@ For each item in samples,
 
 Print "After round-trip through echo, still:".
 For each item in echoed,
-    describe of item.
+    'name the type' of item.

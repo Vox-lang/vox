@@ -15,8 +15,6 @@ A thing called leg has
     a stop called start,
     a stop called end.
 
-(A stop comes into being at a crossing, so the maker is named for the way
- it is called: a stop's 'at the corner of' with 4 and 1.)
 To do the stop's 'at the corner of', with a number called street and a number called avenue.
     A stop called corner.
     Set corner's street to street.

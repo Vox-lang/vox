@@ -72,17 +72,12 @@ Print "{high bits:08b} >> 2 = {result:08b}".
 Print "".
 Print "A simple hex dump".
 
-Set byte 1 of memory to 0xDE.
-Set byte 2 of memory to 0xAD.
-Set byte 3 of memory to 0xBE.
-Set byte 4 of memory to 0xEF.
-Set byte 5 of memory to 0xCA.
-Set byte 6 of memory to 0xFE.
-Set byte 7 of memory to 0xBA.
-Set byte 8 of memory to 0xBE.
+A list called 'magic bytes' is [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE].
+For each position from 1 to 8,
+    set byte position of memory to element position of 'magic bytes'.
 
 Print "Hex dump of first 8 bytes:".
-A number called position is 1.
+Set position to 1.
 While position is less than or equal to 8,
     a number called 'byte value' is byte position of memory,
     Print "{byte value:02X} " without newline,
