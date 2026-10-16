@@ -1,6 +1,6 @@
 # Vox Roadmap: From Today to a Kernel Written in Vox
 
-This roadmap charts the path from the current state of Vox (v0.4.15) to the
+This roadmap charts the path from the current state of Vox (v0.4.16) to the
 long-term goal: a memory-safe, sentence-based systems language capable of
 expressing *any* program, including cryptographic libraries, network stacks,
 device drivers, and ultimately an operating system kernel, across multiple
@@ -253,16 +253,52 @@ grammar would read awkwardly anyway (e.g. `setsockopt`).
       the boundary. Reserve dedicated grammar (the pattern PR #81 used) for
       syscalls common enough to earn readable sentences; route the long tail
       through this primitive.
-- [ ] Safe wrappers in the seed library for the high-value remaining
-      syscalls: sockets (socket/bind/listen/accept/connect/send/recv),
-      polling (epoll/poll), fork/wait, pipes, signals, prioritized per the
-      brainstorm doc.
+- [ ] Safe wrappers in the seed library for the network syscalls: sockets
+      (socket/bind/listen/accept/connect/send/recv) and polling
+      (epoll/poll), prioritized per the brainstorm doc.
 - [ ] Error-flag integration: negative syscall returns set the Vox error
       flag and preserve errno for inspection; extend the pattern already
       established by the mount/pivot_root/execve error paths.
 
+### Next: what a Vox userland and init system need
+
+**P1: an init system.**
+
+- [ ] Process groups and sessions (`setpgid`, `setsid`), so a service stops
+      together with every child it started.
+- [ ] Signals a program can wait on (`rt_sigprocmask`, `rt_sigpending`,
+      `rt_sigtimedwait`), so process 1 shuts down cleanly when asked.
+- [ ] Pipes and redirection (`pipe2`, `dup2`/`dup3`), for service logs and
+      shell pipelines.
+- [ ] Open files across `Execute`: state in the manual that files Vox opens
+      stay open (the runtime opens them without `O_CLOEXEC`), so a service's
+      output can go to its log file.
+
+**P2: services running as their own user.**
+
+- [ ] Switching user: supplementary groups, group, then user (`setgroups`,
+      `setgid`, `setuid`).
+- [ ] User and group ids of the running program (`getuid`, `geteuid`,
+      `getgid`, `getegid`).
+- [ ] Owner and permissions of a file (`chown`, `lchown`, `chmod`), the
+      creation mask (`umask`), and reading owner and permissions by path
+      (`newfstatat`).
+
+**P3: files, the shell and robustness.**
+
+- [ ] Directory listing, current directory and reading links (`getdents64`,
+      `getcwd`, `readlink`).
+- [ ] Rename (`rename`/`renameat2`), for atomic status files and log rotation.
+- [ ] Create a file only if it is absent (`O_EXCL`).
+- [ ] Child subreaper (`prctl` with `PR_SET_CHILD_SUBREAPER`), so a
+      service's orphans report to its supervisor.
+- [ ] A child's environment (`execve`'s `envp`).
+- [ ] Waiting on several files with a time limit (`ppoll`).
+- [ ] Random bytes (`getrandom`), which M5's crypto needs too.
+
 **Exit criteria:** a TCP echo server written in pure Vox (no compiler
-changes), using only the syscall primitive plus library wrappers.
+changes), using only the syscall primitive plus library wrappers; and a Vox
+init that starts, supervises and stops services as their own users.
 
 ---
 
