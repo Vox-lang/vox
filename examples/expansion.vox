@@ -33,5 +33,3 @@ A list called weekdays is ["Monday", "Wednesday"].
  read every loop variable at once: here it flags the one booked slot)
 'schedule a class' of each weekday from weekdays and each craft from crafts,
     but if weekday is "Wednesday" and craft is "smithing" print "{weekday}: smithing is full, try next week".
-
-Print "Done!".
