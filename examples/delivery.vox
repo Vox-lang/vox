@@ -66,9 +66,9 @@ Print "The round comes to {blocks driven today} blocks.".
 
 (A thing is a value, so the van parked at the school holds a copy of that
  corner. Sending the van on cannot move the school.)
-A stop called 'the van' is school.
-Set 'the van's avenue to 9.
-Print "The van has gone on to {'the van'}, and the school is still at {school}.".
+A stop called van is school.
+Set van's avenue to 9.
+Print "The van has gone on to {van}, and the school is still at {school}.".
 
 (Two stops are equal when they are the same corner, field for field.)
 If drive's end is depot then,
