@@ -5,23 +5,23 @@ A flag called 'wants help' is "--help" or "-h", it is a boolean.
 A flag called 'wants version' is "--version" or "-v", it is a boolean.
 A flag called 'we are numbering lines' is "--number" or "-n", it is a boolean.
 
-A text called Program is arguments's name.
+A text called program is arguments's name.
 
 To 'show version'.
-    Print "{Program} (vox) by Josjuar Lister".
+    Print "{program} (vox) by Josjuar Lister".
     Exit 0.
 
 If 'wants help' then,
-    Print "{Program} - concatenate files and print to standard output",
-    Print "Usage: {Program} [OPTION]... [FILE]...",
+    Print "{program} - concatenate files and print to standard output",
+    Print "Usage: {program} [OPTION]... [FILE]...",
     Print "With no FILE, or when FILE is -, read standard input.",
     Print "\nOptions:",
     Print "  -h, --help     display this help and exit",
     Print "  -n, --number   number all output lines",
     Print "  -v, --version  output version information and exit",
     Print "\nExamples:",
-    Print "\t{Program} f - g\tOutput f's contents, then standard input, then g's contents",
-    Print "\t{Program}\t\tCopy standard input to standard output",
+    Print "\t{program} f - g\tOutput f's contents, then standard input, then g's contents",
+    Print "\t{program}\t\tCopy standard input to standard output",
     Print "See https://github.com/vox-lang/vox for more information.",
     Exit 0.
 
@@ -31,19 +31,19 @@ If 'wants version' then,
 A boolean called 'failed to open a file' is false.
 
 Open a file for writing called output at 1 (standard output).
-On error print "{Program}: /dev/stdout: Could not open pipe", exit 1.
+On error print "{program}: /dev/stdout: Could not open pipe", exit 1.
 
-A number called 'Line Number' is 1.
+A number called 'line number' is 1.
 
 To 'read the file' with a file called source.
     Create a buffer called 'staged output'.
     Create a buffer called content.
-    On error print "{Program}: failed to create buffer".
+    On error print "{program}: failed to create buffer".
     Read line from source into content.
     While content is not empty,
         if 'we are numbering lines' then,
-            Append "{Line Number:6}\t{content}" to 'staged output',
-            increment the 'Line Number'.
+            Append "{line number:6}\t{content}" to 'staged output',
+            increment the 'line number'.
         Otherwise,
             Append content to 'staged output'.
         If 'staged output's size is greater than 65535 then,
@@ -55,7 +55,7 @@ To 'read the file' with a file called source.
 
 If arguments's empty then,
     Open a file for reading called source at 0 (standard input),
-    On error print "{Program}: /dev/stdin: Could not open pipe",
+    On error print "{program}: /dev/stdin: Could not open pipe",
         exit 1.
     A buffer called 'staged output' is 'read the file' with source,
     Write 'staged output' to output,
@@ -64,7 +64,7 @@ If arguments's empty then,
 
 (One sentence opens every file named on the command line, in order)
 Open a file called source for reading at each filename from arguments's all treating "-" as "/dev/stdin",
-    On error print "{Program}: {filename}: No such file or directory",
+    On error print "{program}: {filename}: No such file or directory",
         set 'failed to open a file' to true,
         continue.
     A buffer called 'staged output' is 'read the file' with source,

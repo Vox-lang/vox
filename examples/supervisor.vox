@@ -11,10 +11,10 @@
  bits are the signal that ended it, and the next eight its exit code.
  Decoding that is ordinary arithmetic, so it is written here in Vox.)
 
-To 'exit code of' with a number called status.
+To 'exit code' with a number called status.
     Return a number, status divide 256 modulo 256.
 
-To 'signal of' with a number called status.
+To signal with a number called status.
     Return a number, status bit-and 127.
 
 To crashed with a number called status.
@@ -56,9 +56,9 @@ To supervise with a number called pid.
     If 'the child ran out of time' then,
         Print "  it outstayed its welcome, so it was sent signal 9".
     If crashed of status then,
-        Print "  it died by signal {'signal of' of status}".
+        Print "  it died by signal {signal of status}".
     If 'exited normally' of status then,
-        Print "  it finished on its own with exit code {'exit code of' of status}".
+        Print "  it finished on its own with exit code {'exit code' of status}".
 
 Print "The tidy job:".
 A number called 'the tidy child' is fork the process.

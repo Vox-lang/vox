@@ -11,7 +11,7 @@ The VS Code extension highlights octal literals, `isn't` and `aren't`, character
 - VS Code extension: `0o17` and `0O755` scope as octal numbers; `isn't` and `aren't` scope as one operator; character literals take `\n`, `\\` and `\'`; `Library` and `See` headers take a bare or single-quoted name; words that are no longer reserved (`count`, `first`, `size`, `automatic`, `enable` and the like) render as ordinary names, and still scope as properties after a possessive. Folding starts at a `To` or thing definition, and the extension's licence is stated as GPL-3.0-or-later.
 
 ### Changed
-- Examples: `life.vox` names the cell count its wrap works from, a hole holding a whole name writes it bare (`{the copy}`) and `casting.vox` casts in the hole (`{age as text}`), the van in `delivery.vox` is called `van`, `cat --version` prints no stale number, and the closing `Done!` lines are gone.
+- Examples: `life.vox` names the cell count its wrap works from, a hole holding a whole name writes it bare (`{the copy}`) and `casting.vox` casts in the hole (`{age as text}`), the van in `delivery.vox` is called `van`, `cat --version` prints no stale number, and the closing `Done!` lines are gone. `arithmetic.vox` says its sums with `plus`, `minus` and `times`, `sh.vox` names the bytes that end a word, `binary.vox` writes its hex dump from a list, the helpers in `supervisor.vox` and `walker.vox` read as English where they are called (`'exit code' of status`, `'name the type' of item`), `cat.vox` names are lower case, and `pi.vox`, `controller.vox` and `delivery.vox` each lose a line of commentary.
 
 ## [0.4.16] - 2026-10-15
 
