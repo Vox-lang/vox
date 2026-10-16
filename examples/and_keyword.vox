@@ -59,6 +59,3 @@ Print "".
 Print "Joining two each clauses".
 Print "Every shirt with every tie:".
 'suggest an outfit' of each shirt from ["white", "blue"] and each tie from ["red", "green"].
-
-Print "".
-Print "Done!".

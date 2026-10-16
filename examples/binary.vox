@@ -118,9 +118,6 @@ Print "".
 (Declaring one buffer from another copies its bytes, so changing the copy
  leaves memory as it was)
 A buffer called 'the copy' is memory.
-Print "Buffer contents: {'the copy'}".
+Print "Buffer contents: {the copy}".
 Set byte 1 of 'the copy' to 'A'.
-Print "After setting byte 1 to 'A': {'the copy'}".
-
-Print "".
-Print "Done.".
+Print "After setting byte 1 to 'A': {the copy}".

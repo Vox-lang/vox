@@ -1,8 +1,6 @@
 (The cat command, written in Vox: concatenate files and print them to
  standard output)
 
-A text called 'Program Version' is "0.1.10".
-
 A flag called 'wants help' is "--help" or "-h", it is a boolean.
 A flag called 'wants version' is "--version" or "-v", it is a boolean.
 A flag called 'we are numbering lines' is "--number" or "-n", it is a boolean.
@@ -10,7 +8,7 @@ A flag called 'we are numbering lines' is "--number" or "-n", it is a boolean.
 A text called Program is arguments's name.
 
 To 'show version'.
-    Print "{Program} (vox) {Program Version} by Josjuar Lister".
+    Print "{Program} (vox) by Josjuar Lister".
     Exit 0.
 
 If 'wants help' then,
