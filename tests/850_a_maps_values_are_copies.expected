@@ -1,0 +1,2 @@
+shelf: {"fruit": ["apple"], "meta": {"n": 1}}
+again: [["apple"], {"n": 1}]

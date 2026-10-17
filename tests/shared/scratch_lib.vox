@@ -1,0 +1,8 @@
+(A library whose function makes a 64 KiB buffer of its own each time it is
+ called. A host that unloads the library and keeps running gets every one of
+ them back.)
+Library scratch version "1.0".
+
+To 'make scratch'.
+    a buffer called pad is 65536 bytes in size.
+    append "x" to pad.

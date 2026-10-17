@@ -938,6 +938,106 @@ impl Analyzer {
         false
     }
 
+    /// A name given a kind by a parameter or a typed declaration is that
+    /// kind and no other from here on: it leaves every other kind's set.
+    /// Inside a function this is what makes a parameter or a local shadow a
+    /// top-level name of another kind (a local text `hold` beside a
+    /// top-level buffer `hold` is a text, not a buffer); the sets are
+    /// restored when the function's body ends.
+    pub(crate) fn forget_other_kinds(&mut self, name: &str, kind: &Type) {
+        if !matches!(kind, Type::Buffer) {
+            self.buffer_variables.remove(name);
+        }
+        if !matches!(kind, Type::List(_)) {
+            self.list_variables.remove(name);
+        }
+        if !matches!(kind, Type::Map(_)) {
+            self.map_variables.remove(name);
+        }
+        if !matches!(kind, Type::File) {
+            self.file_variables.remove(name);
+        }
+        if !matches!(kind, Type::Timer) {
+            self.timer_variables.remove(name);
+        }
+        if !matches!(kind, Type::Value) {
+            self.value_typed_names.remove(name);
+        }
+        if !matches!(
+            kind,
+            Type::Integer | Type::Float | Type::String | Type::Boolean | Type::Time
+        ) {
+            self.scalar_types.remove(name);
+        }
+    }
+
+    /// What kind a name is, as every per-kind set records it.
+    pub(crate) fn kind_of(&self, name: &str) -> NameKinds {
+        NameKinds {
+            buffer: self.buffer_variables.contains(name),
+            list: self.list_variables.contains(name),
+            map: self.map_variables.contains(name),
+            file: self.file_variables.contains(name),
+            timer: self.timer_variables.contains(name),
+            value: self.value_typed_names.contains(name),
+            scalar: self.scalar_types.get(name).cloned(),
+            thing: self.thing_vars.get(name).cloned(),
+        }
+    }
+
+    /// Give a name back the kind `kind_of` recorded.
+    pub(crate) fn set_kind_of(&mut self, name: &str, kinds: &NameKinds) {
+        fn keep(set: &mut HashSet<String>, name: &str, member: bool) {
+            if member {
+                set.insert(name.to_string());
+            } else {
+                set.remove(name);
+            }
+        }
+        keep(&mut self.buffer_variables, name, kinds.buffer);
+        keep(&mut self.list_variables, name, kinds.list);
+        keep(&mut self.map_variables, name, kinds.map);
+        keep(&mut self.file_variables, name, kinds.file);
+        keep(&mut self.timer_variables, name, kinds.timer);
+        keep(&mut self.value_typed_names, name, kinds.value);
+        match &kinds.scalar {
+            Some(t) => self.scalar_types.insert(name.to_string(), t.clone()),
+            None => self.scalar_types.remove(name),
+        };
+        match &kinds.thing {
+            Some(t) => self.thing_vars.insert(name.to_string(), t.clone()),
+            None => self.thing_vars.remove(name),
+        };
+    }
+
+    /// Inside a function, the kind of every name visible before a body that
+    /// runs only on some paths (a branch, a loop body, an `On error`), so the
+    /// body's own declarations can be undone when it ends: a name declared
+    /// in such a body lasts as long as the body, and after it the name means
+    /// what it meant before (LANGUAGE.md "Declarations in Branches"). Empty
+    /// at the top level, whose rules are unchanged.
+    pub(crate) fn outer_kinds(&self, except: Option<&str>) -> Vec<(String, NameKinds)> {
+        if !self.in_function_scope {
+            return Vec::new();
+        }
+        let mut names: Vec<&String> = self.variables.iter().filter(|n| Some(n.as_str()) != except).collect();
+        names.sort();
+        names.into_iter().map(|n| (n.clone(), self.kind_of(n))).collect()
+    }
+
+    /// Put back the kinds `outer_kinds` recorded; returns the names whose
+    /// kind the body had changed.
+    pub(crate) fn restore_outer_kinds(&mut self, outer: &[(String, NameKinds)]) -> Vec<String> {
+        let mut changed = Vec::new();
+        for (name, kinds) in outer {
+            if &self.kind_of(name) != kinds {
+                changed.push(name.clone());
+                self.set_kind_of(name, kinds);
+            }
+        }
+        changed
+    }
+
     pub(crate) fn is_buffer_variable(&self, name: &str) -> bool {
         self.buffer_variables.contains(name)
     }
@@ -1142,4 +1242,17 @@ fn symbol_patterns(symbol: &str) -> [String; 3] {
         format!("\"{}\"", symbol),
         symbol.to_string(),
     ]
+}
+
+/// A name's kind, as the analyzer's per-kind sets record it (see `kind_of`).
+#[derive(Clone, PartialEq)]
+pub(crate) struct NameKinds {
+    buffer: bool,
+    list: bool,
+    map: bool,
+    file: bool,
+    timer: bool,
+    value: bool,
+    scalar: Option<Type>,
+    thing: Option<String>,
 }

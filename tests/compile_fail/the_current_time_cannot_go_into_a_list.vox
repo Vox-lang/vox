@@ -1,0 +1,4 @@
+(A declared list keeps its type: the current time cannot be put in it.)
+a list called here is ["a"].
+Get current time into here.
+append "b" to here.

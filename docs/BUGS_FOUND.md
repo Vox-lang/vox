@@ -12961,7 +12961,7 @@ renders `255|255|255|`; `{n:#x}` is the obvious hex typo and silently prints dec
 
 ### 128. `Free` through one name of an assigned list, then a read through the other name, segfaults
 
-**Status:** Open. Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox 0.4.15 (8c73f0d); confirmed by TheJostler 2026-10-05. Regression test: tests/867_freeing_a_list_leaves_its_named_copy.vox.
 
 ```vox
 a list called xs is ["a"].
@@ -12981,9 +12981,11 @@ Segmentation fault         (core dumped)
 
 **The manual:** LANGUAGE.md "Releasing a Buffer": "A list also accepts `Free`, with the same after-state a buffer gets: it becomes **empty** (length 0, `empty` is true, prints `[]`), and every later write - `append`, `Set element N of ...` - is refused with the error flag; a second `Free` is the same no-op-that-flags, not a second release. Free releases the list and every collection it holds: a nested list or map element is freed too, recursively, before the list itself is." The manual has no sentence on what `a list called ys is xs.` means; the rule below settles it for this entry.
 
-**Root cause:** not yet investigated. `ys` appears to hold the old block pointer, which `Free xs.` releases without updating the second name.
+**Root cause:** `a list called ys is xs.` stored `xs`'s block pointer in `ys`, so the two names held one block; `Free xs.` released it and pointed only `xs` at the empty released list, leaving `ys` on the released block.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 that a segmentation fault here is a bug. A name copies what it is given, so each name owns its list and `Free` on one name never leaves another holding a released block. Where two names are written as one list (`xs is also called ys.`), `Free xs.` empties the list for both. `Free` releases the children a list holds, tracked by the allocation tracker Vox already uses.
+
+**Fix:** naming copies. A list or map given a name from another name (a declaration, `Set`, `is`, `the ... is`, `Return` of a parameter's or a top-level list, storing it in a `value`, passing it to a `value` parameter) is that name's own copy, all the way down. The program above now prints `1`: `Free xs.` empties `xs` and leaves `ys` holding `["a"]`. The other outcome this entry describes, two names for one list where `Free` empties both, belongs to `is also called`, which Vox does not have yet; until it does, two names share one list only as two parameters given the same list.
 
 ---
 
@@ -13399,7 +13401,7 @@ c
 
 ### 139. One list passed as two parameters splits when it grows
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/812_one_list_passed_as_two_parameters_grows_as_one.vox, tests/813_one_map_passed_as_two_parameters_grows_as_one.vox.
 
 ```vox
 To 'merge' of a list called first and a list called second.
@@ -13428,15 +13430,17 @@ xs last: via second
 
 **The manual:** LANGUAGE.md "Functions" and "Function Calls" (list parameters): a list parameter names the caller's collection, and growth through it is the caller's growth.
 
-**Root cause:** not yet investigated. A first reading, shared with #128 and #140: each name keeps its own copy of the list's block pointer, so growth through one name moves the list and leaves the other name on the old block.
+**Root cause:** each name kept its own copy of the list's block pointer: a list parameter's slot held a copy of the caller's pointer, written back to the caller only by the growth that went through that one parameter, so a second parameter naming the same list kept the old block.
 
 **Fix direction:** TheJostler confirmed on 2026-10-05 that this is a bug. Every name of a list (a variable, a parameter, and `is also called`) goes through the one slot that owns the list, so growth, `Free` and writes through any name are seen by all. This is the same change that settles #140 and #143.
+
+**Fix:** a `list`, `map` or `buffer` parameter holds the address of the word that owns the collection, never a copy of the block. Every read through the parameter goes to that word at the point of use, and every growth, `Free` or `Set` through it writes the new block there before anything else runs, so both parameters, and the caller, see one list. The program above prints `second sees: 21`, `first sees: 22`, `xs length: 22`, `xs last: via second`.
 
 ---
 
 ### 140. `Free` through one of two parameters naming one list, then a read through the other, segfaults
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: tests/814_one_list_passed_as_two_parameters_freed_through_one.vox, tests/816_one_buffer_passed_as_two_parameters_freed_through_one.vox.
 
 ```vox
 To 'merge' of a list called first and a list called second.
@@ -13461,9 +13465,11 @@ second sees: Segmentation fault         (core dumped)
 
 **The manual:** LANGUAGE.md "Releasing a Buffer": a freed list becomes empty, and every later write is refused with the error flag. Parameters name the caller's list.
 
-**Root cause:** not yet investigated. A first reading, the parameter sibling of #128: `second` holds the block that `Free first.` released.
+**Root cause:** `Free first.` pointed `first`'s own slot, and the caller's, at the released list; `second` kept its copy of the block `Free` had just released.
 
 **Fix direction:** TheJostler ruled on 2026-10-05 that a segmentation fault here is a bug. Naming copies, but a parameter still borrows the caller's list, so two parameters can name one list and this program remains reachable under the copy rule. The one-owning-slot representation described under #139 removes it: `Free` through either parameter empties the list for both.
+
+**Fix:** the one-owning-place change described under #139. `Free first.` stores the released list in the word that owns the list, which both parameters read. The program above prints `second sees: 0`, refuses the append with the error flag, and prints `second now: []` and `xs: []`.
 
 ---
 
@@ -13548,7 +13554,7 @@ One known only at run time sets the error flag (`EINVAL`), reaps nothing, and gi
 
 ### 143. Two names of one collection can disagree: growth, `Free` and `Set` through one are not seen by the other
 
-**Status:** Open. Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05.
+**Status:** **fixed** (unreleased). Registered 2026-10-05. Verified on vox main dfdfc7f; confirmed by TheJostler 2026-10-05. Regression tests: (a) tests/815_one_buffer_passed_as_two_parameters_grows_as_one.vox, (b) tests/816_one_buffer_passed_as_two_parameters_freed_through_one.vox, (c) tests/817_a_list_freed_by_its_global_name_while_a_parameter_names_it.vox, (e) tests/844_a_for_each_over_a_list_the_body_frees.vox, (f) tests/836_a_list_write_whose_value_grows_the_list.vox and tests/837_a_map_write_whose_value_grows_the_map.vox, (g) tests/818_set_on_a_list_parameter_replaces_the_callers_list.vox, (d) tests/878_a_value_parameter_holds_a_copy.vox.
 
 Seven programs, one cause: each name of a collection keeps its own copy of the block pointer, so a change that moves or releases the block through one name leaves the others on the old block. Each was re-run on vox main dfdfc7f from a directory outside any repository. Each program below is shown with its own output.
 
@@ -13688,9 +13694,11 @@ Expected: `xs: ["new"]`. The parameter is the caller's list.
 
 **The manual:** LANGUAGE.md "Functions" and "Function Calls": a buffer parameter and a list parameter each name the caller's collection, so a change through the parameter is a change to the caller's; and "Releasing a Buffer": a freed collection is empty and refuses writes. Never a signal.
 
-**Root cause:** shared with #128, #139 and #140. Every name caches the block pointer of the collection, so growth or `Free` through one name leaves the others pointing at the old block.
+**Root cause:** shared with #128, #139 and #140. Every name caches the block pointer of the collection, so growth or `Free` through one name leaves the others pointing at the old block. In (f) the statement also loaded the list or map before working out the value, so the call's growth went to a block the write no longer used.
 
 **Fix direction:** TheJostler confirmed the whole family on 2026-10-05. Every name of a collection (variable, parameter, `value` parameter, loop source, and later `is also called`) goes through the one slot that owns it, so growth, `Free` and `Set` through any name are seen by every name. Which `For each` should see a write made during the loop is a separate question with its own ruling; this entry covers the crashes and the lost writes only.
+
+**Fix:** (a), (b), (c) and (g): a `list`, `map` or `buffer` parameter holds the address of the word that owns the collection (see #139), so a parameter reads what the owner holds now, and `Set` on a parameter replaces the caller's list. (e): a `For each` over a named list reads the list again from its owner at every iteration and stops when the list is shorter than the index, so after `Free` it ends. (f): a statement works out its value (and an index or a key) first and loads the collection last. Programs (a), (b), (c), (e), (f) and (g) now print their Expected output. (d): a list passed to a `value` parameter is copied into it, as storing a list in a `value` is, so the function's `v` keeps `["a", "b"]` while `Free xs.` empties `xs`: the program prints `v: ["a", "b"]`, then `xs: []`. Its Expected above (`v: []`) reads the `value` parameter as sharing the caller's list; with naming copies it holds its own.
 
 ---
 
@@ -14009,3 +14017,31 @@ Segmentation fault         (core dumped)
 **Root cause:** an element of a list whose element type is not known at compile time carries its type in a tag beside it. An equality with a text on the other side compared the two as texts without reading that tag, so a number's value or a float's bits were followed as the address of characters.
 
 **Fix:** the comparison reads the tag first. An element, a `value` or a map read whose tag says text is compared by its characters, with a text or a buffer on the other side; anything else is not equal to a text, and nothing is dereferenced. The error flag is left as it was.
+
+---
+
+### 152. `Get current time into` a declared text, number or list turns it into a time
+
+**Status:** **fixed** (unreleased). Registered 2026-10-16. Verified on vox 0.4.16; confirmed by TheJostler 2026-10-16. Regression tests: tests/compile_fail/the_current_time_cannot_go_into_text.vox and its siblings for a number, a float, a boolean, a list, a map, a buffer and a `value`, and tests/863_the_current_time_goes_into_a_time_or_a_new_name.vox.
+
+```vox
+a text called here is "hello".
+Get current time into here.
+Print "{here}".
+Print "hour {here's hour}".
+```
+```text
+$ vox clock_into_text.vox -o clock_into_text && ./clock_into_text
+1792147030
+hour 10
+```
+
+**Observed:** the statement compiles and quietly changes `here` from a text into a time: it prints the time in seconds, and `here's hour`, a property only a time has, is accepted. A declared `number` becomes a time the same way. A declared `list` also compiles, and a later `append "b" to xs.` then fails in the assembler (`symbol '_file_size' not defined`). A declared `buffer` fails in the assembler at the `Get` itself.
+
+**Expected:** a declared variable keeps its type. `Get current time into` takes a `time` (or a name not yet declared); a text, number, list or buffer is refused at compile time with a message naming the variable and its type.
+
+**The manual:** LANGUAGE.md "Type Immutability": "A variable's type is fixed at its declaration and never changes"; LANGUAGE.md "Getting Current Time": `Get current time into now.`.
+
+**Root cause:** the statement made a new slot for its name and recorded the name as a time, whatever the name had been declared as. Every later use read that slot as a time, so a text or a number printed the seconds and took a time's properties, and a later list or buffer statement on the name was given a time to work on, which the assembler then could not build.
+
+**Fix:** `Get current time into` takes a `time`, or a name not yet declared, which it declares as a time. Any other declared variable is refused at compile time, naming it and its type: `'here' is text, so it cannot take the current time: a variable's type is fixed at its declaration`, with the hint to get the time into a time or a new name. A name declared inside a function is judged the same way.

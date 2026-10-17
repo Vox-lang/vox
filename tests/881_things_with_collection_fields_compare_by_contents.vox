@@ -1,0 +1,21 @@
+(Two things compare field by field; a list or map field compares by its
+ contents and a buffer field by its bytes.)
+A thing called note has
+  a text called title,
+  a list called items,
+  a map called counts,
+  a buffer called body.
+
+a note called first.
+a note called second.
+If first is second then, print "two new notes are equal".
+append "eggs" to first's items.
+If first is not second then, print "a list field differs".
+append "eggs" to second's items.
+Set first's counts's "k" to 1.
+Set second's counts's "k" to 1.
+append "text" to first's body.
+append "text" to second's body.
+If first is second then, print "equal fields again".
+append "!" to second's body.
+If first is not second then, print "a buffer field differs".

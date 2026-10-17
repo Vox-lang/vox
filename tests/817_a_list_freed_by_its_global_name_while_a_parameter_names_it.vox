@@ -1,0 +1,9 @@
+(A function frees a top-level list by its own name while its list
+ parameter names the same list: the parameter reads the empty list.)
+a list called xs is ["a", "b"].
+To 'look at' with a list called items.
+    Free xs.
+    Print "items: {items}".
+
+'look at' of xs.
+Print "xs: {xs}".

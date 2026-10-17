@@ -1,0 +1,7 @@
+(Freeing a copy of a freed list is an ordinary first Free, with no error.)
+a list called xs is ["a"].
+Free xs.
+a list called ys is xs.
+Free ys.
+On error print "freeing the copy once was flagged as a double free".
+Print "done".

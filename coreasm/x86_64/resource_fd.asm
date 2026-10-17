@@ -277,16 +277,18 @@ section .rodata
 
 section .text
 
-; Cleanup all resources - call before exit. Idempotent: the .fini_array
-; path (C/Rust host, run by _dl_fini) and an explicit pre-exit call (Vox
-; host, which exits via sys_exit and so never reaches _dl_fini) can both
-; fire for one load; the guard byte keeps the second call a no-op.
+; Cleanup all resources - call before exit: flush and close every tracked
+; file. Buffers need nothing here: the kernel takes every mapping back at
+; exit, and a library unloaded by a host that keeps running gives its buffers
+; back in `_unload_library` (resource_buffer.asm). Idempotent: the
+; .fini_array path (C/Rust host, run by _dl_fini) and an explicit pre-exit
+; call (Vox host, which exits via sys_exit and so never reaches _dl_fini) can
+; both fire for one load; the guard byte keeps the second call a no-op.
 global _cleanup_all
 _cleanup_all:
     cmp byte [rel cleanup_done], 0
     jne .done
     mov byte [rel cleanup_done], 1
     call _cleanup_fds
-    call _cleanup_buffers
 .done:
     ret

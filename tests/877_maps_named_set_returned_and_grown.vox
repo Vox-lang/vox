@@ -1,0 +1,33 @@
+(Every way of naming a map gives a copy: a declaration, Set, is, storing
+ it in a value, returning it from a parameter; and a copy grows alone.)
+To 'pass back' with a map called shelf.
+    Return a map, shelf.
+
+a map called stock is {"k": 1}.
+a map called 'the copy' is stock.
+Set 'the copy''s "k" to 2.
+a number called kept is stock's "k".
+Print "declared from a name: stock {kept}, 'the copy' {'the copy''s length}".
+
+a map called spare is {}.
+Set spare to stock.
+Set spare's "j" to 2.
+Print "set from a name: stock {stock's length}, spare {spare's length}".
+
+a map called other is {}.
+other is stock.
+Set stock's "j" to 3.
+Print "is from a name: stock {stock's length}, other {other's length}".
+
+a value called held is stock.
+Set stock's "m" to 4.
+Print "stored in a value: stock {stock's length}, held {held}".
+
+a map called returned is 'pass back' of stock.
+Set returned's "n" to 5.
+Print "returned: stock {stock's length}, returned {returned's length}".
+
+a map called counts is {"seed": 0}.
+a map called tally is counts.
+For each number from 1 to 40, Set tally's "{number}" to number.
+Print "grown: counts {counts's length}, tally {tally's length}".

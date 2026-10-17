@@ -1,0 +1,6 @@
+(Freeing a list leaves a copy named from it untouched (docs/BUGS_FOUND.md
+ #128).)
+a list called xs is ["a"].
+a list called ys is xs.
+Free xs.
+Print "ys has {ys's length}".

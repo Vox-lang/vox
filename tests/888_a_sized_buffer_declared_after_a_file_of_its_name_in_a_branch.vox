@@ -1,0 +1,12 @@
+(The same shape with a fixed-size buffer: the buffer is held in one place.)
+a number called gate is 1.
+If gate is 1 then,
+  open a file called cupboard for reading at "/dev/null",
+  Close cupboard.
+a buffer called cupboard is 65 bytes in size.
+
+To 'fill the cupboard'.
+    append "plates" to cupboard.
+
+'fill the cupboard'.
+Print "size {cupboard's size}, capacity {cupboard's capacity}".

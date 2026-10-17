@@ -1,0 +1,14 @@
+(A thing's map field passed to a value parameter is copied into it: the
+ field grows by its own name and the parameter keeps what it was given.)
+A thing called ledger has
+  a map called counts.
+
+a ledger called shop.
+Set shop's counts's "apples" to 1.
+
+To 'look' with a value called kept.
+    For each step from 1 to 40, Set shop's counts's "{step}" to step.
+    Print "kept: {kept}".
+
+'look' of shop's counts.
+Print "the shop counts {shop's counts's length} things".

@@ -1,0 +1,13 @@
+(The number form of test 859: inside the branch the name is the number;
+ after it, the top-level buffer, which the append grows.)
+a buffer called hold is "abc".
+
+To 'branchy' with a number called n.
+    If n is 1 then,
+        a number called hold is 5,
+        Print "in branch {hold plus 1}".
+    append "Z" to hold.
+    Print "after {hold's size}".
+
+'branchy' of 1.
+'branchy' of 2.

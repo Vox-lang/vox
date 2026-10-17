@@ -1,0 +1,17 @@
+(The text form of test 859: after the branch, the name is the top-level
+ buffer, and passing it to a buffer parameter grows that buffer.)
+a buffer called hold is "abc".
+
+To 'grow' with a buffer called data.
+    For each k from 1 to 3000, append "abcdefgh" to data.
+
+To 'branchy' with a number called n.
+    If n is 1 then,
+        a text called hold is "local",
+        Print "in branch {hold}".
+    'grow' of hold.
+    Print "after branch {hold's size}".
+
+'branchy' of 1.
+'branchy' of 2.
+Print "top {hold's size}".

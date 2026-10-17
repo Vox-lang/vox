@@ -1,0 +1,1 @@
+'grow' takes a buffer called data, and `"abc"` is text, not a buffer

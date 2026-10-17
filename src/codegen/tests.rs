@@ -2544,8 +2544,10 @@ Otherwise, a number called s is 1, append s to out.\n";
             "the value is resolved before it is appended: {}",
             asm
         );
+        // A top-level buffer lives in its `.bss` label alone (one owning
+        // place), so the reload reads the label.
         assert!(
-            asm[resolved_at..appended_at].contains("mov rdi, [rbp-"),
+            asm[resolved_at..appended_at].contains("mov rdi, [rel gvar_"),
             "the destination buffer is reloaded into rdi between resolving \
              the argument and appending it: {}",
             &asm[resolved_at..appended_at]
@@ -3646,4 +3648,145 @@ Set fallback to "changed".
             "Library 'stack check' version \"1.0\".\nTo greet.\n  Print \"hi\".\n",
         );
         assert_eq!(library.matches(note).count(), 1, "{}", library);
+    }
+
+    // ---- One owning place: a parameter's cell is used only through
+    // the cell helpers, never read as if it were the collection ----
+
+    /// Every line of a function that touches one of its cell slots (a
+    /// `list`, `map` or `buffer` parameter's slot, recognised by the
+    /// prologue's `; cell: where the owner keeps`) must be a cell-helper line
+    /// (`; cell:`), and a cell loaded to reach the collection must be
+    /// dereferenced by the very next instruction. Returns the offending lines.
+    fn cell_slot_misuses(asm: &str) -> Vec<String> {
+        let lines: Vec<&str> = asm.lines().collect();
+        let mut misuses = Vec::new();
+        let mut start = 0;
+        while start < lines.len() {
+            let mut end = start + 1;
+            while end < lines.len() && !is_function_label(lines[end]) {
+                end += 1;
+            }
+            let body = &lines[start..end];
+            let cells: Vec<String> = body
+                .iter()
+                .filter(|l| l.contains("; cell: where the owner keeps"))
+                .filter_map(|l| l.trim().strip_prefix("mov [rbp-"))
+                .filter_map(|rest| rest.split(']').next())
+                .map(|n| n.to_string())
+                .collect();
+            for (k, line) in body.iter().enumerate() {
+                for cell in &cells {
+                    if !line.contains(&format!("[rbp-{}]", cell)) {
+                        continue;
+                    }
+                    if !line.contains("; cell:") {
+                        misuses.push(format!("touched directly: {}", line.trim()));
+                    } else if line.contains("where the owner keeps it")
+                        && line.trim_start().starts_with("mov r")
+                    {
+                        let reg = line.trim_start()[4..].split(',').next().unwrap_or("");
+                        let next = body.get(k + 1).copied().unwrap_or("");
+                        let pushes_or_stores_through =
+                            next.contains(&format!("[{}]", reg));
+                        if !pushes_or_stores_through {
+                            misuses.push(format!(
+                                "cell loaded but not used as an address next: {} / {}",
+                                line.trim(),
+                                next.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+            start = end;
+        }
+        misuses
+    }
+
+    fn is_function_label(line: &str) -> bool {
+        let Some(first) = line.chars().next() else { return false };
+        (first.is_ascii_alphabetic() || first == '_')
+            && line.trim_end().ends_with(':')
+            && !line.contains(' ')
+    }
+
+    #[test]
+    fn a_collection_parameter_is_reached_only_through_its_cell() {
+        let asm = compile_to_asm(
+            "To 'merge' of a list called first and a list called second.\n\
+             \x20   For each number from 1 to 20, append the number to first.\n\
+             \x20   Print \"second sees: {second's length}\".\n\
+             \x20   Free first.\n\
+             a list called xs is [\"a\"].\n\
+             'merge' of xs and xs.\n",
+        );
+        assert!(asm.contains("; cell: where the owner keeps first"), "{}", asm);
+        assert!(!asm.contains("_backptr") && !asm.contains("_cell]"), "{}", asm);
+        assert_eq!(cell_slot_misuses(&asm), Vec::<String>::new(), "{}", asm);
+    }
+
+    #[test]
+    fn the_cell_audit_sees_a_cell_read_as_a_collection() {
+        let asm = "f:\n    mov [rbp-8], rax  ; cell: where the owner keeps items\n    mov rax, [rbp-8]\n    LIST_LENGTH rax\n";
+        assert_eq!(cell_slot_misuses(asm).len(), 1);
+    }
+
+    /// The audit over every run test that compiles in-process (a test that
+    /// `see`s a library or reads a fixture needs files this cannot provide,
+    /// and is skipped): no function anywhere reads a cell as a collection.
+    #[test]
+    fn every_run_test_reaches_its_collection_parameters_only_through_cells() {
+        let mut audited = 0;
+        let mut with_cells = 0;
+        let mut findings = Vec::new();
+        let mut paths: Vec<_> = std::fs::read_dir("tests")
+            .expect("tests/ exists")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("vox"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let Ok(source) = std::fs::read_to_string(&path) else { continue };
+            let asm = std::panic::catch_unwind(|| {
+                let mut lexer = Lexer::new(&source);
+                let tokens = lexer.tokenize();
+                let mut parser = Parser::new(tokens).with_source("audit.vox", &source);
+                let mut program = parser.parse().ok()?;
+                let mut analyzer = Analyzer::new().with_source("audit.vox", &source);
+                analyzer.analyze(&mut program);
+                if !analyzer.errors.is_empty() {
+                    return None;
+                }
+                Some(CodeGenerator::new().generate(&program))
+            });
+            let Ok(Some(asm)) = asm else { continue };
+            audited += 1;
+            if asm.contains("; cell: where the owner keeps") {
+                with_cells += 1;
+            }
+            for misuse in cell_slot_misuses(&asm) {
+                findings.push(format!("{}: {}", path.display(), misuse));
+            }
+        }
+        assert!(audited > 500, "only {} run tests compiled in-process", audited);
+        assert!(with_cells > 40, "only {} run tests have a collection parameter", with_cells);
+        assert!(findings.is_empty(), "{}", findings.join("\n"));
+    }
+
+    #[test]
+    #[should_panic(expected = "a thing would be stored inside a list")]
+    fn a_thing_never_reaches_a_list_even_past_the_analyzer() {
+        // The analyzer refuses a thing in a collection; codegen asserts it
+        // again, so a thing can never land inside a block growth can move.
+        // The program is built without the analyzer to reach the assertion.
+        let source = "A thing called point has\n  a number called x is 0.\n\n\
+                      a point called origin.\n\
+                      a list called xs is [].\n\
+                      append origin to xs.\n";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens).with_source("r8.vox", source);
+        let program = parser.parse().expect("parses");
+        CodeGenerator::new().generate(&program);
     }

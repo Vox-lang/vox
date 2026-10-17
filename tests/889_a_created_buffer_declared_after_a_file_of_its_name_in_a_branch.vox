@@ -1,0 +1,12 @@
+(The same shape with `Create a buffer`: the buffer is held in one place.)
+a number called gate is 1.
+If gate is 1 then,
+  open a file called cupboard for reading at "/dev/null",
+  Close cupboard.
+Create a buffer called cupboard.
+
+To 'fill the cupboard'.
+    For each plate from 1 to 5000, append "x" to cupboard.
+
+'fill the cupboard'.
+Print "size {cupboard's size}".

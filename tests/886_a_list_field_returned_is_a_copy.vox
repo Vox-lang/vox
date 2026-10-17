@@ -1,0 +1,20 @@
+(A thing's list field handed back by `Return a value` or `Return a list` is
+ the caller's own copy: the thing keeps its field.)
+A thing called note has
+  a list called items.
+
+a note called memo.
+append "a" to memo's items.
+
+To 'give as a value'.
+    Return a value, memo's items.
+
+To 'give as a list'.
+    Return a list, memo's items.
+
+a value called boxed is 'give as a value'.
+a list called listed is 'give as a list'.
+Free memo's items.
+Print "boxed: {boxed}".
+append "z" to listed.
+Print "listed: {listed}, memo: {memo's items}".

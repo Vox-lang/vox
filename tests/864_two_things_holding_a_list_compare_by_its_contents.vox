@@ -1,0 +1,13 @@
+(Two things compare field by field, and a list field compares by its
+ contents, as two lists do: two new notes are the same, and they differ once
+ one note's list holds something the other's does not.)
+
+A thing called note has
+  a text called title,
+  a list called items.
+
+a note called first.
+a note called second.
+If first is second then, Print "the same".
+append "eggs" to first's items.
+If first is not second then, Print "different once a list differs".

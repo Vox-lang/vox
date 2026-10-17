@@ -1,0 +1,9 @@
+(The same as test 808, with the other way of declaring a buffer with no
+ value.)
+To 'fill'.
+    For each number from 1 to 3000, append "abcdefgh" to hold.
+
+a buffer called hold.
+append "a" to hold.
+'fill'.
+Print "after fill: {hold's size}".
