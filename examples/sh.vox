@@ -12,6 +12,11 @@ Open a file at 0 for reading called 'standard input'.
 Create a buffer called line.
 A buffer called word is 256 bytes in size.
 
+(A space, a tab or a newline ends a word; any other byte joins it)
+A number called space is 32.
+A number called tab is 9.
+A number called newline is 10.
+
 While true,
     print "vsh $ " without newline,
     clear line,
@@ -28,18 +33,17 @@ While true,
     a number called 'line length' is line's size,
     a number called position is 1,
     a number called 'this byte' is 0,
+    a number called 'the next place' is 1,
     a boolean called 'at a separator' is false,
     a boolean called 'the word is finished' is false,
     clear word,
 
-    (A space, a tab or a newline ends a word; any other byte joins it)
     While position is less than or equal to 'line length',
         set 'this byte' to byte position of line,
         set 'at a separator' to false,
-        if 'this byte' is 32 then, set 'at a separator' to true.
-        If 'this byte' is 10 then, set 'at a separator' to true.
-        If 'this byte' is 9 then, set 'at a separator' to true.
-        If not 'at a separator' then, set byte {word's size add 1} of word to 'this byte'.
+        if 'this byte' is space or 'this byte' is tab or 'this byte' is newline then, set 'at a separator' to true.
+        Set 'the next place' to word's size add 1,
+        if not 'at a separator' then, set byte 'the next place' of word to 'this byte'.
         Set 'the word is finished' to false,
         if 'at a separator' and word's size is greater than 0 then, set 'the word is finished' to true.
         If 'the word is finished' then, a text called 'finished word' is "{word}".

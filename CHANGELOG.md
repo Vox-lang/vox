@@ -51,6 +51,7 @@ A named list or map is its own copy, lists and maps compare by contents, and a p
 - **A `For each` over a `value` that holds a map sets the error flag** and
   its body does not run. Walk a map's keys by naming the map: `a map called
   stock is box.` then `For each name in stock's keys, ...`.
+- Examples: `life.vox` names the cell count its wrap works from, a hole holding a whole name writes it bare (`{the copy}`) and `casting.vox` casts in the hole (`{age as text}`), the van in `delivery.vox` is called `van`, `cat --version` prints no stale number, and the closing `Done!` lines are gone. `arithmetic.vox` says its sums with `plus`, `minus` and `times`, `sh.vox` names the bytes that end a word, `binary.vox` writes its hex dump from a list, the helpers in `supervisor.vox` and `walker.vox` read as English where they are called (`'exit code' of status`, `'name the type' of item`), `cat.vox` names are lower case, and `pi.vox`, `controller.vox` and `delivery.vox` each lose a line of commentary.
 
 ### Fixed
 - **`Get current time into` a name declared as something other than a

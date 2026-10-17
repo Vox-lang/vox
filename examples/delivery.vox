@@ -15,8 +15,6 @@ A thing called leg has
     a stop called start,
     a stop called end.
 
-(A stop comes into being at a crossing, so the maker is named for the way
- it is called: a stop's 'at the corner of' with 4 and 1.)
 To do the stop's 'at the corner of', with a number called street and a number called avenue.
     A stop called corner.
     Set corner's street to street.
@@ -66,9 +64,9 @@ Print "The round comes to {blocks driven today} blocks.".
 
 (A thing is a value, so the van parked at the school holds a copy of that
  corner. Sending the van on cannot move the school.)
-A stop called 'the van' is school.
-Set 'the van's avenue to 9.
-Print "The van has gone on to {'the van'}, and the school is still at {school}.".
+A stop called van is school.
+Set van's avenue to 9.
+Print "The van has gone on to {van}, and the school is still at {school}.".
 
 (Two stops are equal when they are the same corner, field for field.)
 If drive's end is depot then,

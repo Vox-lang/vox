@@ -20,7 +20,6 @@ A float direction is 1.0.
 (Count our iterations)
 An int steps is 0.
 
-(The beautiful dance of convergence)
 While steps is less than 500000,
     (Calculate the three consecutive numbers for this term)
     a float called smallest is the denominator,
