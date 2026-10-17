@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #153: a comparison is a boolean, so a number declared
+ or set from one keeps its type and refuses it.)
+
+a number called heat is 4.
+a number called limit is 6.
+a number called matched is heat is limit.
+a number called total is 0.
+Set total to heat is greater than limit.

@@ -1,0 +1,20 @@
+(docs/BUGS_FOUND.md #153: the same comparisons as the value of a local
+ declaration, a Set, and a `the ... is` assignment inside a function.)
+
+To compare with a number called heat and a number called limit.
+    a boolean called 'heat matches' is heat is limit.
+    a boolean called 'heat differs' is limit is not heat.
+    a boolean called 'heat higher' is heat is greater than limit.
+    a boolean called 'limit lower' is limit is less than heat.
+    a boolean called 'both set' is heat is positive and limit is positive.
+    a boolean called 'either six' is limit is 6 or heat is 6.
+    a boolean called 'heat unlike six' is not heat is 6.
+    Print "{heat matches} {heat differs} {heat higher} {limit lower} {both set} {either six} {heat unlike six}".
+    Set 'heat matches' to limit is heat.
+    Set 'heat higher' to limit is greater than or equal to heat.
+    the 'both set' is heat is 0 or limit is 0.
+    the 'heat unlike six' is not limit is 6.
+    Print "{heat matches} {heat higher} {both set} {heat unlike six}".
+
+compare of 4 and 6.
+compare of 6 and 6.

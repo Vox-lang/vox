@@ -1,0 +1,2 @@
+cannot initialise 'matched', which is a number, with a boolean
+cannot assign boolean to 'total', which is a number
