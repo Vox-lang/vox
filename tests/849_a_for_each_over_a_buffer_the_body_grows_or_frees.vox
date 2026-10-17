@@ -1,0 +1,8 @@
+(A walk over a buffer reads it as it is at every byte: growth in the body,
+ which can move the buffer, and `Free`, which ends the walk.)
+a buffer called hold is "abc".
+For each b in hold, print b, append "abcdefgh" to hold, append "abcdefgh" to hold.
+Print "size: {hold's size}".
+a buffer called gone is "xyz".
+For each b in gone, print b, Free gone.
+Print "gone: {gone's size}".

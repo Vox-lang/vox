@@ -34,27 +34,20 @@ pub struct CodeGenerator {
     // Mixed-typed scalar variable (e.g. a for-each loop variable over a
     // mixed list). Written when the element is read, consulted on print.
     mixed_tag_slots: HashMap<String, i64>,
-    // docs/BUGS_FOUND.md #90. A `buffer` parameter's argument word is the
-    // ADDRESS of the cell where the CALLER keeps its buffer pointer, not the
-    // pointer itself. This maps a buffer parameter's payload slot offset to
-    // the hidden `{name}_cell` slot holding that address, so every store of a
-    // (possibly reallocated) buffer pointer into the payload slot can travel
-    // on to the caller's cell in the same breath. `_reallocate_buffer` frees
-    // the block it grew out of - mremap consumes it, the fallback munmaps it -
-    // so a caller left holding the old pointer is holding unmapped memory.
-    // Keyed by slot offset rather than by name because the buffer helpers in
-    // `buffers.rs`/`format.rs` only ever know the destination's offset. Reset
-    // and restored per function, like every other per-frame table.
-    buffer_param_cells: HashMap<i64, i64>,
-    // BUGS_FOUND #75. Stack slot ([rbp - offset]) holding the address of the
-    // CALLER's storage for each `list`/`map` parameter of the function being
-    // generated. A collection argument travels as the address of the caller's
-    // slot (the shape a `thing` argument already uses), the prologue reads the
-    // pointer out of it into the parameter's own slot, and every store-back
-    // after a realloc writes the new pointer through this address as well - so
-    // growth inside a callee reaches the caller's variable instead of stopping
-    // at the block the caller still points at. Empty outside a function body.
-    collection_backing_slots: HashMap<String, i64>,
+    // One owning place. A `list`, `map` or `buffer`
+    // parameter's slot holds a CELL: the address of the word where the
+    // collection's owner keeps it (the caller's variable, a field of the
+    // caller's thing, or a hidden slot the caller made for a value with no
+    // name). The function never keeps a copy of the block pointer: every read
+    // goes through the cell at the point of use and every store (growth,
+    // `Free`, `Set`) goes back through it, so every name of the collection,
+    // in every frame, reaches the one word that owns it. These are the slot
+    // offsets that hold a cell, for the function being generated; empty at
+    // the top level.
+    cell_slots: std::collections::HashSet<i64>,
+    // The slot a typed declaration of a parameter's name uses inside the
+    // function being generated, by name (never the parameter's cell).
+    redeclared_parameter_slots: HashMap<String, i64>,
     // The single source of truth for a file handle's open mode. `readable`
     // and `writable` are both derived from this at the point they are read,
     // instead of one being derived (writable) and the other left as a
@@ -132,6 +125,9 @@ pub struct CodeGenerator {
     // Gates `%include "coreasm/<arch>/map.asm"`. _map_keys/_map_values also
     // set uses_lists (they return a list struct).
     uses_maps: bool,
+    // A program compares two lists or two maps by their contents, so the
+    // equality routines (list.asm, map.asm) are assembled.
+    uses_collection_equality: bool,
     // Set when codegen itself emits a call to _str_eq (string/buffer
     // equality comparisons). Distinct from program.uses_strings, which the
     // analyzer computes from string literals/format strings and may miss
@@ -565,8 +561,8 @@ impl CodeGenerator {
             mixed_lists: std::collections::HashSet::new(),
             unprovable_scalars: std::collections::HashSet::new(),
             mixed_tag_slots: HashMap::new(),
-            buffer_param_cells: HashMap::new(),
-            collection_backing_slots: HashMap::new(),
+            cell_slots: std::collections::HashSet::new(),
+            redeclared_parameter_slots: HashMap::new(),
             file_mode: HashMap::new(),
             local_mixed_lists: HashMap::new(),
             list_param_writes: HashMap::new(),
@@ -591,6 +587,7 @@ impl CodeGenerator {
             uses_lists: false,
             uses_heap: false,
             uses_maps: false,
+            uses_collection_equality: false,
             uses_strings: false,
             uses_proc: false,
             uses_readline: false,

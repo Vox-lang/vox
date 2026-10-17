@@ -1,0 +1,25 @@
+(A thing's list field is an owning place like a variable: passed as two
+ parameters it is one list under both, grown and freed through either. A
+ thing parameter is a copy of the caller's thing, so what the function does
+ to its fields stays in the copy.)
+A thing called note has
+  a list called tags,
+  a buffer called body.
+
+To 'merge' of a list called first and a list called second.
+    For each number from 1 to 20, append the number to first.
+    Print "second sees: {second's length}".
+    Free first.
+    Print "second now: {second's length}".
+
+To 'keep' with a note called kept.
+    'merge' of kept's tags and kept's tags.
+    Print "kept: {kept's tags's length}".
+
+a note called memo.
+'merge' of memo's tags and memo's tags.
+Print "memo: {memo's tags's length}".
+a note called other.
+append "z" to other's tags.
+'keep' of other.
+Print "other: {other's tags's length}".

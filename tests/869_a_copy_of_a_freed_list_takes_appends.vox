@@ -1,0 +1,13 @@
+(A copy of a list that has been freed is an empty list of its own, and an
+ append to it works; the freed list itself still refuses one.)
+a list called xs is ["a"].
+Free xs.
+a list called ys is xs.
+append "b" to ys.
+On error print "append to the copy refused".
+Print "ys: {ys}".
+a list called zs is [1].
+Free zs.
+append "c" to zs.
+On error print "append to the freed list refused".
+Print "zs: {zs}".

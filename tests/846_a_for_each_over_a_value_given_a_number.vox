@@ -1,0 +1,5 @@
+(A `For each` over a `value` ends when the body stores something other
+ than a list in it.)
+a value called box is ["a", "b", "c"].
+For each item in box, print item, box is 5.
+Print "box: {box}".

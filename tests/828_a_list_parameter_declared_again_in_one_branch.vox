@@ -1,0 +1,14 @@
+(Declaring a list of the same name as a list parameter names a new list of
+ the function's own. Declared in only one branch, the new list lasts as long
+ as its condition; after it, the name is the parameter again, the caller's
+ list, on both calls.)
+To 'maybe replace' with a list called items and a number called choice.
+    If choice is 1 then, a list called items is ["local"].
+    append "x" to items.
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'maybe replace' of xs and 0.
+Print "xs: {xs}".
+'maybe replace' of xs and 1.
+Print "xs: {xs}".

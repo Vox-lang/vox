@@ -1,0 +1,9 @@
+(The map twin of test 836.)
+To 'grow map' with a map called shelf.
+    For each number from 1 to 20, Set shelf's "{number}" to number.
+    Return a number, 99.
+
+a map called m is {"k": 1}.
+Set m's "k" to 'grow map' of m.
+a number called k is m's "k".
+Print "k: {k}, length: {m's length}".

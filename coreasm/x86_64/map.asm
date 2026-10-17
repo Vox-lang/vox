@@ -837,6 +837,32 @@ _map_values:
     imul rdx, MAP_ENTRY_SIZE
     mov rax, [rsi + rdx + MAP_ENTRY_VALUE]     ; value
     movzx rdx, byte [rsi + rdx + MAP_ENTRY_TAG] ; tag (rdx reloaded)
+    ; A list or map value is copied, as every read-out of a collection is:
+    ; the list this returns never shares a block with the map, so each of
+    ; them stays the one owner of its own nested collections.
+    cmp dl, MAP_TAG_LIST
+    je .mv_copy_list
+    cmp dl, MAP_TAG_MAP
+    jne .mv_store
+    push rcx
+    push rsi
+    push rdx
+    mov rdi, rax
+    call _copy_map
+    pop rdx
+    pop rsi
+    pop rcx
+    jmp .mv_store
+.mv_copy_list:
+    push rcx
+    push rsi
+    push rdx
+    mov rdi, rax
+    call _copy_list
+    pop rdx
+    pop rsi
+    pop rcx
+.mv_store:
     ; data[i] = value
     push rdx                  ; save tag
     lea rdx, [r14 + rcx*8 + LIST_HEADER_SIZE]
@@ -1033,3 +1059,80 @@ _map_render_to_buffer:
 %endif
 
 %endif
+; ============================================================================
+; MAP EQUALITY
+; ============================================================================
+; `is equal to` between two maps (LANGUAGE.md "Comparisons"): the same number
+; of entries, and every key of the first in the second with an equal value,
+; by `_slot_equal` (list.asm). Insertion order does not matter. Assembled with
+; the list equality routines, only for a program that uses them.
+%ifdef __COLLECTION_EQUALITY__
+
+; _map_equal - Args: rdi = map a, rsi = map b. Returns: rax = 1 if equal,
+; 0 if not.
+global _map_equal
+_map_equal:
+    cmp rdi, rsi
+    jne .map_equal_walk
+    mov rax, 1
+    ret
+.map_equal_walk:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi                    ; map a
+    mov r13, rsi                    ; map b
+    mov r15, [r12 + MAP_LENGTH_OFFSET]
+    cmp r15, [r13 + MAP_LENGTH_OFFSET]
+    jne .map_equal_no
+    xor r14, r14                    ; index into a's entries
+.map_equal_next:
+    cmp r14, r15
+    jge .map_equal_yes
+    MAP_ENTRIES_BASE r12, rbx
+    imul rax, r14, MAP_ENTRY_SIZE
+    add rbx, rax                    ; rbx = a's entry
+    xor rbp, rbp                    ; index into b's entries
+.map_equal_find:
+    cmp rbp, r15
+    jge .map_equal_no               ; a key of a is not in b
+    MAP_ENTRIES_BASE r13, rsi
+    imul rax, rbp, MAP_ENTRY_SIZE
+    mov rsi, [rsi + rax + MAP_ENTRY_KEY]
+    mov rdi, [rbx + MAP_ENTRY_KEY]
+    call _str_eq
+    test rax, rax
+    jnz .map_equal_found
+    inc rbp
+    jmp .map_equal_find
+.map_equal_found:
+    MAP_ENTRIES_BASE r13, rax
+    imul rcx, rbp, MAP_ENTRY_SIZE
+    add rax, rcx                    ; rax = b's entry with the same key
+    mov rdi, [rbx + MAP_ENTRY_VALUE]
+    mov rsi, [rax + MAP_ENTRY_VALUE]
+    movzx edx, byte [rbx + MAP_ENTRY_TAG]
+    movzx ecx, byte [rax + MAP_ENTRY_TAG]
+    call _slot_equal
+    test rax, rax
+    jz .map_equal_no
+    inc r14
+    jmp .map_equal_next
+.map_equal_yes:
+    mov rax, 1
+    jmp .map_equal_done
+.map_equal_no:
+    xor eax, eax
+.map_equal_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+
+%endif ; __COLLECTION_EQUALITY__

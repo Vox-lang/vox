@@ -1,0 +1,17 @@
+(A loop body runs only on some paths, like a branch: a text declared in it
+ under the name of a top-level buffer lasts as long as the body, and after
+ the loop the name is the top-level buffer again.)
+a buffer called hold is "abc".
+
+To 'grow' with a buffer called data.
+    For each k from 1 to 3000, append "abcdefgh" to data.
+
+To 'looper'.
+    For each n from 1 to 2,
+        a text called hold is "local {n}",
+        Print "in loop {hold}".
+    'grow' of hold.
+    Print "after loop {hold's size}".
+
+'looper'.
+Print "top {hold's size}".

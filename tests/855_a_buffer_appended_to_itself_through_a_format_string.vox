@@ -1,0 +1,6 @@
+(The format-string form of test 854: the hole reads the buffer, and the
+ append grows it.)
+a buffer called hold is "abc".
+For each number from 1 to 400, append "abcdefgh" to hold.
+append "{hold}" to hold.
+Print "hold {hold's size}".

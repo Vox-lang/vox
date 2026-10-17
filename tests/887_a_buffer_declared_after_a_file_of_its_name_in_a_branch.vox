@@ -1,0 +1,14 @@
+(A file opened inside an `If` and a buffer declared after it under the same
+ name are two variables: the buffer is held in one place, which a function
+ grows and the top level reads.)
+a number called gate is 1.
+If gate is 1 then,
+  open a file called cupboard for reading at "/dev/null",
+  Close cupboard.
+a buffer called cupboard is "ab".
+
+To 'fill the cupboard'.
+    For each plate from 1 to 3000, append "x" to cupboard.
+
+'fill the cupboard'.
+Print "size {cupboard's size}".

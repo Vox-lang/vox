@@ -1,0 +1,34 @@
+(Two lists are equal when they have the same length and equal elements in
+ the same places, nested lists and maps included; two maps when they hold
+ the same keys with equal values, in any order. A number and a float are
+ different elements.)
+a list called xs is ["a", 1, 2.5, true, nothing].
+a list called ys is ["a", 1, 2.5, true, nothing].
+If xs is equal to ys then, print "flat lists equal".
+a list called nested is [[1, ["deep"]], {"k": [2]}].
+a list called again is [[1, ["deep"]], {"k": [2]}].
+If nested is again then, print "nested lists equal".
+a list called other is [[1, ["DEEP"]], {"k": [2]}].
+If nested is not other then, print "a deep difference is seen".
+a list called wholes is [1].
+a list called floats is [1.0].
+If wholes is not floats then, print "a number is not a float".
+a list called shorter is ["a", 1].
+If xs is not shorter then, print "different lengths differ".
+a list called copied is xs.
+If copied is xs then, print "a named copy is equal".
+append "z" to copied.
+If copied is not xs then, print "after the append they differ".
+a list called gone is ["a"].
+Free gone.
+a list called nothing_left is [].
+If gone is nothing_left then, print "a freed list equals an empty one".
+a map called stock is {"apples": 3, "pears": [1, 2]}.
+a map called order is {"pears": [1, 2], "apples": 3}.
+If stock is equal to order then, print "maps equal in any order".
+a map called 'apples only' is {"apples": 3}.
+If stock is not 'apples only' then, print "a missing key differs".
+a map called changed is {"apples": 4, "pears": [1, 2]}.
+If stock is not changed then, print "a changed value differs".
+a map called snapshot is stock.
+If snapshot is stock then, print "a named copy is equal".

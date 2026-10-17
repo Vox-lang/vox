@@ -1,0 +1,19 @@
+a value and a list: equal
+a list and a value: equal
+two values: equal
+a map read and a list: equal
+a list and a map read: equal
+a map read and a value: equal
+a mixed element and a list: equal
+a list and a mixed element: equal
+an element and a value: equal
+a map read and a map: equal
+a map and a map read: equal
+a loop variable and a list: equal
+first and a value: equal
+a value and a grown list: not equal
+a grown list and a map read: not equal
+as answers, after the list grew: 1, 0
+two numbers in values: equal
+a number and a text in values: not equal
+a number and a list in values: not equal

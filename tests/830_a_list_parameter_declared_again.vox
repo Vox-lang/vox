@@ -1,0 +1,10 @@
+(Declared outright, the new list is the name's meaning to the end of the
+ function, and the caller's list is left alone.)
+To 'replace' with a list called items.
+    a list called items is ["new"].
+    append "x" to items.
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'replace' of xs.
+Print "xs: {xs}".

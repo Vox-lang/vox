@@ -1,0 +1,3 @@
+outer: [["a"]]
+shelf: {"k": ["a"]}
+kept: ["a", "b"]

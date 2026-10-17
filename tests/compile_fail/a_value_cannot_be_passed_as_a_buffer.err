@@ -1,0 +1,1 @@
+'grow' takes a buffer called data, and `box` is a value, not a buffer

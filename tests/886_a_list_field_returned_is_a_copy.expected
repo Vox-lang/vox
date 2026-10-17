@@ -1,0 +1,2 @@
+boxed: ["a"]
+listed: ["a", "z"], memo: []
