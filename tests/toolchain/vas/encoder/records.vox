@@ -1,0 +1,321 @@
+(Instruction records for the encoder's tests.
+
+ The encoder reads the record the front end makes for an instruction. The
+ tests make the same record from a line of assembly, with this file, so that
+ they test the encoder alone. It reads the forms the tests use: a mnemonic,
+ rep before movsb or stosb, and operands that are registers; memory written
+ [base + index * scale + displacement] or [rel label + displacement], its
+ terms in any order, with a size word in front or none; and expressions of
+ numbers, characters and labels, joined by +, -, * and <<.
+
+ A label is placed where the labels map says. A name the map does not hold
+ is placed the way the shapes table placed its labels: the first at
+ 0x500000, and each one after it eight bytes on. Pass two hands the encoder
+ a label's address in the same way, as the value of an expression that is
+ not constant.)
+
+(--- Characters ------------------------------------------------------------)
+
+(The characters a character literal cannot spell, or does not show.)
+To 'the quote mark'.
+  Return a number, 39.
+
+To 'the tab'.
+  Return a number, 9.
+
+To 'the line break'.
+  Return a number, 10.
+
+(--- Registers -------------------------------------------------------------)
+
+(The class and the number of every register a record can name.)
+To 'the register map'.
+  a map called registers is {}.
+  'learn the register class' with ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"] and "r64" and registers.
+  'learn the register class' with ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"] and "r32" and registers.
+  'learn the register class' with ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"] and "r16" and registers.
+  'learn the register class' with ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"] and "r8" and registers.
+  'learn the register class' with ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"] and "xmm" and registers.
+  Return a map, registers.
+
+To 'learn the register class' with a list called names and a text called class and a map called registers.
+  For each position from 1 to names's length,
+    a text called 'register name' is element position of names,
+    Set registers's "class {register name}" to class,
+    Set registers's "number {register name}" to position subtract 1.
+
+(The class of a register, or the empty text for a word that is not one.)
+To 'the class of the register' with a text called word and a map called registers.
+  a text called class is registers's "class {word}".
+  On error set class to "".
+  Return a text, class.
+
+(--- Words -----------------------------------------------------------------)
+
+(The words of a line: names and numbers, quoted characters, the shift
+ operator, and every other mark on its own.)
+To 'the words of the line' of a text called line.
+  a buffer called characters is "{line}".
+  a list called words is [].
+  a buffer called word.
+  a number called position is 1.
+  While position is less than or equal to characters's size,
+    a number called character is byte position of characters,
+    if character is ' ' or character is 'the tab' then, 'keep the word' with word and words.
+    if {'the byte belongs to a name' of character} then, 'add the byte to' with character and word.
+    if character is 'the quote mark' then, 'keep the word' with word and words, set position to 'read the quoted character' with characters and position and word, 'keep the word' with word and words.
+    if character is '<' then, 'keep the word' with word and words, 'add the byte to' with character and word, 'add the byte to' with character and word, increment position, 'keep the word' with word and words.
+    if {'the byte stands alone' of character} then, 'keep the word' with word and words, 'add the byte to' with character and word, 'keep the word' with word and words.
+    increment position.
+  'keep the word' with word and words.
+  Return a list, words.
+
+To 'the byte belongs to a name' of a number called character.
+  If character is greater than or equal to 'a' and character is less than or equal to 'z' then, Return a boolean, true.
+  If character is greater than or equal to 'A' and character is less than or equal to 'Z' then, Return a boolean, true.
+  If character is greater than or equal to '0' and character is less than or equal to '9' then, Return a boolean, true.
+  Return a boolean, character is '_' or character is '.' or character is '@' or character is '?' or character is '$'.
+
+To 'the byte stands alone' of a number called character.
+  If character is ' ' or character is 'the tab' or character is 'the quote mark' or character is '<' then, Return a boolean, false.
+  Return a boolean, {'the byte belongs to a name' of character} is false.
+
+(A quoted character, quotes and all, into the word. Answers the position of
+ its closing quote.)
+To 'read the quoted character' with a buffer called characters and a number called start and a buffer called word.
+  'add the byte to' with {'the quote mark'} and word.
+  a number called position is start add 1.
+  While position is less than or equal to characters's size and {byte position of characters} is not 'the quote mark',
+    'add the byte to' with {byte position of characters} and word,
+    increment position.
+  'add the byte to' with {'the quote mark'} and word.
+  Return a number, position.
+
+To 'keep the word' with a buffer called word and a list called words.
+  If word's size is 0 then, Return.
+  a text called 'finished word' is word as text.
+  append 'finished word' to words.
+  clear word.
+
+(--- Expressions -----------------------------------------------------------)
+
+(An expression is read by recursive descent over a run of words, with a
+ reader map holding the word it has reached, the last word it may read,
+ whether every name in it was a number rather than a label, and the first
+ thing wrong with it.)
+To 'a reader from' with a number called first and a number called last.
+  a map called reader is {"position": first, "last": last, "known": true, "problem": ""}.
+  Return a map, reader.
+
+To 'the word the reader is at' with a list called words and a map called reader.
+  a number called position is reader's "position".
+  a number called last is reader's "last".
+  If position is greater than last then, Return a text, "".
+  Return a text, element position of words.
+
+To 'move the reader on' with a map called reader.
+  a number called position is reader's "position".
+  Set reader's "position" to position add 1.
+
+(The value of the words from first to last, which the reader must use up.)
+To 'the value of the words' with a list called words and a map called labels and a map called reader.
+  a number called total is 'the shifted value' with words and labels and reader.
+  a text called 'word left over' is 'the word the reader is at' with words and reader.
+  If 'word left over' is not "" then, Set reader's "problem" to "the expression cannot go on with {word left over}".
+  Return a number, total.
+
+To 'the shifted value' with a list called words and a map called labels and a map called reader.
+  a number called total is 'the summed value' with words and labels and reader.
+  a text called word is 'the word the reader is at' with words and reader.
+  While word is "<<",
+    'move the reader on' with reader,
+    a number called shift is 'the summed value' with words and labels and reader,
+    set total to total bit-shift-left shift,
+    set word to 'the word the reader is at' with words and reader.
+  Return a number, total.
+
+To 'the summed value' with a list called words and a map called labels and a map called reader.
+  a number called total is 'the multiplied value' with words and labels and reader.
+  a text called word is 'the word the reader is at' with words and reader.
+  While word is "+" or word is "-",
+    'move the reader on' with reader,
+    a number called term is 'the multiplied value' with words and labels and reader,
+    if word is "+" then, set total to total add term.
+    if word is "-" then, set total to total subtract term.
+    set word to 'the word the reader is at' with words and reader.
+  Return a number, total.
+
+To 'the multiplied value' with a list called words and a map called labels and a map called reader.
+  a number called total is 'the signed value' with words and labels and reader.
+  a text called word is 'the word the reader is at' with words and reader.
+  While word is "*",
+    'move the reader on' with reader,
+    a number called factor is 'the signed value' with words and labels and reader,
+    set total to total multiply factor,
+    set word to 'the word the reader is at' with words and reader.
+  Return a number, total.
+
+To 'the signed value' with a list called words and a map called labels and a map called reader.
+  a text called word is 'the word the reader is at' with words and reader.
+  If word is "-" then, 'move the reader on' with reader, Return a number, 0 subtract {'the signed value' with words and labels and reader}.
+  If word is "+" then, 'move the reader on' with reader, Return a number, 'the signed value' with words and labels and reader.
+  If word is "(" then, Return a number, 'the bracketed value' with words and labels and reader.
+  'move the reader on' with reader.
+  If word is "" then, Set reader's "problem" to "an expression ends too soon", Return a number, 0.
+  Return a number, 'the value of the word' with word and labels and reader.
+
+To 'the bracketed value' with a list called words and a map called labels and a map called reader.
+  'move the reader on' with reader.
+  a number called total is 'the shifted value' with words and labels and reader.
+  a text called word is 'the word the reader is at' with words and reader.
+  If word is not ")" then, Set reader's "problem" to "a parenthesis is not closed", Return a number, 0.
+  'move the reader on' with reader.
+  Return a number, total.
+
+(A number, a quoted character, or a label.)
+To 'the value of the word' with a text called word and a map called labels and a map called reader.
+  a buffer called characters is "{word}".
+  a number called 'first character' is byte 1 of characters.
+  If 'first character' is 'the quote mark' then, Return a number, byte 2 of characters.
+  If 'first character' is greater than or equal to '0' and 'first character' is less than or equal to '9' then, Return a number, 'the number written as' with word and reader.
+  Set reader's "known" to false.
+  Return a number, 'the address of the label' with word and labels.
+
+To 'the number written as' with a text called word and a map called reader.
+  a buffer called characters is "{word}".
+  a number called 'radix mark' is 0.
+  If characters's size is greater than 2 then, set 'radix mark' to byte 2 of characters.
+  a number called written is 0.
+  If 'radix mark' is 'x' then, set written to word as a hex number.
+  If 'radix mark' is 'o' then, set written to word as an octal number.
+  If 'radix mark' is not 'x' and 'radix mark' is not 'o' then, set written to word as a number.
+  On error Set reader's "problem" to "{word} is not a number".
+  Return a number, written.
+
+To 'the address of the label' with a text called name and a map called labels.
+  a number called address is labels's "{name}".
+  On error set address to 'place the label' with name and labels.
+  Return a number, address.
+
+(A label the test did not place goes where the shapes table put its labels.)
+To 'place the label' with a text called name and a map called labels.
+  a number called 'labels placed' is labels's "labels placed".
+  a number called address is 0x500000 add {'labels placed' multiply 8}.
+  Set labels's "labels placed" to 'labels placed' add 1.
+  Set labels's "{name}" to address.
+  Return a number, address.
+
+(--- Records ---------------------------------------------------------------)
+
+(The record of one instruction, with a "problem" that is empty when the line
+ could be read.)
+To 'the record of the line' with a text called line and a map called labels and a map called registers.
+  a list called words is 'the words of the line' of line.
+  a list called operands is [].
+  a map called record is {"kind": "instruction", "mnemonic": "", "text": line, "problem": ""}.
+  If words's length is 0 then, Set record's "problem" to "the line is empty", Return a map, record.
+  a text called mnemonic is element 1 of words.
+  a number called 'operand start' is 2.
+  If mnemonic is "rep" and words's length is greater than 1 then, set mnemonic to "rep {element 2 of words}", set 'operand start' to 3.
+  a number called nesting is 0.
+  a number called 'operand begins' is 'operand start'.
+  a text called problem is "".
+  For each position from 'operand start' to words's length,
+    a text called word is element position of words,
+    if word is "[" then, increment nesting.
+    if word is "]" then, decrement nesting.
+    if word is "," and nesting is 0 and problem is "" then, set problem to 'read the test operand' with words and 'operand begins' and {position subtract 1} and operands and labels and registers, set 'operand begins' to position add 1..
+  If problem is "" and 'operand start' is less than or equal to words's length then, set problem to 'read the test operand' with words and 'operand begins' and words's length and operands and labels and registers.
+  Set record's "mnemonic" to mnemonic.
+  Set record's "operands" to operands.
+  Set record's "problem" to problem.
+  Return a map, record.
+
+To 'read the test operand' with a list called words and a number called first and a number called last and a list called operands and a map called labels and a map called registers.
+  If first is greater than last then, Return a text, "an operand is empty".
+  a text called 'size word' is "".
+  a number called position is first.
+  a text called 'first word' is element first of words.
+  If 'first word' is "byte" or 'first word' is "word" or 'first word' is "dword" or 'first word' is "qword" then, set 'size word' to 'first word', increment position.
+  If position is greater than last then, Return a text, "a size word has no operand after it".
+  a text called 'opening word' is element position of words.
+  a text called class is 'the class of the register' with 'opening word' and registers.
+  If position is last and class is not "" then, Return a text, 'add the register operand' with 'opening word' and class and 'size word' and operands and registers.
+  If 'opening word' is "[" then, Return a text, 'add the memory operand' with words and position and last and 'size word' and operands and labels and registers.
+  Return a text, 'add the expression operand' with words and position and last and 'size word' and operands and labels.
+
+To 'add the register operand' with a text called word and a text called class and a text called 'size word' and a list called operands and a map called registers.
+  a number called 'register number' is registers's "number {word}".
+  a map called operand is {"kind": "register", "size": 'size word', "text": word, "register": word, "class": class, "number": 'register number'}.
+  append operand to operands.
+  Return a text, "".
+
+To 'add the expression operand' with a list called words and a number called first and a number called last and a text called 'size word' and a list called operands and a map called labels.
+  a map called reader is 'a reader from' with first and last.
+  a number called value is 'the value of the words' with words and labels and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is known' is reader's "known".
+  a map called operand is {"kind": "expression", "size": 'size word', "value": value, "is constant": 'it is known'}.
+  append operand to operands.
+  Return a text, "".
+
+(A memory reference, its terms split at the signs: a register alone is the
+ base, or the index once there is a base; a register times a number is the
+ index and its scale; the rest adds up to the displacement.)
+To 'add the memory operand' with a list called words and a number called opening and a number called last and a text called 'size word' and a list called operands and a map called labels and a map called registers.
+  If {element last of words} is not "]" then, Return a text, "a memory operand is not closed".
+  a map called operand is {"kind": "memory", "size": 'size word', "relative": false, "base": "", "index": "", "scale": 0, "displacement value": 0, "displacement is constant": true}.
+  a number called 'term start' is opening add 1.
+  If {element 'term start' of words} is "rel" then, Set operand's "relative" to true, increment 'term start'.
+  a text called 'term sign' is "+".
+  a text called problem is "".
+  For each position from 'term start' to last,
+    a text called word is element position of words,
+    a boolean called 'the term ends' is false,
+    if word is "+" or word is "-" or word is "]" then, set 'the term ends' to true.
+    if 'the term ends' and position is greater than 'term start' and problem is "" then, set problem to 'take the test term' with words and 'term start' and {position subtract 1} and 'term sign' and operand and labels and registers.
+    if 'the term ends' then, set 'term sign' to word, set 'term start' to position add 1..
+  If problem is not "" then, Return a text, problem.
+  append operand to operands.
+  Return a text, "".
+
+To 'take the test term' with a list called words and a number called first and a number called last and a text called 'term sign' and a map called operand and a map called labels and a map called registers.
+  a text called 'first word' is element first of words.
+  a text called 'last word' is element last of words.
+  a text called 'first class' is 'the class of the register' with 'first word' and registers.
+  a text called 'last class' is 'the class of the register' with 'last word' and registers.
+  a map called reader is 'a reader from' with first and last.
+  If first is last and 'first class' is "r64" then, Return a text, 'place the test register' with 'first word' and 1 and operand.
+  If last is first add 2 and 'first class' is "r64" then, Return a text, 'place the test register' with 'first word' and {'the number written as' with 'last word' and reader} and operand.
+  If last is first add 2 and 'last class' is "r64" then, Return a text, 'place the test register' with 'last word' and {'the number written as' with 'first word' and reader} and operand.
+  a number called term is 'the value of the words' with words and labels and reader.
+  a text called problem is reader's "problem".
+  If problem is not "" then, Return a text, problem.
+  a boolean called 'it is known' is reader's "known".
+  a number called displacement is operand's "displacement value".
+  If 'term sign' is "-" then, set term to 0 subtract term.
+  Set operand's "displacement value" to displacement add term.
+  If 'it is known' is false then, Set operand's "displacement is constant" to false.
+  Return a text, "".
+
+To 'place the test register' with a text called word and a number called scale and a map called operand.
+  a text called base is operand's "base".
+  If base is "" and scale is 1 then, Set operand's "base" to word, Return a text, "".
+  Set operand's "index" to word.
+  Set operand's "scale" to scale.
+  Return a text, "".
+
+(--- Bytes as text ---------------------------------------------------------)
+
+(The bytes of a buffer as two lower-case hex digits each, separated by
+ spaces, the way the shapes table writes them.)
+To 'the bytes in hex' of a buffer called encoded.
+  a buffer called written.
+  a buffer called digits is "0123456789abcdef".
+  For each position from 1 to encoded's size,
+    a number called 'byte value' is byte position of encoded,
+    if position is greater than 1 then, 'add the byte to' with ' ' and written.
+    'add the byte to' with {byte {'byte value' divide 16 add 1} of digits} and written,
+    'add the byte to' with {byte {'byte value' modulo 16 add 1} of digits} and written.
+  Return a text, written as text.

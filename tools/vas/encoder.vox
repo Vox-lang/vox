@@ -1,0 +1,1116 @@
+(The vas encoder: the bytes of one x86-64 instruction.
+
+ This file is part of Library 'vas'. It has no Library line of its own, so
+ it compiles into whatever sees it: vas.vox reaches it with
+   see "./encoder.vox".
+ and the encoder's tests reach it the same way.
+
+ The encoder is table-driven. Every instruction shape vas encodes is one row
+ of 'the encoding rows', written in the notation of the opcode column of the
+ Intel manual: the mnemonic, the patterns its operands must fit, and the steps
+ that lay down its bytes. One routine reads the rows; no mnemonic has code of
+ its own. When an instruction fits more than one row of its mnemonic, the
+ first row it fits is the one used, so the rows are ordered the way nasm
+ chooses between the forms: the accumulator and the sign-extended byte forms
+ before the long ones, and the 32-bit mov before the 64-bit one.
+
+ The operand patterns:
+   r8 r16 r32 r64 xmm      a register of that kind
+   r/m8 ... r/m64          a register of that kind, or memory of that size
+   m16 m64                 memory of that size; m, memory of any size
+   xmm/m64                 an xmm register, or memory of 64 bits
+   al ax eax rax cl        that register
+   1                       the number one
+   imm8 imm16 imm32 imm64  a number that fits that many bits once it is
+                           sign-extended to the size of the operation
+   imm32u                  a number that fits 32 bits zero-extended to 64
+   rel32                   the target of a jump or a call
+ Memory written without a size word fits an r/m pattern only when the row's
+ register fixes the size, as nasm requires; the m and xmm/m64 patterns take
+ it whatever it is. A number that waits on a label is taken at the full size
+ of its operation, as nasm takes it, so its size never depends on an address.
+
+ The steps:
+   two hex digits          that byte. A legacy prefix, 66, F2 or F3, is
+                           written before the REX prefix; every other byte
+                           after it
+   REX.W                   the operation is 64 bits wide
+   /r                      the ModRM byte, with the register operand in its
+                           reg field; then any SIB byte and displacement
+   /0 to /7                the ModRM byte, with that digit in its reg field
+   +r                      the register's number added to the opcode byte
+                           before it
+   ib iw id iq             the immediate, in 1, 2, 4 or 8 bytes
+   cd                      the target, as 32 bits measured from the end of
+                           the instruction
+ A REX prefix is written whenever a register or the operation needs one: W
+ for 64 bits, R, X and B for registers 8 to 15 in the reg field, the index
+ and the base or r/m field, and a REX of its own for spl, bpl, sil and dil.
+
+ The interface, for vas.vox and its tests:
+
+   'prepare the encoder' with <table list> and <row mnemonics list>
+       Reads the rows into the table, a list of numbers, and puts each row's
+       mnemonic on the row mnemonics list. Answers the problems it found, one
+       per line, or the empty text.
+
+   'encode the instruction' with <record> and <address> and <table> and
+           <row mnemonics> and <output buffer>
+       Appends the instruction's bytes to the output, laid down at that
+       address. Answers what is wrong with the instruction, or the empty text.
+
+   'the size of the instruction' with <record> and <table> and
+           <row mnemonics> and <scratch buffer>
+       How many bytes the instruction takes, or -1 when it cannot be encoded.
+       The size never depends on an address, since every jump is rel32, so
+       pass one can call it before any label is placed.
+
+ The record is the front end's instruction record: its "mnemonic" and its
+ "operands", each a map with a "kind" and a "size", and by kind:
+   register    "class" (r64, r32, r16, r8 or xmm) and "number", 0 to 15
+   memory      "relative", "base", "index", "scale", "displacement value"
+               and "displacement is constant"
+   expression  "value" and "is constant"
+ Pass two puts each label's address into the value it waits on before it
+ calls the encoder, and leaves "is constant" false there. A memory operand
+ with no register is relative to the instruction pointer when "relative" is
+ true, and an absolute address when it is false; pass two marks it relative
+ under default rel.
+
+ What it costs. Every text, list and map a Vox program makes is kept until
+ the program ends, and each one takes at least a page. So the encoder makes
+ as few as it can: it finds a mnemonic by reading down the row mnemonics
+ rather than by a key put together as text, and it keeps the facts about the
+ operands in a workspace at the head of the table rather than in a list of
+ their own. What it cannot avoid is reading the record, the operands list and
+ one map for each operand out of it: an instruction with two operands costs
+ about 24 kilobytes to encode or to measure.)
+
+(--- Named numbers ---------------------------------------------------------)
+
+(A library has no top-level statements, so each number with a meaning is a
+ function that answers it.)
+
+(The facts about one operand, eight numbers to each in the workspace.)
+To 'facts per operand'.
+  Return a number, 8.
+
+To 'the form fact'.
+  Return a number, 1.
+
+To 'the width fact'.
+  Return a number, 2.
+
+(The register's number, or a memory operand's base.)
+To 'the register fact'.
+  Return a number, 3.
+
+To 'the index fact'.
+  Return a number, 4.
+
+To 'the scale fact'.
+  Return a number, 5.
+
+(The immediate, or a memory operand's displacement.)
+To 'the value fact'.
+  Return a number, 6.
+
+(1 when the value is known before any label is placed, 0 when it waits on
+ one.)
+To 'the known fact'.
+  Return a number, 7.
+
+To 'the relative fact'.
+  Return a number, 8.
+
+(What an operand is, as the form fact holds it.)
+To 'register form'.
+  Return a number, 1.
+
+To 'memory form'.
+  Return a number, 2.
+
+To 'immediate form'.
+  Return a number, 3.
+
+(The number for a memory operand without a base or an index register.)
+To 'no register'.
+  Return a number, -1.
+
+(The number for a name that is not one of the sixteen 64-bit registers.)
+To 'not an address register'.
+  Return a number, -2.
+
+(The widths, in bits. An xmm register is a vector of 128.)
+To 'vector width'.
+  Return a number, 128.
+
+To 'widest operation'.
+  Return a number, 64.
+
+(The head of the table is the workspace: the facts about the operands of the
+ instruction being encoded, for as many operands as a row can have.)
+To 'the workspace size'.
+  Return a number, 'facts per operand' multiply 'most operands'.
+
+(Each row of the table takes sixteen numbers: the patterns of its three
+ operands, 0 for one it does not have; the last row of its mnemonic; how many
+ steps it has; and the steps.)
+To 'numbers per row'.
+  Return a number, 16.
+
+To 'most operands'.
+  Return a number, 3.
+
+To 'the last row slot'.
+  Return a number, 4.
+
+To 'the step count slot'.
+  Return a number, 5.
+
+To 'the first step slot'.
+  Return a number, 6.
+
+To 'most steps'.
+  Return a number, 11.
+
+(A pattern is written as one number: its family times 10000, the register a
+ fixed register pattern names times 1000, and its width in bits.)
+To 'pattern family size'.
+  Return a number, 10000.
+
+To 'pattern register size'.
+  Return a number, 1000.
+
+To 'register family'.
+  Return a number, 1.
+
+To 'register or memory family'.
+  Return a number, 2.
+
+To 'memory family'.
+  Return a number, 3.
+
+To 'vector or memory family'.
+  Return a number, 4.
+
+To 'fixed register family'.
+  Return a number, 5.
+
+To 'immediate family'.
+  Return a number, 6.
+
+To 'zero-extended immediate family'.
+  Return a number, 7.
+
+To 'the number one family'.
+  Return a number, 8.
+
+To 'jump target family'.
+  Return a number, 9.
+
+(The steps that are not bytes. Every step is one number, laid out so that a
+ range says what kind of step it is:
+   0 to 255     a byte, its own value
+   256          REX.W
+   300          /r, the ModRM byte with the register operand
+   310 to 317   /0 to /7, the ModRM byte with that digit
+   320          +r, the register added to the opcode
+   401 to 408   ib, iw, id and iq: 400 and the immediate's bytes
+   504          cd, the jump target in four bytes)
+To 'the REX W step'.
+  Return a number, 256.
+
+To 'the ModRM step'.
+  Return a number, 300.
+
+(The ModRM byte with a digit in its reg field is this number and the digit.)
+To 'the digit step'.
+  Return a number, 310.
+
+To 'the register in the opcode step'.
+  Return a number, 320.
+
+(An immediate is this number and how many bytes it takes.)
+To 'the immediate step'.
+  Return a number, 400.
+
+To 'the jump target step'.
+  Return a number, 504.
+
+(The legacy prefixes a row can begin with, which go before the REX prefix.)
+To 'operand size prefix'.
+  Return a number, 0x66.
+
+To 'repeat or double prefix'.
+  Return a number, 0xF2.
+
+To 'repeat or single prefix'.
+  Return a number, 0xF3.
+
+To 'the REX base'.
+  Return a number, 0x40.
+
+To 'the SIB byte with no index and no base'.
+  Return a number, 0x25.
+
+To 'the SIB byte for a base of rsp'.
+  Return a number, 0x24.
+
+(--- The table -------------------------------------------------------------)
+
+(Every shape the compiler's output and coreasm use, one row each, in the
+ order an instruction is tried against them. A shape with a cheaper form
+ nasm prefers also has that form's row in front of it, so the bytes are
+ nasm's.)
+To 'the encoding rows'.
+  a list called rows is [].
+  append "adc        | r/m64, imm8          | REX.W 83 /2 ib" to rows.
+  append "adc        | rax, imm32           | REX.W 15 id" to rows.
+  append "adc        | r/m64, imm32         | REX.W 81 /2 id" to rows.
+  append "adc        | r/m64, r64           | REX.W 11 /r" to rows.
+  append "adc        | r64, r/m64           | REX.W 13 /r" to rows.
+  append "add        | al, imm8             | 04 ib" to rows.
+  append "add        | r/m8, imm8           | 80 /0 ib" to rows.
+  append "add        | r/m64, imm8          | REX.W 83 /0 ib" to rows.
+  append "add        | rax, imm32           | REX.W 05 id" to rows.
+  append "add        | r/m64, imm32         | REX.W 81 /0 id" to rows.
+  append "add        | r/m64, r64           | REX.W 01 /r" to rows.
+  append "add        | r64, r/m64           | REX.W 03 /r" to rows.
+  append "addsd      | xmm, xmm/m64         | F2 0F 58 /r" to rows.
+  append "and        | al, imm8             | 24 ib" to rows.
+  append "and        | r/m8, imm8           | 80 /4 ib" to rows.
+  append "and        | r/m8, r8             | 20 /r" to rows.
+  append "and        | r/m16, imm8          | 66 83 /4 ib" to rows.
+  append "and        | ax, imm16            | 66 25 iw" to rows.
+  append "and        | r/m16, imm16         | 66 81 /4 iw" to rows.
+  append "and        | r/m32, imm8          | 83 /4 ib" to rows.
+  append "and        | eax, imm32           | 25 id" to rows.
+  append "and        | r/m32, imm32         | 81 /4 id" to rows.
+  append "and        | r/m64, imm8          | REX.W 83 /4 ib" to rows.
+  append "and        | rax, imm32           | REX.W 25 id" to rows.
+  append "and        | r/m64, imm32         | REX.W 81 /4 id" to rows.
+  append "and        | r/m64, r64           | REX.W 21 /r" to rows.
+  append "and        | r64, r/m64           | REX.W 23 /r" to rows.
+  append "btr        | r/m64, imm8          | REX.W 0F BA /6 ib" to rows.
+  append "call       | rel32                | E8 cd" to rows.
+  append "clc        |                      | F8" to rows.
+  append "cld        |                      | FC" to rows.
+  append "cmovge     | r64, r/m64           | REX.W 0F 4D /r" to rows.
+  append "cmovz      | r64, r/m64           | REX.W 0F 44 /r" to rows.
+  append "cmp        | al, imm8             | 3C ib" to rows.
+  append "cmp        | r/m8, imm8           | 80 /7 ib" to rows.
+  append "cmp        | r/m8, r8             | 38 /r" to rows.
+  append "cmp        | r/m32, imm8          | 83 /7 ib" to rows.
+  append "cmp        | eax, imm32           | 3D id" to rows.
+  append "cmp        | r/m32, imm32         | 81 /7 id" to rows.
+  append "cmp        | r/m64, imm8          | REX.W 83 /7 ib" to rows.
+  append "cmp        | rax, imm32           | REX.W 3D id" to rows.
+  append "cmp        | r/m64, imm32         | REX.W 81 /7 id" to rows.
+  append "cmp        | r/m64, r64           | REX.W 39 /r" to rows.
+  append "cmp        | r64, r/m64           | REX.W 3B /r" to rows.
+  append "cqo        |                      | REX.W 99" to rows.
+  append "cvtsi2sd   | xmm, r/m64           | F2 REX.W 0F 2A /r" to rows.
+  append "cvttsd2si  | r64, xmm/m64         | F2 REX.W 0F 2C /r" to rows.
+  append "dec        | r/m64                | REX.W FF /1" to rows.
+  append "div        | r/m64                | REX.W F7 /6" to rows.
+  append "divsd      | xmm, xmm/m64         | F2 0F 5E /r" to rows.
+  append "fdiv       | m64                  | DC /6" to rows.
+  append "fild       | m64                  | DF /5" to rows.
+  append "fldcw      | m16                  | D9 /5" to rows.
+  append "fmul       | m64                  | DC /1" to rows.
+  append "fnstcw     | m16                  | D9 /7" to rows.
+  append "fstp       | m64                  | DD /3" to rows.
+  append "idiv       | r/m64                | REX.W F7 /7" to rows.
+  append "imul       | r64, r/m64           | REX.W 0F AF /r" to rows.
+  append "imul       | r64, imm8            | REX.W 6B /r ib" to rows.
+  append "imul       | r64, imm32           | REX.W 69 /r id" to rows.
+  append "imul       | r64, r/m64, imm8     | REX.W 6B /r ib" to rows.
+  append "imul       | r64, r/m64, imm32    | REX.W 69 /r id" to rows.
+  append "inc        | r/m8                 | FE /0" to rows.
+  append "inc        | r/m64                | REX.W FF /0" to rows.
+  append "ja         | rel32                | 0F 87 cd" to rows.
+  append "jae        | rel32                | 0F 83 cd" to rows.
+  append "jb         | rel32                | 0F 82 cd" to rows.
+  append "jbe        | rel32                | 0F 86 cd" to rows.
+  append "je         | rel32                | 0F 84 cd" to rows.
+  append "jg         | rel32                | 0F 8F cd" to rows.
+  append "jge        | rel32                | 0F 8D cd" to rows.
+  append "jl         | rel32                | 0F 8C cd" to rows.
+  append "jle        | rel32                | 0F 8E cd" to rows.
+  append "jmp        | rel32                | E9 cd" to rows.
+  append "jnc        | rel32                | 0F 83 cd" to rows.
+  append "jne        | rel32                | 0F 85 cd" to rows.
+  append "jns        | rel32                | 0F 89 cd" to rows.
+  append "jnz        | rel32                | 0F 85 cd" to rows.
+  append "jo         | rel32                | 0F 80 cd" to rows.
+  append "js         | rel32                | 0F 88 cd" to rows.
+  append "jz         | rel32                | 0F 84 cd" to rows.
+  append "lea        | r64, m               | REX.W 8D /r" to rows.
+  append "leave      |                      | C9" to rows.
+  append "mov        | r/m8, r8             | 88 /r" to rows.
+  append "mov        | r8, r/m8             | 8A /r" to rows.
+  append "mov        | r/m16, r16           | 66 89 /r" to rows.
+  append "mov        | r16, r/m16           | 66 8B /r" to rows.
+  append "mov        | r/m32, r32           | 89 /r" to rows.
+  append "mov        | r32, r/m32           | 8B /r" to rows.
+  append "mov        | r/m64, r64           | REX.W 89 /r" to rows.
+  append "mov        | r64, r/m64           | REX.W 8B /r" to rows.
+  append "mov        | r8, imm8             | B0 +r ib" to rows.
+  append "mov        | r/m8, imm8           | C6 /0 ib" to rows.
+  append "mov        | r32, imm32           | B8 +r id" to rows.
+  append "mov        | r/m32, imm32         | C7 /0 id" to rows.
+  append "mov        | r64, imm32u          | B8 +r id" to rows.
+  append "mov        | r/m64, imm32         | REX.W C7 /0 id" to rows.
+  append "mov        | r64, imm64           | REX.W B8 +r iq" to rows.
+  append "movq       | r/m64, xmm           | 66 REX.W 0F 7E /r" to rows.
+  append "movq       | xmm, xmm/m64         | F3 0F 7E /r" to rows.
+  append "movq       | xmm, r/m64           | 66 REX.W 0F 6E /r" to rows.
+  append "movsd      | xmm, xmm/m64         | F2 0F 10 /r" to rows.
+  append "movsd      | m64, xmm             | F2 0F 11 /r" to rows.
+  append "movzx      | r32, r/m8            | 0F B6 /r" to rows.
+  append "movzx      | r32, r/m16           | 0F B7 /r" to rows.
+  append "movzx      | r64, r/m8            | REX.W 0F B6 /r" to rows.
+  append "mul        | r/m64                | REX.W F7 /4" to rows.
+  append "mulsd      | xmm, xmm/m64         | F2 0F 59 /r" to rows.
+  append "neg        | r/m64                | REX.W F7 /3" to rows.
+  append "nop        |                      | 90" to rows.
+  append "or         | al, imm8             | 0C ib" to rows.
+  append "or         | r/m8, imm8           | 80 /1 ib" to rows.
+  append "or         | r/m16, imm8          | 66 83 /1 ib" to rows.
+  append "or         | ax, imm16            | 66 0D iw" to rows.
+  append "or         | r/m16, imm16         | 66 81 /1 iw" to rows.
+  append "or         | r/m64, imm8          | REX.W 83 /1 ib" to rows.
+  append "or         | rax, imm32           | REX.W 0D id" to rows.
+  append "or         | r/m64, imm32         | REX.W 81 /1 id" to rows.
+  append "or         | r/m64, r64           | REX.W 09 /r" to rows.
+  append "or         | r64, r/m64           | REX.W 0B /r" to rows.
+  append "pop        | r64                  | 58 +r" to rows.
+  append "push       | r64                  | 50 +r" to rows.
+  append "push       | imm8                 | 6A ib" to rows.
+  append "push       | imm32                | 68 id" to rows.
+  append "rep movsb  |                      | F3 A4" to rows.
+  append "rep stosb  |                      | F3 AA" to rows.
+  append "ret        |                      | C3" to rows.
+  append "roundsd    | xmm, xmm/m64, imm8   | 66 0F 3A 0B /r ib" to rows.
+  append "seta       | r/m8                 | 0F 97 /0" to rows.
+  append "setb       | r/m8                 | 0F 92 /0" to rows.
+  append "sete       | r/m8                 | 0F 94 /0" to rows.
+  append "setg       | r/m8                 | 0F 9F /0" to rows.
+  append "setge      | r/m8                 | 0F 9D /0" to rows.
+  append "setl       | r/m8                 | 0F 9C /0" to rows.
+  append "setle      | r/m8                 | 0F 9E /0" to rows.
+  append "setne      | r/m8                 | 0F 95 /0" to rows.
+  append "setnp      | r/m8                 | 0F 9B /0" to rows.
+  append "setnz      | r/m8                 | 0F 95 /0" to rows.
+  append "setz       | r/m8                 | 0F 94 /0" to rows.
+  append "shl        | r/m64, 1             | REX.W D1 /4" to rows.
+  append "shl        | r/m64, cl            | REX.W D3 /4" to rows.
+  append "shl        | r/m64, imm8          | REX.W C1 /4 ib" to rows.
+  append "shr        | r/m64, 1             | REX.W D1 /5" to rows.
+  append "shr        | r/m64, cl            | REX.W D3 /5" to rows.
+  append "shr        | r/m64, imm8          | REX.W C1 /5 ib" to rows.
+  append "stc        |                      | F9" to rows.
+  append "std        |                      | FD" to rows.
+  append "sub        | r/m64, imm8          | REX.W 83 /5 ib" to rows.
+  append "sub        | rax, imm32           | REX.W 2D id" to rows.
+  append "sub        | r/m64, imm32         | REX.W 81 /5 id" to rows.
+  append "sub        | r/m64, r64           | REX.W 29 /r" to rows.
+  append "sub        | r64, r/m64           | REX.W 2B /r" to rows.
+  append "subsd      | xmm, xmm/m64         | F2 0F 5C /r" to rows.
+  append "syscall    |                      | 0F 05" to rows.
+  append "test       | r/m8, r8             | 84 /r" to rows.
+  append "test       | r/m32, r32           | 85 /r" to rows.
+  append "test       | rax, imm32           | REX.W A9 id" to rows.
+  append "test       | r/m64, imm32         | REX.W F7 /0 id" to rows.
+  append "test       | r/m64, r64           | REX.W 85 /r" to rows.
+  append "ucomisd    | xmm, xmm/m64         | 66 0F 2E /r" to rows.
+  append "xchg       | rax, r64             | REX.W 90 +r" to rows.
+  append "xchg       | r64, rax             | REX.W 90 +r" to rows.
+  append "xchg       | r64, r/m64           | REX.W 87 /r" to rows.
+  append "xor        | r/m32, r32           | 31 /r" to rows.
+  append "xor        | r/m64, imm8          | REX.W 83 /6 ib" to rows.
+  append "xor        | rax, imm32           | REX.W 35 id" to rows.
+  append "xor        | r/m64, imm32         | REX.W 81 /6 id" to rows.
+  append "xor        | r/m64, r64           | REX.W 31 /r" to rows.
+  append "xor        | r64, r/m64           | REX.W 33 /r" to rows.
+  append "xorpd      | xmm, xmm/m64         | 66 0F 57 /r" to rows.
+  Return a list, rows.
+
+(--- Reading the table -----------------------------------------------------)
+
+(The words of the rows, with the number each stands for. Only reading the
+ table uses them, once, so they can live in a map.)
+To 'learn the encoder words' with a map called vocabulary.
+  'learn the pattern' with "r8" and {'register family'} and 0 and 8 and vocabulary.
+  'learn the pattern' with "r16" and {'register family'} and 0 and 16 and vocabulary.
+  'learn the pattern' with "r32" and {'register family'} and 0 and 32 and vocabulary.
+  'learn the pattern' with "r64" and {'register family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "xmm" and {'register family'} and 0 and {'vector width'} and vocabulary.
+  'learn the pattern' with "r/m8" and {'register or memory family'} and 0 and 8 and vocabulary.
+  'learn the pattern' with "r/m16" and {'register or memory family'} and 0 and 16 and vocabulary.
+  'learn the pattern' with "r/m32" and {'register or memory family'} and 0 and 32 and vocabulary.
+  'learn the pattern' with "r/m64" and {'register or memory family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "m" and {'memory family'} and 0 and 0 and vocabulary.
+  'learn the pattern' with "m16" and {'memory family'} and 0 and 16 and vocabulary.
+  'learn the pattern' with "m64" and {'memory family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "xmm/m64" and {'vector or memory family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "al" and {'fixed register family'} and 0 and 8 and vocabulary.
+  'learn the pattern' with "cl" and {'fixed register family'} and 1 and 8 and vocabulary.
+  'learn the pattern' with "ax" and {'fixed register family'} and 0 and 16 and vocabulary.
+  'learn the pattern' with "eax" and {'fixed register family'} and 0 and 32 and vocabulary.
+  'learn the pattern' with "rax" and {'fixed register family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "1" and {'the number one family'} and 0 and 0 and vocabulary.
+  'learn the pattern' with "imm8" and {'immediate family'} and 0 and 8 and vocabulary.
+  'learn the pattern' with "imm16" and {'immediate family'} and 0 and 16 and vocabulary.
+  'learn the pattern' with "imm32" and {'immediate family'} and 0 and 32 and vocabulary.
+  'learn the pattern' with "imm64" and {'immediate family'} and 0 and 64 and vocabulary.
+  'learn the pattern' with "imm32u" and {'zero-extended immediate family'} and 0 and 32 and vocabulary.
+  'learn the pattern' with "rel32" and {'jump target family'} and 0 and 32 and vocabulary.
+  Set vocabulary's "step REX.W" to 'the REX W step'.
+  Set vocabulary's "step /r" to 'the ModRM step'.
+  For each digit from 0 to 7,
+    Set vocabulary's "step /{digit}" to 'the digit step' add digit.
+  Set vocabulary's "step +r" to 'the register in the opcode step'.
+  Set vocabulary's "step ib" to 'the immediate step' add 1.
+  Set vocabulary's "step iw" to 'the immediate step' add 2.
+  Set vocabulary's "step id" to 'the immediate step' add 4.
+  Set vocabulary's "step iq" to 'the immediate step' add 8.
+  Set vocabulary's "step cd" to 'the jump target step'.
+
+To 'learn the pattern' with a text called word and a number called family and a number called 'fixed register' and a number called width and a map called vocabulary.
+  a number called pattern is family multiply 'pattern family size'.
+  Set pattern to pattern add {'fixed register' multiply 'pattern register size'} add width.
+  Set vocabulary's "pattern {word}" to pattern.
+
+(Read every row into the table: first the workspace, then sixteen numbers to
+ a row, as the named numbers above lay them out, with each row's mnemonic on
+ the row mnemonics list. A row the encoder cannot read is a problem with the
+ table itself.)
+To 'prepare the encoder' with a list called table and a list called 'row mnemonics'.
+  a map called vocabulary is {}.
+  'learn the encoder words' with vocabulary.
+  a list called rows is 'the encoding rows'.
+  a buffer called problems.
+  Repeat 'the workspace size' times, append 0 to table.
+  For each 'row number' from 1 to rows's length,
+    a text called row is element 'row number' of rows,
+    a list called fields is 'the pieces of the row' with row and '|' and true,
+    a text called mnemonic is element 1 of fields,
+    if fields's length is not 3 then, append "row {row number} does not have three fields: {row}\n" to problems.
+    if {'the rows of the mnemonic are apart' with mnemonic and 'row mnemonics'} then, append "the rows of {mnemonic} do not stand together\n" to problems.
+    append mnemonic to 'row mnemonics',
+    'read the row' with fields and 'row number' and table and vocabulary and problems.
+  'mark the last rows' with table and 'row mnemonics'.
+  Return a text, problems as text.
+
+(A mnemonic's rows stand together, so a row can end the search for an
+ instruction's row: a mnemonic seen before, but not on the row just before
+ this one, is out of place.)
+To 'the rows of the mnemonic are apart' with a text called mnemonic and a list called 'row mnemonics'.
+  a number called 'rows so far' is 'row mnemonics''s length.
+  If 'rows so far' is 0 then, Return a boolean, false.
+  If {element 'rows so far' of 'row mnemonics'} is mnemonic then, Return a boolean, false.
+  Return a boolean, {'the first row of the mnemonic' with mnemonic and 'row mnemonics'} is greater than 0.
+
+(Each row learns the last row of its mnemonic. The mnemonic is named before
+ it is compared: two elements of a list parameter compared with each other
+ directly come out unequal even when they are the same text, which is Vox
+ bug #157.)
+To 'mark the last rows' with a list called table and a list called 'row mnemonics'.
+  a number called 'last row' is 'row mnemonics''s length.
+  a number called 'row number' is 'row mnemonics''s length.
+  While 'row number' is greater than 0,
+    set element {'the row slot' with 'row number' and 'the last row slot'} of table to 'last row',
+    a text called mnemonic is element 'row number' of 'row mnemonics',
+    if 'row number' is greater than 1 then, if {element {'row number' subtract 1} of 'row mnemonics'} is not mnemonic then, set 'last row' to 'row number' subtract 1..
+    decrement 'row number'.
+
+(Where a row's slot stands in the table, past the workspace.)
+To 'the row slot' with a number called 'row number' and a number called slot.
+  Return a number, 'the workspace size' add {{'row number' subtract 1} multiply 'numbers per row'} add slot.
+
+(The first row of a mnemonic, found by reading down the row mnemonics, or 0
+ when the table has none. Comparing texts makes nothing, where a map key put
+ together as text would.)
+To 'the first row of the mnemonic' with a text called mnemonic and a list called 'row mnemonics'.
+  For each 'row number' from 1 to 'row mnemonics''s length,
+    if {element 'row number' of 'row mnemonics'} is mnemonic then, Return a number, 'row number'..
+  Return a number, 0.
+
+(One row: its operand patterns, then its steps.)
+To 'read the row' with a list called fields and a number called 'row number' and a list called table and a map called vocabulary and a buffer called problems.
+  Repeat 'numbers per row' times, append 0 to table.
+  If fields's length is not 3 then, Return.
+  a text called 'operand field' is element 2 of fields.
+  a text called 'step field' is element 3 of fields.
+  a list called patterns is 'the pieces of the row' with 'operand field' and ',' and false.
+  a list called steps is 'the pieces of the row' with 'step field' and ' ' and false.
+  If patterns's length is greater than 'most operands' then, append "row {row number} has too many operands\n" to problems, Return.
+  If steps's length is greater than 'most steps' then, append "row {row number} has too many steps\n" to problems, Return.
+  For each 'operand number' from 1 to patterns's length,
+    a text called 'pattern word' is element 'operand number' of patterns,
+    a number called pattern is vocabulary's "pattern {pattern word}",
+    if pattern is 0 then, append "row {row number} has the unknown operand pattern {pattern word}\n" to problems.
+    set element {'the row slot' with 'row number' and 'operand number'} of table to pattern.
+  set element {'the row slot' with 'row number' and 'the step count slot'} of table to steps's length.
+  For each 'step number' from 1 to steps's length,
+    a text called 'step word' is element 'step number' of steps,
+    a number called step is 'the step the word stands for' with 'step word' and vocabulary,
+    if step is less than 0 then, append "row {row number} has the unknown step {step word}\n" to problems.
+    set element {'the row slot' with 'row number' and {'the first step slot' add 'step number' subtract 1}} of table to step.
+
+(A step word: one of the named steps, or two hex digits for a byte. -1 for a
+ word that is neither.)
+To 'the step the word stands for' with a text called word and a map called vocabulary.
+  a number called step is vocabulary's "step {word}".
+  If step is greater than 0 then, Return a number, step.
+  a buffer called characters is "{word}".
+  If characters's size is not 2 then, Return a number, -1.
+  a number called 'byte value' is -1.
+  Set 'byte value' to word as a hex number.
+  On error set 'byte value' to -1.
+  Return a number, 'byte value'.
+
+(The pieces of a text between separators, with the spaces at each end of a
+ piece taken off. An empty piece is kept only when asked for, so that a row's
+ empty operand field still counts as a field.)
+To 'the pieces of the row' with a text called written and a number called separator and a boolean called 'keeping empty pieces'.
+  a buffer called characters is "{written}".
+  a list called pieces is [].
+  a buffer called piece.
+  a number called 'spaces held back' is 0.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    a boolean called 'it ends the piece' is false,
+    if character is separator then, set 'it ends the piece' to true.
+    a boolean called 'it is a space' is false,
+    if character is ' ' then, set 'it is a space' to true.
+    if 'it ends the piece' then, 'keep the piece' with piece and pieces and 'keeping empty pieces', set 'spaces held back' to 0.
+    if 'it ends the piece' is false and 'it is a space' and piece's size is greater than 0 then, increment 'spaces held back'.
+    if 'it ends the piece' is false and 'it is a space' is false then, 'add the spaces held back' with 'spaces held back' and piece, set 'spaces held back' to 0, 'add the byte to' with character and piece..
+  'keep the piece' with piece and pieces and 'keeping empty pieces'.
+  Return a list, pieces.
+
+To 'keep the piece' with a buffer called piece and a list called pieces and a boolean called 'keeping empty pieces'.
+  If piece's size is 0 and 'keeping empty pieces' is false then, Return.
+  a text called 'finished piece' is piece as text.
+  append 'finished piece' to pieces.
+  clear piece.
+
+To 'add the spaces held back' with a number called 'spaces held back' and a buffer called piece.
+  Repeat 'spaces held back' times, 'add the byte to' with ' ' and piece.
+
+To 'add the byte to' with a number called 'byte value' and a buffer called output.
+  Set byte {output's size add 1} of output to 'byte value'.
+
+(--- The facts about the operands ------------------------------------------)
+
+(Each operand's record, read once into eight numbers in the workspace: its
+ form, its width in bits, its register or base, its index, its scale, its
+ value or displacement, whether that value is known before any label is
+ placed, and whether the memory is relative to the instruction pointer.
+ Answers what is wrong with an operand, or the empty text.
+
+ The workspace is the head of the table, so the functions here, which touch
+ only the workspace, call the list workspace; the functions after them read
+ both the rows and the facts from the one list, and call it table.)
+To 'gather the facts' with a list called operands and a list called workspace.
+  For each 'workspace slot' from 1 to 'the workspace size',
+    set element 'workspace slot' of workspace to 0.
+  If operands's length is greater than 'most operands' then, Return a text, "an instruction with more than three operands cannot be encoded".
+  For each 'operand number' from 1 to operands's length,
+    a map called operand is element 'operand number' of operands,
+    a text called kind is operand's "kind",
+    a number called 'operand workspace start' is {'operand number' subtract 1} multiply 'facts per operand',
+    a text called problem is "",
+    if kind is "register" then, set problem to 'gather the register facts' with operand and 'operand workspace start' and workspace.
+    if kind is "memory" then, set problem to 'gather the memory facts' with operand and 'operand workspace start' and workspace.
+    if kind is "expression" then, set problem to 'gather the immediate facts' with operand and 'operand workspace start' and workspace.
+    if kind is not "register" and kind is not "memory" and kind is not "expression" then, set problem to "an operand of the kind {kind} cannot be encoded".
+    if problem is not "" then, Return a text, problem..
+  Return a text, "".
+
+To 'gather the register facts' with a map called operand and a number called 'operand workspace start' and a list called workspace.
+  a text called class is operand's "class".
+  a number called width is 'the width of the register class' of class.
+  If width is 0 then, Return a text, "a register of the class {class} cannot be encoded".
+  a number called 'register number' is operand's "number".
+  Set element {'operand workspace start' add 'the form fact'} of workspace to 'register form'.
+  Set element {'operand workspace start' add 'the width fact'} of workspace to width.
+  Set element {'operand workspace start' add 'the register fact'} of workspace to 'register number'.
+  Return a text, "".
+
+To 'the width of the register class' of a text called class.
+  If class is "r64" then, Return a number, 64.
+  If class is "r32" then, Return a number, 32.
+  If class is "r16" then, Return a number, 16.
+  If class is "r8" then, Return a number, 8.
+  If class is "xmm" then, Return a number, 'vector width'.
+  Return a number, 0.
+
+(A memory operand's size word, in bits; 0 for memory written without one.)
+To 'the width of the size word' of a text called 'size word'.
+  If 'size word' is "byte" then, Return a number, 8.
+  If 'size word' is "word" then, Return a number, 16.
+  If 'size word' is "dword" then, Return a number, 32.
+  If 'size word' is "qword" then, Return a number, 64.
+  Return a number, 0.
+
+To 'gather the memory facts' with a map called operand and a number called 'operand workspace start' and a list called workspace.
+  a text called 'size word' is operand's "size".
+  a text called base is operand's "base".
+  a text called 'index register' is operand's "index".
+  a number called scale is operand's "scale".
+  a number called displacement is operand's "displacement value".
+  a boolean called 'it is known' is operand's "displacement is constant".
+  a boolean called 'it is relative' is operand's "relative".
+  a number called 'base number' is 'the number of the address register' of base.
+  a number called 'index number' is 'the number of the address register' of 'index register'.
+  If 'base number' is 'not an address register' then, Return a text, "memory cannot be addressed through {base}".
+  If 'index number' is 'not an address register' then, Return a text, "memory cannot be addressed through {index register}".
+  If 'index number' is 4 then, Return a text, "rsp cannot be the index register of a memory operand".
+  If 'index number' is not 'no register' and scale is not 1 and scale is not 2 and scale is not 4 and scale is not 8 then, Return a text, "the scale of an index register must be 1, 2, 4 or 8".
+  Set element {'operand workspace start' add 'the form fact'} of workspace to 'memory form'.
+  Set element {'operand workspace start' add 'the width fact'} of workspace to 'the width of the size word' of 'size word'.
+  Set element {'operand workspace start' add 'the register fact'} of workspace to 'base number'.
+  Set element {'operand workspace start' add 'the index fact'} of workspace to 'index number'.
+  Set element {'operand workspace start' add 'the scale fact'} of workspace to scale.
+  Set element {'operand workspace start' add 'the value fact'} of workspace to displacement.
+  If 'it is known' then, Set element {'operand workspace start' add 'the known fact'} of workspace to 1.
+  If 'it is relative' then, Set element {'operand workspace start' add 'the relative fact'} of workspace to 1.
+  Return a text, "".
+
+(The number of a register a memory operand names, in the order the
+ processor numbers them: no register for none, and not an address register
+ for a name that is not one of the sixteen 64-bit registers.)
+To 'the number of the address register' of a text called 'register name'.
+  If 'register name' is "" then, Return a number, 'no register'.
+  If 'register name' is "rax" then, Return a number, 0.
+  If 'register name' is "rcx" then, Return a number, 1.
+  If 'register name' is "rdx" then, Return a number, 2.
+  If 'register name' is "rbx" then, Return a number, 3.
+  If 'register name' is "rsp" then, Return a number, 4.
+  If 'register name' is "rbp" then, Return a number, 5.
+  If 'register name' is "rsi" then, Return a number, 6.
+  If 'register name' is "rdi" then, Return a number, 7.
+  If 'register name' is "r8" then, Return a number, 8.
+  If 'register name' is "r9" then, Return a number, 9.
+  If 'register name' is "r10" then, Return a number, 10.
+  If 'register name' is "r11" then, Return a number, 11.
+  If 'register name' is "r12" then, Return a number, 12.
+  If 'register name' is "r13" then, Return a number, 13.
+  If 'register name' is "r14" then, Return a number, 14.
+  If 'register name' is "r15" then, Return a number, 15.
+  Return a number, 'not an address register'.
+
+To 'gather the immediate facts' with a map called operand and a number called 'operand workspace start' and a list called workspace.
+  a number called value is operand's "value".
+  a boolean called 'it is known' is operand's "is constant".
+  Set element {'operand workspace start' add 'the form fact'} of workspace to 'immediate form'.
+  Set element {'operand workspace start' add 'the value fact'} of workspace to value.
+  If 'it is known' then, Set element {'operand workspace start' add 'the known fact'} of workspace to 1.
+  Return a text, "".
+
+(One fact about one operand, from the workspace.)
+To 'the fact about the operand' with a list called workspace and a number called operand and a number called fact.
+  Return a number, element {{operand subtract 1} multiply 'facts per operand' add fact} of workspace.
+
+(--- Choosing the row ------------------------------------------------------)
+
+To 'the family of the pattern' of a number called pattern.
+  Return a number, pattern divide 'pattern family size'.
+
+To 'the width of the pattern' of a number called pattern.
+  Return a number, pattern modulo 'pattern register size'.
+
+To 'the register the pattern names' of a number called pattern.
+  Return a number, pattern modulo 'pattern family size' divide 'pattern register size'.
+
+(The row of the table an instruction fits, or 0 for none: the first of its
+ mnemonic's rows whose patterns all its operands fit.)
+To 'the row for the operands' with a number called 'first row' and a number called 'operand count' and a list called table.
+  a number called 'last row' is element {'the row slot' with 'first row' and 'the last row slot'} of table.
+  For each 'row number' from 'first row' to 'last row',
+    if 'the row fits' with 'row number' and 'operand count' and table then, Return a number, 'row number'..
+  Return a number, 0.
+
+To 'the row fits' with a number called 'row number' and a number called 'operand count' and a list called table.
+  a number called 'operation width' is 'the operation width of the row' with 'row number' and table.
+  a number called 'register width' is 'the register width of the row' with 'row number' and table.
+  For each operand from 1 to 'most operands',
+    a number called pattern is element {'the row slot' with 'row number' and operand} of table,
+    if operand is greater than 'operand count' and pattern is not 0 then, Return a boolean, false.
+    if operand is not greater than 'operand count' and pattern is 0 then, Return a boolean, false.
+    if pattern is not 0 and {'the operand fits the pattern' with table and operand and pattern and 'operation width' and 'register width'} is false then, Return a boolean, false..
+  Return a boolean, true.
+
+(How wide the operation is, which decides how an immediate is extended: the
+ width of the first operand, a byte beside an xmm register, and the full 64
+ bits when the immediate stands alone.)
+To 'the operation width of the row' with a number called 'row number' and a list called table.
+  a number called pattern is element {'the row slot' with 'row number' and 1} of table.
+  a number called family is 'the family of the pattern' of pattern.
+  a number called width is 'the width of the pattern' of pattern.
+  If family is greater than 'fixed register family' or width is 0 then, Return a number, 'widest operation'.
+  If width is 'vector width' then, Return a number, 8.
+  Return a number, width.
+
+(The width a register pattern in the row gives the operation, which is what
+ lets memory written without a size word fit an r/m pattern; 0 when the row
+ has no such register.)
+To 'the register width of the row' with a number called 'row number' and a list called table.
+  For each operand from 1 to 'most operands',
+    a number called pattern is element {'the row slot' with 'row number' and operand} of table,
+    a number called family is 'the family of the pattern' of pattern,
+    a number called width is 'the width of the pattern' of pattern,
+    if family is 'register family' or family is 'fixed register family' then, if width is not 'vector width' then, Return a number, width...
+  Return a number, 0.
+
+To 'the operand fits the pattern' with a list called table and a number called operand and a number called pattern and a number called 'operation width' and a number called 'register width'.
+  a number called family is 'the family of the pattern' of pattern.
+  a number called width is 'the width of the pattern' of pattern.
+  a number called form is 'the fact about the operand' with table and operand and 'the form fact'.
+  a number called 'operand width' is 'the fact about the operand' with table and operand and 'the width fact'.
+  a boolean called 'it is a register' is false.
+  If form is 'register form' then, set 'it is a register' to true.
+  a boolean called 'it is memory' is false.
+  If form is 'memory form' then, set 'it is memory' to true.
+  a boolean called 'the size fits' is false.
+  If 'operand width' is width then, set 'the size fits' to true.
+  If family is 'register family' then, Return a boolean, 'it is a register' and 'the size fits'.
+  If family is 'register or memory family' then, Return a boolean, 'the register or memory fits' with 'it is a register' and 'it is memory' and 'operand width' and width and 'register width'.
+  If family is 'memory family' then, Return a boolean, 'the memory fits' with 'it is memory' and 'operand width' and width.
+  If family is 'vector or memory family' then, Return a boolean, 'the vector or memory fits' with 'it is a register' and 'it is memory' and 'operand width' and width.
+  If family is 'fixed register family' then, Return a boolean, 'the fixed register fits' with table and operand and 'it is a register' and 'the size fits' and pattern.
+  If form is not 'immediate form' then, Return a boolean, false.
+  If family is 'jump target family' then, Return a boolean, true.
+  a number called value is 'the fact about the operand' with table and operand and 'the value fact'.
+  a boolean called 'it is known' is false.
+  If {'the fact about the operand' with table and operand and 'the known fact'} is 1 then, set 'it is known' to true.
+  If family is 'the number one family' then, Return a boolean, 'it is known' and value is 1.
+  If family is 'zero-extended immediate family' then, Return a boolean, 'the number fits zero-extended' with value and 'it is known' and width.
+  If family is 'immediate family' then, Return a boolean, 'the number fits sign-extended' with value and 'it is known' and width and 'operation width'.
+  Return a boolean, false.
+
+(Memory written without a size word fits only where a register of the row
+ gives it the size.)
+To 'the register or memory fits' with a boolean called 'it is a register' and a boolean called 'it is memory' and a number called 'operand width' and a number called width and a number called 'register width'.
+  If 'operand width' is width then, Return a boolean, 'it is a register' or 'it is memory'.
+  If 'it is memory' and 'operand width' is 0 and 'register width' is width then, Return a boolean, true.
+  Return a boolean, false.
+
+To 'the memory fits' with a boolean called 'it is memory' and a number called 'operand width' and a number called width.
+  If 'it is memory' is false then, Return a boolean, false.
+  If width is 0 or 'operand width' is 0 or 'operand width' is width then, Return a boolean, true.
+  Return a boolean, false.
+
+To 'the vector or memory fits' with a boolean called 'it is a register' and a boolean called 'it is memory' and a number called 'operand width' and a number called width.
+  If 'it is a register' and 'operand width' is 'vector width' then, Return a boolean, true.
+  If 'it is memory' and 'operand width' is 0 then, Return a boolean, true.
+  If 'it is memory' and 'operand width' is width then, Return a boolean, true.
+  Return a boolean, false.
+
+To 'the fixed register fits' with a list called table and a number called operand and a boolean called 'it is a register' and a boolean called 'the size fits' and a number called pattern.
+  If 'it is a register' is false or 'the size fits' is false then, Return a boolean, false.
+  a number called 'register number' is 'the fact about the operand' with table and operand and 'the register fact'.
+  Return a boolean, 'register number' is 'the register the pattern names' of pattern.
+
+(A number fits an immediate of a width when the processor, extending it by
+ its sign to the width of the operation, gets the number back. A number that
+ waits on a label is taken at the full width of the operation.)
+To 'the number fits sign-extended' with a number called value and a boolean called 'it is known' and a number called width and a number called 'operation width'.
+  If 'it is known' is false then, Return a boolean, width is greater than or equal to 'operation width'.
+  If 'operation width' is greater than or equal to 'widest operation' then, Return a boolean, 'the number fits signed' with value and width.
+  a number called 'operation span' is 1 bit-shift-left 'operation width'.
+  a number called 'half operation span' is 1 bit-shift-left {'operation width' subtract 1}.
+  If value is less than 0 subtract 'half operation span' then, Return a boolean, false.
+  If value is greater than or equal to 'operation span' then, Return a boolean, false.
+  If width is greater than or equal to 'operation width' then, Return a boolean, true.
+  a number called truncated is value bit-and {'operation span' subtract 1}.
+  a number called 'half span' is 1 bit-shift-left {width subtract 1}.
+  If truncated is less than 'half span' then, Return a boolean, true.
+  Return a boolean, truncated is greater than or equal to 'operation span' subtract 'half span'.
+
+(Whether a whole 64-bit number is one the width holds as a signed number.)
+To 'the number fits signed' with a number called value and a number called width.
+  If width is greater than or equal to 'widest operation' then, Return a boolean, true.
+  a number called 'half span' is 1 bit-shift-left {width subtract 1}.
+  If value is less than 0 subtract 'half span' then, Return a boolean, false.
+  Return a boolean, value is less than 'half span'.
+
+(A 32-bit immediate the processor extends with zeros, as a 32-bit mov does
+ into its 64-bit register.)
+To 'the number fits zero-extended' with a number called value and a boolean called 'it is known' and a number called width.
+  If 'it is known' is false then, Return a boolean, false.
+  If value is less than 0 then, Return a boolean, false.
+  Return a boolean, value is less than {1 bit-shift-left width}.
+
+(--- Laying down the bytes -------------------------------------------------)
+
+(The bytes of one instruction, appended to the output, laid down at the
+ address. Until the addresses are final, a field measured from the end of
+ the instruction is left as zeros and its reach is not checked, so the size
+ comes out the same whatever the labels hold.)
+To 'encode the record' with a map called record and a number called address and a boolean called 'the addresses are final' and a list called table and a list called 'row mnemonics' and a buffer called output.
+  a text called mnemonic is record's "mnemonic".
+  a number called 'first row' is 'the first row of the mnemonic' with mnemonic and 'row mnemonics'.
+  If 'first row' is 0 then, Return a text, 'the message for the unknown mnemonic' with mnemonic.
+  a list called operands is record's "operands".
+  a text called problem is 'gather the facts' with operands and table.
+  If problem is not "" then, Return a text, problem.
+  a number called 'operand count' is operands's length.
+  a number called 'row number' is 'the row for the operands' with 'first row' and 'operand count' and table.
+  If 'row number' is 0 then, Return a text, 'the message for the unknown shape' with record.
+  Return a text, 'lay down the row' with 'row number' and 'operand count' and address and 'the addresses are final' and table and output.
+
+To 'the message for the unknown mnemonic' with a text called mnemonic.
+  a text called complaint is "".
+  Set complaint to "vas has no encoding for the instruction {mnemonic}".
+  Return a text, complaint.
+
+To 'the message for the unknown shape' with a map called record.
+  a text called written is record's "text".
+  a text called complaint is "".
+  Set complaint to "vas has no encoding for these operands: {written}".
+  Return a text, complaint.
+
+(Which operand each part of the row takes: the addressed operand goes in the
+ r/m field of the ModRM byte, the register operand in its reg field or the
+ opcode, then the immediate and the jump target. 0 for a part the row does
+ not have. A row with a ModRM byte and no r/m pattern, the two-operand imul,
+ addresses its register operand too.)
+To 'the operand in the role' with a number called 'row number' and a number called role and a list called table.
+  For each operand from 1 to 'most operands',
+    a number called pattern is element {'the row slot' with 'row number' and operand} of table,
+    a number called family is 'the family of the pattern' of pattern,
+    if pattern is not 0 and {'the role of the family' of family} is role then, Return a number, operand..
+  Return a number, 0.
+
+To 'the addressed role'.
+  Return a number, 1.
+
+To 'the register role'.
+  Return a number, 2.
+
+To 'the immediate role'.
+  Return a number, 3.
+
+To 'the role of the family' of a number called family.
+  If family is 'register or memory family' or family is 'memory family' or family is 'vector or memory family' then, Return a number, 'the addressed role'.
+  If family is 'register family' then, Return a number, 'the register role'.
+  If family is 'immediate family' or family is 'zero-extended immediate family' or family is 'jump target family' then, Return a number, 'the immediate role'.
+  Return a number, 0.
+
+To 'lay down the row' with a number called 'row number' and a number called 'operand count' and a number called address and a boolean called 'the addresses are final' and a list called table and a buffer called output.
+  a number called 'addressed operand' is 'the operand in the role' with 'row number' and 'the addressed role' and table.
+  a number called 'register operand' is 'the operand in the role' with 'row number' and 'the register role' and table.
+  a number called 'immediate operand' is 'the operand in the role' with 'row number' and 'the immediate role' and table.
+  If 'addressed operand' is 0 then, set 'addressed operand' to 'register operand'.
+  a number called 'step count' is element {'the row slot' with 'row number' and 'the step count slot'} of table.
+  a number called 'REX byte' is 'the REX prefix' with 'row number' and 'operand count' and 'addressed operand' and 'register operand' and table.
+  a boolean called 'the REX byte is laid down' is false.
+  If 'REX byte' is 0 then, set 'the REX byte is laid down' to true.
+  a number called 'instruction start' is output's size.
+  (A field measured from the end of the instruction, a jump's target or
+   memory relative to the instruction pointer, is laid down as zeros and
+   written once the end is known: where it begins, and the operand whose
+   value is its target.)
+  a number called 'field position' is 0.
+  a number called 'field operand' is 0.
+  For each 'step number' from 1 to 'step count',
+    a number called step is element {'the row slot' with 'row number' and {'the first step slot' add 'step number' subtract 1}} of table,
+    a boolean called 'it is a ModRM step' is false,
+    if step is 'the ModRM step' or {'the step is a digit' of step} then, set 'it is a ModRM step' to true.
+    if step is less than 256 and 'the REX byte is laid down' is false and {'the byte is a legacy prefix' of step} is false then, 'add the byte to' with 'REX byte' and output, set 'the REX byte is laid down' to true.
+    if step is less than 256 then, 'add the byte to' with step and output.
+    if step is 'the register in the opcode step' then, 'add the register to the opcode' with {'the fact about the operand' with table and 'register operand' and 'the register fact'} and output.
+    if 'it is a ModRM step' then, set 'field position' to 'lay down the address' with {'the register field' with step and table and 'register operand'} and table and 'addressed operand' and output.
+    if 'it is a ModRM step' and 'field position' is greater than 0 then, set 'field operand' to 'addressed operand'.
+    if step is greater than 'the immediate step' and step is less than 'the jump target step' then, 'lay down the number' with {'the fact about the operand' with table and 'immediate operand' and 'the value fact'} and {step subtract 'the immediate step'} and output.
+    if step is 'the jump target step' then, set 'field position' to 'lay down the jump target' with output, set 'field operand' to 'immediate operand'..
+  If 'field position' is 0 then, Return a text, "".
+  a number called 'field target' is 'the fact about the operand' with table and 'field operand' and 'the value fact'.
+  a number called 'next address' is address add output's size subtract 'instruction start'.
+  a number called distance is 'field target' subtract 'next address'.
+  If 'the addresses are final' is false then, Return a text, "".
+  If {'the number fits signed' with distance and 32} is false then, Return a text, "the target is too far from the instruction to reach in 32 bits".
+  'write the number' with distance and 4 and 'field position' and output.
+  Return a text, "".
+
+To 'the byte is a legacy prefix' of a number called step.
+  If step is 'operand size prefix' or step is 'repeat or double prefix' or step is 'repeat or single prefix' then, Return a boolean, true.
+  Return a boolean, false.
+
+To 'the step is a digit' of a number called step.
+  If step is less than 'the digit step' then, Return a boolean, false.
+  Return a boolean, step is less than 'the digit step' add 8.
+
+(A jump's target, as four zeros until the end of the instruction is known.
+ Answers where the four bytes begin in the output.)
+To 'lay down the jump target' with a buffer called output.
+  a number called 'field position' is output's size add 1.
+  'lay down the number' with 0 and 4 and output.
+  Return a number, 'field position'.
+
+(The reg field of the ModRM byte: the digit the row names, or the low three
+ bits of the register operand.)
+To 'the register field' with a number called step and a list called table and a number called 'register operand'.
+  If {'the step is a digit' of step} then, Return a number, step subtract 'the digit step'.
+  a number called 'register number' is 'the fact about the operand' with table and 'register operand' and 'the register fact'.
+  Return a number, 'register number' bit-and 7.
+
+To 'add the register to the opcode' with a number called 'register number' and a buffer called output.
+  a number called opcode is byte {output's size} of output.
+  Set byte {output's size} of output to opcode add {'register number' bit-and 7}.
+
+(The REX prefix the instruction needs, or 0 for none. W comes from the row;
+ R, X and B carry the fourth bit of the reg field, the index and the base or
+ r/m field; and a byte register numbered 4 to 7 is spl, bpl, sil or dil,
+ which only a REX prefix reaches.)
+To 'the REX prefix' with a number called 'row number' and a number called 'operand count' and a number called 'addressed operand' and a number called 'register operand' and a list called table.
+  a number called 'REX bits' is 0.
+  a boolean called 'it is needed' is false.
+  a number called 'step count' is element {'the row slot' with 'row number' and 'the step count slot'} of table.
+  a boolean called 'it has a ModRM byte' is false.
+  a boolean called 'it adds the register to the opcode' is false.
+  For each 'step number' from 1 to 'step count',
+    a number called step is element {'the row slot' with 'row number' and {'the first step slot' add 'step number' subtract 1}} of table,
+    if step is 'the REX W step' then, set 'REX bits' to 'REX bits' bit-or 8, set 'it is needed' to true.
+    if step is 'the ModRM step' then, set 'it has a ModRM byte' to true.
+    if step is 'the register in the opcode step' then, set 'it adds the register to the opcode' to true..
+  a boolean called 'the register is numbered past 7' is false.
+  If 'register operand' is greater than 0 then, if {'the fact about the operand' with table and 'register operand' and 'the register fact'} is greater than 7 then, set 'the register is numbered past 7' to true..
+  If 'the register is numbered past 7' and 'it has a ModRM byte' then, set 'REX bits' to 'REX bits' bit-or 4.
+  If 'the register is numbered past 7' and 'it adds the register to the opcode' then, set 'REX bits' to 'REX bits' bit-or 1.
+  If 'addressed operand' is greater than 0 then, set 'REX bits' to 'REX bits' bit-or {'the REX bits of the address' with table and 'addressed operand'}.
+  If 'REX bits' is greater than 0 then, set 'it is needed' to true.
+  For each operand from 1 to 'operand count',
+    a number called form is 'the fact about the operand' with table and operand and 'the form fact',
+    a number called width is 'the fact about the operand' with table and operand and 'the width fact',
+    a number called 'register number' is 'the fact about the operand' with table and operand and 'the register fact',
+    if form is 'register form' and width is 8 and {'the register needs a REX prefix' of 'register number'} then, set 'it is needed' to true..
+  If 'it is needed' is false then, Return a number, 0.
+  Return a number, 'the REX base' bit-or 'REX bits'.
+
+(spl, bpl, sil and dil share their numbers with ah, ch, dh and bh, which an
+ instruction without a REX prefix reaches instead.)
+To 'the register needs a REX prefix' of a number called 'register number'.
+  If 'register number' is less than 4 then, Return a boolean, false.
+  Return a boolean, 'register number' is less than 8.
+
+(X and B for the addressed operand: B for a register or a base numbered 8
+ to 15, X for such an index.)
+To 'the REX bits of the address' with a list called table and a number called operand.
+  a number called bits is 0.
+  a number called form is 'the fact about the operand' with table and operand and 'the form fact'.
+  a number called 'base number' is 'the fact about the operand' with table and operand and 'the register fact'.
+  a number called 'index number' is 'the fact about the operand' with table and operand and 'the index fact'.
+  If 'base number' is greater than 7 then, set bits to bits bit-or 1.
+  If form is 'memory form' and 'index number' is greater than 7 then, set bits to bits bit-or 2.
+  Return a number, bits.
+
+(The ModRM byte for the addressed operand, with any SIB byte and
+ displacement after it. Answers where a displacement measured from the end of
+ the instruction begins in the output, for memory relative to the
+ instruction pointer, or 0.)
+To 'lay down the address' with a number called 'register field' and a list called table and a number called operand and a buffer called output.
+  a number called form is 'the fact about the operand' with table and operand and 'the form fact'.
+  a number called 'base number' is 'the fact about the operand' with table and operand and 'the register fact'.
+  a number called 'register field bits' is 'register field' multiply 8.
+  If form is 'register form' then, 'add the byte to' with {0xC0 add 'register field bits' add {'base number' bit-and 7}} and output, Return a number, 0.
+  a number called 'index number' is 'the fact about the operand' with table and operand and 'the index fact'.
+  a number called displacement is 'the fact about the operand' with table and operand and 'the value fact'.
+  a boolean called 'there is a base' is true.
+  If 'base number' is 'no register' then, set 'there is a base' to false.
+  a boolean called 'there is an index' is true.
+  If 'index number' is 'no register' then, set 'there is an index' to false.
+  If 'there is a base' is false and 'there is an index' is false then, Return a number, 'lay down the address without registers' with 'register field bits' and table and operand and output.
+  a number called 'displacement size' is 'the displacement size' with table and operand.
+  a number called 'mod field bits' is 'the mod field bits for the displacement size' of 'displacement size'.
+  If 'there is a base' is false then, set 'mod field bits' to 0.
+  If 'there is an index' is false and {'base number' bit-and 7} is not 4 then, 'add the byte to' with {'mod field bits' add 'register field bits' add {'base number' bit-and 7}} and output.
+  If 'there is an index' is false and {'base number' bit-and 7} is 4 then, 'add the byte to' with {'mod field bits' add 'register field bits' add 4} and output, 'add the byte to' with 'the SIB byte for a base of rsp' and output.
+  If 'there is an index' then, 'add the byte to' with {'mod field bits' add 'register field bits' add 4} and output, 'add the byte to' with {'the SIB byte' with table and operand} and output.
+  'lay down the number' with displacement and 'displacement size' and output.
+  Return a number, 0.
+
+(Memory with no register: relative to the instruction pointer, a ModRM r/m
+ of 5 and a displacement filled in once the end of the instruction is
+ known; or an absolute address, a SIB byte with neither index nor base and
+ the address in 32 bits.)
+To 'lay down the address without registers' with a number called 'register field bits' and a list called table and a number called operand and a buffer called output.
+  a number called displacement is 'the fact about the operand' with table and operand and 'the value fact'.
+  If {'the fact about the operand' with table and operand and 'the relative fact'} is 1 then, 'add the byte to' with {'register field bits' add 5} and output, 'lay down the number' with 0 and 4 and output, Return a number, output's size subtract 3.
+  'add the byte to' with {'register field bits' add 4} and output.
+  'add the byte to' with 'the SIB byte with no index and no base' and output.
+  'lay down the number' with displacement and 4 and output.
+  Return a number, 0.
+
+(How many bytes the displacement takes: none for 0, unless the base is rbp
+ or r13, whose r/m bits with no displacement mean something else, so they
+ take a byte of 0; one byte for a number that fits; four otherwise, and
+ always four for a displacement that waits on a label or has no base.)
+To 'the displacement size' with a list called table and a number called operand.
+  a number called 'base number' is 'the fact about the operand' with table and operand and 'the register fact'.
+  a number called displacement is 'the fact about the operand' with table and operand and 'the value fact'.
+  a boolean called 'it waits on a label' is false.
+  If {'the fact about the operand' with table and operand and 'the known fact'} is 0 then, set 'it waits on a label' to true.
+  If 'base number' is 'no register' or 'it waits on a label' then, Return a number, 4.
+  If displacement is 0 and {'base number' bit-and 7} is not 5 then, Return a number, 0.
+  If {'the number fits signed' with displacement and 8} then, Return a number, 1.
+  Return a number, 4.
+
+To 'the mod field bits for the displacement size' of a number called 'displacement size'.
+  If 'displacement size' is 1 then, Return a number, 0x40.
+  If 'displacement size' is 4 then, Return a number, 0x80.
+  Return a number, 0.
+
+(The SIB byte: the scale as a power of two, the index, and the base, or 5
+ for none.)
+To 'the SIB byte' with a list called table and a number called operand.
+  a number called 'base number' is 'the fact about the operand' with table and operand and 'the register fact'.
+  a number called 'index number' is 'the fact about the operand' with table and operand and 'the index fact'.
+  a number called scale is 'the fact about the operand' with table and operand and 'the scale fact'.
+  a number called 'scale bits' is 0.
+  If scale is 2 then, set 'scale bits' to 0x40.
+  If scale is 4 then, set 'scale bits' to 0x80.
+  If scale is 8 then, set 'scale bits' to 0xC0.
+  a number called 'base bits' is 5.
+  If 'base number' is not 'no register' then, set 'base bits' to 'base number' bit-and 7.
+  Return a number, 'scale bits' add {{'index number' bit-and 7} multiply 8} add 'base bits'.
+
+(A number in that many bytes, least significant first, as x86 keeps it. A
+ negative number comes out in two's complement, since the shift brings in
+ zeros and the mask keeps the low byte.)
+To 'lay down the number' with a number called value and a number called 'byte count' and a buffer called output.
+  For each 'byte number' from 1 to 'byte count',
+    a number called shift is {'byte number' subtract 1} multiply 8,
+    'add the byte to' with {value bit-shift-right shift bit-and 255} and output.
+
+(The same, written over bytes already laid down, from the position given.)
+To 'write the number' with a number called value and a number called 'byte count' and a number called position and a buffer called output.
+  For each 'byte number' from 1 to 'byte count',
+    a number called shift is {'byte number' subtract 1} multiply 8,
+    Set byte {position add 'byte number' subtract 1} of output to value bit-shift-right shift bit-and 255.
+
+(--- The interface ---------------------------------------------------------)
+
+(The instruction's bytes, appended to the output, laid down at the address.
+ Answers what is wrong with the instruction, or the empty text; nothing is
+ appended then.)
+To 'encode the instruction' with a map called record and a number called address and a list called table and a list called 'row mnemonics' and a buffer called output.
+  a number called 'instruction start' is output's size.
+  a text called problem is 'encode the record' with record and address and true and table and 'row mnemonics' and output.
+  If problem is not "" and 'instruction start' is 0 then, clear output.
+  If problem is not "" and 'instruction start' is greater than 0 then, resize output to 'instruction start'.
+  Return a text, problem.
+
+(How many bytes the instruction takes, whatever its labels hold, or -1 when
+ it cannot be encoded. The scratch buffer is the caller's, so measuring makes
+ no buffer of its own.)
+To 'the size of the instruction' with a map called record and a list called table and a list called 'row mnemonics' and a buffer called scratch.
+  clear scratch.
+  a text called problem is 'encode the record' with record and 0 and false and table and 'row mnemonics' and scratch.
+  If problem is not "" then, Return a number, -1.
+  Return a number, scratch's size.

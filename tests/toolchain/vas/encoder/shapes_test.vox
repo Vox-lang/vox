@@ -1,0 +1,142 @@
+(Every instruction shape of the corpus, encoded and compared with nasm.
+
+ The shapes table, tests/toolchain/shapes.tsv, holds one row for each
+ mnemonic and operand shape the compiler's output and coreasm use, with an
+ example line and the bytes nasm -f bin gives it at 0x401000, its labels at
+ 0x500000 and every eight bytes on. This test builds the record of each
+ example, encodes it at the same address with the labels in the same places,
+ and compares the bytes. It also checks that the size the encoder measures
+ is the size it lays down, and, for a line that names a label, that its
+ bytes agree with the object-file bytes nasm gives outside the field the
+ linker fills in.
+
+ The jumps are the one place vas differs from nasm on purpose: nasm encodes
+ a jump to a target in reach in two bytes, and vas always takes rel32. The
+ table's example jumps to a target out of reach, so their bytes are nasm's
+ rel32 form; the test names those rows.
+
+ usage: shapes_test <path of shapes.tsv>
+ Without a path it reads tests/toolchain/shapes.tsv from the directory it
+ runs in. It exits 1 if any row differs, or if it cannot read the table.)
+
+see "./records.vox".
+see "../../../../tools/vas/encoder.vox".
+
+a text called 'table path' is "tests/toolchain/shapes.tsv".
+If arguments's count is greater than 1 then, set 'table path' to arguments's first.
+
+a list called 'encoding table' is [].
+a list called 'row mnemonics' is [].
+a text called 'table problems' is 'prepare the encoder' with 'encoding table' and 'row mnemonics'.
+If 'table problems' is not "" then,
+  Print "The encoding table has problems:\n{table problems}",
+  Exit 1.
+
+a map called registers is 'the register map'.
+a buffer called scratch.
+
+(The whole shapes table, one text to a line.)
+To 'the lines of the file' of a text called path.
+  a list called lines is [].
+  a buffer called content.
+  open a file for reading called source at path.
+  On error Return a list, lines.
+  Create a buffer called chunk.
+  Read from source into chunk.
+  While chunk's size is greater than 0,
+    append chunk to content,
+    Read from source into chunk.
+  Close source.
+  a buffer called line.
+  For each position from 1 to content's size,
+    a number called character is byte position of content,
+    if character is 'the line break' then, 'keep the line' with line and lines.
+    if character is not 'the line break' then, 'add the byte to' with character and line..
+  'keep the line' with line and lines.
+  Return a list, lines.
+
+To 'keep the line' with a buffer called line and a list called lines.
+  If line's size is 0 then, Return.
+  a text called 'finished line' is line as text.
+  append 'finished line' to lines.
+  clear line.
+
+(Whether the bytes agree with an object-file form such as
+ "48 8d 35 [00 00 00 00]": the same number of bytes, and the same bytes
+ outside the brackets, which mark the field the linker fills in.)
+To 'the bytes agree with the object form' with a buffer called encoded and a text called 'object form'.
+  a list called pieces is 'the pieces of the row' with 'object form' and ' ' and false.
+  If pieces's length is not encoded's size then, Return a boolean, false.
+  a boolean called 'it is relocated' is false.
+  For each 'byte number' from 1 to pieces's length,
+    a text called piece is element 'byte number' of pieces,
+    a buffer called characters is "{piece}",
+    if byte 1 of characters is '[' then, set 'it is relocated' to true.
+    a text called digits is 'the hex digits of the piece' of piece,
+    a number called 'object byte' is digits as a hex number,
+    if 'it is relocated' is false and 'object byte' is not byte 'byte number' of encoded then, Return a boolean, false.
+    if byte {characters's size} of characters is ']' then, set 'it is relocated' to false..
+  Return a boolean, true.
+
+(A piece of an object form without its brackets.)
+To 'the hex digits of the piece' of a text called piece.
+  a buffer called characters is "{piece}".
+  a buffer called digits.
+  For each position from 1 to characters's size,
+    a number called character is byte position of characters,
+    if character is not '[' and character is not ']' then, 'add the byte to' with character and digits..
+  Return a text, digits as text.
+
+a list called rows is 'the lines of the file' of 'table path'.
+If rows's length is 0 then,
+  Print "shapes_test: cannot read the shapes table at {table path}",
+  Exit 1.
+
+a number called 'rows read' is 0.
+a number called 'rows exact' is 0.
+a number called 'object forms checked' is 0.
+a number called 'object forms agreeing' is 0.
+a list called 'rel32 rows' is [].
+a list called 'differing rows' is [].
+
+(The first line names the columns: mnemonic, operands, count, files,
+ example, source, bytes, object bytes and flags.)
+For each 'row number' from 2 to rows's length,
+  a text called row is element 'row number' of rows,
+  a list called fields is 'the pieces of the row' with row and {'the tab'} and true,
+  a text called example is element 5 of fields,
+  a text called expected is element 7 of fields,
+  a text called 'object form' is element 8 of fields,
+  a text called flags is element 9 of fields,
+  increment 'rows read',
+  a map called labels is {},
+  a map called record is 'the record of the line' with example and labels and registers,
+  a text called problem is record's "problem",
+  a buffer called output,
+  if problem is "" then, set problem to 'encode the instruction' with record and 0x401000 and 'encoding table' and 'row mnemonics' and output.
+  a text called encoded is 'the bytes in hex' of output,
+  a number called size is 'the size of the instruction' with record and 'encoding table' and 'row mnemonics' and scratch,
+  a boolean called 'it is exact' is false,
+  if problem is "" and encoded is expected and size is output's size then, set 'it is exact' to true.
+  if 'it is exact' then, increment 'rows exact'.
+  if 'it is exact' is false then, append "{example}: nasm gives {expected}; vas gives {encoded}, measures {size} bytes; {problem}" to 'differing rows'.
+  if 'the text begins with' with flags and "rel8:" then, append example to 'rel32 rows'.
+  if 'object form' is not "-" then, increment 'object forms checked'.
+  if 'object form' is not "-" and {'the bytes agree with the object form' with output and 'object form'} then, increment 'object forms agreeing'..
+
+To 'the text begins with' with a text called 'whole text' and a text called beginning.
+  a buffer called whole is "{whole text}".
+  a buffer called start is "{beginning}".
+  If start's size is greater than whole's size then, Return a boolean, false.
+  For each position from 1 to start's size,
+    if byte position of whole is not byte position of start then, Return a boolean, false..
+  Return a boolean, true.
+
+For each difference in 'differing rows',
+  Print "DIFFERS: {difference}".
+Print "{rows exact} of {rows read} shapes encode exactly as nasm -f bin encodes them.".
+Print "{object forms agreeing} of {object forms checked} lines that name a label agree with nasm's object-file bytes outside the relocated field.".
+Print "{'rel32 rows''s length} rows are jumps nasm would shorten to rel8 for a target in reach; vas always encodes rel32, so they are compared with nasm's rel32 form for a target out of reach:".
+For each jump in 'rel32 rows',
+  Print "  {jump}".
+If 'rows exact' is not 'rows read' or 'object forms agreeing' is not 'object forms checked' then, Exit 1.

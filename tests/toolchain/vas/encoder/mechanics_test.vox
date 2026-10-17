@@ -1,0 +1,239 @@
+(The encoding mechanics, one focused check each.
+
+ Every instruction is encoded at 0x401000, with the label distant at 0x500000
+ and the label behind at 0x400800, and its bytes are compared with the bytes
+ nasm -f bin gives the same line placed the same way. Each check also
+ measures the instruction with its labels somewhere else, which must give
+ the same size, since pass one measures before any label is placed. Then a
+ few instructions vas must refuse, with the message it gives.
+
+ Run it from anywhere; it reads no files. It prints a count for each
+ mechanic and exits 1 if any check fails.)
+
+see "./records.vox".
+see "../../../../tools/vas/encoder.vox".
+
+a list called 'encoding table' is [].
+a list called 'row mnemonics' is [].
+a text called 'table problems' is 'prepare the encoder' with 'encoding table' and 'row mnemonics'.
+If 'table problems' is not "" then,
+  Print "The encoding table has problems:\n{table problems}",
+  Exit 1.
+
+a map called registers is 'the register map'.
+a buffer called scratch.
+a list called 'mechanics in order' is [].
+a map called tally is {}.
+a number called 'checks run' is 0.
+a number called 'checks passed' is 0.
+
+(Count a check under its mechanic, keeping the mechanics in the order they
+ first appear.)
+To 'count the check' with a text called mechanic and a boolean called 'it passed'.
+  a boolean called 'it was seen' is tally's "seen {mechanic}".
+  If 'it was seen' is false then, append mechanic to 'mechanics in order', Set tally's "seen {mechanic}" to true.
+  a number called run is tally's "run {mechanic}".
+  Set tally's "run {mechanic}" to run add 1.
+  increment 'checks run'.
+  If 'it passed' then,
+    a number called passed is tally's "passed {mechanic}",
+    Set tally's "passed {mechanic}" to passed add 1,
+    increment 'checks passed'.
+
+To 'check the encoding' with a text called mechanic and a text called line and a text called expected.
+  a map called 'placed labels' is {"distant": 0x500000, "behind": 0x400800}.
+  a map called record is 'the record of the line' with line and 'placed labels' and registers.
+  a text called problem is record's "problem".
+  a buffer called output.
+  If problem is "" then, set problem to 'encode the instruction' with record and 0x401000 and 'encoding table' and 'row mnemonics' and output.
+  a text called encoded is 'the bytes in hex' of output.
+  a map called 'moved labels' is {"distant": 16, "behind": 0x7FFF0000}.
+  a map called 'moved record' is 'the record of the line' with line and 'moved labels' and registers.
+  a number called size is 'the size of the instruction' with 'moved record' and 'encoding table' and 'row mnemonics' and scratch.
+  a boolean called 'it passed' is false.
+  If problem is "" and encoded is expected and size is output's size then, set 'it passed' to true.
+  If 'it passed' is false then, Print "FAIL ({mechanic}) {line}: nasm gives {expected}; vas gives {encoded}, measures {size} bytes; {problem}".
+  'count the check' with mechanic and 'it passed'.
+
+To 'check the refusal' with a text called line and a text called expected.
+  a map called 'placed labels' is {"distant": 0x500000, "behind": 0x400800, "unreachable": 0x90000000}.
+  a map called record is 'the record of the line' with line and 'placed labels' and registers.
+  a buffer called output.
+  a text called problem is 'encode the instruction' with record and 0x401000 and 'encoding table' and 'row mnemonics' and output.
+  a boolean called 'it passed' is false.
+  If problem is expected and output's size is 0 then, set 'it passed' to true.
+  If 'it passed' is false then, Print "FAIL (refusals) {line}: expected the refusal \"{expected}\"; vas says \"{problem}\" and lays down {output's size} bytes".
+  'count the check' with "refusals" and 'it passed'.
+
+(The REX prefix: W for a 64-bit operation; R, X and B for a register 8 to 15
+ in the reg field, the index and the base; none for a 32-bit operation on
+ the first eight registers; and a REX of its own for spl, bpl, sil and dil.)
+'check the encoding' with "REX prefix" and "mov eax, ebx" and "89 d8".
+'check the encoding' with "REX prefix" and "mov rax, rbx" and "48 89 d8".
+'check the encoding' with "REX prefix" and "mov rax, r9" and "4c 89 c8".
+'check the encoding' with "REX prefix" and "mov r9, rax" and "49 89 c1".
+'check the encoding' with "REX prefix" and "mov rax, [rbx + r9*2]" and "4a 8b 04 4b".
+'check the encoding' with "REX prefix" and "mov r15, [r13 + r14*8 + 16]" and "4f 8b 7c f5 10".
+'check the encoding' with "REX prefix" and "mov sil, al" and "40 88 c6".
+'check the encoding' with "REX prefix" and "cmp dil, 1" and "40 80 ff 01".
+'check the encoding' with "REX prefix" and "movzx eax, bpl" and "40 0f b6 c5".
+'check the encoding' with "REX prefix" and "sete sil" and "40 0f 94 c6".
+'check the encoding' with "REX prefix" and "mov [rbp-104], r11b" and "44 88 5d 98".
+'check the encoding' with "REX prefix" and "mov spl, 5" and "40 b4 05".
+'check the encoding' with "REX prefix" and "pop r12" and "41 5c".
+'check the encoding' with "REX prefix" and "push r15" and "41 57".
+
+(The ModRM byte: a register, memory with no displacement, a byte of
+ displacement and four, and a digit in the reg field.)
+'check the encoding' with "ModRM byte" and "add rax, rbx" and "48 01 d8".
+'check the encoding' with "ModRM byte" and "mov rax, [rbx]" and "48 8b 03".
+'check the encoding' with "ModRM byte" and "mov rax, [rbx + 8]" and "48 8b 43 08".
+'check the encoding' with "ModRM byte" and "mov rax, [rbx + 1024]" and "48 8b 83 00 04 00 00".
+'check the encoding' with "ModRM byte" and "neg qword [rbx]" and "48 f7 1b".
+'check the encoding' with "ModRM byte" and "dec rdi" and "48 ff cf".
+
+(The SIB byte: a base of rsp or r12, which the r/m field cannot name, and an
+ index with each scale, with and without a base.)
+'check the encoding' with "SIB byte" and "mov rax, [rsp]" and "48 8b 04 24".
+'check the encoding' with "SIB byte" and "mov rax, [rsp + 8]" and "48 8b 44 24 08".
+'check the encoding' with "SIB byte" and "mov rax, [r12]" and "49 8b 04 24".
+'check the encoding' with "SIB byte" and "mov rax, [r12 + 300]" and "49 8b 84 24 2c 01 00 00".
+'check the encoding' with "SIB byte" and "mov rax, [rbx + rcx]" and "48 8b 04 0b".
+'check the encoding' with "SIB byte" and "mov rax, [rbx + rcx*2]" and "48 8b 04 4b".
+'check the encoding' with "SIB byte" and "mov rax, [rbx + rcx*4 + 8]" and "48 8b 44 8b 08".
+'check the encoding' with "SIB byte" and "mov rax, [rbx + rcx*8 + 1000]" and "48 8b 84 cb e8 03 00 00".
+'check the encoding' with "SIB byte" and "lea rax, [rcx*4 + 16]" and "48 8d 04 8d 10 00 00 00".
+'check the encoding' with "SIB byte" and "mov rax, [rdx + r12*4]" and "4a 8b 04 a2".
+
+(A base of rbp or r13 with no displacement: the r/m bits mean something
+ else without one, so a byte of 0 goes in. r13 as an index needs none.)
+'check the encoding' with "rbp and r13 bases" and "mov rax, [rbp]" and "48 8b 45 00".
+'check the encoding' with "rbp and r13 bases" and "mov rax, [r13]" and "49 8b 45 00".
+'check the encoding' with "rbp and r13 bases" and "mov rax, [r13 + rcx]" and "49 8b 44 0d 00".
+'check the encoding' with "rbp and r13 bases" and "mov rax, [rax + r13]" and "4a 8b 04 28".
+'check the encoding' with "rbp and r13 bases" and "mov rax, [rbp + rcx*2]" and "48 8b 44 4d 00".
+'check the encoding' with "rbp and r13 bases" and "lea rsi, [rbp]" and "48 8d 75 00".
+
+(A displacement takes one byte from -128 to 127, and four past either end.)
+'check the encoding' with "disp8 and disp32" and "mov rax, [rbx + 127]" and "48 8b 43 7f".
+'check the encoding' with "disp8 and disp32" and "mov rax, [rbx + 128]" and "48 8b 83 80 00 00 00".
+'check the encoding' with "disp8 and disp32" and "mov rax, [rbx - 128]" and "48 8b 43 80".
+'check the encoding' with "disp8 and disp32" and "mov rax, [rbx - 129]" and "48 8b 83 7f ff ff ff".
+'check the encoding' with "disp8 and disp32" and "inc qword [rbp-144]" and "48 ff 85 70 ff ff ff".
+
+(An immediate takes the sign-extended byte form when the processor gets the
+ number back from one byte, measured against the width of the operation, and
+ the long form otherwise; the accumulator has short long forms of its own.)
+'check the encoding' with "imm8 and imm32" and "add rax, 127" and "48 83 c0 7f".
+'check the encoding' with "imm8 and imm32" and "add rax, 128" and "48 05 80 00 00 00".
+'check the encoding' with "imm8 and imm32" and "add rbx, 128" and "48 81 c3 80 00 00 00".
+'check the encoding' with "imm8 and imm32" and "add rbx, -128" and "48 83 c3 80".
+'check the encoding' with "imm8 and imm32" and "add rbx, -129" and "48 81 c3 7f ff ff ff".
+'check the encoding' with "imm8 and imm32" and "and bx, 0xFFFF" and "66 83 e3 ff".
+'check the encoding' with "imm8 and imm32" and "and bx, 0xFCFF" and "66 81 e3 ff fc".
+'check the encoding' with "imm8 and imm32" and "and ax, 0x1234" and "66 25 34 12".
+'check the encoding' with "imm8 and imm32" and "cmp r11d, 0xFFFFFFFF" and "41 83 fb ff".
+'check the encoding' with "imm8 and imm32" and "cmp eax, 1000" and "3d e8 03 00 00".
+'check the encoding' with "imm8 and imm32" and "cmp al, 0xFF" and "3c ff".
+'check the encoding' with "imm8 and imm32" and "add dl, 200" and "80 c2 c8".
+'check the encoding' with "imm8 and imm32" and "push 10" and "6a 0a".
+'check the encoding' with "imm8 and imm32" and "push 1000" and "68 e8 03 00 00".
+'check the encoding' with "imm8 and imm32" and "imul rax, rax, 10" and "48 6b c0 0a".
+'check the encoding' with "imm8 and imm32" and "imul rcx, 200" and "48 69 c9 c8 00 00 00".
+'check the encoding' with "imm8 and imm32" and "test rax, 1" and "48 a9 01 00 00 00".
+'check the encoding' with "imm8 and imm32" and "test r15, 1" and "49 f7 c7 01 00 00 00".
+'check the encoding' with "imm8 and imm32" and "mov qword [rax + 8], -1" and "48 c7 40 08 ff ff ff ff".
+
+(A mov into a 64-bit register takes nasm's shortest form: a 32-bit mov,
+ which zero-extends, for 0 to 0xFFFFFFFF; the sign-extended 32-bit form for
+ a small negative number; and the whole 64 bits otherwise, and always for a
+ label.)
+'check the encoding' with "mov of an immediate" and "mov rax, 0" and "b8 00 00 00 00".
+'check the encoding' with "mov of an immediate" and "mov r13, 0xFFFFFFFF" and "41 bd ff ff ff ff".
+'check the encoding' with "mov of an immediate" and "mov rax, -1" and "48 c7 c0 ff ff ff ff".
+'check the encoding' with "mov of an immediate" and "mov rax, -2147483648" and "48 c7 c0 00 00 00 80".
+'check the encoding' with "mov of an immediate" and "mov rax, -2147483649" and "48 b8 ff ff ff 7f ff ff ff ff".
+'check the encoding' with "mov of an immediate" and "mov rax, 0x100000000" and "48 b8 00 00 00 00 01 00 00 00".
+'check the encoding' with "mov of an immediate" and "mov r13, distant" and "49 bd 00 00 50 00 00 00 00 00".
+'check the encoding' with "mov of an immediate" and "mov edx, 0xFFFFFFFF" and "ba ff ff ff ff".
+'check the encoding' with "mov of an immediate" and "mov r8b, ' '" and "41 b0 20".
+
+(A jump or a call is measured from the address of the next instruction, and
+ is always 32 bits, forwards or back.)
+'check the encoding' with "rel32" and "call distant" and "e8 fb ef 0f 00".
+'check the encoding' with "rel32" and "jmp behind" and "e9 fb f7 ff ff".
+'check the encoding' with "rel32" and "jne distant" and "0f 85 fa ef 0f 00".
+'check the encoding' with "rel32" and "jz behind" and "0f 84 fa f7 ff ff".
+
+(The operand-size prefix for 16 bits, F2 and F3 for SSE and rep, each
+ before the REX prefix.)
+'check the encoding' with "legacy prefixes" and "mov [rsp + 12], bx" and "66 89 5c 24 0c".
+'check the encoding' with "legacy prefixes" and "mov bx, [rsp + 8]" and "66 8b 5c 24 08".
+'check the encoding' with "legacy prefixes" and "addsd xmm0, xmm1" and "f2 0f 58 c1".
+'check the encoding' with "legacy prefixes" and "movq xmm0, [r14]" and "f3 41 0f 7e 06".
+'check the encoding' with "legacy prefixes" and "cvtsi2sd xmm1, r12" and "f2 49 0f 2a cc".
+'check the encoding' with "legacy prefixes" and "cvttsd2si r12, xmm0" and "f2 4c 0f 2c e0".
+'check the encoding' with "legacy prefixes" and "movsd xmm8, [rbp-8]" and "f2 44 0f 10 45 f8".
+'check the encoding' with "legacy prefixes" and "rep movsb" and "f3 a4".
+'check the encoding' with "legacy prefixes" and "roundsd xmm0, xmm0, 0" and "66 0f 3a 0b c0 00".
+
+(The two-byte opcodes behind 0F.)
+'check the encoding' with "the 0F escape" and "syscall" and "0f 05".
+'check the encoding' with "the 0F escape" and "movzx rcx, dl" and "48 0f b6 ca".
+'check the encoding' with "the 0F escape" and "imul rax, rbx" and "48 0f af c3".
+'check the encoding' with "the 0F escape" and "btr rax, 63" and "48 0f ba f0 3f".
+'check the encoding' with "the 0F escape" and "cmovge r12, rbx" and "4c 0f 4d e3".
+
+(The x87 instructions, D8 to DF with a digit in the reg field.)
+'check the encoding' with "x87" and "fild qword [rsp]" and "df 2c 24".
+'check the encoding' with "x87" and "fldcw [rsp + 12]" and "d9 6c 24 0c".
+'check the encoding' with "x87" and "fnstcw [rsp + 8]" and "d9 7c 24 08".
+'check the encoding' with "x87" and "fstp qword [rsp]" and "dd 1c 24".
+'check the encoding' with "x87" and "fmul qword [rsi + rcx*8]" and "dc 0c ce".
+'check the encoding' with "x87" and "fdiv qword [rsi + 22*8]" and "dc b6 b0 00 00 00".
+'check the encoding' with "x87" and "fstp qword [r12 + 8]" and "41 dd 5c 24 08".
+
+(Memory relative to the instruction pointer: 32 bits from the end of the
+ whole instruction, immediate and all, forwards or back; and an absolute
+ address, written without rel.)
+'check the encoding' with "rel addressing" and "lea rsi, [rel distant]" and "48 8d 35 f9 ef 0f 00".
+'check the encoding' with "rel addressing" and "lea rdi, [rel distant + 20]" and "48 8d 3d 0d f0 0f 00".
+'check the encoding' with "rel addressing" and "cmp qword [rel distant], 0" and "48 83 3d f8 ef 0f 00 00".
+'check the encoding' with "rel addressing" and "mov qword [rel distant], 0" and "48 c7 05 f5 ef 0f 00 00 00 00 00".
+'check the encoding' with "rel addressing" and "mov byte [rel distant + 40], '0'" and "c6 05 21 f0 0f 00 30".
+'check the encoding' with "rel addressing" and "lea rax, [rel behind]" and "48 8d 05 f9 f7 ff ff".
+'check the encoding' with "rel addressing" and "movsd xmm1, [rel distant]" and "f2 0f 10 0d f8 ef 0f 00".
+'check the encoding' with "rel addressing" and "mov rax, [distant]" and "48 8b 04 25 00 00 50 00".
+
+(The short forms nasm prefers: a shift by one, a shift by cl, the
+ accumulator forms, and xchg with rax.)
+'check the encoding' with "short forms" and "shl rax, 1" and "48 d1 e0".
+'check the encoding' with "short forms" and "shr rax, cl" and "48 d3 e8".
+'check the encoding' with "short forms" and "shl rax, 52" and "48 c1 e0 34".
+'check the encoding' with "short forms" and "xchg rax, rbx" and "48 93".
+'check the encoding' with "short forms" and "xchg rbx, rax" and "48 93".
+'check the encoding' with "short forms" and "xchg rsi, rdx" and "48 87 f2".
+'check the encoding' with "short forms" and "or al, 0x20" and "0c 20".
+'check the encoding' with "short forms" and "and eax, 0o7777" and "25 ff 0f 00 00".
+'check the encoding' with "short forms" and "cmp rax, -4096" and "48 3d 00 f0 ff ff".
+'check the encoding' with "short forms" and "xor ebx, ebx" and "31 db".
+'check the encoding' with "short forms" and "inc al" and "fe c0".
+
+(What vas refuses: a mnemonic outside the table, operands no row fits,
+ memory whose size nothing gives, rsp as an index, and a target out of
+ reach of 32 bits.)
+'check the refusal' with "pushf" and "vas has no encoding for the instruction pushf".
+'check the refusal' with "mov [rax], 5" and "vas has no encoding for these operands: mov [rax], 5".
+'check the refusal' with "inc [rax]" and "vas has no encoding for these operands: inc [rax]".
+'check the refusal' with "movzx eax, [rbx]" and "vas has no encoding for these operands: movzx eax, [rbx]".
+'check the refusal' with "add r9d, 1000" and "vas has no encoding for these operands: add r9d, 1000".
+'check the refusal' with "mov rax, [rbx + rsp*2]" and "rsp cannot be the index register of a memory operand".
+'check the refusal' with "jmp unreachable" and "the target is too far from the instruction to reach in 32 bits".
+'check the refusal' with "lea rax, [rel unreachable]" and "the target is too far from the instruction to reach in 32 bits".
+
+For each mechanic in 'mechanics in order',
+  a number called run is tally's "run {mechanic}",
+  a number called passed is tally's "passed {mechanic}",
+  Print "{passed} of {run}: {mechanic}".
+Print "{checks passed} of {checks run} encoder mechanics checks pass.".
+If 'checks passed' is not 'checks run' then, Exit 1.
