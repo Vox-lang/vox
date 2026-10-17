@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# A stand-in for nasm, put first on PATH so the Vox compiler calls it in
+# place of the real one. It assembles exactly as asked, with the real nasm,
+# and records which source made each ELF object, in OBJECT.source beside
+# it, so the ld stand-in beside this file can link the program from its
+# source with vox-elf instead of from the object.
+#
+# OBJECT.source holds two lines:
+#   asm ABSOLUTE-PATH-OF-THE-SOURCE
+#   include THE-INCLUDE-DIRECTORY-NASM-WAS-GIVEN (empty when none)
+#
+# Environment:
+#   REAL_NASM       the real nasm (default /usr/bin/nasm)
+#   SHIM_ASSEMBLER  nasm (default) or vas; vas is not written yet, and
+#                   asking for it is refused
+#   SHIM_LOG        the file every decision is appended to
+#                   (default ${TMPDIR:-/tmp}/vox-toolchain-shims.log)
+set -uo pipefail
+
+real_nasm=${REAL_NASM:-/usr/bin/nasm}
+assembler=${SHIM_ASSEMBLER:-nasm}
+log=${SHIM_LOG:-${TMPDIR:-/tmp}/vox-toolchain-shims.log}
+
+note() { printf 'nasm-shim [%s] %s\n' "$$" "$*" >> "$log"; }
+
+# The arguments the compiler passes: -f elf64 [-DPIC] -I<dir>/ -o OBJECT
+# SOURCE. Runtime tests use -i in place of -I, and the attached and
+# separated spellings both occur, so all four are read.
+format="" object="" source="" include=""
+arguments=("$@")
+index=0
+while [ "$index" -lt "${#arguments[@]}" ]; do
+    word=${arguments[$index]}
+    case $word in
+        -f) index=$((index + 1)); format=${arguments[$index]:-} ;;
+        -f*) format=${word#-f} ;;
+        -o) index=$((index + 1)); object=${arguments[$index]:-} ;;
+        -o*) object=${word#-o} ;;
+        -I|-i) index=$((index + 1)); include=${arguments[$index]:-} ;;
+        -I*|-i*) include=${word#-?} ;;
+        -D*|-w*|-p*|-l*|-M*|-g|-O*) ;;
+        -*) ;;
+        *) source=$word ;;
+    esac
+    index=$((index + 1))
+done
+
+case $assembler in
+    nasm) ;;
+    vas)
+        # TODO: when vas exists, assemble SOURCE with it here, writing the
+        # same OBJECT the real nasm would, and keep the .source record.
+        note "refused: SHIM_ASSEMBLER=vas, but vas does not exist yet ($*)"
+        echo "nasm shim: SHIM_ASSEMBLER=vas asks for vas, which is not written yet; unset it to use nasm" >&2
+        exit 1 ;;
+    *)
+        note "refused: SHIM_ASSEMBLER=$assembler is not nasm or vas"
+        echo "nasm shim: SHIM_ASSEMBLER must be nasm or vas, not $assembler" >&2
+        exit 1 ;;
+esac
+
+"$real_nasm" "$@"
+status=$?
+
+# Only an ELF object is ever handed to ld, so only one is recorded. The bin
+# assemblies vox-elf's own nasm-image.sh makes are passed through untouched.
+if [ "$status" -eq 0 ] && [ "$format" = elf64 ] && [ -n "$object" ] && [ -n "$source" ]; then
+    source_path=$(realpath -- "$source")
+    include_path=""
+    [ -n "$include" ] && include_path=$(realpath -m -- "$include")/
+    printf 'asm %s\ninclude %s\n' "$source_path" "$include_path" > "$object.source"
+    note "assembled $source_path into $object with $real_nasm; recorded $object.source"
+else
+    note "assembled with $real_nasm, status $status, nothing recorded: $*"
+fi
+exit "$status"
