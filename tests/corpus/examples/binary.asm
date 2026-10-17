@@ -143,7 +143,7 @@ _start:
     sub rsp, 32
 
     xor rax, rax
-    mov [rbp-32], rax  ; store byte value
+    mov [rbp-24], rax
     PRINT_STR str_0, str_0_len
     PRINT_NEWLINE
     mov rax, 255
@@ -237,45 +237,39 @@ _start:
     mov rax, 16
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-8], rax  ; buffer struct pointer
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; buffer memory
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 72
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_1  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_0  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_1  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_0  ; grown buffer now has space
 .bset_err_1:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_2
 .bset_ok_0:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 72
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_3  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -285,41 +279,37 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_2:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 2
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 101
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_5  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_4  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_5  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_4  ; grown buffer now has space
 .bset_err_5:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_6
 .bset_ok_4:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 101
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_7  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -329,41 +319,37 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_6:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 3
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 108
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_9  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_8  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_9  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_8  ; grown buffer now has space
 .bset_err_9:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_10
 .bset_ok_8:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 108
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_11  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -373,41 +359,37 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_10:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 4
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 108
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_13  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_12  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_13  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_12  ; grown buffer now has space
 .bset_err_13:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_14
 .bset_ok_12:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 108
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_15  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -417,41 +399,37 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_14:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 5
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 111
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_17  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_16  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_17  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_16  ; grown buffer now has space
 .bset_err_17:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_18
 .bset_ok_16:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 111
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_19  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -461,11 +439,11 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_18:
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_21  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -489,7 +467,7 @@ _start:
     PRINT_HEX_UPPER_ZEROPAD rdi, 2
     PRINT_NEWLINE
     PRINT_STR str_20, str_20_len
-    mov rax, [rbp-8]
+    mov rax, [rel gvar_9]
     mov rdi, rax
     PRINT_BUF rdi
     PRINT_NEWLINE
@@ -498,41 +476,37 @@ _start:
     PRINT_STR str_22, str_22_len
     PRINT_NEWLINE
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 5
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 33
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_24  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_23  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_24  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
+    mov [rel gvar_9], rax  ; store new pointer for memory
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_23  ; grown buffer now has space
 .bset_err_24:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_25
 .bset_ok_23:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 33
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_26  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -542,7 +516,7 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_25:
     PRINT_STR str_23, str_23_len
-    mov rax, [rbp-8]
+    mov rax, [rel gvar_9]
     mov rdi, rax
     PRINT_BUF rdi
     PRINT_NEWLINE
@@ -664,8 +638,8 @@ _start:
     PRINT_STR str_37, str_37_len
     PRINT_NEWLINE
     ; List literal with 8 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_27
     EXIT 1
 .list_mmap_ok_27:
@@ -724,52 +698,24 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_8], rax  ; global store magic bytes
     mov rax, 1
-    mov [rbp-16], rax
+    mov [rbp-8], rax
     mov rax, 8
     inc rax
-    mov [rbp-24], rax
+    mov [rbp-16], rax
 .for_start_28:
-    mov rax, [rbp-16]
-    cmp rax, [rbp-24]
+    mov rax, [rbp-8]
+    cmp rax, [rbp-16]
     jge .for_end_30
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
-    mov rax, [rbp-16]
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
-    cmp rcx, 1
-    jl .bset_err_32  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
-    jle .bset_ok_31  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
-    jnz .bset_err_32  ; fixed buffer overflow
-    push rcx  ; save index across grow call
-    mov rdi, rbx  ; buffer pointer
-    mov rsi, rcx  ; required capacity = index
-    call _grow_buffer
-    mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
     mov rax, [rbp-8]
-    mov [rel gvar_9], rax
-    pop rcx  ; restore 1-indexed position
-    jmp .bset_ok_31  ; grown buffer now has space
-.bset_err_32:
-    SET_LAST_ERROR 1  ; set error flag
-    jmp .bset_done_33
-.bset_ok_31:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
     ; Element access (1-indexed) with bounds check
+    mov rax, [rbp-8]
+    push rax  ; index
     mov rax, [rel gvar_8]
-    push rax  ; save list pointer
-    mov rax, [rbp-16]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_36  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -788,9 +734,33 @@ _start:
     add rax, rbx
     mov rax, [rax]  ; get element
 .elem_done_37:
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
+    cmp rcx, 1
+    jl .bset_err_32  ; index < 1 is error
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
+    jle .bset_ok_31  ; index <= capacity is OK
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
+    jnz .bset_err_32  ; fixed buffer overflow
+    push rdx  ; save value across grow call
+    push rcx  ; save index across grow call
+    mov rdi, rbx  ; buffer pointer
+    mov rsi, rcx  ; required capacity = index
+    call _grow_buffer
+    mov rbx, rax  ; new buffer pointer
+    mov [rel gvar_9], rax  ; store new pointer for memory
+    pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
+    jmp .bset_ok_31  ; grown buffer now has space
+.bset_err_32:
+    SET_LAST_ERROR 1  ; set error flag
+    jmp .bset_done_33
+.bset_ok_31:
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_34  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -800,28 +770,28 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_33:
 .for_continue_29:
-    inc qword [rbp-16]
+    inc qword [rbp-8]
     jmp .for_start_28
 .for_end_30:
     PRINT_STR str_38, str_38_len
     PRINT_NEWLINE
     mov rax, 1
-    mov [rbp-16], rax  ; store position
-    mov rax, [rbp-16]
+    mov [rbp-8], rax
+    mov rax, [rbp-8]
     mov [rel gvar_11], rax
 .while_start_38:
     mov rax, 8
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-8]
     pop rbx
     cmp rax, rbx
     jg .while_end_39
     ; Byte access (1-indexed) with bounds check
     mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-16]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_41  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -838,13 +808,13 @@ _start:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_42:
-    mov [rbp-32], rax  ; store byte value
-    mov rax, [rbp-32]
+    mov [rbp-24], rax
+    mov rax, [rbp-24]
     mov rdi, rax
     PRINT_HEX_UPPER_ZEROPAD rdi, 2
     PRINT_STR str_39, str_39_len
-    inc qword [rbp-16]
-    mov rax, [rbp-16]
+    inc qword [rbp-8]
+    mov rax, [rbp-8]
     mov [rel gvar_11], rax
     jmp .while_start_38
 .while_end_39:
@@ -855,11 +825,11 @@ _start:
     PRINT_STR str_42, str_42_len
     PRINT_NEWLINE
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_44  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -878,11 +848,11 @@ _start:
 .byte_done_45:
     mov [rel gvar_7], rax  ; global store lowest byte
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     mov rax, 2
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_47  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -901,11 +871,11 @@ _start:
 .byte_done_48:
     mov [rel gvar_15], rax  ; global store second byte
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     mov rax, 3
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_50  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -924,11 +894,11 @@ _start:
 .byte_done_51:
     mov [rel gvar_18], rax  ; global store third byte
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     mov rax, 4
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_53  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -986,46 +956,42 @@ _start:
     mov rax, 305419896
     mov [rel gvar_10], rax  ; global store new value
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
-    cmp rcx, 1
-    jl .bset_err_56  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
-    jle .bset_ok_55  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
-    jnz .bset_err_56  ; fixed buffer overflow
-    push rcx  ; save index across grow call
-    mov rdi, rbx  ; buffer pointer
-    mov rsi, rcx  ; required capacity = index
-    call _grow_buffer
-    mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
-    pop rcx  ; restore 1-indexed position
-    jmp .bset_ok_55  ; grown buffer now has space
-.bset_err_56:
-    SET_LAST_ERROR 1  ; set error flag
-    jmp .bset_done_57
-.bset_ok_55:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
     push rax
     mov rax, [rel gvar_10]
     pop rbx
     and rax, rbx
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
+    cmp rcx, 1
+    jl .bset_err_56  ; index < 1 is error
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
+    jle .bset_ok_55  ; index <= capacity is OK
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
+    jnz .bset_err_56  ; fixed buffer overflow
+    push rdx  ; save value across grow call
+    push rcx  ; save index across grow call
+    mov rdi, rbx  ; buffer pointer
+    mov rsi, rcx  ; required capacity = index
+    call _grow_buffer
+    mov rbx, rax  ; new buffer pointer
+    mov [rel gvar_9], rax  ; store new pointer for memory
+    pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
+    jmp .bset_ok_55  ; grown buffer now has space
+.bset_err_56:
+    SET_LAST_ERROR 1  ; set error flag
+    jmp .bset_done_57
+.bset_ok_55:
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_58  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1035,37 +1001,9 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_57:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 2
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
-    cmp rcx, 1
-    jl .bset_err_60  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
-    jle .bset_ok_59  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
-    jnz .bset_err_60  ; fixed buffer overflow
-    push rcx  ; save index across grow call
-    mov rdi, rbx  ; buffer pointer
-    mov rsi, rcx  ; required capacity = index
-    call _grow_buffer
-    mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
-    pop rcx  ; restore 1-indexed position
-    jmp .bset_ok_59  ; grown buffer now has space
-.bset_err_60:
-    SET_LAST_ERROR 1  ; set error flag
-    jmp .bset_done_61
-.bset_ok_59:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
     push rax
@@ -1078,9 +1016,33 @@ _start:
     shr rax, cl
     pop rbx
     and rax, rbx
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
+    cmp rcx, 1
+    jl .bset_err_60  ; index < 1 is error
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
+    jle .bset_ok_59  ; index <= capacity is OK
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
+    jnz .bset_err_60  ; fixed buffer overflow
+    push rdx  ; save value across grow call
+    push rcx  ; save index across grow call
+    mov rdi, rbx  ; buffer pointer
+    mov rsi, rcx  ; required capacity = index
+    call _grow_buffer
+    mov rbx, rax  ; new buffer pointer
+    mov [rel gvar_9], rax  ; store new pointer for memory
+    pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
+    jmp .bset_ok_59  ; grown buffer now has space
+.bset_err_60:
+    SET_LAST_ERROR 1  ; set error flag
+    jmp .bset_done_61
+.bset_ok_59:
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_62  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1090,37 +1052,9 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_61:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 3
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
-    cmp rcx, 1
-    jl .bset_err_64  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
-    jle .bset_ok_63  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
-    jnz .bset_err_64  ; fixed buffer overflow
-    push rcx  ; save index across grow call
-    mov rdi, rbx  ; buffer pointer
-    mov rsi, rcx  ; required capacity = index
-    call _grow_buffer
-    mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
-    pop rcx  ; restore 1-indexed position
-    jmp .bset_ok_63  ; grown buffer now has space
-.bset_err_64:
-    SET_LAST_ERROR 1  ; set error flag
-    jmp .bset_done_65
-.bset_ok_63:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
     push rax
@@ -1133,9 +1067,33 @@ _start:
     shr rax, cl
     pop rbx
     and rax, rbx
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
+    cmp rcx, 1
+    jl .bset_err_64  ; index < 1 is error
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
+    jle .bset_ok_63  ; index <= capacity is OK
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
+    jnz .bset_err_64  ; fixed buffer overflow
+    push rdx  ; save value across grow call
+    push rcx  ; save index across grow call
+    mov rdi, rbx  ; buffer pointer
+    mov rsi, rcx  ; required capacity = index
+    call _grow_buffer
+    mov rbx, rax  ; new buffer pointer
+    mov [rel gvar_9], rax  ; store new pointer for memory
+    pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
+    jmp .bset_ok_63  ; grown buffer now has space
+.bset_err_64:
+    SET_LAST_ERROR 1  ; set error flag
+    jmp .bset_done_65
+.bset_ok_63:
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_66  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1145,37 +1103,9 @@ _start:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_65:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local memory
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 4
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
-    cmp rcx, 1
-    jl .bset_err_68  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
-    jle .bset_ok_67  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
-    jnz .bset_err_68  ; fixed buffer overflow
-    push rcx  ; save index across grow call
-    mov rdi, rbx  ; buffer pointer
-    mov rsi, rcx  ; required capacity = index
-    call _grow_buffer
-    mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for memory
-    mov rax, [rbp-8]
-    mov [rel gvar_9], rax
-    pop rcx  ; restore 1-indexed position
-    jmp .bset_ok_67  ; grown buffer now has space
-.bset_err_68:
-    SET_LAST_ERROR 1  ; set error flag
-    jmp .bset_done_69
-.bset_ok_67:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
     push rax
@@ -1188,9 +1118,33 @@ _start:
     shr rax, cl
     pop rbx
     and rax, rbx
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; value
+    mov rax, [rel gvar_9]  ; global mirror memory
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
+    cmp rcx, 1
+    jl .bset_err_68  ; index < 1 is error
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
+    jle .bset_ok_67  ; index <= capacity is OK
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
+    jnz .bset_err_68  ; fixed buffer overflow
+    push rdx  ; save value across grow call
+    push rcx  ; save index across grow call
+    mov rdi, rbx  ; buffer pointer
+    mov rsi, rcx  ; required capacity = index
+    call _grow_buffer
+    mov rbx, rax  ; new buffer pointer
+    mov [rel gvar_9], rax  ; store new pointer for memory
+    pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
+    jmp .bset_ok_67  ; grown buffer now has space
+.bset_err_68:
+    SET_LAST_ERROR 1  ; set error flag
+    jmp .bset_done_69
+.bset_ok_67:
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_70  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1202,22 +1156,22 @@ _start:
     PRINT_STR str_44, str_44_len
     PRINT_NEWLINE
     mov rax, 1
-    mov [rbp-16], rax  ; store position
-    mov rax, [rbp-16]
+    mov [rbp-8], rax
+    mov rax, [rbp-8]
     mov [rel gvar_11], rax
 .while_start_71:
     mov rax, 4
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-8]
     pop rbx
     cmp rax, rbx
     jg .while_end_72
     ; Byte access (1-indexed) with bounds check
     mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-16]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_9]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_74  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1234,13 +1188,13 @@ _start:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_75:
-    mov [rbp-32], rax  ; store byte value
-    mov rax, [rbp-32]
+    mov [rbp-24], rax
+    mov rax, [rbp-24]
     mov rdi, rax
     PRINT_HEX_UPPER_ZEROPAD rdi, 2
     PRINT_STR str_45, str_45_len
-    inc qword [rbp-16]
-    mov rax, [rbp-16]
+    inc qword [rbp-8]
+    mov rax, [rbp-8]
     mov [rel gvar_11], rax
     jmp .while_start_71
 .while_end_72:
@@ -1250,7 +1204,7 @@ _start:
     call _alloc_buffer
     mov [rel gvar_17], rax  ; global store buffer the copy
     mov rdi, [rel gvar_17]
-    mov rsi, [rbp-8]
+    mov rsi, [rel gvar_9]
     call _buffer_copy
     mov [rel gvar_17], rax
     PRINT_STR str_47, str_47_len
@@ -1259,20 +1213,24 @@ _start:
     PRINT_BUF rdi
     PRINT_NEWLINE
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rel gvar_17]  ; global mirror the copy
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 65
+    push rax  ; value
+    mov rax, [rel gvar_17]  ; global mirror the copy
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_77  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_76  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_77  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
@@ -1280,18 +1238,12 @@ _start:
     mov rbx, rax  ; new buffer pointer
     mov [rel gvar_17], rax  ; store new pointer for the copy
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_76  ; grown buffer now has space
 .bset_err_77:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_78
 .bset_ok_76:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 65
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_79  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte

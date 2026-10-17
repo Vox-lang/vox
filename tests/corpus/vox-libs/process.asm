@@ -75,7 +75,7 @@ process_0_1_crashed:
     mov rax, [rbp-8]
     pop rbx
     and rax, rbx
-    mov [rbp-16], rax  ; store terminating signal
+    mov [rbp-16], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]
@@ -100,7 +100,7 @@ process_0_1_exited_normally:
     mov rax, [rbp-8]
     pop rbx
     and rax, rbx
-    mov [rbp-16], rax  ; store terminating signal
+    mov [rbp-16], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]

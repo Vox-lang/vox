@@ -8,14 +8,20 @@
 # Usage:
 #   bash tests/toolchain/corpus.sh
 #
-# Environment (each default is one maintainer's checkout layout, so point
-# them at your own):
+# Environment:
 #   VOX            the compiler to run (default: vox from PATH)
+#   VOX_COMMIT     the commit the compiler was built from, recorded in the
+#                  MANIFEST (default: the contents of a COMMIT file beside
+#                  the compiler, if there is one)
 #   VOX_CORE_PATH  the coreasm directory the compiler reads
 #                  (default: /usr/share/vox/coreasm)
-#   VOXOS_SRC      a voxos checkout (default: $HOME/scr/voxos)
-#   COREUTILS_SRC  a vox-coreutils checkout (default: $HOME/scr/vox-coreutils)
-#   VOX_LIBS_SRC   a vox-libs checkout (default: $HOME/scr/english/vox-libs)
+#   VOXOS_SRC      a voxos checkout (required)
+#   COREUTILS_SRC  a vox-coreutils checkout (required)
+#   VOX_LIBS_SRC   a vox-libs checkout (required)
+#
+# The compiler's --version line names a release, and a build from an
+# unreleased commit prints the release it follows, so the commit is what
+# tells two such corpora apart.
 #
 # `vox <file> --emit-asm` writes <stem>.asm into the current directory and
 # ignores -o, so every source is compiled from its own scratch directory and
@@ -31,19 +37,34 @@ CORPUS="$ROOT/tests/corpus"
 
 VOX="${VOX:-vox}"
 export VOX_CORE_PATH="${VOX_CORE_PATH:-/usr/share/vox/coreasm}"
-VOXOS_SRC="${VOXOS_SRC:-$HOME/scr/voxos}"
-COREUTILS_SRC="${COREUTILS_SRC:-$HOME/scr/vox-coreutils}"
-VOX_LIBS_SRC="${VOX_LIBS_SRC:-$HOME/scr/english/vox-libs}"
+VOXOS_SRC="${VOXOS_SRC:-}"
+COREUTILS_SRC="${COREUTILS_SRC:-}"
+VOX_LIBS_SRC="${VOX_LIBS_SRC:-}"
 
 for setting in VOXOS_SRC COREUTILS_SRC VOX_LIBS_SRC VOX_CORE_PATH; do
+    if [[ -z "${!setting}" ]]; then
+        echo "corpus: set $setting to a checkout (see the header of $0)" >&2
+        exit 1
+    fi
     if [[ ! -d "${!setting}" ]]; then
         echo "corpus: $setting is not a directory: ${!setting}" >&2
         exit 1
     fi
 done
 
+if ! compiler_path="$(command -v "$VOX")"; then
+    echo "corpus: no compiler at $VOX" >&2
+    exit 1
+fi
+
 # The compiler prints its version on stderr.
 compiler_version="$("$VOX" --version 2>&1 | head -1)"
+compiler_commit="${VOX_COMMIT:-}"
+if [[ -z "$compiler_commit" && -f "$(dirname "$compiler_path")/COMMIT" ]]; then
+    compiler_commit="$(head -1 "$(dirname "$compiler_path")/COMMIT" | tr -d '[:space:]')"
+fi
+compiler="$compiler_version"
+[[ -n "$compiler_commit" ]] && compiler="$compiler_version (commit $compiler_commit)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 : >"$scratch/manifest"
@@ -155,7 +176,7 @@ compile_tree vox-libs "$VOX_LIBS_SRC" "${libraries[@]}"
 
 {
     echo "# The assembly corpus, written by tests/toolchain/corpus.sh. Do not edit by hand."
-    echo "# compiler: $compiler_version"
+    echo "# compiler: $compiler"
     echo "#"
     echo "# Columns: the .asm file (relative to tests/corpus), how it is built"
     echo "# (program: nasm -f elf64, then ld; library: nasm -f elf64 -DPIC, then"
@@ -173,5 +194,5 @@ compile_tree vox-libs "$VOX_LIBS_SRC" "${libraries[@]}"
 
 files=$(grep -vc '^#' "$CORPUS/MANIFEST" || true)
 skipped=$(grep -c '^# skipped:' "$CORPUS/MANIFEST" || true)
-echo "corpus: $files assembly files written, $skipped sources skipped ($compiler_version)"
+echo "corpus: $files assembly files written, $skipped sources skipped ($compiler)"
 grep '^# skipped:' "$CORPUS/MANIFEST" | sed 's/^# /corpus: /' || true

@@ -67,7 +67,7 @@ section .data
 
 section .text
 section .fini_array progbits alloc write
-    dq _cleanup_all
+    dq _unload_library
 
 section .text
 global textkit_0_2_is_whitespace:function
@@ -100,7 +100,7 @@ textkit_0_2_is_whitespace:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, 0
-    mov [rbp-16], rax  ; store r
+    mov [rbp-16], rax
     mov rax, 32
     push rax
     mov rax, [rbp-8]
@@ -108,7 +108,7 @@ textkit_0_2_is_whitespace:
     cmp rax, rbx
     jne .else_1
     mov rax, 1
-    mov [rbp-16], rax  ; store r
+    mov [rbp-16], rax
     jmp .if_end_0
 .else_1:
 .if_end_0:
@@ -119,7 +119,7 @@ textkit_0_2_is_whitespace:
     cmp rax, rbx
     jne .else_3
     mov rax, 1
-    mov [rbp-16], rax  ; store r
+    mov [rbp-16], rax
     jmp .if_end_2
 .else_3:
 .if_end_2:
@@ -130,7 +130,7 @@ textkit_0_2_is_whitespace:
     cmp rax, rbx
     jne .else_5
     mov rax, 1
-    mov [rbp-16], rax  ; store r
+    mov [rbp-16], rax
     jmp .if_end_4
 .else_5:
 .if_end_4:
@@ -141,7 +141,7 @@ textkit_0_2_is_whitespace:
     cmp rax, rbx
     jne .else_7
     mov rax, 1
-    mov [rbp-16], rax  ; store r
+    mov [rbp-16], rax
     jmp .if_end_6
 .else_7:
 .if_end_6:
@@ -161,7 +161,7 @@ textkit_0_2_text_length:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer src
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -197,7 +197,7 @@ textkit_0_2_slice:
     mov [rbp-24], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer src
+    mov [rbp-32], rax
     mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
@@ -210,13 +210,13 @@ textkit_0_2_slice:
     mov [rbp-32], rax
     mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-40], rax  ; store n
+    mov [rbp-40], rax
     mov rax, [rbp-16]
-    mov [rbp-48], rax  ; store i
+    mov [rbp-48], rax
     mov rax, [rbp-24]
-    mov [rbp-56], rax  ; store fin
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-64], rax  ; store b
+    mov [rbp-64], rax
     mov rax, 1
     push rax
     mov rax, [rbp-48]
@@ -224,7 +224,7 @@ textkit_0_2_slice:
     cmp rax, rbx
     jge .else_9
     mov rax, 1
-    mov [rbp-48], rax  ; store i
+    mov [rbp-48], rax
     jmp .if_end_8
 .else_9:
 .if_end_8:
@@ -235,7 +235,7 @@ textkit_0_2_slice:
     cmp rax, rbx
     jle .else_11
     mov rax, [rbp-40]
-    mov [rbp-56], rax  ; store fin
+    mov [rbp-56], rax
     jmp .if_end_10
 .else_11:
 .if_end_10:
@@ -253,11 +253,11 @@ textkit_0_2_slice:
     cmp rax, rbx
     jg .while_end_13
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-32]
-    push rax  ; save buffer pointer
     mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_15  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -274,41 +274,39 @@ textkit_0_2_slice:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_16:
-    mov [rbp-64], rax  ; store b
+    mov [rbp-64], rax
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-80]  ; local ch
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-64]
+    push rax  ; value
+    mov rax, [rbp-80]
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_18  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_17  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_18  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-80], rax  ; store new pointer for ch
+    mov [rbp-80], rax
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_17  ; grown buffer now has space
 .bset_err_18:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_19
 .bset_ok_17:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-64]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_20  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -334,7 +332,7 @@ textkit_0_2_slice:
     mov [rbp-96], rax
     mov rax, [rbp-96]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-88], rax  ; store r
+    mov [rbp-88], rax
     mov rax, [rbp-88]
     push rax  ; save return value
     call _dec_call_depth
@@ -355,7 +353,7 @@ textkit_0_2_index_of:
     mov [rbp-16], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer h
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -368,7 +366,7 @@ textkit_0_2_index_of:
     mov [rbp-24], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer nd
+    mov [rbp-32], rax
     mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
@@ -381,10 +379,10 @@ textkit_0_2_index_of:
     mov [rbp-32], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-40], rax  ; store H
+    mov [rbp-40], rax
     mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-48], rax  ; store N
+    mov [rbp-48], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -396,21 +394,21 @@ textkit_0_2_index_of:
     INT_SUB
     pop rbx
     INT_ADD
-    mov [rbp-56], rax  ; store maxpos
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-64], rax  ; store found
+    mov [rbp-64], rax
     mov rax, 1
-    mov [rbp-72], rax  ; store i
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store j
+    mov [rbp-80], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store cb
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store nb
+    mov [rbp-96], rax
     mov rax, 0
-    mov [rbp-104], rax  ; store ok
+    mov [rbp-104], rax
     mov rax, 0
-    mov [rbp-112], rax  ; store eq
+    mov [rbp-112], rax
 .while_start_21:
     mov rax, 0
     push rax
@@ -425,9 +423,9 @@ textkit_0_2_index_of:
     cmp rax, rbx
     jg .while_end_22
     mov rax, 1
-    mov [rbp-104], rax  ; store ok
+    mov [rbp-104], rax
     mov rax, 1
-    mov [rbp-80], rax  ; store j
+    mov [rbp-80], rax
 .while_start_23:
     mov rax, 1
     push rax
@@ -442,8 +440,6 @@ textkit_0_2_index_of:
     cmp rax, rbx
     jg .while_end_24
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-24]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -455,8 +451,10 @@ textkit_0_2_index_of:
     INT_ADD
     pop rbx
     INT_SUB
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-24]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_26  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -473,13 +471,13 @@ textkit_0_2_index_of:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_27:
-    mov [rbp-88], rax  ; store cb
+    mov [rbp-88], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-32]
-    push rax  ; save buffer pointer
     mov rax, [rbp-80]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_29  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -496,9 +494,9 @@ textkit_0_2_index_of:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_30:
-    mov [rbp-96], rax  ; store nb
+    mov [rbp-96], rax
     mov rax, 0
-    mov [rbp-112], rax  ; store eq
+    mov [rbp-112], rax
     mov rax, [rbp-96]
     push rax
     mov rax, [rbp-88]
@@ -506,7 +504,7 @@ textkit_0_2_index_of:
     cmp rax, rbx
     jne .else_32
     mov rax, 1
-    mov [rbp-112], rax  ; store eq
+    mov [rbp-112], rax
     jmp .if_end_31
 .else_32:
 .if_end_31:
@@ -517,7 +515,7 @@ textkit_0_2_index_of:
     cmp rax, rbx
     jne .else_34
     mov rax, 0
-    mov [rbp-104], rax  ; store ok
+    mov [rbp-104], rax
     jmp .if_end_33
 .else_34:
 .if_end_33:
@@ -540,7 +538,7 @@ textkit_0_2_index_of:
     cmp rax, rbx
     jne .else_38
     mov rax, [rbp-72]
-    mov [rbp-64], rax  ; store found
+    mov [rbp-64], rax
     jmp .if_end_37
 .else_38:
 .if_end_37:
@@ -581,7 +579,7 @@ textkit_0_2_contains:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-24], rax  ; store pos
+    mov [rbp-24], rax
     mov rax, 0
     push rax
     mov rax, [rbp-24]
@@ -611,7 +609,7 @@ textkit_0_2_starts_with:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-24], rax  ; store pos
+    mov [rbp-24], rax
     mov rax, 1
     push rax
     mov rax, [rbp-24]
@@ -636,7 +634,7 @@ textkit_0_2_ends_with:
     mov [rbp-16], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer h
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -649,7 +647,7 @@ textkit_0_2_ends_with:
     mov [rbp-24], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer sfx
+    mov [rbp-32], rax
     mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
@@ -662,22 +660,22 @@ textkit_0_2_ends_with:
     mov [rbp-32], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-40], rax  ; store H
+    mov [rbp-40], rax
     mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-48], rax  ; store S
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-56], rax  ; store off
+    mov [rbp-56], rax
     mov rax, 1
-    mov [rbp-64], rax  ; store j
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store hb
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store sb
+    mov [rbp-80], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store ok
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store eq
+    mov [rbp-96], rax
     mov rax, [rbp-40]
     push rax
     mov rax, [rbp-48]
@@ -685,14 +683,14 @@ textkit_0_2_ends_with:
     cmp rax, rbx
     jg .else_42
     mov rax, 1
-    mov [rbp-88], rax  ; store ok
+    mov [rbp-88], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-48]
     push rax
     mov rax, [rbp-40]
     pop rbx
     INT_SUB
-    mov [rbp-56], rax  ; store off
+    mov [rbp-56], rax
     jmp .if_end_41
 .else_42:
 .if_end_41:
@@ -710,16 +708,16 @@ textkit_0_2_ends_with:
     cmp rax, rbx
     jg .while_end_44
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-24]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-64]
     push rax
     mov rax, [rbp-56]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-24]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_46  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -736,13 +734,13 @@ textkit_0_2_ends_with:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_47:
-    mov [rbp-72], rax  ; store hb
+    mov [rbp-72], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-32]
-    push rax  ; save buffer pointer
     mov rax, [rbp-64]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_49  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -759,9 +757,9 @@ textkit_0_2_ends_with:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_50:
-    mov [rbp-80], rax  ; store sb
+    mov [rbp-80], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store eq
+    mov [rbp-96], rax
     mov rax, [rbp-80]
     push rax
     mov rax, [rbp-72]
@@ -769,7 +767,7 @@ textkit_0_2_ends_with:
     cmp rax, rbx
     jne .else_52
     mov rax, 1
-    mov [rbp-96], rax  ; store eq
+    mov [rbp-96], rax
     jmp .if_end_51
 .else_52:
 .if_end_51:
@@ -780,7 +778,7 @@ textkit_0_2_ends_with:
     cmp rax, rbx
     jne .else_54
     mov rax, 0
-    mov [rbp-88], rax  ; store ok
+    mov [rbp-88], rax
     jmp .if_end_53
 .else_54:
 .if_end_53:
@@ -816,7 +814,7 @@ textkit_0_2_uppercase:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer src
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -829,11 +827,11 @@ textkit_0_2_uppercase:
     mov [rbp-16], rax
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-24], rax  ; store n
+    mov [rbp-24], rax
     mov rax, 1
-    mov [rbp-32], rax  ; store i
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     call _alloc_buffer
     mov [rbp-48], rax  ; buffer struct pointer
     mov rax, 1
@@ -848,11 +846,11 @@ textkit_0_2_uppercase:
     cmp rax, rbx
     jg .while_end_58
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_60  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -869,7 +867,7 @@ textkit_0_2_uppercase:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_61:
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     mov rax, 97
     push rax
     mov rax, [rbp-40]
@@ -888,44 +886,42 @@ textkit_0_2_uppercase:
     mov rax, [rbp-40]
     pop rbx
     INT_SUB
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     jmp .if_end_62
 .else_63:
 .if_end_62:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-56]  ; local ch
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-40]
+    push rax  ; value
+    mov rax, [rbp-56]
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_65  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_64  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_65  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-56], rax  ; store new pointer for ch
+    mov [rbp-56], rax
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_64  ; grown buffer now has space
 .bset_err_65:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_66
 .bset_ok_64:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-40]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_67  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -951,7 +947,7 @@ textkit_0_2_uppercase:
     mov [rbp-72], rax
     mov rax, [rbp-72]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-64], rax  ; store r
+    mov [rbp-64], rax
     mov rax, [rbp-64]
     push rax  ; save return value
     call _dec_call_depth
@@ -968,7 +964,7 @@ textkit_0_2_lowercase:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer src
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -981,11 +977,11 @@ textkit_0_2_lowercase:
     mov [rbp-16], rax
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-24], rax  ; store n
+    mov [rbp-24], rax
     mov rax, 1
-    mov [rbp-32], rax  ; store i
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     call _alloc_buffer
     mov [rbp-48], rax  ; buffer struct pointer
     mov rax, 1
@@ -1000,11 +996,11 @@ textkit_0_2_lowercase:
     cmp rax, rbx
     jg .while_end_69
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_71  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1021,7 +1017,7 @@ textkit_0_2_lowercase:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_72:
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     mov rax, 65
     push rax
     mov rax, [rbp-40]
@@ -1040,44 +1036,42 @@ textkit_0_2_lowercase:
     mov rax, [rbp-40]
     pop rbx
     INT_ADD
-    mov [rbp-40], rax  ; store b
+    mov [rbp-40], rax
     jmp .if_end_73
 .else_74:
 .if_end_73:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-56]  ; local ch
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-40]
+    push rax  ; value
+    mov rax, [rbp-56]
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_76  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_75  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_76  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-56], rax  ; store new pointer for ch
+    mov [rbp-56], rax
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_75  ; grown buffer now has space
 .bset_err_76:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_77
 .bset_ok_75:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-40]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_78  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1103,7 +1097,7 @@ textkit_0_2_lowercase:
     mov [rbp-72], rax
     mov rax, [rbp-72]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-64], rax  ; store r
+    mov [rbp-64], rax
     mov rax, [rbp-64]
     push rax  ; save return value
     call _dec_call_depth
@@ -1120,7 +1114,7 @@ textkit_0_2_trim:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer src
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -1133,15 +1127,15 @@ textkit_0_2_trim:
     mov [rbp-16], rax
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-24], rax  ; store n
+    mov [rbp-24], rax
     mov rax, 1
-    mov [rbp-32], rax  ; store lo
+    mov [rbp-32], rax
     mov rax, [rbp-24]
-    mov [rbp-40], rax  ; store hi
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, 1
-    mov [rbp-56], rax  ; store go
+    mov [rbp-56], rax
 .while_start_79:
     mov rax, 1
     push rax
@@ -1156,11 +1150,11 @@ textkit_0_2_trim:
     cmp rax, rbx
     jg .while_end_80
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_82  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1177,12 +1171,12 @@ textkit_0_2_trim:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_83:
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax
     pop rdi
     call textkit_0_2_is_whitespace
-    mov [rbp-56], rax  ; store go
+    mov [rbp-56], rax
     mov rax, 1
     push rax
     mov rax, [rbp-56]
@@ -1196,7 +1190,7 @@ textkit_0_2_trim:
     jmp .while_start_79
 .while_end_80:
     mov rax, 1
-    mov [rbp-56], rax  ; store go
+    mov [rbp-56], rax
 .while_start_86:
     mov rax, 1
     push rax
@@ -1211,11 +1205,11 @@ textkit_0_2_trim:
     cmp rax, rbx
     jl .while_end_87
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-40]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_89  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1232,12 +1226,12 @@ textkit_0_2_trim:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_90:
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax
     pop rdi
     call textkit_0_2_is_whitespace
-    mov [rbp-56], rax  ; store go
+    mov [rbp-56], rax
     mov rax, 1
     push rax
     mov rax, [rbp-56]
@@ -1264,11 +1258,11 @@ textkit_0_2_trim:
     cmp rax, rbx
     jg .while_end_94
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_96  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1285,41 +1279,39 @@ textkit_0_2_trim:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_97:
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-72]  ; local ch
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-48]
+    push rax  ; value
+    mov rax, [rbp-72]
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_99  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_98  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_99  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-72], rax  ; store new pointer for ch
+    mov [rbp-72], rax
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_98  ; grown buffer now has space
 .bset_err_99:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_100
 .bset_ok_98:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-48]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_101  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1345,7 +1337,7 @@ textkit_0_2_trim:
     mov [rbp-88], rax
     mov rax, [rbp-88]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-80], rax  ; store r
+    mov [rbp-80], rax
     mov rax, [rbp-80]
     push rax  ; save return value
     call _dec_call_depth
@@ -1366,7 +1358,7 @@ textkit_0_2_pad_left:
     mov [rbp-16], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer src
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -1379,7 +1371,7 @@ textkit_0_2_pad_left:
     mov [rbp-24], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-32], rax  ; store n
+    mov [rbp-32], rax
     call _alloc_buffer
     mov [rbp-40], rax  ; buffer struct pointer
 .while_start_102:
@@ -1411,7 +1403,7 @@ textkit_0_2_pad_left:
     mov [rbp-56], rax
     mov rax, [rbp-56]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-48], rax  ; store r
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax  ; save return value
     call _dec_call_depth
@@ -1432,7 +1424,7 @@ textkit_0_2_pad_right:
     mov [rbp-16], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer src
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -1445,7 +1437,7 @@ textkit_0_2_pad_right:
     mov [rbp-24], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-32], rax  ; store n
+    mov [rbp-32], rax
     call _alloc_buffer
     mov [rbp-40], rax  ; buffer struct pointer
     mov rdi, [rbp-40]
@@ -1477,7 +1469,7 @@ textkit_0_2_pad_right:
     mov [rbp-56], rax
     mov rax, [rbp-56]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-48], rax  ; store r
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax  ; save return value
     call _dec_call_depth
@@ -1499,7 +1491,7 @@ textkit_0_2_repeat_text:
     call _alloc_buffer
     mov [rbp-24], rax  ; buffer struct pointer
     mov rax, 1
-    mov [rbp-32], rax  ; store i
+    mov [rbp-32], rax
 .while_start_106:
     mov rax, [rbp-16]
     push rax
@@ -1525,7 +1517,7 @@ textkit_0_2_repeat_text:
     mov [rbp-48], rax
     mov rax, [rbp-48]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-40], rax  ; store r
+    mov [rbp-40], rax
     mov rax, [rbp-40]
     push rax  ; save return value
     call _dec_call_depth
@@ -1539,21 +1531,20 @@ textkit_0_2_buffer_text:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps w
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps w
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax
-    mov rax, [rbp-8]
-    mov rdi, [rbp-32]
+    mov [rbp-24], rax
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, [rbp-24]
     mov rsi, rax
     call _buffer_append
-    mov [rbp-32], rax
-    mov rax, [rbp-32]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-24], rax  ; store r
+    mov [rbp-24], rax
     mov rax, [rbp-24]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-16], rax
+    mov rax, [rbp-16]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -1569,7 +1560,7 @@ textkit_0_2_split_words:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer src
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -1586,8 +1577,8 @@ textkit_0_2_split_words:
     call _buffer_append_bytes
     mov [rbp-16], rax
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_108
     EXIT 1
 .list_mmap_ok_108:
@@ -1596,7 +1587,7 @@ textkit_0_2_split_words:
     mov qword [rax + 8], 0  ; length
     mov qword [rax + 16], 8  ; element size
     pop rax  ; list pointer in rax
-    mov [rbp-24], rax  ; store out
+    mov [rbp-24], rax
     call _alloc_buffer
     mov [rbp-32], rax  ; buffer struct pointer
     mov rax, 1
@@ -1605,13 +1596,13 @@ textkit_0_2_split_words:
     mov [rbp-40], rax  ; buffer struct pointer
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-48], rax  ; store n
+    mov [rbp-48], rax
     mov rax, 1
-    mov [rbp-56], rax  ; store i
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-64], rax  ; store b
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store ws
+    mov [rbp-72], rax
 .while_start_109:
     mov rax, [rbp-48]
     push rax
@@ -1620,11 +1611,11 @@ textkit_0_2_split_words:
     cmp rax, rbx
     jg .while_end_110
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-56]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_112  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1641,12 +1632,12 @@ textkit_0_2_split_words:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_113:
-    mov [rbp-64], rax  ; store b
+    mov [rbp-64], rax
     mov rax, [rbp-64]
     push rax
     pop rdi
     call textkit_0_2_is_whitespace
-    mov [rbp-72], rax  ; store ws
+    mov [rbp-72], rax
     mov rax, 0
     push rax
     mov rax, [rbp-72]
@@ -1654,39 +1645,37 @@ textkit_0_2_split_words:
     cmp rax, rbx
     jne .else_115
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-40]  ; local ch
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-64]
+    push rax  ; value
+    mov rax, [rbp-40]
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_117  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_116  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_117  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-40], rax  ; store new pointer for ch
+    mov [rbp-40], rax
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_116  ; grown buffer now has space
 .bset_err_117:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_118
 .bset_ok_116:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-64]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_119  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1716,23 +1705,24 @@ textkit_0_2_split_words:
     cmp rax, rbx
     jle .else_121
     ; Append value to list
-    mov rax, [rbp-24]  ; local out
-    push rax  ; save list pointer
-    lea rax, [rbp-32]  ; the cell holding word
+    lea rax, [rbp-32]
     push rax
     pop rdi
     call textkit_0_2_buffer_text
     push rax  ; save value to append
     mov edx, 1  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rbp-24]
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
-    mov [rbp-24], rax  ; store new pointer for out
+    mov [rbp-24], rax
     ; Clear buffer contents
-    mov rax, [rbp-32]  ; local word
+    mov rax, [rbp-32]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-32], rax  ; buffer (unchanged pointer)
+    mov [rbp-32], rax
     jmp .if_end_120
 .else_121:
 .if_end_120:
@@ -1758,16 +1748,16 @@ textkit_0_2_split_on:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     lea rax, [rel str_3]  ; empty text
-    mov [rbp-64], rax  ; store text field
+    mov [rbp-64], rax
     xor rax, rax
-    mov [rbp-56], rax  ; store field end
+    mov [rbp-56], rax
     xor rax, rax
-    mov [rbp-80], rax  ; store rest end
+    mov [rbp-80], rax
     xor rax, rax
-    mov [rbp-72], rax  ; store rest start
+    mov [rbp-72], rax
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_122
     EXIT 1
 .list_mmap_ok_122:
@@ -1776,16 +1766,16 @@ textkit_0_2_split_on:
     mov qword [rax + 8], 0  ; length
     mov qword [rax + 16], 8  ; element size
     pop rax  ; list pointer in rax
-    mov [rbp-24], rax  ; store fields
+    mov [rbp-24], rax
     mov rax, [rbp-16]
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-32], rax  ; store separator length
+    mov [rbp-32], rax
     mov rax, [rbp-8]
-    mov [rbp-40], rax  ; store rest
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store found
+    mov [rbp-48], rax
     mov rax, 0
     push rax
     mov rax, [rbp-32]
@@ -1799,7 +1789,7 @@ textkit_0_2_split_on:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-48], rax  ; store found
+    mov [rbp-48], rax
     jmp .if_end_123
 .else_124:
 .if_end_123:
@@ -1816,7 +1806,7 @@ textkit_0_2_split_on:
     mov rax, [rbp-48]
     pop rbx
     INT_SUB
-    mov [rbp-56], rax  ; store field end
+    mov [rbp-56], rax
     mov rax, [rbp-56]
     push rax
     mov rax, 1
@@ -1827,29 +1817,30 @@ textkit_0_2_split_on:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-64], rax  ; store field
+    mov [rbp-64], rax
     ; Append value to list
-    mov rax, [rbp-24]  ; local fields
-    push rax  ; save list pointer
     mov rax, [rbp-64]
     push rax  ; save value to append
     mov edx, 1  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rbp-24]
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
-    mov [rbp-24], rax  ; store new pointer for fields
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-32]
     push rax
     mov rax, [rbp-48]
     pop rbx
     INT_ADD
-    mov [rbp-72], rax  ; store rest start
+    mov [rbp-72], rax
     mov rax, [rbp-40]
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-80], rax  ; store rest end
+    mov [rbp-80], rax
     mov rax, [rbp-80]
     push rax
     mov rax, [rbp-72]
@@ -1860,7 +1851,7 @@ textkit_0_2_split_on:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-40], rax  ; store rest
+    mov [rbp-40], rax
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-40]
@@ -1868,19 +1859,20 @@ textkit_0_2_split_on:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-48], rax  ; store found
+    mov [rbp-48], rax
     jmp .while_start_125
 .while_end_126:
     ; Append value to list
-    mov rax, [rbp-24]  ; local fields
-    push rax  ; save list pointer
     mov rax, [rbp-40]
     push rax  ; save value to append
     mov edx, 1  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rbp-24]
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
-    mov [rbp-24], rax  ; store new pointer for fields
+    mov [rbp-24], rax
     mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
@@ -1896,16 +1888,16 @@ textkit_0_2_split_lines:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     lea rax, [rel str_3]  ; empty text
-    mov [rbp-128], rax  ; store text clean line
+    mov [rbp-128], rax
     xor rax, rax
-    mov [rbp-152], rax  ; store ends in a carriage return
+    mov [rbp-152], rax
     xor rax, rax
-    mov [rbp-96], rax  ; store line length
+    mov [rbp-96], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-16], rax  ; store content length
+    mov [rbp-16], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]
@@ -1913,8 +1905,8 @@ textkit_0_2_split_lines:
     cmp rax, rbx
     jne .else_128
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_129
     EXIT 1
 .list_mmap_ok_129:
@@ -1931,7 +1923,7 @@ textkit_0_2_split_lines:
 .else_128:
 .if_end_127:
     mov rax, [rbp-8]
-    mov [rbp-24], rax  ; store unterminated content
+    mov [rbp-24], rax
     lea rax, [rel str_4]
     push rax
     mov rax, [rbp-8]
@@ -1939,7 +1931,7 @@ textkit_0_2_split_lines:
     pop rdi
     pop rsi
     call textkit_0_2_ends_with
-    mov [rbp-32], rax  ; store ends in a newline
+    mov [rbp-32], rax
     mov rax, [rbp-32]
     test rax, rax
     jz .else_131
@@ -1958,7 +1950,7 @@ textkit_0_2_split_lines:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-24], rax  ; store unterminated content
+    mov [rbp-24], rax
     jmp .if_end_130
 .else_131:
 .if_end_130:
@@ -1969,10 +1961,10 @@ textkit_0_2_split_lines:
     pop rdi
     pop rsi
     call textkit_0_2_split_on
-    mov [rbp-40], rax  ; store lines
+    mov [rbp-40], rax
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_132
     EXIT 1
 .list_mmap_ok_132:
@@ -1981,13 +1973,19 @@ textkit_0_2_split_lines:
     mov qword [rax + 8], 0  ; length
     mov qword [rax + 16], 8  ; element size
     pop rax  ; list pointer in rax
-    mov [rbp-48], rax  ; store clean lines
+    mov [rbp-48], rax
     mov rax, [rbp-40]
     mov [rbp-56], rax  ; list pointer
     LIST_LENGTH rax  ; get length (offset 8)
     mov [rbp-64], rax  ; list length
     mov qword [rbp-72], 0  ; index
 .foreach_start_133:
+    mov rax, [rbp-40]
+    mov [rbp-56], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-72]  ; index
+    cmp rax, rcx
+    jge .foreach_end_135  ; the list is shorter now
     mov rax, [rbp-72]  ; index
     cmp rax, [rbp-64]  ; compare with length
     jge .foreach_end_135
@@ -2085,7 +2083,7 @@ textkit_0_2_split_lines:
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-96], rax  ; store line length
+    mov [rbp-96], rax
     mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
     mov rax, [rbp-80]
     ; #115: a dynamically-typed value is cast to its destination's type
@@ -2152,7 +2150,7 @@ textkit_0_2_split_lines:
     SET_LAST_ERROR 1
     mov r11b, 1  ; new tag
 .vr_done_154:
-    mov [rbp-128], rax  ; store clean line
+    mov [rbp-128], rax
     lea rax, [rel str_12]
     push rax
     mov rax, [rbp-80]
@@ -2224,7 +2222,7 @@ textkit_0_2_split_lines:
     pop rdi
     pop rsi
     call textkit_0_2_ends_with
-    mov [rbp-152], rax  ; store ends in a carriage return
+    mov [rbp-152], rax
     mov rax, [rbp-152]
     test rax, rax
     jz .else_167
@@ -2307,20 +2305,21 @@ textkit_0_2_split_lines:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-128], rax  ; store clean line
+    mov [rbp-128], rax
     jmp .if_end_166
 .else_167:
 .if_end_166:
     ; Append value to list
-    mov rax, [rbp-48]  ; local clean lines
-    push rax  ; save list pointer
     mov rax, [rbp-128]
     push rax  ; save value to append
     mov edx, 1  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rbp-48]
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
-    mov [rbp-48], rax  ; store new pointer for clean lines
+    mov [rbp-48], rax
 .foreach_continue_134:
     inc qword [rbp-72]
     jmp .foreach_start_133
@@ -2348,18 +2347,18 @@ textkit_0_2_replace:
     mov rax, rdx
     mov [rbp-24], rax  ; param payload
     lea rax, [rel str_3]  ; empty text
-    mov [rbp-72], rax  ; store text before
+    mov [rbp-72], rax
     xor rax, rax
-    mov [rbp-64], rax  ; store before end
+    mov [rbp-64], rax
     xor rax, rax
-    mov [rbp-88], rax  ; store rest end
+    mov [rbp-88], rax
     xor rax, rax
-    mov [rbp-80], rax  ; store rest start
+    mov [rbp-80], rax
     mov rax, [rbp-16]
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-32], rax  ; store needle length
+    mov [rbp-32], rax
     mov rax, 0
     push rax
     mov rax, [rbp-32]
@@ -2377,7 +2376,7 @@ textkit_0_2_replace:
     call _alloc_buffer
     mov [rbp-40], rax  ; buffer struct pointer
     mov rax, [rbp-8]
-    mov [rbp-48], rax  ; store rest
+    mov [rbp-48], rax
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-48]
@@ -2385,7 +2384,7 @@ textkit_0_2_replace:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-56], rax  ; store found
+    mov [rbp-56], rax
 .while_start_179:
     mov rax, 0
     push rax
@@ -2399,7 +2398,7 @@ textkit_0_2_replace:
     mov rax, [rbp-56]
     pop rbx
     INT_SUB
-    mov [rbp-64], rax  ; store before end
+    mov [rbp-64], rax
     mov rax, [rbp-64]
     push rax
     mov rax, 1
@@ -2410,7 +2409,7 @@ textkit_0_2_replace:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-72], rax  ; store before
+    mov [rbp-72], rax
     mov rax, [rbp-72]
     mov rdi, [rbp-40]
     mov rsi, rax
@@ -2427,12 +2426,12 @@ textkit_0_2_replace:
     mov rax, [rbp-56]
     pop rbx
     INT_ADD
-    mov [rbp-80], rax  ; store rest start
+    mov [rbp-80], rax
     mov rax, [rbp-48]
     push rax
     pop rdi
     call textkit_0_2_text_length
-    mov [rbp-88], rax  ; store rest end
+    mov [rbp-88], rax
     mov rax, [rbp-88]
     push rax
     mov rax, [rbp-80]
@@ -2443,7 +2442,7 @@ textkit_0_2_replace:
     pop rsi
     pop rdx
     call textkit_0_2_slice
-    mov [rbp-48], rax  ; store rest
+    mov [rbp-48], rax
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-48]
@@ -2451,7 +2450,7 @@ textkit_0_2_replace:
     pop rdi
     pop rsi
     call textkit_0_2_index_of
-    mov [rbp-56], rax  ; store found
+    mov [rbp-56], rax
     jmp .while_start_179
 .while_end_180:
     mov rax, [rbp-48]
@@ -2469,7 +2468,7 @@ textkit_0_2_replace:
     mov [rbp-104], rax
     mov rax, [rbp-104]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-96], rax  ; store the replaced text
+    mov [rbp-96], rax
     mov rax, [rbp-96]
     push rax  ; save return value
     call _dec_call_depth
@@ -2485,34 +2484,34 @@ textkit_0_2_join:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps items
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps items
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     lea rax, [rel str_3]  ; empty text
-    mov [rbp-64], rax  ; store text item
+    mov [rbp-56], rax
     call _alloc_buffer
-    mov [rbp-32], rax  ; buffer struct pointer
-    mov rax, [rbp-8]
+    mov [rbp-24], rax  ; buffer struct pointer
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     LIST_LENGTH rax  ; list length at offset 8
-    mov [rbp-40], rax  ; store n
+    mov [rbp-32], rax
     mov rax, 1
-    mov [rbp-48], rax  ; store i
+    mov [rbp-40], rax
 .while_start_181:
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jg .while_end_182
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save list pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rax, [rbp-40]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_184  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -2568,8 +2567,8 @@ textkit_0_2_join:
     push rax  ; integer to format
     mov rdi, 1024
     call _alloc_buffer
-    mov [rbp-72], rax  ; format buffer
-    mov rdi, [rbp-72]
+    mov [rbp-64], rax  ; format buffer
+    mov rdi, [rbp-64]
     pop rax  ; restore integer
     mov rsi, rax
     xor rdx, rdx
@@ -2577,7 +2576,7 @@ textkit_0_2_join:
     xor r8, r8
     xor r9, r9
     call _buffer_append_formatted_int
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     BUFFER_DATA_ADDR rax  ; buffer data area
     mov r11b, 1  ; new tag
     jmp .vr_done_196
@@ -2586,11 +2585,11 @@ textkit_0_2_join:
     push rax  ; float bits to format
     mov rdi, 1024
     call _alloc_buffer
-    mov [rbp-80], rax  ; format buffer
-    mov rdi, [rbp-80]
+    mov [rbp-72], rax  ; format buffer
+    mov rdi, [rbp-72]
     pop rax  ; restore float bits
     call _buffer_append_float
-    mov rax, [rbp-80]
+    mov rax, [rbp-72]
     BUFFER_DATA_ADDR rax  ; buffer data area
     mov r11b, 1  ; new tag
     jmp .vr_done_196
@@ -2622,41 +2621,41 @@ textkit_0_2_join:
     jnz .miss_empty_done_199
     lea rax, [rel str_3]  ; empty text
 .miss_empty_done_199:
-    mov [rbp-64], rax  ; store item
-    mov rax, [rbp-64]
-    mov rdi, [rbp-32]
+    mov [rbp-56], rax
+    mov rax, [rbp-56]
+    mov rdi, [rbp-24]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-32], rax
-    mov rax, [rbp-40]
+    mov [rbp-24], rax
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jge .else_201
-    mov rax, [rbp-24]
-    mov rdi, [rbp-32]
+    mov rax, [rbp-16]
+    mov rdi, [rbp-24]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-32], rax
+    mov [rbp-24], rax
     jmp .if_end_200
 .else_201:
 .if_end_200:
-    inc qword [rbp-48]
+    inc qword [rbp-40]
     jmp .while_start_181
 .while_end_182:
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-96], rax
-    mov rax, [rbp-32]
-    mov rdi, [rbp-96]
+    mov [rbp-88], rax
+    mov rax, [rbp-24]
+    mov rdi, [rbp-88]
     mov rsi, rax
     call _buffer_append
-    mov [rbp-96], rax
-    mov rax, [rbp-96]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-88], rax  ; store r
+    mov [rbp-88], rax
     mov rax, [rbp-88]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-80], rax
+    mov rax, [rbp-80]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value

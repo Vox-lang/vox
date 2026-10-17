@@ -675,11 +675,11 @@ copy_the_file:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_35  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-24], rsi  ; store new pointer for chunk
+    mov [rbp-24], rsi
     jmp .read_done_36
 .skip_fd_35:
     SET_LAST_ERROR 1
@@ -714,18 +714,18 @@ copy_the_file:
     SET_LAST_ERROR 1
 .write_done_42:
     ; Clear buffer contents
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-24], rax  ; buffer (unchanged pointer)
+    mov [rbp-24], rax
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_43  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-24], rsi  ; store new pointer for chunk
+    mov [rbp-24], rsi
     jmp .read_done_44
 .skip_fd_43:
     SET_LAST_ERROR 1
@@ -759,11 +759,11 @@ drain_the_pipe:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_46  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-24], rsi  ; store new pointer for chunk
+    mov [rbp-24], rsi
     jmp .read_done_47
 .skip_fd_46:
     SET_LAST_ERROR 1
@@ -785,18 +785,18 @@ drain_the_pipe:
     SET_LAST_ERROR 1
 .write_done_52:
     ; Clear buffer contents
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-24], rax  ; buffer (unchanged pointer)
+    mov [rbp-24], rax
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_53  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local chunk
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-24], rsi  ; store new pointer for chunk
+    mov [rbp-24], rsi
     jmp .read_done_54
 .skip_fd_53:
     SET_LAST_ERROR 1
@@ -902,11 +902,11 @@ number_the_file:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_61  ; skip if invalid fd
-    mov rax, [rbp-32]  ; local content
+    mov rax, [rbp-32]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-32], rsi  ; store new pointer for content
+    mov [rbp-32], rsi
     jmp .readline_done_62
 .skip_fd_61:
     SET_LAST_ERROR 1
@@ -967,11 +967,11 @@ number_the_file:
     push rax
     ; Byte access (1-indexed) with bounds check
     mov rax, [rbp-32]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_72  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1013,21 +1013,21 @@ number_the_file:
     SET_LAST_ERROR 1
 .write_done_77:
     ; Clear buffer contents
-    mov rax, [rbp-24]  ; local staged_output
+    mov rax, [rbp-24]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-24], rax  ; buffer (unchanged pointer)
+    mov [rbp-24], rax
     jmp .if_end_74
 .else_75:
 .if_end_74:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_78  ; skip if invalid fd
-    mov rax, [rbp-32]  ; local content
+    mov rax, [rbp-32]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-32], rsi  ; store new pointer for content
+    mov [rbp-32], rsi
     jmp .readline_done_79
 .skip_fd_78:
     SET_LAST_ERROR 1

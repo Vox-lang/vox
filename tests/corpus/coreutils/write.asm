@@ -96,7 +96,7 @@ _start:
 
     push rbp
     mov rbp, rsp
-    sub rsp, 144
+    sub rsp, 128
 
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
@@ -328,16 +328,12 @@ _start:
     mov rax, [rbp-104]
     mov [rel gvar_5], rax
     call _alloc_buffer
-    mov [rbp-112], rax  ; buffer struct pointer
-    mov rax, [rbp-112]
-    mov [rel gvar_2], rax
+    mov [rel gvar_2], rax  ; buffer file contents
     call _alloc_buffer
-    mov [rbp-120], rax  ; buffer struct pointer
-    mov rax, [rbp-120]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rax  ; buffer input line
     lea rdi, [rel str_26]
     FILE_OPEN_READ rdi
-    mov [rbp-128], rax  ; file descriptor
+    mov [rbp-112], rax  ; file descriptor
     test rax, rax
     jns .file_ok_23  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -348,7 +344,7 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_24:
-    mov rax, [rbp-128]
+    mov rax, [rbp-112]
     mov [rel gvar_6], rax
     mov rax, [rbp-32]
     test rax, rax
@@ -356,7 +352,7 @@ _start:
     mov rax, [rbp-8]
     mov rdi, rax  ; path pointer
     FILE_OPEN_APPEND rdi
-    mov [rbp-136], rax  ; file descriptor
+    mov [rbp-120], rax  ; file descriptor
     test rax, rax
     jns .file_ok_27  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -367,14 +363,14 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_28:
-    mov rax, [rbp-136]
+    mov rax, [rbp-120]
     mov [rel gvar_3], rax
     jmp .if_end_25
 .else_26:
     mov rax, [rbp-8]
     mov rdi, rax  ; path pointer
     FILE_OPEN_WRITE rdi
-    mov [rbp-136], rax  ; file descriptor
+    mov [rbp-120], rax  ; file descriptor
     test rax, rax
     jns .file_ok_29  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -385,25 +381,23 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_30:
-    mov rax, [rbp-136]
+    mov rax, [rbp-120]
     mov [rel gvar_3], rax
 .if_end_25:
     mov rdi, 0
     test rdi, rdi
     js .skip_fd_31  ; skip if invalid fd
-    mov rax, [rbp-120]  ; local input line
+    mov rax, [rel gvar_4]  ; global mirror input line
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-120], rsi  ; store new pointer for input line
-    mov rax, [rbp-120]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rsi  ; store new pointer for input line
     jmp .readline_done_32
 .skip_fd_31:
     SET_LAST_ERROR 1
 .readline_done_32:
 .while_start_33:
-    mov rax, [rbp-120]
+    mov rax, [rel gvar_4]
     mov rax, [rax + 8]  ; get size/length
     test rax, rax
     jnz .not_true_35
@@ -414,7 +408,7 @@ _start:
     mov rdi, rax
     call _str_len
     push rax           ; R: len
-    mov rax, [rbp-120]
+    mov rax, [rel gvar_4]
     push rax           ; L: struct ptr
     mov rdi, rax
     call _buffer_length
@@ -428,10 +422,10 @@ _start:
     call _mem_eq
     test rax, rax
     jz .else_37  ; 1=equal
-    mov rdi, [rbp-136]
+    mov rdi, [rbp-120]
     test rdi, rdi
     js .skip_fd_38  ; skip if invalid fd
-    mov rsi, [rbp-112]
+    mov rsi, [rel gvar_2]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_39
 .skip_fd_38:
@@ -447,32 +441,28 @@ _start:
     jmp .if_end_36
 .else_37:
 .if_end_36:
-    mov rdi, [rbp-112]
-    mov rsi, [rbp-120]
+    mov rdi, [rel gvar_2]
+    mov rsi, [rel gvar_4]
     call _buffer_append
-    mov [rbp-112], rax
-    mov rax, [rbp-112]
     mov [rel gvar_2], rax
     mov rdi, 0
     test rdi, rdi
     js .skip_fd_40  ; skip if invalid fd
-    mov rax, [rbp-120]  ; local input line
+    mov rax, [rel gvar_4]  ; global mirror input line
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-120], rsi  ; store new pointer for input line
-    mov rax, [rbp-120]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rsi  ; store new pointer for input line
     jmp .readline_done_41
 .skip_fd_40:
     SET_LAST_ERROR 1
 .readline_done_41:
     jmp .while_start_33
 .while_end_34:
-    mov rdi, [rbp-136]
+    mov rdi, [rbp-120]
     test rdi, rdi
     js .skip_fd_42  ; skip if invalid fd
-    mov rsi, [rbp-112]
+    mov rsi, [rel gvar_2]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_43
 .skip_fd_42:

@@ -816,7 +816,7 @@ section .data
 
 section .text
 section .fini_array progbits alloc write
-    dq _cleanup_all
+    dq _unload_library
 
 section .text
 global date_0_1_floor_divide:function
@@ -932,14 +932,14 @@ date_0_1_floor_divide:
     mov rax, [rbp-8]
     pop rbx
     INT_DIV
-    mov [rbp-24], rax  ; store quotient
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
     pop rbx
     INT_MOD
-    mov [rbp-32], rax  ; store the remainder
+    mov [rbp-32], rax
     mov rax, 0
     push rax
     mov rax, [rbp-32]
@@ -958,7 +958,7 @@ date_0_1_floor_divide:
     mov rax, [rbp-24]
     pop rbx
     INT_SUB
-    mov [rbp-24], rax  ; store quotient
+    mov [rbp-24], rax
     jmp .if_end_0
 .else_1:
 .if_end_0:
@@ -986,7 +986,7 @@ date_0_1_floor_modulo:
     mov rax, [rbp-8]
     pop rbx
     INT_MOD
-    mov [rbp-24], rax  ; store the remainder
+    mov [rbp-24], rax
     mov rax, 0
     push rax
     mov rax, [rbp-24]
@@ -999,7 +999,7 @@ date_0_1_floor_modulo:
     mov rax, [rbp-24]
     pop rbx
     INT_ADD
-    mov [rbp-24], rax  ; store the remainder
+    mov [rbp-24], rax
     jmp .if_end_2
 .else_3:
 .if_end_2:
@@ -1024,9 +1024,7 @@ date_0_1_read_a_normalised_month_into:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; where the caller keeps civil
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps civil
     mov rax, 12
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -1039,7 +1037,7 @@ date_0_1_read_a_normalised_month_into:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-40], rax  ; store extra years
+    mov [rbp-32], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -1057,43 +1055,49 @@ date_0_1_read_a_normalised_month_into:
     call date_0_1_floor_modulo
     pop rbx
     INT_ADD
-    mov [rbp-48], rax  ; store the normalised month
+    mov [rbp-40], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_0]  ; literal map key
     push rax  ; save key pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, [rbp-16]
     pop rbx
     INT_ADD
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for civil
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps civil
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_1]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for civil
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps civil
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
@@ -1119,8 +1123,8 @@ date_0_1_days_from_civil:
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-32], rax  ; store normalised
-    lea rax, [rbp-32]  ; the caller's normalised
+    mov [rbp-32], rax
+    lea rax, [rbp-32]
     push rax
     mov rax, [rbp-8]
     push rax
@@ -1132,11 +1136,11 @@ date_0_1_days_from_civil:
     call date_0_1_read_a_normalised_month_into
     mov qword [rbp-40], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_2]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_4
@@ -1202,14 +1206,14 @@ date_0_1_days_from_civil:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_16:
-    mov [rbp-48], rax  ; store the civil year
+    mov [rbp-48], rax
     mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_3]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_17
@@ -1275,7 +1279,7 @@ date_0_1_days_from_civil:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_29:
-    mov [rbp-64], rax  ; store the civil month
+    mov [rbp-64], rax
     mov rax, 2
     push rax
     mov rax, [rbp-64]
@@ -1288,7 +1292,7 @@ date_0_1_days_from_civil:
     mov rax, [rbp-48]
     pop rbx
     INT_SUB
-    mov [rbp-48], rax  ; store the civil year
+    mov [rbp-48], rax
     jmp .if_end_30
 .else_31:
 .if_end_30:
@@ -1299,7 +1303,7 @@ date_0_1_days_from_civil:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-72], rax  ; store era
+    mov [rbp-72], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 400
@@ -1311,14 +1315,14 @@ date_0_1_days_from_civil:
     mov rax, [rbp-48]
     pop rbx
     INT_SUB
-    mov [rbp-80], rax  ; store the year of the era
+    mov [rbp-80], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 3
     push rax
     mov rax, [rbp-64]
     pop rbx
     INT_SUB
-    mov [rbp-88], rax  ; store the month index
+    mov [rbp-88], rax
     mov rax, 2
     push rax
     mov rax, [rbp-64]
@@ -1331,7 +1335,7 @@ date_0_1_days_from_civil:
     mov rax, [rbp-64]
     pop rbx
     INT_ADD
-    mov [rbp-88], rax  ; store the month index
+    mov [rbp-88], rax
     jmp .if_end_32
 .else_33:
 .if_end_32:
@@ -1341,7 +1345,7 @@ date_0_1_days_from_civil:
     mov rax, 153
     pop rbx
     INT_MUL
-    mov [rbp-96], rax  ; store the day of the year before the era
+    mov [rbp-96], rax
     mov rax, 5
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -1354,7 +1358,7 @@ date_0_1_days_from_civil:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-104], rax  ; store the day of the year
+    mov [rbp-104], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -1366,7 +1370,7 @@ date_0_1_days_from_civil:
     INT_ADD
     pop rbx
     INT_SUB
-    mov [rbp-104], rax  ; store the day of the year
+    mov [rbp-104], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 100
     push rax
@@ -1385,7 +1389,7 @@ date_0_1_days_from_civil:
     call date_0_1_floor_divide
     pop rbx
     INT_SUB
-    mov [rbp-112], rax  ; store the leap days in the era
+    mov [rbp-112], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-104]
     push rax
@@ -1402,7 +1406,7 @@ date_0_1_days_from_civil:
     INT_ADD
     pop rbx
     INT_ADD
-    mov [rbp-120], rax  ; store the day of the era
+    mov [rbp-120], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 719468
     push rax
@@ -1426,7 +1430,7 @@ date_0_1_days_from_civil:
 
 ; Function: read civil into
 date_0_1_read_civil_into:
-    FUNC_PROLOGUE 128
+    FUNC_PROLOGUE 112
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -1435,40 +1439,38 @@ date_0_1_read_civil_into:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps civil
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps civil
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 719468
     push rax
     mov rax, [rbp-8]
     pop rbx
     INT_ADD
-    mov [rbp-32], rax  ; store z
+    mov [rbp-24], rax
     mov rax, 146097
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-40], rax  ; store era
+    mov [rbp-32], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 146097
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     pop rbx
     INT_MUL
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     INT_SUB
-    mov [rbp-48], rax  ; store the day of the era
+    mov [rbp-40], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 36524
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
     pop rdi
     pop rsi
@@ -1476,56 +1478,56 @@ date_0_1_read_civil_into:
     push rax
     mov rax, 1460
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_divide
     pop rbx
     INT_SUB
-    mov [rbp-56], rax  ; store the leap correction
+    mov [rbp-48], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 146096
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_divide
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     INT_ADD
-    mov [rbp-56], rax  ; store the leap correction
+    mov [rbp-48], rax
     mov rax, 365
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-56]
-    push rax
     mov rax, [rbp-48]
+    push rax
+    mov rax, [rbp-40]
     pop rbx
     INT_SUB
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-64], rax  ; store the year of the era guess
+    mov [rbp-56], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 400
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     pop rbx
     INT_MUL
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     pop rbx
     INT_ADD
-    mov [rbp-72], rax  ; store the civil year
+    mov [rbp-64], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 100
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     pop rdi
     pop rsi
@@ -1533,20 +1535,20 @@ date_0_1_read_civil_into:
     push rax
     mov rax, 4
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_divide
     pop rbx
     INT_SUB
-    mov [rbp-80], rax  ; store the leap days in the era
+    mov [rbp-72], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-80]
+    mov rax, [rbp-72]
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     mov rax, 365
     pop rbx
@@ -1554,11 +1556,29 @@ date_0_1_read_civil_into:
     pop rbx
     INT_ADD
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     INT_SUB
-    mov [rbp-88], rax  ; store the day of the year
+    mov [rbp-80], rax
     mov rax, 153
+    push rax
+    CLEAR_LAST_ERROR  ; clear error before arithmetic
+    mov rax, 2
+    push rax
+    CLEAR_LAST_ERROR  ; clear error before arithmetic
+    mov rax, [rbp-80]
+    push rax
+    mov rax, 5
+    pop rbx
+    INT_MUL
+    pop rbx
+    INT_ADD
+    push rax
+    pop rdi
+    pop rsi
+    call date_0_1_floor_divide
+    mov [rbp-88], rax
+    mov rax, 5
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 2
@@ -1566,24 +1586,6 @@ date_0_1_read_civil_into:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-88]
     push rax
-    mov rax, 5
-    pop rbx
-    INT_MUL
-    pop rbx
-    INT_ADD
-    push rax
-    pop rdi
-    pop rsi
-    call date_0_1_floor_divide
-    mov [rbp-96], rax  ; store the month index
-    mov rax, 5
-    push rax
-    CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, 2
-    push rax
-    CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-96]
-    push rax
     mov rax, 153
     pop rbx
     INT_MUL
@@ -1593,105 +1595,114 @@ date_0_1_read_civil_into:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-104], rax  ; store the day of the month before adjustment
+    mov [rbp-96], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-104]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-80]
     pop rbx
     INT_SUB
     pop rbx
     INT_ADD
-    mov [rbp-112], rax  ; store the civil day
+    mov [rbp-104], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 3
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-88]
     pop rbx
     INT_ADD
-    mov [rbp-120], rax  ; store the civil month
+    mov [rbp-112], rax
     mov rax, 10
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jl .else_35
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 9
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-88]
     pop rbx
     INT_SUB
-    mov [rbp-120], rax  ; store the civil month
+    mov [rbp-112], rax
     jmp .if_end_34
 .else_35:
 .if_end_34:
     mov rax, 2
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-112]
     pop rbx
     cmp rax, rbx
     jg .else_37
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     pop rbx
     INT_ADD
-    mov [rbp-72], rax  ; store the civil year
+    mov [rbp-64], rax
     jmp .if_end_36
 .else_37:
 .if_end_36:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_4]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-16], rax  ; store new pointer for civil
     push rbx
-    mov rbx, [rbp-24]  ; where the caller keeps civil
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_5]  ; literal map key
-    push rax  ; save key pointer
-    mov rax, [rbp-120]
-    mov rdx, rax  ; value
-    mov ecx, 0  ; value type tag
-    pop rsi  ; key pointer
-    pop rdi  ; map pointer
-    call _map_insert
-    mov [rbp-16], rax  ; store new pointer for civil
-    push rbx
-    mov rbx, [rbp-24]  ; where the caller keeps civil
-    mov [rbx], rax  ; the caller grows too
-    pop rbx
-    ; Set map's key to value (insert/replace)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
-    lea rax, [rel str_6]  ; literal map key
     push rax  ; save key pointer
     mov rax, [rbp-112]
     mov rdx, rax  ; value
-    xor ecx, ecx  ; default integer tag
+    mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-16], rax  ; store new pointer for civil
     push rbx
-    mov rbx, [rbp-24]  ; where the caller keeps civil
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
+    ; Set map's key to value (insert/replace)
+    lea rax, [rel str_6]  ; literal map key
+    push rax  ; save key pointer
+    mov rax, [rbp-104]
+    mov rdx, rax  ; value
+    xor ecx, ecx  ; default integer tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
+    pop rsi  ; key pointer
+    call _map_insert
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
@@ -1784,7 +1795,7 @@ date_0_1_the_moment_at:
     pop rsi
     pop rdx
     call date_0_1_days_from_civil
-    mov [rbp-56], rax  ; store the day number
+    mov [rbp-56], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 60
@@ -1801,14 +1812,14 @@ date_0_1_the_moment_at:
     INT_MUL
     pop rbx
     INT_ADD
-    mov [rbp-64], rax  ; store the seconds of the day
+    mov [rbp-64], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-48]
     push rax
     mov rax, [rbp-64]
     pop rbx
     INT_ADD
-    mov [rbp-64], rax  ; store the seconds of the day
+    mov [rbp-64], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-64]
     push rax
@@ -1840,14 +1851,14 @@ date_0_1_the_year_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-24], rax  ; store civil
-    lea rax, [rbp-24]  ; the caller's civil
+    mov [rbp-24], rax
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-16]
     push rax
@@ -1855,11 +1866,11 @@ date_0_1_the_year_of:
     pop rsi
     call date_0_1_read_civil_into
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_7]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_38
@@ -1936,14 +1947,14 @@ date_0_1_the_month_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-24], rax  ; store civil
-    lea rax, [rbp-24]  ; the caller's civil
+    mov [rbp-24], rax
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-16]
     push rax
@@ -1951,11 +1962,11 @@ date_0_1_the_month_of:
     pop rsi
     call date_0_1_read_civil_into
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_8]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_49
@@ -2032,14 +2043,14 @@ date_0_1_the_day_of_month_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-24], rax  ; store civil
-    lea rax, [rbp-24]  ; the caller's civil
+    mov [rbp-24], rax
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-16]
     push rax
@@ -2047,11 +2058,11 @@ date_0_1_the_day_of_month_of:
     pop rsi
     call date_0_1_read_civil_into
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_9]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_60
@@ -2128,7 +2139,7 @@ date_0_1_the_hour_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the total hours
+    mov [rbp-16], rax
     mov rax, 24
     push rax
     mov rax, [rbp-16]
@@ -2156,7 +2167,7 @@ date_0_1_the_minute_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the total minutes
+    mov [rbp-16], rax
     mov rax, 60
     push rax
     mov rax, [rbp-16]
@@ -2204,7 +2215,7 @@ date_0_1_the_weekday_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     mov rax, 7
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -2217,7 +2228,7 @@ date_0_1_the_weekday_of:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-24], rax  ; store the weekday index
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -2244,14 +2255,14 @@ date_0_1_the_day_of_year_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-24], rax  ; store civil
-    lea rax, [rbp-24]  ; the caller's civil
+    mov [rbp-24], rax
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-16]
     push rax
@@ -2260,11 +2271,11 @@ date_0_1_the_day_of_year_of:
     call date_0_1_read_civil_into
     mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_10]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_71
@@ -2330,7 +2341,7 @@ date_0_1_the_day_of_year_of:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_83:
-    mov [rbp-40], rax  ; store the year
+    mov [rbp-40], rax
     mov rax, 1
     push rax
     mov rax, 1
@@ -2341,7 +2352,7 @@ date_0_1_the_day_of_year_of:
     pop rsi
     pop rdx
     call date_0_1_days_from_civil
-    mov [rbp-48], rax  ; store the start of the year
+    mov [rbp-48], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -2384,7 +2395,7 @@ date_0_1_the_iso_week_correction_for:
     call date_0_1_floor_divide
     pop rbx
     INT_SUB
-    mov [rbp-16], rax  ; store the leap correction
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 400
     push rax
@@ -2397,7 +2408,7 @@ date_0_1_the_iso_week_correction_for:
     mov rax, [rbp-16]
     pop rbx
     INT_ADD
-    mov [rbp-16], rax  ; store the leap correction
+    mov [rbp-16], rax
     mov rax, 7
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -2427,7 +2438,7 @@ date_0_1_weeks_in_the_iso_year:
     push rax
     pop rdi
     call date_0_1_the_iso_week_correction_for
-    mov [rbp-16], rax  ; store p
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -2437,7 +2448,7 @@ date_0_1_weeks_in_the_iso_year:
     push rax
     pop rdi
     call date_0_1_the_iso_week_correction_for
-    mov [rbp-24], rax  ; store p of the previous year
+    mov [rbp-24], rax
     mov rax, 4
     push rax
     mov rax, [rbp-16]
@@ -2483,9 +2494,7 @@ date_0_1_read_the_iso_week_into:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps the result
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps the result
     mov rax, 86400
     push rax
     mov rax, [rbp-8]
@@ -2493,27 +2502,27 @@ date_0_1_read_the_iso_week_into:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-32], rax  ; store the day number
+    mov [rbp-24], rax
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-40], rax  ; store civil
-    lea rax, [rbp-40]  ; the caller's civil
+    mov [rbp-32], rax
+    lea rax, [rbp-32]
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_civil_into
-    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-40], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_11]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_88
@@ -2558,7 +2567,7 @@ date_0_1_read_the_iso_week_into:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_99
-    mov qword [rbp-48], 1  ; the text was not a number
+    mov qword [rbp-40], 1  ; the text was not a number
 .cast_read_a_number_99:
 .vr_store_97:
     mov r11b, 0  ; new tag
@@ -2574,31 +2583,31 @@ date_0_1_read_the_iso_week_into:
     mov r11b, 0  ; new tag
 .vr_done_98:
 .dyn_cast_done_91:
-    cmp qword [rbp-48], 0
+    cmp qword [rbp-40], 0
     je .cast_stored_100
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_100:
-    mov [rbp-56], rax  ; store the year
+    mov [rbp-48], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_weekday_of
-    mov [rbp-64], rax  ; store weekday
+    mov [rbp-56], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_day_of_year_of
-    mov [rbp-72], rax  ; store the day of year
+    mov [rbp-64], rax
     mov rax, 7
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 10
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     pop rbx
     INT_SUB
     pop rbx
@@ -2607,84 +2616,90 @@ date_0_1_read_the_iso_week_into:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-80], rax  ; store week
-    mov rax, [rbp-80]
-    mov [rbp-88], rax  ; store the unadjusted week
-    mov rax, [rbp-56]
+    mov [rbp-72], rax
+    mov rax, [rbp-72]
+    mov [rbp-80], rax
+    mov rax, [rbp-48]
     push rax
     pop rdi
     call date_0_1_weeks_in_the_iso_year
-    mov [rbp-96], rax  ; store the weeks in this year
+    mov [rbp-88], rax
     mov rax, 1
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jge .else_102
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     INT_SUB
-    mov [rbp-56], rax  ; store the year
-    mov rax, [rbp-56]
+    mov [rbp-48], rax
+    mov rax, [rbp-48]
     push rax
     pop rdi
     call date_0_1_weeks_in_the_iso_year
-    mov [rbp-80], rax  ; store week
+    mov [rbp-72], rax
     jmp .if_end_101
 .else_102:
 .if_end_101:
-    mov rax, [rbp-96]
-    push rax
     mov rax, [rbp-88]
+    push rax
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jle .else_104
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     INT_ADD
-    mov [rbp-56], rax  ; store the year
+    mov [rbp-48], rax
     mov rax, 1
-    mov [rbp-80], rax  ; store week
+    mov [rbp-72], rax
     jmp .if_end_103
 .else_104:
 .if_end_103:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_12]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-16], rax  ; store new pointer for the result
     push rbx
-    mov rbx, [rbp-24]  ; where the caller keeps the result
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_13]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-72]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-16], rax  ; store new pointer for the result
     push rbx
-    mov rbx, [rbp-24]  ; where the caller keeps the result
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
@@ -2702,8 +2717,8 @@ date_0_1_the_iso_week_of:
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-16], rax  ; store the result
-    lea rax, [rbp-16]  ; the caller's the result
+    mov [rbp-16], rax
+    lea rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
     push rax
@@ -2711,11 +2726,11 @@ date_0_1_the_iso_week_of:
     pop rsi
     call date_0_1_read_the_iso_week_into
     ; Map key access (lookup)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_14]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_105
@@ -2790,8 +2805,8 @@ date_0_1_the_iso_week_year_of:
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-16], rax  ; store the result
-    lea rax, [rbp-16]  ; the caller's the result
+    mov [rbp-16], rax
+    lea rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
     push rax
@@ -2799,11 +2814,11 @@ date_0_1_the_iso_week_year_of:
     pop rsi
     call date_0_1_read_the_iso_week_into
     ; Map key access (lookup)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_15]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_116
@@ -2877,7 +2892,7 @@ date_0_1_the_quarter_of:
     push rax
     pop rdi
     call date_0_1_the_month_of
-    mov [rbp-16], rax  ; store the month
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -2912,7 +2927,7 @@ date_0_1_the_century_of:
     push rax
     pop rdi
     call date_0_1_the_year_of
-    mov [rbp-16], rax  ; store the year
+    mov [rbp-16], rax
     mov rax, 100
     push rax
     mov rax, [rbp-16]
@@ -2934,8 +2949,8 @@ date_0_1_the_month_name_of:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     ; List literal with 12 elements (capacity 12)
-    HEAP_ALLOC 132  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 132  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_127
     EXIT 1
 .list_mmap_ok_127:
@@ -3028,13 +3043,13 @@ date_0_1_the_month_name_of:
     LIST_SET_TAG [rbx + 131], 1  ; slot 12 type tag
     push rbx ; save list pointer
     pop rax  ; list pointer in rax
-    mov [rbp-16], rax  ; store names
+    mov [rbp-16], rax
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save list pointer
     mov rax, [rbp-8]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_129  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -3058,7 +3073,7 @@ date_0_1_the_month_name_of:
     jnz .miss_empty_done_131
     lea rax, [rel str_28]  ; empty text
 .miss_empty_done_131:
-    mov [rbp-24], rax  ; store name
+    mov [rbp-24], rax
     mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
@@ -3074,8 +3089,8 @@ date_0_1_the_short_month_name_of:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     ; List literal with 12 elements (capacity 12)
-    HEAP_ALLOC 132  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 132  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_132
     EXIT 1
 .list_mmap_ok_132:
@@ -3168,13 +3183,13 @@ date_0_1_the_short_month_name_of:
     LIST_SET_TAG [rbx + 131], 1  ; slot 12 type tag
     push rbx ; save list pointer
     pop rax  ; list pointer in rax
-    mov [rbp-16], rax  ; store names
+    mov [rbp-16], rax
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save list pointer
     mov rax, [rbp-8]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_134  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -3198,7 +3213,7 @@ date_0_1_the_short_month_name_of:
     jnz .miss_empty_done_136
     lea rax, [rel str_28]  ; empty text
 .miss_empty_done_136:
-    mov [rbp-24], rax  ; store name
+    mov [rbp-24], rax
     mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
@@ -3214,8 +3229,8 @@ date_0_1_the_weekday_name_of:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     ; List literal with 7 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_137
     EXIT 1
 .list_mmap_ok_137:
@@ -3273,13 +3288,13 @@ date_0_1_the_weekday_name_of:
     LIST_SET_TAG [rbx + 94], 1  ; slot 7 type tag
     push rbx ; save list pointer
     pop rax  ; list pointer in rax
-    mov [rbp-16], rax  ; store names
+    mov [rbp-16], rax
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save list pointer
     mov rax, [rbp-8]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_139  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -3303,7 +3318,7 @@ date_0_1_the_weekday_name_of:
     jnz .miss_empty_done_141
     lea rax, [rel str_28]  ; empty text
 .miss_empty_done_141:
-    mov [rbp-24], rax  ; store name
+    mov [rbp-24], rax
     mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
@@ -3319,8 +3334,8 @@ date_0_1_the_short_weekday_name_of:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     ; List literal with 7 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_142
     EXIT 1
 .list_mmap_ok_142:
@@ -3378,13 +3393,13 @@ date_0_1_the_short_weekday_name_of:
     LIST_SET_TAG [rbx + 94], 1  ; slot 7 type tag
     push rbx ; save list pointer
     pop rax  ; list pointer in rax
-    mov [rbp-16], rax  ; store names
+    mov [rbp-16], rax
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save list pointer
     mov rax, [rbp-8]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_144  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -3408,7 +3423,7 @@ date_0_1_the_short_weekday_name_of:
     jnz .miss_empty_done_146
     lea rax, [rel str_28]  ; empty text
 .miss_empty_done_146:
-    mov [rbp-24], rax  ; store name
+    mov [rbp-24], rax
     mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
@@ -3430,7 +3445,7 @@ date_0_1_is_a_leap_year:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-16], rax  ; store divides by four
+    mov [rbp-16], rax
     mov rax, 100
     push rax
     mov rax, [rbp-8]
@@ -3438,7 +3453,7 @@ date_0_1_is_a_leap_year:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-24], rax  ; store divides by a hundred
+    mov [rbp-24], rax
     mov rax, 400
     push rax
     mov rax, [rbp-8]
@@ -3446,7 +3461,7 @@ date_0_1_is_a_leap_year:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-32], rax  ; store divides by four hundred
+    mov [rbp-32], rax
     mov rax, 0
     push rax
     mov rax, [rbp-16]
@@ -3498,8 +3513,8 @@ date_0_1_the_days_in:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     ; List literal with 12 elements (capacity 12)
-    HEAP_ALLOC 132  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 132  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_151
     EXIT 1
 .list_mmap_ok_151:
@@ -3580,13 +3595,13 @@ date_0_1_the_days_in:
     LIST_SET_ELEM [rbx + 112], rax
     push rbx ; save list pointer
     pop rax  ; list pointer in rax
-    mov [rbp-24], rax  ; store lengths
+    mov [rbp-24], rax
     ; Element access (1-indexed) with bounds check
-    mov rax, [rbp-24]
-    push rax  ; save list pointer
     mov rax, [rbp-8]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-24]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_153  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -3605,9 +3620,9 @@ date_0_1_the_days_in:
     add rax, rbx
     mov rax, [rax]  ; get element
 .elem_done_154:
-    mov [rbp-32], rax  ; store the length
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-40], rax  ; store it is a leap february
+    mov [rbp-40], rax
     mov rax, 2
     push rax
     mov rax, [rbp-8]
@@ -3621,7 +3636,7 @@ date_0_1_the_days_in:
     test rax, rax
     jz .else_156
     mov rax, 1
-    mov [rbp-40], rax  ; store it is a leap february
+    mov [rbp-40], rax
     jmp .if_end_155
 .else_156:
 .if_end_155:
@@ -3629,7 +3644,7 @@ date_0_1_the_days_in:
     test rax, rax
     jz .else_158
     mov rax, 29
-    mov [rbp-32], rax  ; store the length
+    mov [rbp-32], rax
     jmp .if_end_157
 .else_158:
 .if_end_157:
@@ -3704,7 +3719,7 @@ date_0_1_is_a_valid_date:
     pop rdi
     pop rsi
     call date_0_1_the_days_in
-    mov [rbp-32], rax  ; store the length
+    mov [rbp-32], rax
     mov rax, [rbp-32]
     push rax
     mov rax, [rbp-24]
@@ -3963,7 +3978,7 @@ date_0_1_months_later:
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-24], rax  ; store civil
+    mov [rbp-24], rax
     mov rax, 86400
     push rax
     mov rax, [rbp-8]
@@ -3971,8 +3986,8 @@ date_0_1_months_later:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-32], rax  ; store the day number
-    lea rax, [rbp-24]  ; the caller's civil
+    mov [rbp-32], rax
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-32]
     push rax
@@ -3981,11 +3996,11 @@ date_0_1_months_later:
     call date_0_1_read_civil_into
     mov qword [rbp-40], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_55]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_175
@@ -4051,14 +4066,14 @@ date_0_1_months_later:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_187:
-    mov [rbp-48], rax  ; store the year
+    mov [rbp-48], rax
     mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_56]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_188
@@ -4124,14 +4139,14 @@ date_0_1_months_later:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_200:
-    mov [rbp-64], rax  ; store the month
+    mov [rbp-64], rax
     mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_57]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_201
@@ -4197,7 +4212,7 @@ date_0_1_months_later:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_213:
-    mov [rbp-80], rax  ; store the day of month
+    mov [rbp-80], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-16]
     push rax
@@ -4219,7 +4234,7 @@ date_0_1_months_later:
     INT_ADD
     pop rbx
     INT_ADD
-    mov [rbp-88], rax  ; store the total months
+    mov [rbp-88], rax
     mov rax, 12
     push rax
     mov rax, [rbp-88]
@@ -4227,7 +4242,7 @@ date_0_1_months_later:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-96], rax  ; store the target year
+    mov [rbp-96], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -4240,7 +4255,7 @@ date_0_1_months_later:
     call date_0_1_floor_modulo
     pop rbx
     INT_ADD
-    mov [rbp-104], rax  ; store the target month
+    mov [rbp-104], rax
     mov rax, [rbp-96]
     push rax
     mov rax, [rbp-104]
@@ -4248,7 +4263,7 @@ date_0_1_months_later:
     pop rdi
     pop rsi
     call date_0_1_the_days_in
-    mov [rbp-112], rax  ; store the longest day
+    mov [rbp-112], rax
     mov rax, [rbp-112]
     push rax
     mov rax, [rbp-80]
@@ -4256,7 +4271,7 @@ date_0_1_months_later:
     cmp rax, rbx
     jle .else_215
     mov rax, [rbp-112]
-    mov [rbp-80], rax  ; store the day of month
+    mov [rbp-80], rax
     jmp .if_end_214
 .else_215:
 .if_end_214:
@@ -4264,17 +4279,17 @@ date_0_1_months_later:
     push rax
     pop rdi
     call date_0_1_the_hour_of
-    mov [rbp-120], rax  ; store the hour
+    mov [rbp-120], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_minute_of
-    mov [rbp-128], rax  ; store the minute
+    mov [rbp-128], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_second_of
-    mov [rbp-136], rax  ; store the second
+    mov [rbp-136], rax
     mov rax, [rbp-136]
     push rax
     mov rax, [rbp-128]
@@ -4343,7 +4358,7 @@ date_0_1_the_start_of_the_day_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-16], rax  ; store the day number
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 86400
     push rax
@@ -4367,12 +4382,12 @@ date_0_1_the_start_of_the_week_of:
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
-    mov [rbp-16], rax  ; store the start of the day
+    mov [rbp-16], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_weekday_of
-    mov [rbp-24], rax  ; store weekday
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 86400
@@ -4407,7 +4422,7 @@ date_0_1_the_start_of_the_month_of:
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-16], rax  ; store civil
+    mov [rbp-16], rax
     mov rax, 86400
     push rax
     mov rax, [rbp-8]
@@ -4415,8 +4430,8 @@ date_0_1_the_start_of_the_month_of:
     pop rdi
     pop rsi
     call date_0_1_floor_divide
-    mov [rbp-24], rax  ; store the day number
-    lea rax, [rbp-16]  ; the caller's civil
+    mov [rbp-24], rax
+    lea rax, [rbp-16]
     push rax
     mov rax, [rbp-24]
     push rax
@@ -4425,11 +4440,11 @@ date_0_1_the_start_of_the_month_of:
     call date_0_1_read_civil_into
     mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_58]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_216
@@ -4495,14 +4510,14 @@ date_0_1_the_start_of_the_month_of:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_228:
-    mov [rbp-40], rax  ; store the year
+    mov [rbp-40], rax
     mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-16]
-    push rax  ; save map pointer
     lea rax, [rel str_59]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_229
@@ -4568,7 +4583,7 @@ date_0_1_the_start_of_the_month_of:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_241:
-    mov [rbp-56], rax  ; store the month
+    mov [rbp-56], rax
     mov rax, 1
     push rax
     mov rax, [rbp-56]
@@ -4596,7 +4611,7 @@ date_0_1_the_start_of_the_year_of:
     push rax
     pop rdi
     call date_0_1_the_year_of
-    mov [rbp-16], rax  ; store the year
+    mov [rbp-16], rax
     mov rax, 1
     push rax
     mov rax, 1
@@ -4628,12 +4643,12 @@ date_0_1_the_weekday_on_or_after:
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
-    mov [rbp-24], rax  ; store the start of the day
+    mov [rbp-24], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_weekday_of
-    mov [rbp-32], rax  ; store the current weekday
+    mov [rbp-32], rax
     mov rax, 7
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -4646,7 +4661,7 @@ date_0_1_the_weekday_on_or_after:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-40], rax  ; store the difference
+    mov [rbp-40], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 86400
@@ -4679,12 +4694,12 @@ date_0_1_the_weekday_on_or_before:
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
-    mov [rbp-24], rax  ; store the start of the day
+    mov [rbp-24], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_weekday_of
-    mov [rbp-32], rax  ; store the current weekday
+    mov [rbp-32], rax
     mov rax, 7
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
@@ -4697,7 +4712,7 @@ date_0_1_the_weekday_on_or_before:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-40], rax  ; store the difference
+    mov [rbp-40], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 86400
@@ -4745,7 +4760,7 @@ date_0_1_the_days_between:
 
 ; Function: write the byte
 date_0_1_write_the_byte:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -4754,51 +4769,50 @@ date_0_1_write_the_byte:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps output
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-16]  ; local output
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-8]
+    push rax  ; value
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_243  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_242  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_243  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-16], rax  ; store new pointer for output
-    mov rcx, [rbp-24]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_242  ; grown buffer now has space
 .bset_err_243:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_244
 .bset_ok_242:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-8]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_245  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -4820,7 +4834,7 @@ date_0_1_uppercase_text:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer letters
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -4835,11 +4849,11 @@ date_0_1_uppercase_text:
     mov [rbp-24], rax  ; buffer struct pointer
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-32], rax  ; store the length
+    mov [rbp-32], rax
     mov rax, 1
-    mov [rbp-40], rax  ; store position
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
 .while_start_246:
     mov rax, [rbp-32]
     push rax
@@ -4848,11 +4862,11 @@ date_0_1_uppercase_text:
     cmp rax, rbx
     jg .while_end_247
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-40]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_249  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -4869,7 +4883,7 @@ date_0_1_uppercase_text:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_250:
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
     mov rax, 97
     push rax
     mov rax, [rbp-48]
@@ -4888,11 +4902,11 @@ date_0_1_uppercase_text:
     mov rax, [rbp-48]
     pop rbx
     INT_SUB
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
     jmp .if_end_251
 .else_252:
 .if_end_251:
-    lea rax, [rbp-24]  ; the cell holding upper
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-48]
     push rax
@@ -4927,7 +4941,7 @@ date_0_1_lowercase_text:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer letters
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -4942,11 +4956,11 @@ date_0_1_lowercase_text:
     mov [rbp-24], rax  ; buffer struct pointer
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-32], rax  ; store the length
+    mov [rbp-32], rax
     mov rax, 1
-    mov [rbp-40], rax  ; store position
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
 .while_start_253:
     mov rax, [rbp-32]
     push rax
@@ -4955,11 +4969,11 @@ date_0_1_lowercase_text:
     cmp rax, rbx
     jg .while_end_254
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-40]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_256  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -4976,7 +4990,7 @@ date_0_1_lowercase_text:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_257:
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
     mov rax, 65
     push rax
     mov rax, [rbp-48]
@@ -4995,11 +5009,11 @@ date_0_1_lowercase_text:
     mov rax, [rbp-48]
     pop rbx
     INT_ADD
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-48], rax
     jmp .if_end_258
 .else_259:
 .if_end_258:
-    lea rax, [rbp-24]  ; the cell holding lower
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-48]
     push rax
@@ -5126,49 +5140,47 @@ date_0_1_write_padded:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps output
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     mov rax, rcx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-32], rax  ; param payload
     mov rax, r8
-    mov [rbp-48], rax  ; param payload
+    mov [rbp-40], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-56], rax  ; store buffer letters
-    mov rdi, [rbp-56]
+    mov [rbp-48], rax
+    mov rdi, [rbp-48]
     push rdi
     call _buffer_clear
     mov rdi, rax
     pop rsi  ; discard original pointer copy
-    mov rax, [rbp-24]
-    mov rdi, [rbp-56]
+    mov rax, [rbp-16]
+    mov rdi, [rbp-48]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-56], rax
-    mov rax, [rbp-56]
+    mov [rbp-48], rax
+    mov rax, [rbp-48]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-64], rax  ; store the length
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store the sign length
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store the first byte
+    mov [rbp-72], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jle .else_267
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-56]
-    push rax  ; save buffer pointer
     mov rax, 1
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-48]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_269  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -5185,107 +5197,101 @@ date_0_1_write_padded:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_270:
-    mov [rbp-80], rax  ; store the first byte
+    mov [rbp-72], rax
     jmp .if_end_266
 .else_267:
 .if_end_266:
     mov rax, 45
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_272
     mov rax, 1
-    mov [rbp-72], rax  ; store the sign length
+    mov [rbp-64], rax
     jmp .if_end_271
 .else_272:
 .if_end_271:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     INT_SUB
-    mov [rbp-88], rax  ; store the pad count
-    mov rax, [rbp-48]
+    mov [rbp-80], rax
+    mov rax, [rbp-40]
     test rax, rax
     jz .else_274
     mov rax, 0
-    mov [rbp-88], rax  ; store the pad count
+    mov [rbp-80], rax
     jmp .if_end_273
 .else_274:
 .if_end_273:
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jge .else_276
     mov rax, 0
-    mov [rbp-88], rax  ; store the pad count
+    mov [rbp-80], rax
     jmp .if_end_275
 .else_276:
 .if_end_275:
     mov rax, 1
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jne .else_278
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 45
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     jmp .if_end_277
 .else_278:
 .if_end_277:
-    mov rax, [rbp-88]
-    mov [rbp-96], rax
+    mov rax, [rbp-80]
+    mov [rbp-88], rax
 .repeat_start_279:
-    cmp qword [rbp-96], 0
+    cmp qword [rbp-88], 0
     jle .repeat_end_281
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
 .repeat_continue_280:
-    dec qword [rbp-96]
+    dec qword [rbp-88]
     jmp .repeat_start_279
 .repeat_end_281:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-72]
+    mov rax, [rbp-64]
     push rax
     mov rax, 1
     pop rbx
     INT_ADD
-    mov [rbp-104], rax
-    mov rax, [rbp-64]
+    mov [rbp-96], rax
+    mov rax, [rbp-56]
     inc rax
-    mov [rbp-112], rax
+    mov [rbp-104], rax
 .for_start_282:
-    mov rax, [rbp-104]
-    cmp rax, [rbp-112]
+    mov rax, [rbp-96]
+    cmp rax, [rbp-104]
     jge .for_end_284
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-56]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-104]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-96]
+    push rax  ; index
+    mov rax, [rbp-48]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_286  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -5306,11 +5312,8 @@ date_0_1_write_padded:
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
 .for_continue_283:
-    inc qword [rbp-104]
+    inc qword [rbp-96]
     jmp .for_start_282
 .for_end_284:
     call _dec_call_depth
@@ -5333,78 +5336,76 @@ date_0_1_render_specifier:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps output
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     mov rax, rcx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-32], rax  ; param payload
     mov rax, r8
-    mov [rbp-48], rax  ; param payload
+    mov [rbp-40], rax  ; param payload
     mov rax, r9
-    mov [rbp-56], rax  ; param payload
-    mov rax, [rbp-32]
-    mov [rbp-64], rax  ; store the width to use
+    mov [rbp-48], rax  ; param payload
+    mov rax, [rbp-24]
+    mov [rbp-56], rax
     mov rax, 0
-    push rax
-    mov rax, [rbp-56]
-    pop rbx
-    cmp rax, rbx
-    jl .else_289
-    mov rax, [rbp-56]
-    mov [rbp-64], rax  ; store the width to use
-    jmp .if_end_288
-.else_289:
-.if_end_288:
-    mov rax, [rbp-40]
-    mov [rbp-72], rax  ; store the pad to use
-    mov rax, 48
     push rax
     mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
+    jl .else_289
+    mov rax, [rbp-48]
+    mov [rbp-56], rax
+    jmp .if_end_288
+.else_289:
+.if_end_288:
+    mov rax, [rbp-32]
+    mov [rbp-64], rax
+    mov rax, 48
+    push rax
+    mov rax, [rbp-40]
+    pop rbx
+    cmp rax, rbx
     jne .else_291
     mov rax, 48
-    mov [rbp-72], rax  ; store the pad to use
+    mov [rbp-64], rax
     jmp .if_end_290
 .else_291:
 .if_end_290:
     mov rax, 95
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jne .else_293
     mov rax, 32
-    mov [rbp-72], rax  ; store the pad to use
+    mov [rbp-64], rax
     jmp .if_end_292
 .else_293:
 .if_end_292:
     mov rax, 0
-    mov [rbp-80], rax  ; store suppress padding
+    mov [rbp-72], rax
     mov rax, 45
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jne .else_295
     mov rax, 1
-    mov [rbp-80], rax  ; store suppress padding
+    mov [rbp-72], rax
     jmp .if_end_294
 .else_295:
 .if_end_294:
-    mov rax, [rbp-80]
-    push rax
     mov rax, [rbp-72]
     push rax
     mov rax, [rbp-64]
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-56]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-16]
+    push rax
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -5412,9 +5413,6 @@ date_0_1_render_specifier:
     pop rcx
     pop r8
     call date_0_1_write_padded
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     call _dec_call_depth
     FUNC_EPILOGUE
 
@@ -5430,7 +5428,7 @@ date_0_1_the_twelve_hour_of:
     push rax
     pop rdi
     call date_0_1_the_hour_of
-    mov [rbp-16], rax  ; store the hour
+    mov [rbp-16], rax
     mov rax, 12
     push rax
     mov rax, [rbp-16]
@@ -5438,7 +5436,7 @@ date_0_1_the_twelve_hour_of:
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-24], rax  ; store h
+    mov [rbp-24], rax
     mov rax, 0
     push rax
     mov rax, [rbp-24]
@@ -5471,7 +5469,7 @@ date_0_1_the_am_or_pm_of:
     push rax
     pop rdi
     call date_0_1_the_hour_of
-    mov [rbp-16], rax  ; store the hour
+    mov [rbp-16], rax
     mov rax, 12
     push rax
     mov rax, [rbp-16]
@@ -5509,12 +5507,12 @@ date_0_1_the_sunday_week_of:
     call date_0_1_the_day_of_year_of
     pop rbx
     INT_SUB
-    mov [rbp-16], rax  ; store the day of year zero based
+    mov [rbp-16], rax
     mov rax, [rbp-8]
     push rax
     pop rdi
     call date_0_1_the_day_of_week_sunday_based_of
-    mov [rbp-24], rax  ; store the sunday based weekday
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-24]
     push rax
@@ -5526,7 +5524,7 @@ date_0_1_the_sunday_week_of:
     INT_ADD
     pop rbx
     INT_SUB
-    mov [rbp-32], rax  ; store the numerator
+    mov [rbp-32], rax
     mov rax, 7
     push rax
     mov rax, [rbp-32]
@@ -5556,7 +5554,7 @@ date_0_1_the_monday_week_of:
     call date_0_1_the_day_of_year_of
     pop rbx
     INT_SUB
-    mov [rbp-16], rax  ; store the day of year zero based
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -5566,7 +5564,7 @@ date_0_1_the_monday_week_of:
     call date_0_1_the_weekday_of
     pop rbx
     INT_SUB
-    mov [rbp-24], rax  ; store the monday based weekday
+    mov [rbp-24], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-24]
     push rax
@@ -5578,7 +5576,7 @@ date_0_1_the_monday_week_of:
     INT_ADD
     pop rbx
     INT_SUB
-    mov [rbp-32], rax  ; store the numerator
+    mov [rbp-32], rax
     mov rax, 7
     push rax
     mov rax, [rbp-32]
@@ -5616,7 +5614,7 @@ date_0_1_the_day_of_week_sunday_based_of:
 
 ; Function: write a specifier
 date_0_1_write_a_specifier:
-    FUNC_PROLOGUE 576
+    FUNC_PROLOGUE 560
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -5631,448 +5629,446 @@ date_0_1_write_a_specifier:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps output
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     mov rax, rcx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-32], rax  ; param payload
     mov rax, r8
-    mov [rbp-48], rax  ; param payload
+    mov [rbp-40], rax  ; param payload
     mov rax, r9
-    mov [rbp-56], rax  ; param payload
+    mov [rbp-48], rax  ; param payload
     lea rax, [rel str_28]  ; empty text
-    mov [rbp-552], rax  ; store text a cased
+    mov [rbp-544], rax
     lea rax, [rel str_28]  ; empty text
-    mov [rbp-560], rax  ; store text p lowered
+    mov [rbp-552], rax
     lea rax, [rel str_28]  ; empty text
-    mov [rbp-568], rax  ; store text z cased
-    mov rax, [rbp-24]
+    mov [rbp-560], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_year_of
-    mov [rbp-64], rax  ; store the year
-    mov rax, [rbp-24]
+    mov [rbp-56], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_month_of
-    mov [rbp-72], rax  ; store the month
-    mov rax, [rbp-24]
+    mov [rbp-64], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_day_of_month_of
-    mov [rbp-80], rax  ; store the day of month
-    mov rax, [rbp-24]
+    mov [rbp-72], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_hour_of
-    mov [rbp-88], rax  ; store the hour
-    mov rax, [rbp-24]
+    mov [rbp-80], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_minute_of
-    mov [rbp-96], rax  ; store the minute
-    mov rax, [rbp-24]
+    mov [rbp-88], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_second_of
-    mov [rbp-104], rax  ; store the second
-    mov rax, [rbp-24]
+    mov [rbp-96], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_weekday_of
-    mov [rbp-112], rax  ; store the weekday
-    mov rax, [rbp-24]
+    mov [rbp-104], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_day_of_year_of
-    mov [rbp-120], rax  ; store the day of year
-    mov rax, [rbp-24]
+    mov [rbp-112], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_iso_week_of
-    mov [rbp-128], rax  ; store the iso week
-    mov rax, [rbp-24]
+    mov [rbp-120], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_iso_week_year_of
-    mov [rbp-136], rax  ; store the iso week year
-    mov rax, [rbp-24]
+    mov [rbp-128], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_quarter_of
-    mov [rbp-144], rax  ; store the quarter
-    mov rax, [rbp-24]
+    mov [rbp-136], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_century_of
-    mov [rbp-152], rax  ; store the century
+    mov [rbp-144], rax
     mov rax, 100
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-160], rax  ; store the short year
+    mov [rbp-152], rax
     mov rax, 100
     push rax
-    mov rax, [rbp-136]
+    mov rax, [rbp-128]
     push rax
     pop rdi
     pop rsi
     call date_0_1_floor_modulo
-    mov [rbp-168], rax  ; store the short iso week year
-    mov rax, [rbp-24]
+    mov [rbp-160], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_twelve_hour_of
-    mov [rbp-176], rax  ; store the twelve hour
-    mov rax, [rbp-24]
+    mov [rbp-168], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_sunday_week_of
-    mov [rbp-184], rax  ; store the sunday week
-    mov rax, [rbp-24]
+    mov [rbp-176], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_monday_week_of
-    mov [rbp-192], rax  ; store the monday week
-    mov rax, [rbp-24]
+    mov [rbp-184], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_day_of_week_sunday_based_of
-    mov [rbp-200], rax  ; store the sunday based weekday
-    mov rax, [rbp-72]
+    mov [rbp-192], rax
+    mov rax, [rbp-64]
     push rax
     pop rdi
     call date_0_1_the_month_name_of
-    mov [rbp-208], rax  ; store the month name
-    mov rax, [rbp-72]
+    mov [rbp-200], rax
+    mov rax, [rbp-64]
     push rax
     pop rdi
     call date_0_1_the_short_month_name_of
-    mov [rbp-216], rax  ; store the short month name
-    mov rax, [rbp-112]
+    mov [rbp-208], rax
+    mov rax, [rbp-104]
     push rax
     pop rdi
     call date_0_1_the_weekday_name_of
-    mov [rbp-224], rax  ; store the weekday name
-    mov rax, [rbp-112]
+    mov [rbp-216], rax
+    mov rax, [rbp-104]
     push rax
     pop rdi
     call date_0_1_the_short_weekday_name_of
-    mov [rbp-232], rax  ; store the short weekday name
-    mov rax, [rbp-24]
+    mov [rbp-224], rax
+    mov rax, [rbp-16]
     push rax
     pop rdi
     call date_0_1_the_am_or_pm_of
-    mov [rbp-240], rax  ; store the am or pm
+    mov [rbp-232], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-256], rax
-    mov rax, [rbp-64]
-    mov rdi, [rbp-256]
+    mov [rbp-248], rax
+    mov rax, [rbp-56]
+    mov rdi, [rbp-248]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-256], rax
-    mov rax, [rbp-256]
+    mov [rbp-248], rax
+    mov rax, [rbp-248]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-248], rax  ; store the year text
+    mov [rbp-240], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-272], rax
-    mov rax, [rbp-160]
-    mov rdi, [rbp-272]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-272], rax
-    mov rax, [rbp-272]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-264], rax  ; store the short year text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-288], rax
-    mov rax, [rbp-72]
-    mov rdi, [rbp-288]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-288], rax
-    mov rax, [rbp-288]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-280], rax  ; store the month text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-304], rax
-    mov rax, [rbp-80]
-    mov rdi, [rbp-304]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-304], rax
-    mov rax, [rbp-304]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-296], rax  ; store the day of month text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-320], rax
-    mov rax, [rbp-88]
-    mov rdi, [rbp-320]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-320], rax
-    mov rax, [rbp-320]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-312], rax  ; store the hour text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-336], rax
-    mov rax, [rbp-176]
-    mov rdi, [rbp-336]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-336], rax
-    mov rax, [rbp-336]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-328], rax  ; store the twelve hour text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-352], rax
-    mov rax, [rbp-96]
-    mov rdi, [rbp-352]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-352], rax
-    mov rax, [rbp-352]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-344], rax  ; store the minute text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-368], rax
-    mov rax, [rbp-104]
-    mov rdi, [rbp-368]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-368], rax
-    mov rax, [rbp-368]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-360], rax  ; store the second text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-384], rax
-    mov rax, [rbp-112]
-    mov rdi, [rbp-384]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-384], rax
-    mov rax, [rbp-384]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-376], rax  ; store the weekday text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-400], rax
-    mov rax, [rbp-200]
-    mov rdi, [rbp-400]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-400], rax
-    mov rax, [rbp-400]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-392], rax  ; store the sunday based weekday text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-416], rax
-    mov rax, [rbp-120]
-    mov rdi, [rbp-416]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-416], rax
-    mov rax, [rbp-416]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-408], rax  ; store the day of year text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-432], rax
-    mov rax, [rbp-184]
-    mov rdi, [rbp-432]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-432], rax
-    mov rax, [rbp-432]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-424], rax  ; store the sunday week text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-448], rax
-    mov rax, [rbp-192]
-    mov rdi, [rbp-448]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-448], rax
-    mov rax, [rbp-448]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-440], rax  ; store the monday week text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-464], rax
-    mov rax, [rbp-128]
-    mov rdi, [rbp-464]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-464], rax
-    mov rax, [rbp-464]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-456], rax  ; store the iso week text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-480], rax
-    mov rax, [rbp-136]
-    mov rdi, [rbp-480]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-480], rax
-    mov rax, [rbp-480]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-472], rax  ; store the iso week year text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-496], rax
-    mov rax, [rbp-168]
-    mov rdi, [rbp-496]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-496], rax
-    mov rax, [rbp-496]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-488], rax  ; store the short iso week year text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-512], rax
-    mov rax, [rbp-144]
-    mov rdi, [rbp-512]
-    mov rsi, rax
-    mov rdx, 0
-    mov rcx, 0
-    mov r8, 0
-    mov r9, 0
-    call _buffer_append_formatted_int
-    mov [rbp-512], rax
-    mov rax, [rbp-512]
-    BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-504], rax  ; store the quarter text
-    mov rdi, 1024  ; default buffer size
-    call _alloc_buffer
-    mov [rbp-528], rax
+    mov [rbp-264], rax
     mov rax, [rbp-152]
-    mov rdi, [rbp-528]
+    mov rdi, [rbp-264]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-528], rax
-    mov rax, [rbp-528]
+    mov [rbp-264], rax
+    mov rax, [rbp-264]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-520], rax  ; store the century text
+    mov [rbp-256], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-544], rax
-    mov rax, [rbp-24]
-    mov rdi, [rbp-544]
+    mov [rbp-280], rax
+    mov rax, [rbp-64]
+    mov rdi, [rbp-280]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-544], rax
-    mov rax, [rbp-544]
+    mov [rbp-280], rax
+    mov rax, [rbp-280]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-536], rax  ; store the moment text
+    mov [rbp-272], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-296], rax
+    mov rax, [rbp-72]
+    mov rdi, [rbp-296]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-296], rax
+    mov rax, [rbp-296]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-288], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-312], rax
+    mov rax, [rbp-80]
+    mov rdi, [rbp-312]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-312], rax
+    mov rax, [rbp-312]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-304], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-328], rax
+    mov rax, [rbp-168]
+    mov rdi, [rbp-328]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-328], rax
+    mov rax, [rbp-328]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-320], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-344], rax
+    mov rax, [rbp-88]
+    mov rdi, [rbp-344]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-344], rax
+    mov rax, [rbp-344]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-336], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-360], rax
+    mov rax, [rbp-96]
+    mov rdi, [rbp-360]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-360], rax
+    mov rax, [rbp-360]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-352], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-376], rax
+    mov rax, [rbp-104]
+    mov rdi, [rbp-376]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-376], rax
+    mov rax, [rbp-376]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-368], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-392], rax
+    mov rax, [rbp-192]
+    mov rdi, [rbp-392]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-392], rax
+    mov rax, [rbp-392]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-384], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-408], rax
+    mov rax, [rbp-112]
+    mov rdi, [rbp-408]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-408], rax
+    mov rax, [rbp-408]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-400], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-424], rax
+    mov rax, [rbp-176]
+    mov rdi, [rbp-424]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-424], rax
+    mov rax, [rbp-424]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-416], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-440], rax
+    mov rax, [rbp-184]
+    mov rdi, [rbp-440]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-440], rax
+    mov rax, [rbp-440]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-432], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-456], rax
+    mov rax, [rbp-120]
+    mov rdi, [rbp-456]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-456], rax
+    mov rax, [rbp-456]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-448], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-472], rax
+    mov rax, [rbp-128]
+    mov rdi, [rbp-472]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-472], rax
+    mov rax, [rbp-472]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-464], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-488], rax
+    mov rax, [rbp-160]
+    mov rdi, [rbp-488]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-488], rax
+    mov rax, [rbp-488]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-480], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-504], rax
+    mov rax, [rbp-136]
+    mov rdi, [rbp-504]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-504], rax
+    mov rax, [rbp-504]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-496], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-520], rax
+    mov rax, [rbp-144]
+    mov rdi, [rbp-520]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-520], rax
+    mov rax, [rbp-520]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-512], rax
+    mov rdi, 1024  ; default buffer size
+    call _alloc_buffer
+    mov [rbp-536], rax
+    mov rax, [rbp-16]
+    mov rdi, [rbp-536]
+    mov rsi, rax
+    mov rdx, 0
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    call _buffer_append_formatted_int
+    mov [rbp-536], rax
+    mov rax, [rbp-536]
+    BUFFER_DATA_ADDR rax  ; buffer data area
+    mov [rbp-528], rax
     mov rax, 89
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_301
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 4
     push rax
-    mov rax, [rbp-248]
+    mov rax, [rbp-240]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6081,9 +6077,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6094,21 +6087,21 @@ date_0_1_write_a_specifier:
 .if_end_300:
     mov rax, 121
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_303
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-264]
+    mov rax, [rbp-256]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6117,9 +6110,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6130,21 +6120,21 @@ date_0_1_write_a_specifier:
 .if_end_302:
     mov rax, 109
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_305
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-280]
+    mov rax, [rbp-272]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6153,9 +6143,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6166,21 +6153,21 @@ date_0_1_write_a_specifier:
 .if_end_304:
     mov rax, 100
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_307
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-296]
+    mov rax, [rbp-288]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6189,9 +6176,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6202,21 +6186,21 @@ date_0_1_write_a_specifier:
 .if_end_306:
     mov rax, 101
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_309
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-296]
+    mov rax, [rbp-288]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6225,9 +6209,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6238,21 +6219,21 @@ date_0_1_write_a_specifier:
 .if_end_308:
     mov rax, 72
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_311
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-312]
+    mov rax, [rbp-304]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6261,9 +6242,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6274,21 +6252,21 @@ date_0_1_write_a_specifier:
 .if_end_310:
     mov rax, 107
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_313
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-312]
+    mov rax, [rbp-304]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6297,9 +6275,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6310,21 +6285,21 @@ date_0_1_write_a_specifier:
 .if_end_312:
     mov rax, 73
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_315
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-328]
+    mov rax, [rbp-320]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6333,9 +6308,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6346,21 +6318,21 @@ date_0_1_write_a_specifier:
 .if_end_314:
     mov rax, 108
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_317
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-328]
+    mov rax, [rbp-320]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6369,9 +6341,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6382,21 +6351,21 @@ date_0_1_write_a_specifier:
 .if_end_316:
     mov rax, 77
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_319
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-344]
+    mov rax, [rbp-336]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6405,9 +6374,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6418,21 +6384,21 @@ date_0_1_write_a_specifier:
 .if_end_318:
     mov rax, 83
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_321
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-360]
+    mov rax, [rbp-352]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6441,9 +6407,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6454,21 +6417,21 @@ date_0_1_write_a_specifier:
 .if_end_320:
     mov rax, 106
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_323
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 3
     push rax
-    mov rax, [rbp-408]
+    mov rax, [rbp-400]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6477,9 +6440,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6490,21 +6450,21 @@ date_0_1_write_a_specifier:
 .if_end_322:
     mov rax, 117
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_325
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 1
     push rax
-    mov rax, [rbp-376]
+    mov rax, [rbp-368]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6513,9 +6473,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6526,21 +6483,21 @@ date_0_1_write_a_specifier:
 .if_end_324:
     mov rax, 119
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_327
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 1
     push rax
-    mov rax, [rbp-392]
+    mov rax, [rbp-384]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6549,9 +6506,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6562,21 +6516,21 @@ date_0_1_write_a_specifier:
 .if_end_326:
     mov rax, 85
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_329
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-424]
+    mov rax, [rbp-416]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6585,9 +6539,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6598,21 +6549,21 @@ date_0_1_write_a_specifier:
 .if_end_328:
     mov rax, 87
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_331
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-440]
+    mov rax, [rbp-432]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6621,9 +6572,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6634,21 +6582,21 @@ date_0_1_write_a_specifier:
 .if_end_330:
     mov rax, 86
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_333
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-456]
+    mov rax, [rbp-448]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6657,9 +6605,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6670,21 +6615,21 @@ date_0_1_write_a_specifier:
 .if_end_332:
     mov rax, 71
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_335
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 4
     push rax
-    mov rax, [rbp-472]
+    mov rax, [rbp-464]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6693,9 +6638,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6706,21 +6648,21 @@ date_0_1_write_a_specifier:
 .if_end_334:
     mov rax, 103
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_337
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-488]
+    mov rax, [rbp-480]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6729,9 +6671,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6742,21 +6681,21 @@ date_0_1_write_a_specifier:
 .if_end_336:
     mov rax, 113
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_339
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 1
     push rax
-    mov rax, [rbp-504]
+    mov rax, [rbp-496]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6765,9 +6704,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6778,21 +6714,21 @@ date_0_1_write_a_specifier:
 .if_end_338:
     mov rax, 67
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_341
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 2
     push rax
-    mov rax, [rbp-520]
+    mov rax, [rbp-512]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6801,9 +6737,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6814,21 +6747,21 @@ date_0_1_write_a_specifier:
 .if_end_340:
     mov rax, 115
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_343
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 48
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-536]
+    mov rax, [rbp-528]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6837,9 +6770,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6850,29 +6780,29 @@ date_0_1_write_a_specifier:
 .if_end_342:
     mov rax, 97
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_345
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-232]
+    mov rax, [rbp-224]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_a_title
-    mov [rbp-552], rax  ; store a cased
-    mov rax, [rbp-56]
+    mov [rbp-544], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-552]
+    mov rax, [rbp-544]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6881,9 +6811,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6894,29 +6821,29 @@ date_0_1_write_a_specifier:
 .if_end_344:
     mov rax, 65
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_347
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-224]
+    mov rax, [rbp-216]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_a_title
-    mov [rbp-552], rax  ; store a cased
-    mov rax, [rbp-56]
+    mov [rbp-544], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-552]
+    mov rax, [rbp-544]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6925,9 +6852,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6938,29 +6862,29 @@ date_0_1_write_a_specifier:
 .if_end_346:
     mov rax, 98
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_349
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-208]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_a_title
-    mov [rbp-552], rax  ; store a cased
-    mov rax, [rbp-56]
+    mov [rbp-544], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-552]
+    mov rax, [rbp-544]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -6969,9 +6893,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -6982,29 +6903,29 @@ date_0_1_write_a_specifier:
 .if_end_348:
     mov rax, 66
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_351
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-200]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_a_title
-    mov [rbp-552], rax  ; store a cased
-    mov rax, [rbp-56]
+    mov [rbp-544], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-552]
+    mov rax, [rbp-544]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7013,9 +6934,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7026,21 +6944,21 @@ date_0_1_write_a_specifier:
 .if_end_350:
     mov rax, 104
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_353
-    mov rax, [rbp-56]
-    push rax
     mov rax, [rbp-48]
     push rax
     mov rax, [rbp-40]
     push rax
+    mov rax, [rbp-32]
+    push rax
     mov rax, 98
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7049,9 +6967,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -7061,29 +6976,29 @@ date_0_1_write_a_specifier:
 .if_end_352:
     mov rax, 112
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_355
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-240]
+    mov rax, [rbp-232]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_upper
-    mov [rbp-552], rax  ; store a cased
-    mov rax, [rbp-56]
+    mov [rbp-544], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-552]
+    mov rax, [rbp-544]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7092,9 +7007,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7105,26 +7017,26 @@ date_0_1_write_a_specifier:
 .if_end_354:
     mov rax, 80
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_357
-    mov rax, [rbp-240]
+    mov rax, [rbp-232]
     push rax
     pop rdi
     call date_0_1_lowercase_text
-    mov [rbp-560], rax  ; store p lowered
-    mov rax, [rbp-56]
+    mov [rbp-552], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-560]
+    mov rax, [rbp-552]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7133,9 +7045,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7146,29 +7055,29 @@ date_0_1_write_a_specifier:
 .if_end_356:
     mov rax, 90
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_359
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
     lea rax, [rel str_62]
     push rax
     pop rdi
     pop rsi
     call date_0_1_cased_for_upper
-    mov [rbp-568], rax  ; store z cased
-    mov rax, [rbp-56]
+    mov [rbp-560], rax
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
     mov rax, 32
     push rax
     mov rax, 0
     push rax
-    mov rax, [rbp-568]
+    mov rax, [rbp-560]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7177,9 +7086,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_render_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7190,17 +7096,19 @@ date_0_1_write_a_specifier:
 .if_end_358:
     mov rax, 122
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_361
-    mov rdi, [rbp-8]
+    mov rdi, [rbp-8]  ; cell: where the owner keeps it
+    mov rdi, [rdi]  ; the collection, as it is now
     lea rsi, [rel str_63]
     mov rdx, str_63_len
     call _buffer_append_bytes
-    mov [rbp-8], rax
-    mov rcx, [rbp-16]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-8]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7211,20 +7119,17 @@ date_0_1_write_a_specifier:
 .if_end_360:
     mov rax, 110
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_363
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 10
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7235,20 +7140,17 @@ date_0_1_write_a_specifier:
 .if_end_362:
     mov rax, 116
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_365
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 9
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7259,20 +7161,17 @@ date_0_1_write_a_specifier:
 .if_end_364:
     mov rax, 37
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_367
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 37
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7283,7 +7182,7 @@ date_0_1_write_a_specifier:
 .if_end_366:
     mov rax, 82
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_369
@@ -7296,9 +7195,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 72
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7307,19 +7206,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 58
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7329,9 +7222,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 77
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7340,9 +7233,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7353,7 +7243,7 @@ date_0_1_write_a_specifier:
 .if_end_368:
     mov rax, 84
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_371
@@ -7366,9 +7256,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 72
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7377,19 +7267,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 58
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7399,9 +7283,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 77
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7410,19 +7294,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 58
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7432,9 +7310,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 83
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7443,9 +7321,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7456,7 +7331,7 @@ date_0_1_write_a_specifier:
 .if_end_370:
     mov rax, 88
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_373
@@ -7469,9 +7344,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 84
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7480,9 +7355,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -7492,7 +7364,7 @@ date_0_1_write_a_specifier:
 .if_end_372:
     mov rax, 68
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_375
@@ -7505,9 +7377,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 109
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7516,19 +7388,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 47
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7538,9 +7404,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 100
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7549,19 +7415,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 47
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7571,9 +7431,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 121
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7582,9 +7442,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7595,7 +7452,7 @@ date_0_1_write_a_specifier:
 .if_end_374:
     mov rax, 120
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_377
@@ -7608,9 +7465,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 68
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7619,9 +7476,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -7631,7 +7485,7 @@ date_0_1_write_a_specifier:
 .if_end_376:
     mov rax, 70
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_379
@@ -7644,9 +7498,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 89
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7655,19 +7509,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 45
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7677,9 +7525,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 109
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7688,19 +7536,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 45
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7710,9 +7552,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 100
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7721,9 +7563,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7734,7 +7573,7 @@ date_0_1_write_a_specifier:
 .if_end_378:
     mov rax, 114
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_381
@@ -7747,9 +7586,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 73
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7758,19 +7597,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 58
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7780,9 +7613,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 77
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7791,19 +7624,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 58
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7813,9 +7640,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 83
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7824,19 +7651,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7846,9 +7667,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 112
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7857,9 +7678,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -7870,7 +7688,7 @@ date_0_1_write_a_specifier:
 .if_end_380:
     mov rax, 99
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_383
@@ -7883,9 +7701,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 97
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7894,19 +7712,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7916,9 +7728,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 98
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7927,19 +7739,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7949,9 +7755,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 101
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7960,19 +7766,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -7982,9 +7782,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 84
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -7993,19 +7793,13 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     INT_NEG
     push rax
@@ -8015,9 +7809,9 @@ date_0_1_write_a_specifier:
     push rax
     mov rax, 89
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where output's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -8026,9 +7820,6 @@ date_0_1_write_a_specifier:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 1
     push rax  ; save return value
     call _dec_call_depth
@@ -8045,7 +7836,7 @@ date_0_1_write_a_specifier:
 
 ; Function: write one escape at
 date_0_1_write_one_escape_at:
-    FUNC_PROLOGUE 160
+    FUNC_PROLOGUE 144
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -8058,52 +7849,49 @@ date_0_1_write_one_escape_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps format
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps format
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     mov rax, rcx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-32], rax  ; param payload
     mov rax, r8
-    mov [rbp-56], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-48], rax  ; param payload
+    mov [rbp-40], rax  ; cell: where the owner keeps output
     lea rax, [rel str_28]  ; empty text
-    mov [rbp-128], rax  ; store text the width text
+    mov [rbp-112], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     INT_ADD
-    mov [rbp-64], rax  ; store i
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store pad flag
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store case flag
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store c
+    mov [rbp-72], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
 .while_start_384:
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     test rax, rax
     jz .while_end_385
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jg .while_end_385
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-64]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-48]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_387  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -8120,103 +7908,104 @@ date_0_1_write_one_escape_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_388:
-    mov [rbp-88], rax  ; store c
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     mov rax, 45
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_390
     mov rax, 45
-    mov [rbp-72], rax  ; store pad flag
+    mov [rbp-56], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     jmp .if_end_389
 .else_390:
 .if_end_389:
     mov rax, 95
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_392
     mov rax, 95
-    mov [rbp-72], rax  ; store pad flag
+    mov [rbp-56], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     jmp .if_end_391
 .else_392:
 .if_end_391:
     mov rax, 48
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_394
     mov rax, 48
-    mov [rbp-72], rax  ; store pad flag
+    mov [rbp-56], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     jmp .if_end_393
 .else_394:
 .if_end_393:
     mov rax, 94
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_396
     mov rax, 94
-    mov [rbp-80], rax  ; store case flag
+    mov [rbp-64], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     jmp .if_end_395
 .else_396:
 .if_end_395:
     mov rax, 35
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_398
     mov rax, 35
-    mov [rbp-80], rax  ; store case flag
+    mov [rbp-64], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still a flag
+    mov [rbp-80], rax
     jmp .if_end_397
 .else_398:
 .if_end_397:
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     test rax, rax
     jz .else_400
-    inc qword [rbp-64]
+    inc qword [rbp-48]
     jmp .if_end_399
 .else_400:
 .if_end_399:
     jmp .while_start_384
 .while_end_385:
     call _alloc_buffer
-    mov [rbp-104], rax  ; buffer struct pointer
+    mov [rbp-88], rax  ; buffer struct pointer
     mov rax, 1
-    mov [rbp-112], rax  ; store still a digit
+    mov [rbp-96], rax
 .while_start_401:
-    mov rax, [rbp-112]
+    mov rax, [rbp-96]
     test rax, rax
     jz .while_end_402
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jg .while_end_402
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-64]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-48]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_404  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -8233,37 +8022,37 @@ date_0_1_write_one_escape_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_405:
-    mov [rbp-88], rax  ; store c
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-112], rax  ; store still a digit
+    mov [rbp-96], rax
     mov rax, 48
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jl .else_407
     mov rax, 57
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jg .else_407
     mov rax, 1
-    mov [rbp-112], rax  ; store still a digit
+    mov [rbp-96], rax
     jmp .if_end_406
 .else_407:
 .if_end_406:
-    mov rax, [rbp-112]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_409
-    lea rax, [rbp-104]  ; the cell holding digits
+    lea rax, [rbp-88]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    inc qword [rbp-64]
+    inc qword [rbp-48]
     jmp .if_end_408
 .else_409:
 .if_end_408:
@@ -8271,59 +8060,56 @@ date_0_1_write_one_escape_at:
 .while_end_402:
     mov rax, 1
     INT_NEG
-    mov [rbp-120], rax  ; store width
+    mov [rbp-104], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-88]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     cmp rax, rbx
     jle .else_411
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-136], rax
-    mov rax, [rbp-104]
-    mov rdi, [rbp-136]
+    mov [rbp-120], rax
+    mov rax, [rbp-88]
+    mov rdi, [rbp-120]
     mov rsi, rax
     call _buffer_append
-    mov [rbp-136], rax
-    mov rax, [rbp-136]
+    mov [rbp-120], rax
+    mov rax, [rbp-120]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-128], rax  ; store the width text
-    mov qword [rbp-144], 0  ; no cast of a text to a number has failed yet
-    mov rax, [rbp-128]
+    mov [rbp-112], rax
+    mov qword [rbp-128], 0  ; no cast of a text to a number has failed yet
+    mov rax, [rbp-112]
     mov rdi, rax
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_412
-    mov qword [rbp-144], 1  ; the text was not a number
+    mov qword [rbp-128], 1  ; the text was not a number
 .cast_read_a_number_412:
-    cmp qword [rbp-144], 0
+    cmp qword [rbp-128], 0
     je .cast_stored_413
-    mov rax, qword [rbp-120]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-104]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_413:
-    mov [rbp-120], rax  ; store width
+    mov [rbp-104], rax
     jmp .if_end_410
 .else_411:
 .if_end_410:
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jle .else_415
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-40]  ; cell: the owner's address, passed on
     push rax
     mov rax, 37
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -8332,11 +8118,12 @@ date_0_1_write_one_escape_at:
 .else_415:
 .if_end_414:
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-64]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-48]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_417  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -8353,18 +8140,18 @@ date_0_1_write_one_escape_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_418:
-    mov [rbp-88], rax  ; store c
-    mov rax, [rbp-120]
+    mov [rbp-72], rax
+    mov rax, [rbp-104]
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
+    push rax
+    mov rax, [rbp-56]
     push rax
     mov rax, [rbp-72]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-40]
-    push rax
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-40]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
@@ -8373,30 +8160,24 @@ date_0_1_write_one_escape_at:
     pop r8
     pop r9
     call date_0_1_write_a_specifier
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
-    mov [rbp-152], rax  ; store it was written
+    mov [rbp-136], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-152]
+    mov rax, [rbp-136]
     pop rbx
     cmp rax, rbx
     jne .else_420
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-40]  ; cell: the owner's address, passed on
     push rax
     mov rax, 37
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     INT_ADD
     push rax  ; save return value
@@ -8409,7 +8190,7 @@ date_0_1_write_one_escape_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     INT_ADD
     push rax  ; save return value
@@ -8433,7 +8214,7 @@ date_0_1_the_moment_written_as:
     mov [rbp-24], rax  ; buffer struct pointer
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer format
+    mov [rbp-32], rax
     mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
@@ -8446,11 +8227,11 @@ date_0_1_the_moment_written_as:
     mov [rbp-32], rax
     mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-40], rax  ; store the length
+    mov [rbp-40], rax
     mov rax, 1
-    mov [rbp-48], rax  ; store position
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-56], rax  ; store the byte
+    mov [rbp-56], rax
 .while_start_421:
     mov rax, [rbp-40]
     push rax
@@ -8459,11 +8240,11 @@ date_0_1_the_moment_written_as:
     cmp rax, rbx
     jg .while_end_422
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-32]
-    push rax  ; save buffer pointer
     mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_424  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -8480,14 +8261,14 @@ date_0_1_the_moment_written_as:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_425:
-    mov [rbp-56], rax  ; store the byte
+    mov [rbp-56], rax
     mov rax, 37
     push rax
     mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_427
-    lea rax, [rbp-24]  ; the cell holding output
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-8]
     push rax
@@ -8495,7 +8276,7 @@ date_0_1_the_moment_written_as:
     push rax
     mov rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the cell holding format
+    lea rax, [rbp-32]
     push rax
     pop rdi
     pop rsi
@@ -8503,7 +8284,7 @@ date_0_1_the_moment_written_as:
     pop rcx
     pop r8
     call date_0_1_write_one_escape_at
-    mov [rbp-48], rax  ; store position
+    mov [rbp-48], rax
     jmp .if_end_426
 .else_427:
 .if_end_426:
@@ -8513,7 +8294,7 @@ date_0_1_the_moment_written_as:
     pop rbx
     cmp rax, rbx
     je .else_429
-    lea rax, [rbp-24]  ; the cell holding output
+    lea rax, [rbp-24]
     push rax
     mov rax, [rbp-56]
     push rax
@@ -8643,27 +8424,24 @@ date_0_1_the_moment_in_words_of:
 
 ; Function: the byte at
 date_0_1_the_byte_at:
-    FUNC_PROLOGUE 48
+    FUNC_PROLOGUE 32
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
-    mov qword [rbp-40], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
+    mov qword [rbp-24], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_69]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_430
@@ -8708,7 +8486,7 @@ date_0_1_the_byte_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_441
-    mov qword [rbp-40], 1  ; the text was not a number
+    mov qword [rbp-24], 1  ; the text was not a number
 .cast_read_a_number_441:
 .vr_store_439:
     mov r11b, 0  ; new tag
@@ -8724,15 +8502,15 @@ date_0_1_the_byte_at:
     mov r11b, 0  ; new tag
 .vr_done_440:
 .dyn_cast_done_433:
-    cmp qword [rbp-40], 0
+    cmp qword [rbp-24], 0
     je .cast_stored_442
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_442:
-    mov [rbp-48], rax  ; store position
+    mov [rbp-32], rax
     mov rax, 1
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     cmp rax, rbx
     jge .else_444
@@ -8744,10 +8522,11 @@ date_0_1_the_byte_at:
     jmp .if_end_443
 .else_444:
 .if_end_443:
-    mov rax, [rbp-8]
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     cmp rax, rbx
     jle .else_446
@@ -8760,11 +8539,12 @@ date_0_1_the_byte_at:
 .else_446:
 .if_end_445:
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-32]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_448  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -8793,16 +8573,15 @@ date_0_1_step_past_the_byte:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-8], rax  ; param payload
-    mov qword [rbp-24], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-8], rax  ; cell: where the owner keeps reader
+    mov qword [rbp-16], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-8]
-    push rax  ; save map pointer
     lea rax, [rel str_70]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_450
@@ -8847,7 +8626,7 @@ date_0_1_step_past_the_byte:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_461
-    mov qword [rbp-24], 1  ; the text was not a number
+    mov qword [rbp-16], 1  ; the text was not a number
 .cast_read_a_number_461:
 .vr_store_459:
     mov r11b, 0  ; new tag
@@ -8863,112 +8642,84 @@ date_0_1_step_past_the_byte:
     mov r11b, 0  ; new tag
 .vr_done_460:
 .dyn_cast_done_453:
-    cmp qword [rbp-24], 0
+    cmp qword [rbp-16], 0
     je .cast_stored_462
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_462:
-    mov [rbp-32], rax  ; store position
+    mov [rbp-24], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-8]
-    push rax  ; save map pointer
     lea rax, [rel str_71]  ; literal map key
     push rax  ; save key pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     INT_ADD
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-8], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-16]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-8]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: skip spaces
 date_0_1_skip_spaces:
-    FUNC_PROLOGUE 48
+    FUNC_PROLOGUE 32
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, 0
-    mov [rbp-40], rax  ; store how many
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-24], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-32], rax
 .while_start_463:
     mov rax, 32
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     cmp rax, rbx
     jne .while_end_464
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    inc qword [rbp-40]
-    lea rax, [rbp-24]  ; the caller's reader
+    inc qword [rbp-24]
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-48], rax  ; store the byte
+    mov [rbp-32], rax
     jmp .while_start_463
 .while_end_464:
-    mov rax, [rbp-40]
+    mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -8976,7 +8727,7 @@ date_0_1_skip_spaces:
 
 ; Function: the document reads
 date_0_1_the_document_reads:
-    FUNC_PROLOGUE 112
+    FUNC_PROLOGUE 96
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -8985,42 +8736,39 @@ date_0_1_the_document_reads:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     xor rax, rax
-    mov [rbp-104], rax  ; store the byte found
+    mov [rbp-88], rax
     xor rax, rax
-    mov [rbp-112], rax  ; store the byte wanted
+    mov [rbp-96], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-48], rax  ; store buffer wanted
-    mov rdi, [rbp-48]
+    mov [rbp-32], rax
+    mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
     mov rdi, rax
     pop rsi  ; discard original pointer copy
-    mov rax, [rbp-40]
-    mov rdi, [rbp-48]
+    mov rax, [rbp-24]
+    mov rdi, [rbp-32]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-48], rax
-    mov rax, [rbp-48]
+    mov [rbp-32], rax
+    mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-56], rax  ; store letters wanted
-    mov qword [rbp-64], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-40], rax
+    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_72]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_465
@@ -9065,7 +8813,7 @@ date_0_1_the_document_reads:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_476
-    mov qword [rbp-64], 1  ; the text was not a number
+    mov qword [rbp-48], 1  ; the text was not a number
 .cast_read_a_number_476:
 .vr_store_474:
     mov r11b, 0  ; new tag
@@ -9081,57 +8829,47 @@ date_0_1_the_document_reads:
     mov r11b, 0  ; new tag
 .vr_done_475:
 .dyn_cast_done_468:
-    cmp qword [rbp-64], 0
+    cmp qword [rbp-48], 0
     je .cast_stored_477
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_477:
-    mov [rbp-72], rax  ; store start
-    mov rax, [rbp-72]
-    mov [rbp-80], rax  ; store position
+    mov [rbp-56], rax
+    mov rax, [rbp-56]
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store letters matched
+    mov [rbp-72], rax
     mov rax, 1
-    mov [rbp-96], rax  ; store still matching
+    mov [rbp-80], rax
 .while_start_478:
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     test rax, rax
     jz .while_end_479
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jge .while_end_479
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-104], rax  ; store the byte found
+    mov [rbp-88], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-48]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_481  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -9148,35 +8886,28 @@ date_0_1_the_document_reads:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_482:
-    mov [rbp-112], rax  ; store the byte wanted
+    mov [rbp-96], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store still matching
-    mov rax, [rbp-112]
+    mov [rbp-80], rax
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jne .else_484
     mov rax, 1
-    mov [rbp-96], rax  ; store still matching
+    mov [rbp-80], rax
     jmp .if_end_483
 .else_484:
 .if_end_483:
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     test rax, rax
     jz .else_486
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    inc qword [rbp-88]
+    inc qword [rbp-72]
     jmp .if_end_485
 .else_486:
 .if_end_485:
@@ -9184,25 +8915,28 @@ date_0_1_the_document_reads:
 .while_end_479:
     mov rax, 0
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jne .else_488
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_73]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-72]
+    mov rax, [rbp-56]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     mov rax, 0
     push rax  ; save return value
@@ -9259,7 +8993,7 @@ date_0_1_folded_to_lower_case:
 
 ; Function: the document reads ignoring case
 date_0_1_the_document_reads_ignoring_case:
-    FUNC_PROLOGUE 112
+    FUNC_PROLOGUE 96
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -9268,42 +9002,39 @@ date_0_1_the_document_reads_ignoring_case:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; param payload
     xor rax, rax
-    mov [rbp-96], rax  ; store the byte found
+    mov [rbp-80], rax
     xor rax, rax
-    mov [rbp-104], rax  ; store the byte wanted
+    mov [rbp-88], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-48], rax  ; store buffer wanted
-    mov rdi, [rbp-48]
+    mov [rbp-32], rax
+    mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
     mov rdi, rax
     pop rsi  ; discard original pointer copy
-    mov rax, [rbp-40]
-    mov rdi, [rbp-48]
+    mov rax, [rbp-24]
+    mov rdi, [rbp-32]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-48], rax
-    mov rax, [rbp-48]
+    mov [rbp-32], rax
+    mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-56], rax  ; store letters wanted
-    mov qword [rbp-64], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-40], rax
+    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_74]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_491
@@ -9348,7 +9079,7 @@ date_0_1_the_document_reads_ignoring_case:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_502
-    mov qword [rbp-64], 1  ; the text was not a number
+    mov qword [rbp-48], 1  ; the text was not a number
 .cast_read_a_number_502:
 .vr_store_500:
     mov r11b, 0  ; new tag
@@ -9364,58 +9095,48 @@ date_0_1_the_document_reads_ignoring_case:
     mov r11b, 0  ; new tag
 .vr_done_501:
 .dyn_cast_done_494:
-    cmp qword [rbp-64], 0
+    cmp qword [rbp-48], 0
     je .cast_stored_503
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_503:
-    mov [rbp-72], rax  ; store start
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store letters matched
+    mov [rbp-64], rax
     mov rax, 1
-    mov [rbp-88], rax  ; store still matching
+    mov [rbp-72], rax
 .while_start_504:
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     test rax, rax
     jz .while_end_505
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jge .while_end_505
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     push rax
     pop rdi
     call date_0_1_folded_to_lower_case
-    mov [rbp-96], rax  ; store the byte found
+    mov [rbp-80], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-48]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-32]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_507  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -9432,35 +9153,28 @@ date_0_1_the_document_reads_ignoring_case:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_508:
-    mov [rbp-104], rax  ; store the byte wanted
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store still matching
-    mov rax, [rbp-104]
+    mov [rbp-72], rax
+    mov rax, [rbp-88]
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jne .else_510
     mov rax, 1
-    mov [rbp-88], rax  ; store still matching
+    mov [rbp-72], rax
     jmp .if_end_509
 .else_510:
 .if_end_509:
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     test rax, rax
     jz .else_512
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    inc qword [rbp-80]
+    inc qword [rbp-64]
     jmp .if_end_511
 .else_512:
 .if_end_511:
@@ -9468,25 +9182,28 @@ date_0_1_the_document_reads_ignoring_case:
 .while_end_505:
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_514
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_75]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-72]
+    mov rax, [rbp-56]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     mov rax, 0
     push rax  ; save return value
@@ -9504,7 +9221,7 @@ date_0_1_the_document_reads_ignoring_case:
 
 ; Function: read exactly
 date_0_1_read_exactly:
-    FUNC_PROLOGUE 112
+    FUNC_PROLOGUE 96
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -9515,22 +9232,19 @@ date_0_1_read_exactly:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps document
     mov rax, rdx
-    mov [rbp-40], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps reader
     xor rax, rax
-    mov [rbp-88], rax  ; store b
-    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-72], rax
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_76]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_515
@@ -9575,7 +9289,7 @@ date_0_1_read_exactly:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_526
-    mov qword [rbp-48], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_526:
 .vr_store_524:
     mov r11b, 0  ; new tag
@@ -9591,87 +9305,70 @@ date_0_1_read_exactly:
     mov r11b, 0  ; new tag
 .vr_done_525:
 .dyn_cast_done_518:
-    cmp qword [rbp-48], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_527
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_527:
-    mov [rbp-56], rax  ; store start
+    mov [rbp-40], rax
     call _alloc_buffer
-    mov [rbp-64], rax  ; buffer struct pointer
+    mov [rbp-48], rax  ; buffer struct pointer
     mov rax, 0
-    mov [rbp-72], rax  ; store i
+    mov [rbp-56], rax
     mov rax, 1
-    mov [rbp-80], rax  ; store ok
+    mov [rbp-64], rax
 .while_start_528:
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
     test rax, rax
     jz .while_end_529
     mov rax, [rbp-8]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jge .while_end_529
-    lea rax, [rbp-32]  ; the caller's reader
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-24]  ; where document's owner keeps it
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-24]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-16], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-32]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-40]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-88], rax  ; store b
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store ok
+    mov [rbp-64], rax
     mov rax, 48
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jl .else_531
     mov rax, 57
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jg .else_531
     mov rax, 1
-    mov [rbp-80], rax  ; store ok
+    mov [rbp-64], rax
     jmp .if_end_530
 .else_531:
 .if_end_530:
-    mov rax, [rbp-80]
+    mov rax, [rbp-64]
     test rax, rax
     jz .else_533
-    lea rax, [rbp-64]  ; the cell holding digits
+    lea rax, [rbp-48]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-72]
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    lea rax, [rbp-32]  ; the caller's reader
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-32]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-40]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    inc qword [rbp-72]
+    inc qword [rbp-56]
     jmp .if_end_532
 .else_533:
 .if_end_532:
@@ -9679,25 +9376,28 @@ date_0_1_read_exactly:
 .while_end_529:
     mov rax, [rbp-8]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jge .else_535
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_77]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-32], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-40]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     mov rax, 1
     INT_NEG
@@ -9710,16 +9410,16 @@ date_0_1_read_exactly:
 .if_end_534:
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-104], rax
-    mov rax, [rbp-64]
-    mov rdi, [rbp-104]
+    mov [rbp-88], rax
+    mov rax, [rbp-48]
+    mov rdi, [rbp-88]
     mov rsi, rax
     call _buffer_append
-    mov [rbp-104], rax
-    mov rax, [rbp-104]
+    mov [rbp-88], rax
+    mov rax, [rbp-88]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-96], rax  ; store figures
-    mov rax, [rbp-96]
+    mov [rbp-80], rax
+    mov rax, [rbp-80]
     mov rdi, rax
     call _parse_i64
     push rax  ; save return value
@@ -9729,7 +9429,7 @@ date_0_1_read_exactly:
 
 ; Function: read some digits into
 date_0_1_read_some_digits_into:
-    FUNC_PROLOGUE 96
+    FUNC_PROLOGUE 64
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -9738,112 +9438,79 @@ date_0_1_read_some_digits_into:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
     call _alloc_buffer
-    mov [rbp-56], rax  ; buffer struct pointer
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-32], rax  ; buffer struct pointer
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-64], rax  ; store b
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store still a digit
+    mov [rbp-48], rax
     mov rax, 48
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jl .else_537
     mov rax, 57
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jg .else_537
     mov rax, 1
-    mov [rbp-72], rax  ; store still a digit
+    mov [rbp-48], rax
     jmp .if_end_536
 .else_537:
 .if_end_536:
 .while_start_538:
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     test rax, rax
     jz .while_end_539
-    lea rax, [rbp-56]  ; the cell holding digits
+    lea rax, [rbp-32]
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     push rax
     pop rdi
     pop rsi
     call date_0_1_write_the_byte
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-64], rax  ; store b
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store still a digit
+    mov [rbp-48], rax
     mov rax, 48
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jl .else_541
     mov rax, 57
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jg .else_541
     mov rax, 1
-    mov [rbp-72], rax  ; store still a digit
+    mov [rbp-48], rax
     jmp .if_end_540
 .else_541:
 .if_end_540:
@@ -9851,42 +9518,48 @@ date_0_1_read_some_digits_into:
 .while_end_539:
     mov rax, 0
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     cmp rax, rbx
     jne .else_543
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_78]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_79]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -9897,48 +9570,54 @@ date_0_1_read_some_digits_into:
 .if_end_542:
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-88], rax
-    mov rax, [rbp-56]
-    mov rdi, [rbp-88]
+    mov [rbp-64], rax
+    mov rax, [rbp-32]
+    mov rdi, [rbp-64]
     mov rsi, rax
     call _buffer_append
-    mov [rbp-88], rax
-    mov rax, [rbp-88]
+    mov [rbp-64], rax
+    mov rax, [rbp-64]
     BUFFER_DATA_ADDR rax  ; buffer data area
-    mov [rbp-80], rax  ; store figures
+    mov [rbp-56], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_80]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_81]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     mov rdi, rax
     call _parse_i64
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
@@ -9995,7 +9674,7 @@ date_0_1_the_trimmed_text_of:
     mov [rbp-8], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-16], rax  ; store buffer letters
+    mov [rbp-16], rax
     mov rdi, [rbp-16]
     push rdi
     call _buffer_clear
@@ -10008,15 +9687,15 @@ date_0_1_the_trimmed_text_of:
     mov [rbp-16], rax
     mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-24], rax  ; store the length
+    mov [rbp-24], rax
     mov rax, 1
-    mov [rbp-32], rax  ; store start
+    mov [rbp-32], rax
     mov rax, [rbp-24]
-    mov [rbp-40], rax  ; store the end
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, 1
-    mov [rbp-56], rax  ; store still whitespace at the start
+    mov [rbp-56], rax
 .while_start_544:
     mov rax, [rbp-40]
     push rax
@@ -10028,11 +9707,11 @@ date_0_1_the_trimmed_text_of:
     test rax, rax
     jz .while_end_545
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_547  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -10049,12 +9728,12 @@ date_0_1_the_trimmed_text_of:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_548:
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax
     pop rdi
     call date_0_1_is_a_space_byte
-    mov [rbp-56], rax  ; store still whitespace at the start
+    mov [rbp-56], rax
     mov rax, [rbp-56]
     test rax, rax
     jz .else_550
@@ -10065,7 +9744,7 @@ date_0_1_the_trimmed_text_of:
     jmp .while_start_544
 .while_end_545:
     mov rax, 1
-    mov [rbp-64], rax  ; store still whitespace at the end
+    mov [rbp-64], rax
 .while_start_551:
     mov rax, [rbp-32]
     push rax
@@ -10077,11 +9756,11 @@ date_0_1_the_trimmed_text_of:
     test rax, rax
     jz .while_end_552
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-40]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_554  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -10098,12 +9777,12 @@ date_0_1_the_trimmed_text_of:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_555:
-    mov [rbp-48], rax  ; store b
+    mov [rbp-48], rax
     mov rax, [rbp-48]
     push rax
     pop rdi
     call date_0_1_is_a_space_byte
-    mov [rbp-64], rax  ; store still whitespace at the end
+    mov [rbp-64], rax
     mov rax, [rbp-64]
     test rax, rax
     jz .else_557
@@ -10124,14 +9803,14 @@ date_0_1_the_trimmed_text_of:
     mov rax, [rbp-80]
     cmp rax, [rbp-88]
     jge .for_end_560
-    lea rax, [rbp-72]  ; the cell holding trimmed
+    lea rax, [rbp-72]
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     mov rax, [rbp-80]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_562  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -10173,7 +9852,7 @@ date_0_1_the_trimmed_text_of:
 
 ; Function: read an offset into
 date_0_1_read_an_offset_into:
-    FUNC_PROLOGUE 128
+    FUNC_PROLOGUE 112
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -10182,26 +9861,21 @@ date_0_1_read_an_offset_into:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
     xor rax, rax
-    mov [rbp-120], rax  ; store the fused minute
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-96], rax
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_82]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_564
@@ -10246,7 +9920,7 @@ date_0_1_read_an_offset_into:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_575
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_575:
 .vr_store_573:
     mov r11b, 0  ; new tag
@@ -10262,67 +9936,63 @@ date_0_1_read_an_offset_into:
     mov r11b, 0  ; new tag
 .vr_done_574:
 .dyn_cast_done_567:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_576
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_576:
-    mov [rbp-64], rax  ; store start
+    mov [rbp-40], rax
     lea rax, [rel str_83]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-72], rax  ; store it reads z
-    mov rax, [rbp-72]
+    mov [rbp-48], rax
+    mov rax, [rbp-48]
     test rax, rax
     jz .else_578
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_84]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_85]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -10331,86 +10001,82 @@ date_0_1_read_an_offset_into:
     jmp .if_end_577
 .else_578:
 .if_end_577:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-80], rax  ; store c
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store the sign
+    mov [rbp-64], rax
     mov rax, 43
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_580
     mov rax, 1
-    mov [rbp-88], rax  ; store the sign
+    mov [rbp-64], rax
     jmp .if_end_579
 .else_580:
 .if_end_579:
     mov rax, 45
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_582
     mov rax, 1
     INT_NEG
-    mov [rbp-88], rax  ; store the sign
+    mov [rbp-64], rax
     jmp .if_end_581
 .else_582:
 .if_end_581:
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jne .else_584
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_86]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_87]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -10419,20 +10085,13 @@ date_0_1_read_an_offset_into:
     jmp .if_end_583
 .else_584:
 .if_end_583:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call date_0_1_step_past_the_byte
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -10440,70 +10099,69 @@ date_0_1_read_an_offset_into:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-96], rax  ; store the hour
+    mov [rbp-72], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jge .else_586
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_88]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_89]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_90]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -10513,34 +10171,24 @@ date_0_1_read_an_offset_into:
 .else_586:
 .if_end_585:
     mov rax, 0
-    mov [rbp-104], rax  ; store the minute
+    mov [rbp-80], rax
     lea rax, [rel str_91]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-112], rax  ; store it has a colon
-    mov rax, [rbp-112]
+    mov [rbp-88], rax
+    mov rax, [rbp-88]
     test rax, rax
     jz .else_588
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -10548,76 +10196,75 @@ date_0_1_read_an_offset_into:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-104], rax  ; store the minute
+    mov [rbp-80], rax
     jmp .if_end_587
 .else_588:
 .if_end_587:
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     test rax, rax
     jz .else_590
     mov rax, 0
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jge .else_590
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_92]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_93]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_94]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -10628,13 +10275,13 @@ date_0_1_read_an_offset_into:
 .if_end_589:
     mov rax, 0
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jne .else_592
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -10642,25 +10289,15 @@ date_0_1_read_an_offset_into:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-120], rax  ; store the fused minute
+    mov [rbp-96], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     pop rbx
     cmp rax, rbx
     jl .else_594
-    mov rax, [rbp-120]
-    mov [rbp-104], rax  ; store the minute
+    mov rax, [rbp-96]
+    mov [rbp-80], rax
     jmp .if_end_593
 .else_594:
 .if_end_593:
@@ -10671,95 +10308,87 @@ date_0_1_read_an_offset_into:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 60
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     pop rbx
     INT_MUL
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 3600
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-72]
     pop rbx
     INT_MUL
     pop rbx
     INT_ADD
-    mov [rbp-128], rax  ; store the offset seconds
+    mov [rbp-104], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_95]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_96]  ; literal map key
     push rax  ; save key pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     INT_MUL
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: read a month name at
 date_0_1_read_a_month_name_at:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     lea rax, [rel str_97]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_596
     mov rax, 1
@@ -10772,24 +10401,14 @@ date_0_1_read_a_month_name_at:
 .if_end_595:
     lea rax, [rel str_98]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_598
     mov rax, 2
@@ -10802,24 +10421,14 @@ date_0_1_read_a_month_name_at:
 .if_end_597:
     lea rax, [rel str_99]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_600
     mov rax, 3
@@ -10832,24 +10441,14 @@ date_0_1_read_a_month_name_at:
 .if_end_599:
     lea rax, [rel str_100]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_602
     mov rax, 4
@@ -10862,24 +10461,14 @@ date_0_1_read_a_month_name_at:
 .if_end_601:
     lea rax, [rel str_101]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_604
     mov rax, 5
@@ -10892,24 +10481,14 @@ date_0_1_read_a_month_name_at:
 .if_end_603:
     lea rax, [rel str_102]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_606
     mov rax, 6
@@ -10922,24 +10501,14 @@ date_0_1_read_a_month_name_at:
 .if_end_605:
     lea rax, [rel str_103]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_608
     mov rax, 7
@@ -10952,24 +10521,14 @@ date_0_1_read_a_month_name_at:
 .if_end_607:
     lea rax, [rel str_104]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_610
     mov rax, 8
@@ -10982,24 +10541,14 @@ date_0_1_read_a_month_name_at:
 .if_end_609:
     lea rax, [rel str_105]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_612
     mov rax, 9
@@ -11012,24 +10561,14 @@ date_0_1_read_a_month_name_at:
 .if_end_611:
     lea rax, [rel str_106]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_614
     mov rax, 10
@@ -11042,24 +10581,14 @@ date_0_1_read_a_month_name_at:
 .if_end_613:
     lea rax, [rel str_107]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_616
     mov rax, 11
@@ -11072,24 +10601,14 @@ date_0_1_read_a_month_name_at:
 .if_end_615:
     lea rax, [rel str_108]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_618
     mov rax, 12
@@ -11102,24 +10621,14 @@ date_0_1_read_a_month_name_at:
 .if_end_617:
     lea rax, [rel str_109]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_620
     mov rax, 1
@@ -11132,24 +10641,14 @@ date_0_1_read_a_month_name_at:
 .if_end_619:
     lea rax, [rel str_110]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_622
     mov rax, 2
@@ -11162,24 +10661,14 @@ date_0_1_read_a_month_name_at:
 .if_end_621:
     lea rax, [rel str_111]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_624
     mov rax, 3
@@ -11192,24 +10681,14 @@ date_0_1_read_a_month_name_at:
 .if_end_623:
     lea rax, [rel str_112]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_626
     mov rax, 4
@@ -11222,24 +10701,14 @@ date_0_1_read_a_month_name_at:
 .if_end_625:
     lea rax, [rel str_113]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_628
     mov rax, 6
@@ -11252,24 +10721,14 @@ date_0_1_read_a_month_name_at:
 .if_end_627:
     lea rax, [rel str_114]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_630
     mov rax, 7
@@ -11282,24 +10741,14 @@ date_0_1_read_a_month_name_at:
 .if_end_629:
     lea rax, [rel str_115]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_632
     mov rax, 8
@@ -11312,24 +10761,14 @@ date_0_1_read_a_month_name_at:
 .if_end_631:
     lea rax, [rel str_116]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_634
     mov rax, 9
@@ -11342,24 +10781,14 @@ date_0_1_read_a_month_name_at:
 .if_end_633:
     lea rax, [rel str_117]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_636
     mov rax, 10
@@ -11372,24 +10801,14 @@ date_0_1_read_a_month_name_at:
 .if_end_635:
     lea rax, [rel str_118]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_638
     mov rax, 11
@@ -11402,24 +10821,14 @@ date_0_1_read_a_month_name_at:
 .if_end_637:
     lea rax, [rel str_119]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_640
     mov rax, 12
@@ -11438,40 +10847,26 @@ date_0_1_read_a_month_name_at:
 
 ; Function: read a weekday name at
 date_0_1_read_a_weekday_name_at:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     lea rax, [rel str_120]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_642
     mov rax, 1
@@ -11484,24 +10879,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_641:
     lea rax, [rel str_121]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_644
     mov rax, 2
@@ -11514,24 +10899,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_643:
     lea rax, [rel str_122]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_646
     mov rax, 3
@@ -11544,24 +10919,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_645:
     lea rax, [rel str_123]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_648
     mov rax, 4
@@ -11574,24 +10939,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_647:
     lea rax, [rel str_124]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_650
     mov rax, 5
@@ -11604,24 +10959,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_649:
     lea rax, [rel str_125]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_652
     mov rax, 6
@@ -11634,24 +10979,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_651:
     lea rax, [rel str_126]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_654
     mov rax, 7
@@ -11664,24 +10999,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_653:
     lea rax, [rel str_127]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_656
     mov rax, 1
@@ -11694,24 +11019,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_655:
     lea rax, [rel str_128]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_658
     mov rax, 2
@@ -11724,24 +11039,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_657:
     lea rax, [rel str_129]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_660
     mov rax, 3
@@ -11754,24 +11059,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_659:
     lea rax, [rel str_130]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_662
     mov rax, 4
@@ -11784,24 +11079,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_661:
     lea rax, [rel str_131]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_664
     mov rax, 5
@@ -11814,24 +11099,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_663:
     lea rax, [rel str_132]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_666
     mov rax, 6
@@ -11844,24 +11119,14 @@ date_0_1_read_a_weekday_name_at:
 .if_end_665:
     lea rax, [rel str_133]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_668
     mov rax, 7
@@ -11880,7 +11145,7 @@ date_0_1_read_a_weekday_name_at:
 
 ; Function: try a clock time at
 date_0_1_try_a_clock_time_at:
-    FUNC_PROLOGUE 176
+    FUNC_PROLOGUE 144
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -11889,24 +11154,19 @@ date_0_1_try_a_clock_time_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_134]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_669
@@ -11951,7 +11211,7 @@ date_0_1_try_a_clock_time_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_680
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_680:
 .vr_store_678:
     mov r11b, 0  ; new tag
@@ -11967,12 +11227,12 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 0  ; new tag
 .vr_done_679:
 .dyn_cast_done_672:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_681
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_681:
-    mov [rbp-64], rax  ; store start
+    mov [rbp-40], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -11996,34 +11256,24 @@ date_0_1_try_a_clock_time_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-72], rax  ; store scratch
-    lea rax, [rbp-72]  ; the caller's scratch
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-80], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_137]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_682
@@ -12085,33 +11335,36 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 3  ; new tag
 .vr_done_692:
 .dyn_cast_done_685:
-    cmp qword [rbp-80], 0
+    cmp qword [rbp-56], 0
     je .cast_stored_693
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_693:
-    mov [rbp-88], rax  ; store the hour matched
+    mov [rbp-64], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jne .else_695
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_138]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -12120,13 +11373,13 @@ date_0_1_try_a_clock_time_at:
     jmp .if_end_694
 .else_695:
 .if_end_694:
-    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_139]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_696
@@ -12171,7 +11424,7 @@ date_0_1_try_a_clock_time_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_707
-    mov qword [rbp-96], 1  ; the text was not a number
+    mov qword [rbp-72], 1  ; the text was not a number
 .cast_read_a_number_707:
 .vr_store_705:
     mov r11b, 0  ; new tag
@@ -12187,70 +11440,66 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 0  ; new tag
 .vr_done_706:
 .dyn_cast_done_699:
-    cmp qword [rbp-96], 0
+    cmp qword [rbp-72], 0
     je .cast_stored_708
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_708:
-    mov [rbp-104], rax  ; store the hour
+    mov [rbp-80], rax
     lea rax, [rel str_140]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-112], rax  ; store has the first colon
+    mov [rbp-88], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jne .else_710
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_141]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_142]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -12260,44 +11509,37 @@ date_0_1_try_a_clock_time_at:
 .else_710:
 .if_end_709:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_143]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-72], rax  ; store new pointer for scratch
-    lea rax, [rbp-72]  ; the caller's scratch
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_144]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_711
@@ -12359,49 +11601,55 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 3  ; new tag
 .vr_done_721:
 .dyn_cast_done_714:
-    cmp qword [rbp-120], 0
+    cmp qword [rbp-96], 0
     je .cast_stored_722
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_722:
-    mov [rbp-128], rax  ; store the minute matched
+    mov [rbp-104], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     pop rbx
     cmp rax, rbx
     jne .else_724
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_145]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_146]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -12410,13 +11658,13 @@ date_0_1_try_a_clock_time_at:
     jmp .if_end_723
 .else_724:
 .if_end_723:
-    mov qword [rbp-136], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_147]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_725
@@ -12461,7 +11709,7 @@ date_0_1_try_a_clock_time_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_736
-    mov qword [rbp-136], 1  ; the text was not a number
+    mov qword [rbp-112], 1  ; the text was not a number
 .cast_read_a_number_736:
 .vr_store_734:
     mov r11b, 0  ; new tag
@@ -12477,78 +11725,61 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 0  ; new tag
 .vr_done_735:
 .dyn_cast_done_728:
-    cmp qword [rbp-136], 0
+    cmp qword [rbp-112], 0
     je .cast_stored_737
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_737:
-    mov [rbp-144], rax  ; store the minute
+    mov [rbp-120], rax
     mov rax, 0
-    mov [rbp-152], rax  ; store the second
+    mov [rbp-128], rax
     lea rax, [rel str_148]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-160], rax  ; store has the second colon
-    mov rax, [rbp-160]
+    mov [rbp-136], rax
+    mov rax, [rbp-136]
     test rax, rax
     jz .else_739
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_149]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-72], rax  ; store new pointer for scratch
-    lea rax, [rbp-72]  ; the caller's scratch
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     mov rax, 0
     push rax
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_150]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_742
@@ -12569,36 +11800,42 @@ date_0_1_try_a_clock_time_at:
     cmp rax, rbx
     jne .else_741
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_151]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_152]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -12610,16 +11847,16 @@ date_0_1_try_a_clock_time_at:
     jmp .if_end_738
 .else_739:
 .if_end_738:
-    mov rax, [rbp-160]
+    mov rax, [rbp-136]
     test rax, rax
     jz .else_746
-    mov qword [rbp-168], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-144], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_153]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_747
@@ -12664,7 +11901,7 @@ date_0_1_try_a_clock_time_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_758
-    mov qword [rbp-168], 1  ; the text was not a number
+    mov qword [rbp-144], 1  ; the text was not a number
 .cast_read_a_number_758:
 .vr_store_756:
     mov r11b, 0  ; new tag
@@ -12680,85 +11917,97 @@ date_0_1_try_a_clock_time_at:
     mov r11b, 0  ; new tag
 .vr_done_757:
 .dyn_cast_done_750:
-    cmp qword [rbp-168], 0
+    cmp qword [rbp-144], 0
     je .cast_stored_759
-    mov rax, qword [rbp-152]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-128]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_759:
-    mov [rbp-152], rax  ; store the second
+    mov [rbp-128], rax
     jmp .if_end_745
 .else_746:
 .if_end_745:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_154]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_155]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_156]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-144]
+    mov rax, [rbp-120]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_157]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-152]
+    mov rax, [rbp-128]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try the epoch form at
 date_0_1_try_the_epoch_form_at:
-    FUNC_PROLOGUE 128
+    FUNC_PROLOGUE 112
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -12767,24 +12016,19 @@ date_0_1_try_the_epoch_form_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_158]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_760
@@ -12829,7 +12073,7 @@ date_0_1_try_the_epoch_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_771
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_771:
 .vr_store_769:
     mov r11b, 0  ; new tag
@@ -12845,54 +12089,47 @@ date_0_1_try_the_epoch_form_at:
     mov r11b, 0  ; new tag
 .vr_done_770:
 .dyn_cast_done_763:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_772
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_772:
-    mov [rbp-64], rax  ; store start
+    mov [rbp-40], rax
     lea rax, [rel str_159]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-72], rax  ; store has the at sign
+    mov [rbp-48], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_774
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_160]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -12902,34 +12139,24 @@ date_0_1_try_the_epoch_form_at:
 .else_774:
 .if_end_773:
     mov rax, 1
-    mov [rbp-80], rax  ; store the sign
+    mov [rbp-56], rax
     lea rax, [rel str_161]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-88], rax  ; store it is negative
-    mov rax, [rbp-88]
+    mov [rbp-64], rax
+    mov rax, [rbp-64]
     test rax, rax
     jz .else_776
     mov rax, 1
     INT_NEG
-    mov [rbp-80], rax  ; store the sign
+    mov [rbp-56], rax
     jmp .if_end_775
 .else_776:
 .if_end_775:
@@ -12956,34 +12183,24 @@ date_0_1_try_the_epoch_form_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-96], rax  ; store scratch
-    lea rax, [rbp-96]  ; the caller's scratch
+    mov [rbp-72], rax
+    lea rax, [rbp-72]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-104], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-80], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-96]
-    push rax  ; save map pointer
     lea rax, [rel str_164]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_777
@@ -13045,49 +12262,55 @@ date_0_1_try_the_epoch_form_at:
     mov r11b, 3  ; new tag
 .vr_done_787:
 .dyn_cast_done_780:
-    cmp qword [rbp-104], 0
+    cmp qword [rbp-80], 0
     je .cast_stored_788
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_788:
-    mov [rbp-112], rax  ; store digits matched
+    mov [rbp-88], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jne .else_790
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_165]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_166]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13096,13 +12319,13 @@ date_0_1_try_the_epoch_form_at:
     jmp .if_end_789
 .else_790:
 .if_end_789:
-    mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-96]
-    push rax  ; save map pointer
     lea rax, [rel str_167]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_791
@@ -13147,7 +12370,7 @@ date_0_1_try_the_epoch_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_802
-    mov qword [rbp-120], 1  ; the text was not a number
+    mov qword [rbp-96], 1  ; the text was not a number
 .cast_read_a_number_802:
 .vr_store_800:
     mov r11b, 0  ; new tag
@@ -13163,55 +12386,61 @@ date_0_1_try_the_epoch_form_at:
     mov r11b, 0  ; new tag
 .vr_done_801:
 .dyn_cast_done_794:
-    cmp qword [rbp-120], 0
+    cmp qword [rbp-96], 0
     je .cast_stored_803
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_803:
-    mov [rbp-128], rax  ; store the value
+    mov [rbp-104], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_168]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_169]  ; literal map key
     push rax  ; save key pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     INT_MUL
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try the compact form at
 date_0_1_try_the_compact_form_at:
-    FUNC_PROLOGUE 160
+    FUNC_PROLOGUE 128
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -13220,24 +12449,19 @@ date_0_1_try_the_compact_form_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_170]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_804
@@ -13282,7 +12506,7 @@ date_0_1_try_the_compact_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_815
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_815:
 .vr_store_813:
     mov r11b, 0  ; new tag
@@ -13298,15 +12522,15 @@ date_0_1_try_the_compact_form_at:
     mov r11b, 0  ; new tag
 .vr_done_814:
 .dyn_cast_done_807:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_816
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_816:
-    mov [rbp-64], rax  ; store start
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-40], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 4
     push rax
@@ -13314,38 +12538,31 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-72], rax  ; store the year
+    mov [rbp-48], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jge .else_818
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_171]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13354,9 +12571,9 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_817
 .else_818:
 .if_end_817:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -13364,54 +12581,50 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-80], rax  ; store the month
+    mov [rbp-56], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jge .else_820
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_172]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_173]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13420,9 +12633,9 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_819
 .else_820:
 .if_end_819:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -13430,54 +12643,50 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-88], rax  ; store the day of month
+    mov [rbp-64], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jge .else_822
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_174]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_175]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13487,38 +12696,28 @@ date_0_1_try_the_compact_form_at:
 .else_822:
 .if_end_821:
     mov rax, 0
-    mov [rbp-96], rax  ; store the hour
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-104], rax  ; store the minute
+    mov [rbp-80], rax
     mov rax, 0
-    mov [rbp-112], rax  ; store the second
+    mov [rbp-88], rax
     lea rax, [rel str_176]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-120], rax  ; store has a time part
-    mov rax, [rbp-120]
+    mov [rbp-96], rax
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_824
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -13526,60 +12725,56 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-96], rax  ; store the hour
+    mov [rbp-72], rax
     jmp .if_end_823
 .else_824:
 .if_end_823:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_826
     mov rax, 0
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jge .else_826
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_177]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_178]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13588,12 +12783,12 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_825
 .else_826:
 .if_end_825:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_828
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -13601,60 +12796,56 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-104], rax  ; store the minute
+    mov [rbp-80], rax
     jmp .if_end_827
 .else_828:
 .if_end_827:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_830
     mov rax, 0
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jge .else_830
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_179]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_180]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13663,12 +12854,12 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_829
 .else_830:
 .if_end_829:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_832
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -13676,60 +12867,56 @@ date_0_1_try_the_compact_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-112], rax  ; store the second
+    mov [rbp-88], rax
     jmp .if_end_831
 .else_832:
 .if_end_831:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     test rax, rax
     jz .else_834
     mov rax, 0
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jge .else_834
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_181]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_182]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13738,77 +12925,73 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_833
 .else_834:
 .if_end_833:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_byte_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-128], rax  ; store the next byte
+    mov [rbp-104], rax
     mov rax, 0
-    mov [rbp-136], rax  ; store the next byte is a digit
+    mov [rbp-112], rax
     mov rax, 48
     push rax
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     pop rbx
     cmp rax, rbx
     jl .else_836
     mov rax, 57
     push rax
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     pop rbx
     cmp rax, rbx
     jg .else_836
     mov rax, 1
-    mov [rbp-136], rax  ; store the next byte is a digit
+    mov [rbp-112], rax
     jmp .if_end_835
 .else_836:
 .if_end_835:
-    mov rax, [rbp-136]
+    mov rax, [rbp-112]
     test rax, rax
     jz .else_838
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_183]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_184]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13817,6 +13000,68 @@ date_0_1_try_the_compact_form_at:
     jmp .if_end_837
 .else_838:
 .if_end_837:
+    mov rax, [rbp-64]
+    push rax
+    mov rax, [rbp-56]
+    push rax
+    mov rax, [rbp-48]
+    push rax
+    pop rdi
+    pop rsi
+    pop rdx
+    call date_0_1_is_a_valid_date
+    mov [rbp-120], rax
+    mov rax, 0
+    push rax
+    mov rax, [rbp-120]
+    pop rbx
+    cmp rax, rbx
+    jne .else_840
+    ; Set map's key to value (insert/replace)
+    lea rax, [rel str_185]  ; literal map key
+    push rax  ; save key pointer
+    mov rax, [rbp-40]
+    mov rdx, rax  ; value
+    mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
+    pop rsi  ; key pointer
+    call _map_insert
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
+    ; Set map's key to value (insert/replace)
+    lea rax, [rel str_186]  ; literal map key
+    push rax  ; save key pointer
+    mov rax, 0
+    mov rdx, rax  ; value
+    mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
+    pop rsi  ; key pointer
+    call _map_insert
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
+    push rax  ; save return value
+    call _dec_call_depth
+    pop rax  ; restore return value
+    FUNC_EPILOGUE
+    jmp .if_end_839
+.else_840:
+.if_end_839:
     mov rax, [rbp-88]
     push rax
     mov rax, [rbp-80]
@@ -13826,101 +13071,51 @@ date_0_1_try_the_compact_form_at:
     pop rdi
     pop rsi
     pop rdx
-    call date_0_1_is_a_valid_date
-    mov [rbp-144], rax  ; store the date is valid
-    mov rax, 0
-    push rax
-    mov rax, [rbp-144]
-    pop rbx
-    cmp rax, rbx
-    jne .else_840
-    ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
-    lea rax, [rel str_185]  ; literal map key
-    push rax  ; save key pointer
-    mov rax, [rbp-64]
-    mov rdx, rax  ; value
-    mov ecx, 0  ; value type tag
-    pop rsi  ; key pointer
-    pop rdi  ; map pointer
-    call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
-    push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
-    pop rbx
-    ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
-    lea rax, [rel str_186]  ; literal map key
-    push rax  ; save key pointer
-    mov rax, 0
-    mov rdx, rax  ; value
-    mov ecx, 3  ; value type tag
-    pop rsi  ; key pointer
-    pop rdi  ; map pointer
-    call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
-    push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
-    pop rbx
-    push rax  ; save return value
-    call _dec_call_depth
-    pop rax  ; restore return value
-    FUNC_EPILOGUE
-    jmp .if_end_839
-.else_840:
-.if_end_839:
-    mov rax, [rbp-112]
-    push rax
-    mov rax, [rbp-104]
-    push rax
-    mov rax, [rbp-96]
-    push rax
-    pop rdi
-    pop rsi
-    pop rdx
     call date_0_1_is_a_valid_time
-    mov [rbp-152], rax  ; store the time is valid
+    mov [rbp-128], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-152]
+    mov rax, [rbp-128]
     pop rbx
     cmp rax, rbx
     jne .else_842
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_187]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_188]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -13930,37 +13125,38 @@ date_0_1_try_the_compact_form_at:
 .else_842:
 .if_end_841:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_189]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_190]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-112]
-    push rax
-    mov rax, [rbp-104]
-    push rax
-    mov rax, [rbp-96]
-    push rax
     mov rax, [rbp-88]
     push rax
     mov rax, [rbp-80]
     push rax
     mov rax, [rbp-72]
+    push rax
+    mov rax, [rbp-64]
+    push rax
+    mov rax, [rbp-56]
+    push rax
+    mov rax, [rbp-48]
     push rax
     pop rdi
     pop rsi
@@ -13971,20 +13167,25 @@ date_0_1_try_the_compact_form_at:
     call date_0_1_the_moment_at
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try the dashed iso form at
 date_0_1_try_the_dashed_iso_form_at:
-    FUNC_PROLOGUE 256
+    FUNC_PROLOGUE 224
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -13993,24 +13194,19 @@ date_0_1_try_the_dashed_iso_form_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_191]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_843
@@ -14055,7 +13251,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_854
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_854:
 .vr_store_852:
     mov r11b, 0  ; new tag
@@ -14071,15 +13267,15 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_853:
 .dyn_cast_done_846:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_855
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_855:
-    mov [rbp-64], rax  ; store start
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-40], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 4
     push rax
@@ -14087,38 +13283,31 @@ date_0_1_try_the_dashed_iso_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-72], rax  ; store the year
+    mov [rbp-48], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jge .else_857
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_192]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14129,62 +13318,58 @@ date_0_1_try_the_dashed_iso_form_at:
 .if_end_856:
     lea rax, [rel str_193]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-80], rax  ; store has the first dash
+    mov [rbp-56], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_859
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_194]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_195]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14193,9 +13378,9 @@ date_0_1_try_the_dashed_iso_form_at:
     jmp .if_end_858
 .else_859:
 .if_end_858:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -14203,54 +13388,50 @@ date_0_1_try_the_dashed_iso_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-88], rax  ; store the month
+    mov [rbp-64], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jge .else_861
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_196]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_197]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14261,62 +13442,58 @@ date_0_1_try_the_dashed_iso_form_at:
 .if_end_860:
     lea rax, [rel str_198]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-96], rax  ; store has the second dash
+    mov [rbp-72], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-72]
     pop rbx
     cmp rax, rbx
     jne .else_863
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_199]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_200]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14325,9 +13502,9 @@ date_0_1_try_the_dashed_iso_form_at:
     jmp .if_end_862
 .else_863:
 .if_end_862:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     mov rax, 2
     push rax
@@ -14335,54 +13512,50 @@ date_0_1_try_the_dashed_iso_form_at:
     pop rsi
     pop rdx
     call date_0_1_read_exactly
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-104], rax  ; store the day of month
+    mov [rbp-80], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jge .else_865
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_201]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_202]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14392,18 +13565,19 @@ date_0_1_try_the_dashed_iso_form_at:
 .else_865:
 .if_end_864:
     mov rax, 0
-    mov [rbp-112], rax  ; store the hour
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-120], rax  ; store the minute
+    mov [rbp-96], rax
     mov rax, 0
-    mov [rbp-128], rax  ; store the second
-    mov qword [rbp-136], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-104], rax
+    mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_203]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_866
@@ -14448,7 +13622,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_877
-    mov qword [rbp-136], 1  ; the text was not a number
+    mov qword [rbp-112], 1  ; the text was not a number
 .cast_read_a_number_877:
 .vr_store_875:
     mov r11b, 0  ; new tag
@@ -14464,60 +13638,40 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_876:
 .dyn_cast_done_869:
-    cmp qword [rbp-136], 0
+    cmp qword [rbp-112], 0
     je .cast_stored_878
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_878:
-    mov [rbp-144], rax  ; store the position before the time part
+    mov [rbp-120], rax
     lea rax, [rel str_204]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-152], rax  ; store has a separator
+    mov [rbp-128], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-152]
+    mov rax, [rbp-128]
     pop rbx
     cmp rax, rbx
     jne .else_880
     lea rax, [rel str_205]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-152], rax  ; store has a separator
+    mov [rbp-128], rax
     jmp .if_end_879
 .else_880:
 .if_end_879:
@@ -14562,40 +13716,30 @@ date_0_1_try_the_dashed_iso_form_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-160], rax  ; store clock
-    mov rax, [rbp-152]
+    mov [rbp-136], rax
+    mov rax, [rbp-128]
     test rax, rax
     jz .else_882
-    lea rax, [rbp-160]  ; the caller's clock
+    lea rax, [rbp-136]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_a_clock_time_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     jmp .if_end_881
 .else_882:
 .if_end_881:
-    mov qword [rbp-168], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-144], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-160]
-    push rax  ; save map pointer
     lea rax, [rel str_210]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-136]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_883
@@ -14657,25 +13801,25 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 3  ; new tag
 .vr_done_893:
 .dyn_cast_done_886:
-    cmp qword [rbp-168], 0
+    cmp qword [rbp-144], 0
     je .cast_stored_894
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_894:
-    mov [rbp-176], rax  ; store the time matched
+    mov [rbp-152], rax
+    mov rax, [rbp-128]
+    test rax, rax
+    jz .else_896
     mov rax, [rbp-152]
     test rax, rax
     jz .else_896
-    mov rax, [rbp-176]
-    test rax, rax
-    jz .else_896
-    mov qword [rbp-184], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-160], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-160]
-    push rax  ; save map pointer
     lea rax, [rel str_211]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-136]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_897
@@ -14720,7 +13864,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_908
-    mov qword [rbp-184], 1  ; the text was not a number
+    mov qword [rbp-160], 1  ; the text was not a number
 .cast_read_a_number_908:
 .vr_store_906:
     mov r11b, 0  ; new tag
@@ -14736,19 +13880,19 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_907:
 .dyn_cast_done_900:
-    cmp qword [rbp-184], 0
+    cmp qword [rbp-160], 0
     je .cast_stored_909
-    mov rax, qword [rbp-112]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-88]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_909:
-    mov [rbp-112], rax  ; store the hour
-    mov qword [rbp-192], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-88], rax
+    mov qword [rbp-168], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-160]
-    push rax  ; save map pointer
     lea rax, [rel str_212]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-136]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_910
@@ -14793,7 +13937,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_921
-    mov qword [rbp-192], 1  ; the text was not a number
+    mov qword [rbp-168], 1  ; the text was not a number
 .cast_read_a_number_921:
 .vr_store_919:
     mov r11b, 0  ; new tag
@@ -14809,19 +13953,19 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_920:
 .dyn_cast_done_913:
-    cmp qword [rbp-192], 0
+    cmp qword [rbp-168], 0
     je .cast_stored_922
-    mov rax, qword [rbp-120]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-96]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_922:
-    mov [rbp-120], rax  ; store the minute
-    mov qword [rbp-200], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-96], rax
+    mov qword [rbp-176], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-160]
-    push rax  ; save map pointer
     lea rax, [rel str_213]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-136]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_923
@@ -14866,7 +14010,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_934
-    mov qword [rbp-200], 1  ; the text was not a number
+    mov qword [rbp-176], 1  ; the text was not a number
 .cast_read_a_number_934:
 .vr_store_932:
     mov r11b, 0  ; new tag
@@ -14882,88 +14026,97 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_933:
 .dyn_cast_done_926:
-    cmp qword [rbp-200], 0
+    cmp qword [rbp-176], 0
     je .cast_stored_935
-    mov rax, qword [rbp-128]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-104]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_935:
-    mov [rbp-128], rax  ; store the second
+    mov [rbp-104], rax
     jmp .if_end_895
 .else_896:
 .if_end_895:
     mov rax, 0
     push rax
-    mov rax, [rbp-176]
+    mov rax, [rbp-152]
     pop rbx
     cmp rax, rbx
     jne .else_937
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_214]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-144]
+    mov rax, [rbp-120]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     jmp .if_end_936
 .else_937:
 .if_end_936:
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_date
-    mov [rbp-208], rax  ; store the date is valid
+    mov [rbp-184], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-184]
     pop rbx
     cmp rax, rbx
     jne .else_939
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_215]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_216]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -14972,54 +14125,60 @@ date_0_1_try_the_dashed_iso_form_at:
     jmp .if_end_938
 .else_939:
 .if_end_938:
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_time
-    mov [rbp-216], rax  ; store the time is valid
+    mov [rbp-192], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-192]
     pop rbx
     cmp rax, rbx
     jne .else_941
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_217]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_218]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15051,35 +14210,25 @@ date_0_1_try_the_dashed_iso_form_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-224], rax  ; store offset
-    lea rax, [rbp-224]  ; the caller's offset
+    mov [rbp-200], rax
+    lea rax, [rbp-200]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_an_offset_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     mov rax, 0
-    mov [rbp-232], rax  ; store the offset seconds
+    mov [rbp-208], rax
     ; Map key access (lookup)
-    mov rax, [rbp-224]
-    push rax  ; save map pointer
     lea rax, [rel str_221]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-200]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_944
@@ -15098,13 +14247,13 @@ date_0_1_try_the_dashed_iso_form_at:
 .copyin_done_946:
     test rax, rax
     jz .else_943
-    mov qword [rbp-240], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-216], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-224]
-    push rax  ; save map pointer
     lea rax, [rel str_222]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-200]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_947
@@ -15149,7 +14298,7 @@ date_0_1_try_the_dashed_iso_form_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_958
-    mov qword [rbp-240], 1  ; the text was not a number
+    mov qword [rbp-216], 1  ; the text was not a number
 .cast_read_a_number_958:
 .vr_store_956:
     mov r11b, 0  ; new tag
@@ -15165,26 +14314,26 @@ date_0_1_try_the_dashed_iso_form_at:
     mov r11b, 0  ; new tag
 .vr_done_957:
 .dyn_cast_done_950:
-    cmp qword [rbp-240], 0
+    cmp qword [rbp-216], 0
     je .cast_stored_959
-    mov rax, qword [rbp-232]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-208]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_959:
-    mov [rbp-232], rax  ; store the offset seconds
+    mov [rbp-208], rax
     jmp .if_end_942
 .else_943:
 .if_end_942:
-    mov rax, [rbp-128]
-    push rax
-    mov rax, [rbp-120]
-    push rax
-    mov rax, [rbp-112]
-    push rax
     mov rax, [rbp-104]
+    push rax
+    mov rax, [rbp-96]
     push rax
     mov rax, [rbp-88]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-80]
+    push rax
+    mov rax, [rbp-64]
+    push rax
+    mov rax, [rbp-48]
     push rax
     pop rdi
     pop rsi
@@ -15193,50 +14342,56 @@ date_0_1_try_the_dashed_iso_form_at:
     pop r8
     pop r9
     call date_0_1_the_moment_at
-    mov [rbp-248], rax  ; store the local moment
+    mov [rbp-224], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_223]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_224]  ; literal map key
     push rax  ; save key pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-232]
+    mov rax, [rbp-208]
     push rax
-    mov rax, [rbp-248]
+    mov rax, [rbp-224]
     pop rbx
     INT_SUB
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try a day month year at
 date_0_1_try_a_day_month_year_at:
-    FUNC_PROLOGUE 272
+    FUNC_PROLOGUE 256
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -15245,24 +14400,19 @@ date_0_1_try_a_day_month_year_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_225]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_960
@@ -15307,7 +14457,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_971
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_971:
 .vr_store_969:
     mov r11b, 0  ; new tag
@@ -15323,12 +14473,12 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_970:
 .dyn_cast_done_963:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_972
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_972:
-    mov [rbp-64], rax  ; store start
+    mov [rbp-40], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -15352,34 +14502,24 @@ date_0_1_try_a_day_month_year_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-72], rax  ; store scratch
-    lea rax, [rbp-72]  ; the caller's scratch
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-80], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_228]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_973
@@ -15441,33 +14581,36 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 3  ; new tag
 .vr_done_983:
 .dyn_cast_done_976:
-    cmp qword [rbp-80], 0
+    cmp qword [rbp-56], 0
     je .cast_stored_984
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_984:
-    mov [rbp-88], rax  ; store day matched
+    mov [rbp-64], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-88]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jne .else_986
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_229]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15476,13 +14619,13 @@ date_0_1_try_a_day_month_year_at:
     jmp .if_end_985
 .else_986:
 .if_end_985:
-    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_230]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_987
@@ -15527,7 +14670,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_998
-    mov qword [rbp-96], 1  ; the text was not a number
+    mov qword [rbp-72], 1  ; the text was not a number
 .cast_read_a_number_998:
 .vr_store_996:
     mov r11b, 0  ; new tag
@@ -15543,67 +14686,63 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_997:
 .dyn_cast_done_990:
-    cmp qword [rbp-96], 0
+    cmp qword [rbp-72], 0
     je .cast_stored_999
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_999:
-    mov [rbp-104], rax  ; store the day of month
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-80], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-112], rax  ; store the spaces after the day
+    mov [rbp-88], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
     jne .else_1001
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_231]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_232]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15612,61 +14751,57 @@ date_0_1_try_a_day_month_year_at:
     jmp .if_end_1000
 .else_1001:
 .if_end_1000:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_month_name_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-120], rax  ; store the month
+    mov [rbp-96], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     pop rbx
     cmp rax, rbx
     jne .else_1003
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_233]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_234]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15675,61 +14810,57 @@ date_0_1_try_a_day_month_year_at:
     jmp .if_end_1002
 .else_1003:
 .if_end_1002:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-128], rax  ; store the spaces after the month
+    mov [rbp-104], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-128]
+    mov rax, [rbp-104]
     pop rbx
     cmp rax, rbx
     jne .else_1005
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_235]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_236]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15739,44 +14870,37 @@ date_0_1_try_a_day_month_year_at:
 .else_1005:
 .if_end_1004:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_237]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-72], rax  ; store new pointer for scratch
-    lea rax, [rbp-72]  ; the caller's scratch
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-136], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_238]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1006
@@ -15838,49 +14962,55 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 3  ; new tag
 .vr_done_1016:
 .dyn_cast_done_1009:
-    cmp qword [rbp-136], 0
+    cmp qword [rbp-112], 0
     je .cast_stored_1017
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1017:
-    mov [rbp-144], rax  ; store year matched
+    mov [rbp-120], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-144]
+    mov rax, [rbp-120]
     pop rbx
     cmp rax, rbx
     jne .else_1019
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_239]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_240]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -15889,13 +15019,13 @@ date_0_1_try_a_day_month_year_at:
     jmp .if_end_1018
 .else_1019:
 .if_end_1018:
-    mov qword [rbp-152], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-128], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_241]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1020
@@ -15940,7 +15070,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1031
-    mov qword [rbp-152], 1  ; the text was not a number
+    mov qword [rbp-128], 1  ; the text was not a number
 .cast_read_a_number_1031:
 .vr_store_1029:
     mov r11b, 0  ; new tag
@@ -15956,19 +15086,20 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1030:
 .dyn_cast_done_1023:
-    cmp qword [rbp-152], 0
+    cmp qword [rbp-128], 0
     je .cast_stored_1032
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1032:
-    mov [rbp-160], rax  ; store the year
-    mov qword [rbp-168], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-136], rax
+    mov qword [rbp-144], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_242]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1033
@@ -16013,7 +15144,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1044
-    mov qword [rbp-168], 1  ; the text was not a number
+    mov qword [rbp-144], 1  ; the text was not a number
 .cast_read_a_number_1044:
 .vr_store_1042:
     mov r11b, 0  ; new tag
@@ -16029,30 +15160,20 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1043:
 .dyn_cast_done_1036:
-    cmp qword [rbp-168], 0
+    cmp qword [rbp-144], 0
     je .cast_stored_1045
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1045:
-    mov [rbp-176], rax  ; store the position after the year
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-152], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-184], rax  ; store the spaces before the time
+    mov [rbp-160], rax
     ; Map literal with 4 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -16094,40 +15215,30 @@ date_0_1_try_a_day_month_year_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-192], rax  ; store clock
-    lea rax, [rbp-192]  ; the caller's clock
+    mov [rbp-168], rax
+    lea rax, [rbp-168]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_a_clock_time_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     mov rax, 0
-    mov [rbp-200], rax  ; store the hour
+    mov [rbp-176], rax
     mov rax, 0
-    mov [rbp-208], rax  ; store the minute
+    mov [rbp-184], rax
     mov rax, 0
-    mov [rbp-216], rax  ; store the second
-    mov qword [rbp-224], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-192], rax
+    mov qword [rbp-200], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-192]
-    push rax  ; save map pointer
     lea rax, [rel str_247]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-168]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1046
@@ -16189,22 +15300,22 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 3  ; new tag
 .vr_done_1056:
 .dyn_cast_done_1049:
-    cmp qword [rbp-224], 0
+    cmp qword [rbp-200], 0
     je .cast_stored_1057
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1057:
-    mov [rbp-232], rax  ; store the time matched
-    mov rax, [rbp-232]
+    mov [rbp-208], rax
+    mov rax, [rbp-208]
     test rax, rax
     jz .else_1059
-    mov qword [rbp-240], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-216], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-192]
-    push rax  ; save map pointer
     lea rax, [rel str_248]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-168]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1060
@@ -16249,7 +15360,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1071
-    mov qword [rbp-240], 1  ; the text was not a number
+    mov qword [rbp-216], 1  ; the text was not a number
 .cast_read_a_number_1071:
 .vr_store_1069:
     mov r11b, 0  ; new tag
@@ -16265,19 +15376,19 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1070:
 .dyn_cast_done_1063:
-    cmp qword [rbp-240], 0
+    cmp qword [rbp-216], 0
     je .cast_stored_1072
-    mov rax, qword [rbp-200]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-176]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1072:
-    mov [rbp-200], rax  ; store the hour
-    mov qword [rbp-248], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-176], rax
+    mov qword [rbp-224], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-192]
-    push rax  ; save map pointer
     lea rax, [rel str_249]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-168]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1073
@@ -16322,7 +15433,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1084
-    mov qword [rbp-248], 1  ; the text was not a number
+    mov qword [rbp-224], 1  ; the text was not a number
 .cast_read_a_number_1084:
 .vr_store_1082:
     mov r11b, 0  ; new tag
@@ -16338,19 +15449,19 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1083:
 .dyn_cast_done_1076:
-    cmp qword [rbp-248], 0
+    cmp qword [rbp-224], 0
     je .cast_stored_1085
-    mov rax, qword [rbp-208]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-184]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1085:
-    mov [rbp-208], rax  ; store the minute
-    mov qword [rbp-256], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-184], rax
+    mov qword [rbp-232], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-192]
-    push rax  ; save map pointer
     lea rax, [rel str_250]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-168]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1086
@@ -16395,7 +15506,7 @@ date_0_1_try_a_day_month_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1097
-    mov qword [rbp-256], 1  ; the text was not a number
+    mov qword [rbp-232], 1  ; the text was not a number
 .cast_read_a_number_1097:
 .vr_store_1095:
     mov r11b, 0  ; new tag
@@ -16411,88 +15522,97 @@ date_0_1_try_a_day_month_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1096:
 .dyn_cast_done_1089:
-    cmp qword [rbp-256], 0
+    cmp qword [rbp-232], 0
     je .cast_stored_1098
-    mov rax, qword [rbp-216]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-192]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1098:
-    mov [rbp-216], rax  ; store the second
+    mov [rbp-192], rax
     jmp .if_end_1058
 .else_1059:
 .if_end_1058:
     mov rax, 0
     push rax
-    mov rax, [rbp-232]
+    mov rax, [rbp-208]
     pop rbx
     cmp rax, rbx
     jne .else_1100
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_251]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-176]
+    mov rax, [rbp-152]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     jmp .if_end_1099
 .else_1100:
 .if_end_1099:
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-160]
+    mov rax, [rbp-136]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_date
-    mov [rbp-264], rax  ; store the date is valid
+    mov [rbp-240], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-264]
+    mov rax, [rbp-240]
     pop rbx
     cmp rax, rbx
     jne .else_1102
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_252]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_253]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -16501,54 +15621,60 @@ date_0_1_try_a_day_month_year_at:
     jmp .if_end_1101
 .else_1102:
 .if_end_1101:
-    mov rax, [rbp-216]
+    mov rax, [rbp-192]
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-184]
     push rax
-    mov rax, [rbp-200]
+    mov rax, [rbp-176]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_time
-    mov [rbp-272], rax  ; store the time is valid
+    mov [rbp-248], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-272]
+    mov rax, [rbp-248]
     pop rbx
     cmp rax, rbx
     jne .else_1104
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_254]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_255]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -16558,37 +15684,38 @@ date_0_1_try_a_day_month_year_at:
 .else_1104:
 .if_end_1103:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_256]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_257]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-216]
+    mov rax, [rbp-192]
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-184]
     push rax
-    mov rax, [rbp-200]
+    mov rax, [rbp-176]
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-160]
+    mov rax, [rbp-136]
     push rax
     pop rdi
     pop rsi
@@ -16599,20 +15726,25 @@ date_0_1_try_a_day_month_year_at:
     call date_0_1_the_moment_at
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try a month day year at
 date_0_1_try_a_month_day_year_at:
-    FUNC_PROLOGUE 288
+    FUNC_PROLOGUE 256
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -16621,24 +15753,19 @@ date_0_1_try_a_month_day_year_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_258]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1105
@@ -16683,7 +15810,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1116
-    mov qword [rbp-56], 1  ; the text was not a number
+    mov qword [rbp-32], 1  ; the text was not a number
 .cast_read_a_number_1116:
 .vr_store_1114:
     mov r11b, 0  ; new tag
@@ -16699,51 +15826,44 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1115:
 .dyn_cast_done_1108:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_1117
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1117:
-    mov [rbp-64], rax  ; store start
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-40], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_month_name_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-72], rax  ; store the month
+    mov [rbp-48], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_1119
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_259]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -16752,61 +15872,57 @@ date_0_1_try_a_month_day_year_at:
     jmp .if_end_1118
 .else_1119:
 .if_end_1118:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-80], rax  ; store the spaces after the month
+    mov [rbp-56], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-80]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_1121
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_260]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_261]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -16838,34 +15954,24 @@ date_0_1_try_a_month_day_year_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-88], rax  ; store scratch
-    lea rax, [rbp-88]  ; the caller's scratch
+    mov [rbp-64], rax
+    lea rax, [rbp-64]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-88]
-    push rax  ; save map pointer
     lea rax, [rel str_264]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-64]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1122
@@ -16927,49 +16033,55 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 3  ; new tag
 .vr_done_1132:
 .dyn_cast_done_1125:
-    cmp qword [rbp-96], 0
+    cmp qword [rbp-72], 0
     je .cast_stored_1133
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1133:
-    mov [rbp-104], rax  ; store day matched
+    mov [rbp-80], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-104]
+    mov rax, [rbp-80]
     pop rbx
     cmp rax, rbx
     jne .else_1135
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_265]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_266]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -16978,13 +16090,13 @@ date_0_1_try_a_month_day_year_at:
     jmp .if_end_1134
 .else_1135:
 .if_end_1134:
-    mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-88], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-88]
-    push rax  ; save map pointer
     lea rax, [rel str_267]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-64]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1136
@@ -17029,7 +16141,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1147
-    mov qword [rbp-112], 1  ; the text was not a number
+    mov qword [rbp-88], 1  ; the text was not a number
 .cast_read_a_number_1147:
 .vr_store_1145:
     mov r11b, 0  ; new tag
@@ -17045,88 +16157,74 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1146:
 .dyn_cast_done_1139:
-    cmp qword [rbp-112], 0
+    cmp qword [rbp-88], 0
     je .cast_stored_1148
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1148:
-    mov [rbp-120], rax  ; store the day of month
+    mov [rbp-96], rax
     lea rax, [rel str_268]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-128], rax  ; store had a comma
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-104], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-136], rax  ; store the spaces after the day
+    mov [rbp-112], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-136]
+    mov rax, [rbp-112]
     pop rbx
     cmp rax, rbx
     jne .else_1150
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_269]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_270]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -17136,44 +16234,37 @@ date_0_1_try_a_month_day_year_at:
 .else_1150:
 .if_end_1149:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-88]
-    push rax  ; save map pointer
     lea rax, [rel str_271]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-64]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-88], rax  ; store new pointer for scratch
-    lea rax, [rbp-88]  ; the caller's scratch
+    mov [rbp-64], rax
+    lea rax, [rbp-64]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-144], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-88]
-    push rax  ; save map pointer
     lea rax, [rel str_272]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-64]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1151
@@ -17235,49 +16326,55 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 3  ; new tag
 .vr_done_1161:
 .dyn_cast_done_1154:
-    cmp qword [rbp-144], 0
+    cmp qword [rbp-120], 0
     je .cast_stored_1162
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1162:
-    mov [rbp-152], rax  ; store year matched
+    mov [rbp-128], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-152]
+    mov rax, [rbp-128]
     pop rbx
     cmp rax, rbx
     jne .else_1164
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_273]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_274]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -17286,13 +16383,13 @@ date_0_1_try_a_month_day_year_at:
     jmp .if_end_1163
 .else_1164:
 .if_end_1163:
-    mov qword [rbp-160], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-136], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-88]
-    push rax  ; save map pointer
     lea rax, [rel str_275]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-64]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1165
@@ -17337,7 +16434,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1176
-    mov qword [rbp-160], 1  ; the text was not a number
+    mov qword [rbp-136], 1  ; the text was not a number
 .cast_read_a_number_1176:
 .vr_store_1174:
     mov r11b, 0  ; new tag
@@ -17353,19 +16450,20 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1175:
 .dyn_cast_done_1168:
-    cmp qword [rbp-160], 0
+    cmp qword [rbp-136], 0
     je .cast_stored_1177
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1177:
-    mov [rbp-168], rax  ; store the year
-    mov qword [rbp-176], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-144], rax
+    mov qword [rbp-152], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_276]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1178
@@ -17410,7 +16508,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1189
-    mov qword [rbp-176], 1  ; the text was not a number
+    mov qword [rbp-152], 1  ; the text was not a number
 .cast_read_a_number_1189:
 .vr_store_1187:
     mov r11b, 0  ; new tag
@@ -17426,30 +16524,20 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1188:
 .dyn_cast_done_1181:
-    cmp qword [rbp-176], 0
+    cmp qword [rbp-152], 0
     je .cast_stored_1190
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1190:
-    mov [rbp-184], rax  ; store the position after the year
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-160], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-192], rax  ; store the spaces before the time
+    mov [rbp-168], rax
     ; Map literal with 4 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -17491,40 +16579,30 @@ date_0_1_try_a_month_day_year_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-200], rax  ; store clock
-    lea rax, [rbp-200]  ; the caller's clock
+    mov [rbp-176], rax
+    lea rax, [rbp-176]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_a_clock_time_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     mov rax, 0
-    mov [rbp-208], rax  ; store the hour
+    mov [rbp-184], rax
     mov rax, 0
-    mov [rbp-216], rax  ; store the minute
+    mov [rbp-192], rax
     mov rax, 0
-    mov [rbp-224], rax  ; store the second
-    mov qword [rbp-232], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-200], rax
+    mov qword [rbp-208], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-200]
-    push rax  ; save map pointer
     lea rax, [rel str_281]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-176]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1191
@@ -17586,22 +16664,22 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 3  ; new tag
 .vr_done_1201:
 .dyn_cast_done_1194:
-    cmp qword [rbp-232], 0
+    cmp qword [rbp-208], 0
     je .cast_stored_1202
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1202:
-    mov [rbp-240], rax  ; store the time matched
-    mov rax, [rbp-240]
+    mov [rbp-216], rax
+    mov rax, [rbp-216]
     test rax, rax
     jz .else_1204
-    mov qword [rbp-248], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-224], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-200]
-    push rax  ; save map pointer
     lea rax, [rel str_282]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-176]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1205
@@ -17646,7 +16724,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1216
-    mov qword [rbp-248], 1  ; the text was not a number
+    mov qword [rbp-224], 1  ; the text was not a number
 .cast_read_a_number_1216:
 .vr_store_1214:
     mov r11b, 0  ; new tag
@@ -17662,19 +16740,19 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1215:
 .dyn_cast_done_1208:
-    cmp qword [rbp-248], 0
+    cmp qword [rbp-224], 0
     je .cast_stored_1217
-    mov rax, qword [rbp-208]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-184]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1217:
-    mov [rbp-208], rax  ; store the hour
-    mov qword [rbp-256], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-184], rax
+    mov qword [rbp-232], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-200]
-    push rax  ; save map pointer
     lea rax, [rel str_283]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-176]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1218
@@ -17719,7 +16797,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1229
-    mov qword [rbp-256], 1  ; the text was not a number
+    mov qword [rbp-232], 1  ; the text was not a number
 .cast_read_a_number_1229:
 .vr_store_1227:
     mov r11b, 0  ; new tag
@@ -17735,19 +16813,19 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1228:
 .dyn_cast_done_1221:
-    cmp qword [rbp-256], 0
+    cmp qword [rbp-232], 0
     je .cast_stored_1230
-    mov rax, qword [rbp-216]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-192]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1230:
-    mov [rbp-216], rax  ; store the minute
-    mov qword [rbp-264], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-192], rax
+    mov qword [rbp-240], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-200]
-    push rax  ; save map pointer
     lea rax, [rel str_284]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-176]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1231
@@ -17792,7 +16870,7 @@ date_0_1_try_a_month_day_year_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1242
-    mov qword [rbp-264], 1  ; the text was not a number
+    mov qword [rbp-240], 1  ; the text was not a number
 .cast_read_a_number_1242:
 .vr_store_1240:
     mov r11b, 0  ; new tag
@@ -17808,88 +16886,97 @@ date_0_1_try_a_month_day_year_at:
     mov r11b, 0  ; new tag
 .vr_done_1241:
 .dyn_cast_done_1234:
-    cmp qword [rbp-264], 0
+    cmp qword [rbp-240], 0
     je .cast_stored_1243
-    mov rax, qword [rbp-224]  ; a text was not a number: keep what was there
+    mov rax, qword [rbp-200]  ; a text was not a number: keep what was there
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1243:
-    mov [rbp-224], rax  ; store the second
+    mov [rbp-200], rax
     jmp .if_end_1203
 .else_1204:
 .if_end_1203:
     mov rax, 0
     push rax
-    mov rax, [rbp-240]
+    mov rax, [rbp-216]
     pop rbx
     cmp rax, rbx
     jne .else_1245
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_285]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-184]
+    mov rax, [rbp-160]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     jmp .if_end_1244
 .else_1245:
 .if_end_1244:
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-168]
+    mov rax, [rbp-144]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_date
-    mov [rbp-272], rax  ; store the date is valid
+    mov [rbp-248], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-272]
+    mov rax, [rbp-248]
     pop rbx
     cmp rax, rbx
     jne .else_1247
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_286]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_287]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -17898,54 +16985,60 @@ date_0_1_try_a_month_day_year_at:
     jmp .if_end_1246
 .else_1247:
 .if_end_1246:
-    mov rax, [rbp-224]
+    mov rax, [rbp-200]
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-192]
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-184]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_is_a_valid_time
-    mov [rbp-280], rax  ; store the time is valid
+    mov [rbp-256], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-280]
+    mov rax, [rbp-256]
     pop rbx
     cmp rax, rbx
     jne .else_1249
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_288]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-64]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_289]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -17955,37 +17048,38 @@ date_0_1_try_a_month_day_year_at:
 .else_1249:
 .if_end_1248:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_290]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_291]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-224]
+    mov rax, [rbp-200]
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-192]
     push rax
-    mov rax, [rbp-208]
+    mov rax, [rbp-184]
     push rax
-    mov rax, [rbp-120]
+    mov rax, [rbp-96]
     push rax
-    mov rax, [rbp-72]
+    mov rax, [rbp-48]
     push rax
-    mov rax, [rbp-168]
+    mov rax, [rbp-144]
     push rax
     pop rdi
     pop rsi
@@ -17996,20 +17090,25 @@ date_0_1_try_a_month_day_year_at:
     call date_0_1_the_moment_at
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: try an absolute moment at
 date_0_1_try_an_absolute_moment_at:
-    FUNC_PROLOGUE 112
+    FUNC_PROLOGUE 96
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -18018,51 +17117,29 @@ date_0_1_try_an_absolute_moment_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov [rbp-24], rax  ; cell: where the owner keeps outcome
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_the_epoch_form_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; outcome as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps outcome
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-32], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_292]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1250
@@ -18124,13 +17201,13 @@ date_0_1_try_an_absolute_moment_at:
     mov r11b, 3  ; new tag
 .vr_done_1260:
 .dyn_cast_done_1253:
-    cmp qword [rbp-56], 0
+    cmp qword [rbp-32], 0
     je .cast_stored_1261
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1261:
-    mov [rbp-64], rax  ; store matched the epoch form
-    mov rax, [rbp-64]
+    mov [rbp-40], rax
+    mov rax, [rbp-40]
     test rax, rax
     jz .else_1263
     push rax  ; save return value
@@ -18140,40 +17217,24 @@ date_0_1_try_an_absolute_moment_at:
     jmp .if_end_1262
 .else_1263:
 .if_end_1262:
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_the_dashed_iso_form_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; outcome as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps outcome
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_293]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1264
@@ -18235,13 +17296,13 @@ date_0_1_try_an_absolute_moment_at:
     mov r11b, 3  ; new tag
 .vr_done_1274:
 .dyn_cast_done_1267:
-    cmp qword [rbp-72], 0
+    cmp qword [rbp-48], 0
     je .cast_stored_1275
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1275:
-    mov [rbp-80], rax  ; store matched the dashed form
-    mov rax, [rbp-80]
+    mov [rbp-56], rax
+    mov rax, [rbp-56]
     test rax, rax
     jz .else_1277
     push rax  ; save return value
@@ -18251,40 +17312,24 @@ date_0_1_try_an_absolute_moment_at:
     jmp .if_end_1276
 .else_1277:
 .if_end_1276:
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_the_compact_form_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; outcome as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps outcome
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-88], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-64], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_294]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1278
@@ -18346,13 +17391,13 @@ date_0_1_try_an_absolute_moment_at:
     mov r11b, 3  ; new tag
 .vr_done_1288:
 .dyn_cast_done_1281:
-    cmp qword [rbp-88], 0
+    cmp qword [rbp-64], 0
     je .cast_stored_1289
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1289:
-    mov [rbp-96], rax  ; store matched the compact form
-    mov rax, [rbp-96]
+    mov [rbp-72], rax
+    mov rax, [rbp-72]
     test rax, rax
     jz .else_1291
     push rax  ; save return value
@@ -18362,40 +17407,24 @@ date_0_1_try_an_absolute_moment_at:
     jmp .if_end_1290
 .else_1291:
 .if_end_1290:
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_a_day_month_year_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; outcome as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps outcome
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-104], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-80], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_295]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1292
@@ -18457,13 +17486,13 @@ date_0_1_try_an_absolute_moment_at:
     mov r11b, 3  ; new tag
 .vr_done_1302:
 .dyn_cast_done_1295:
-    cmp qword [rbp-104], 0
+    cmp qword [rbp-80], 0
     je .cast_stored_1303
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1303:
-    mov [rbp-112], rax  ; store matched the day month year form
-    mov rax, [rbp-112]
+    mov [rbp-88], rax
+    mov rax, [rbp-88]
     test rax, rax
     jz .else_1305
     push rax  ; save return value
@@ -18473,33 +17502,16 @@ date_0_1_try_an_absolute_moment_at:
     jmp .if_end_1304
 .else_1305:
 .if_end_1304:
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_try_a_month_day_year_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; outcome as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps outcome
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
@@ -18515,10 +17527,10 @@ date_0_1_the_moment_read_from:
     push rax
     pop rdi
     call date_0_1_the_trimmed_text_of
-    mov [rbp-16], rax  ; store trimmed
+    mov [rbp-16], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer document
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -18543,7 +17555,7 @@ date_0_1_the_moment_read_from:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-32], rax  ; store reader
+    mov [rbp-32], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -18567,12 +17579,12 @@ date_0_1_the_moment_read_from:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-40], rax  ; store outcome
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov [rbp-40], rax
+    lea rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the caller's reader
+    lea rax, [rbp-32]
     push rax
-    lea rax, [rbp-24]  ; the cell holding document
+    lea rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
@@ -18580,11 +17592,11 @@ date_0_1_the_moment_read_from:
     call date_0_1_try_an_absolute_moment_at
     mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_299]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-40]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1306
@@ -18651,7 +17663,7 @@ date_0_1_the_moment_read_from:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1317:
-    mov [rbp-56], rax  ; store it matched
+    mov [rbp-56], rax
     mov rax, 0
     push rax
     mov rax, [rbp-56]
@@ -18668,11 +17680,11 @@ date_0_1_the_moment_read_from:
 .if_end_1318:
     mov qword [rbp-64], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_300]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1320
@@ -18738,7 +17750,7 @@ date_0_1_the_moment_read_from:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1332:
-    mov [rbp-72], rax  ; store the position
+    mov [rbp-72], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
@@ -18755,11 +17767,11 @@ date_0_1_the_moment_read_from:
 .else_1334:
 .if_end_1333:
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_301]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-40]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1335
@@ -18833,10 +17845,10 @@ date_0_1_reads_as_a_moment:
     push rax
     pop rdi
     call date_0_1_the_trimmed_text_of
-    mov [rbp-16], rax  ; store trimmed
+    mov [rbp-16], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer document
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -18861,7 +17873,7 @@ date_0_1_reads_as_a_moment:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-32], rax  ; store reader
+    mov [rbp-32], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -18885,12 +17897,12 @@ date_0_1_reads_as_a_moment:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-40], rax  ; store outcome
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov [rbp-40], rax
+    lea rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the caller's reader
+    lea rax, [rbp-32]
     push rax
-    lea rax, [rbp-24]  ; the cell holding document
+    lea rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
@@ -18898,11 +17910,11 @@ date_0_1_reads_as_a_moment:
     call date_0_1_try_an_absolute_moment_at
     mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_305]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-40]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1346
@@ -18969,7 +17981,7 @@ date_0_1_reads_as_a_moment:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1357:
-    mov [rbp-56], rax  ; store it matched
+    mov [rbp-56], rax
     mov rax, 0
     push rax
     mov rax, [rbp-56]
@@ -18986,11 +17998,11 @@ date_0_1_reads_as_a_moment:
 .if_end_1358:
     mov qword [rbp-64], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_306]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1360
@@ -19056,7 +18068,7 @@ date_0_1_reads_as_a_moment:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1372:
-    mov [rbp-72], rax  ; store the position
+    mov [rbp-72], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
@@ -19070,40 +18082,26 @@ date_0_1_reads_as_a_moment:
 
 ; Function: read a unit word at
 date_0_1_read_a_unit_word_at:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     lea rax, [rel str_307]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1374
     mov rax, 1
@@ -19116,24 +18114,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1373:
     lea rax, [rel str_308]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1376
     mov rax, 1
@@ -19146,24 +18134,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1375:
     lea rax, [rel str_309]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1378
     mov rax, 2
@@ -19176,24 +18154,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1377:
     lea rax, [rel str_310]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1380
     mov rax, 2
@@ -19206,24 +18174,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1379:
     lea rax, [rel str_311]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1382
     mov rax, 3
@@ -19236,24 +18194,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1381:
     lea rax, [rel str_312]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1384
     mov rax, 3
@@ -19266,24 +18214,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1383:
     lea rax, [rel str_313]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1386
     mov rax, 4
@@ -19296,24 +18234,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1385:
     lea rax, [rel str_314]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1388
     mov rax, 4
@@ -19326,24 +18254,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1387:
     lea rax, [rel str_315]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1390
     mov rax, 5
@@ -19356,24 +18274,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1389:
     lea rax, [rel str_316]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1392
     mov rax, 5
@@ -19386,24 +18294,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1391:
     lea rax, [rel str_317]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1394
     mov rax, 6
@@ -19416,24 +18314,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1393:
     lea rax, [rel str_318]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1396
     mov rax, 6
@@ -19446,24 +18334,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1395:
     lea rax, [rel str_319]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1398
     mov rax, 7
@@ -19476,24 +18354,14 @@ date_0_1_read_a_unit_word_at:
 .if_end_1397:
     lea rax, [rel str_320]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     test rax, rax
     jz .else_1400
     mov rax, 7
@@ -19660,7 +18528,7 @@ date_0_1_apply_a_unit:
 
 ; Function: try a relative item at
 date_0_1_try_a_relative_item_at:
-    FUNC_PROLOGUE 368
+    FUNC_PROLOGUE 336
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -19671,36 +18539,29 @@ date_0_1_try_a_relative_item_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps state
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps state
     mov rax, rcx
-    mov [rbp-64], rax  ; where the caller keeps outcome
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-56], rax  ; param payload
+    mov [rbp-32], rax  ; cell: where the owner keeps outcome
     xor rax, rax
-    mov [rbp-288], rax  ; store has a minus
+    mov [rbp-256], rax
     xor rax, rax
-    mov [rbp-232], rax  ; store the day after
+    mov [rbp-200], rax
     xor rax, rax
-    mov [rbp-248], rax  ; store the day before
+    mov [rbp-216], rax
     xor rax, rax
-    mov [rbp-136], rax  ; store the start of today
-    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
+    mov [rbp-104], rax
+    mov qword [rbp-40], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_321]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1413
@@ -19745,7 +18606,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1424
-    mov qword [rbp-72], 1  ; the text was not a number
+    mov qword [rbp-40], 1  ; the text was not a number
 .cast_read_a_number_1424:
 .vr_store_1422:
     mov r11b, 0  ; new tag
@@ -19761,51 +18622,44 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1423:
 .dyn_cast_done_1416:
-    cmp qword [rbp-72], 0
+    cmp qword [rbp-40], 0
     je .cast_stored_1425
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1425:
-    mov [rbp-80], rax  ; store start
+    mov [rbp-48], rax
     lea rax, [rel str_322]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-88], rax  ; store it is now
-    mov rax, [rbp-88]
+    mov [rbp-56], rax
+    mov rax, [rbp-56]
     test rax, rax
     jz .else_1427
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_323]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -19816,35 +18670,26 @@ date_0_1_try_a_relative_item_at:
 .if_end_1426:
     lea rax, [rel str_324]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-96], rax  ; store it is today
-    mov rax, [rbp-96]
+    mov [rbp-64], rax
+    mov rax, [rbp-64]
     test rax, rax
     jz .else_1429
-    mov qword [rbp-104], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-72], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_325]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1430
@@ -19889,7 +18734,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1441
-    mov qword [rbp-104], 1  ; the text was not a number
+    mov qword [rbp-72], 1  ; the text was not a number
 .cast_read_a_number_1441:
 .vr_store_1439:
     mov r11b, 0  ; new tag
@@ -19905,46 +18750,52 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1440:
 .dyn_cast_done_1433:
-    cmp qword [rbp-104], 0
+    cmp qword [rbp-72], 0
     je .cast_stored_1442
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1442:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_326]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_327]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -19955,35 +18806,26 @@ date_0_1_try_a_relative_item_at:
 .if_end_1428:
     lea rax, [rel str_328]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-120], rax  ; store it is tomorrow
-    mov rax, [rbp-120]
+    mov [rbp-88], rax
+    mov rax, [rbp-88]
     test rax, rax
     jz .else_1444
-    mov qword [rbp-128], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-96], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_329]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1445
@@ -20028,7 +18870,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1456
-    mov qword [rbp-128], 1  ; the text was not a number
+    mov qword [rbp-96], 1  ; the text was not a number
 .cast_read_a_number_1456:
 .vr_store_1454:
     mov r11b, 0  ; new tag
@@ -20044,54 +18886,60 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1455:
 .dyn_cast_done_1448:
-    cmp qword [rbp-128], 0
+    cmp qword [rbp-96], 0
     je .cast_stored_1457
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1457:
-    mov [rbp-112], rax  ; store base
-    mov rax, [rbp-112]
+    mov [rbp-80], rax
+    mov rax, [rbp-80]
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
-    mov [rbp-136], rax  ; store the start of today
+    mov [rbp-104], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_330]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     push rax
-    mov rax, [rbp-136]
+    mov rax, [rbp-104]
     push rax
     pop rdi
     pop rsi
     call date_0_1_days_later
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_331]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20102,35 +18950,26 @@ date_0_1_try_a_relative_item_at:
 .if_end_1443:
     lea rax, [rel str_332]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-144], rax  ; store it is yesterday
-    mov rax, [rbp-144]
+    mov [rbp-112], rax
+    mov rax, [rbp-112]
     test rax, rax
     jz .else_1459
-    mov qword [rbp-152], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-120], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_333]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1460
@@ -20175,7 +19014,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1471
-    mov qword [rbp-152], 1  ; the text was not a number
+    mov qword [rbp-120], 1  ; the text was not a number
 .cast_read_a_number_1471:
 .vr_store_1469:
     mov r11b, 0  ; new tag
@@ -20191,55 +19030,61 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1470:
 .dyn_cast_done_1463:
-    cmp qword [rbp-152], 0
+    cmp qword [rbp-120], 0
     je .cast_stored_1472
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1472:
-    mov [rbp-112], rax  ; store base
-    mov rax, [rbp-112]
+    mov [rbp-80], rax
+    mov rax, [rbp-80]
     push rax
     pop rdi
     call date_0_1_the_start_of_the_day_of
-    mov [rbp-136], rax  ; store the start of today
+    mov [rbp-104], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_334]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     INT_NEG
     push rax
-    mov rax, [rbp-136]
+    mov rax, [rbp-104]
     push rax
     pop rdi
     pop rsi
     call date_0_1_days_later
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_335]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20250,152 +19095,128 @@ date_0_1_try_a_relative_item_at:
 .if_end_1458:
     lea rax, [rel str_336]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-160], rax  ; store says next
+    mov [rbp-128], rax
     mov rax, 0
-    mov [rbp-168], rax  ; store says last
+    mov [rbp-136], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-160]
+    mov rax, [rbp-128]
     pop rbx
     cmp rax, rbx
     jne .else_1474
     lea rax, [rel str_337]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-168], rax  ; store says last
+    mov [rbp-136], rax
     jmp .if_end_1473
 .else_1474:
 .if_end_1473:
     mov rax, 0
-    mov [rbp-176], rax  ; store says next or last
-    mov rax, [rbp-160]
+    mov [rbp-144], rax
+    mov rax, [rbp-128]
     test rax, rax
     jz .else_1476
     mov rax, 1
-    mov [rbp-176], rax  ; store says next or last
+    mov [rbp-144], rax
     jmp .if_end_1475
 .else_1476:
 .if_end_1475:
-    mov rax, [rbp-168]
+    mov rax, [rbp-136]
     test rax, rax
     jz .else_1478
     mov rax, 1
-    mov [rbp-176], rax  ; store says next or last
+    mov [rbp-144], rax
     jmp .if_end_1477
 .else_1478:
 .if_end_1477:
     mov rax, 1
-    mov [rbp-184], rax  ; store the direction
-    mov rax, [rbp-168]
+    mov [rbp-152], rax
+    mov rax, [rbp-136]
     test rax, rax
     jz .else_1480
     mov rax, 1
     INT_NEG
-    mov [rbp-184], rax  ; store the direction
+    mov [rbp-152], rax
     jmp .if_end_1479
 .else_1480:
 .if_end_1479:
     mov rax, 0
-    mov [rbp-192], rax  ; store the spaces after next or last
-    mov rax, [rbp-176]
+    mov [rbp-160], rax
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1482
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-192], rax  ; store the spaces after next or last
+    mov [rbp-160], rax
     jmp .if_end_1481
 .else_1482:
 .if_end_1481:
-    mov rax, [rbp-176]
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1484
     mov rax, 0
     push rax
-    mov rax, [rbp-192]
+    mov rax, [rbp-160]
     pop rbx
     cmp rax, rbx
     jne .else_1484
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_338]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_339]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20405,47 +19226,38 @@ date_0_1_try_a_relative_item_at:
 .else_1484:
 .if_end_1483:
     mov rax, 0
-    mov [rbp-200], rax  ; store the unit after next or last
-    mov rax, [rbp-176]
+    mov [rbp-168], rax
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1486
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_unit_word_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-200], rax  ; store the unit after next or last
+    mov [rbp-168], rax
     jmp .if_end_1485
 .else_1486:
 .if_end_1485:
-    mov rax, [rbp-176]
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1488
     mov rax, 0
     push rax
-    mov rax, [rbp-200]
+    mov rax, [rbp-168]
     pop rbx
     cmp rax, rbx
     je .else_1488
-    mov qword [rbp-208], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-176], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_340]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1489
@@ -20490,7 +19302,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1500
-    mov qword [rbp-208], 1  ; the text was not a number
+    mov qword [rbp-176], 1  ; the text was not a number
 .cast_read_a_number_1500:
 .vr_store_1498:
     mov r11b, 0  ; new tag
@@ -20506,22 +19318,20 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1499:
 .dyn_cast_done_1492:
-    cmp qword [rbp-208], 0
+    cmp qword [rbp-176], 0
     je .cast_stored_1501
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1501:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_341]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-184]
+    mov rax, [rbp-152]
     push rax
-    mov rax, [rbp-200]
+    mov rax, [rbp-168]
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
@@ -20529,29 +19339,37 @@ date_0_1_try_a_relative_item_at:
     call date_0_1_apply_a_unit
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_342]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20561,77 +19379,73 @@ date_0_1_try_a_relative_item_at:
 .else_1488:
 .if_end_1487:
     mov rax, 0
-    mov [rbp-216], rax  ; store the weekday after next or last
-    mov rax, [rbp-176]
+    mov [rbp-184], rax
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1503
     mov rax, 0
     push rax
-    mov rax, [rbp-200]
+    mov rax, [rbp-168]
     pop rbx
     cmp rax, rbx
     jne .else_1503
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_weekday_name_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-216], rax  ; store the weekday after next or last
+    mov [rbp-184], rax
     jmp .if_end_1502
 .else_1503:
 .if_end_1502:
-    mov rax, [rbp-176]
+    mov rax, [rbp-144]
     test rax, rax
     jz .else_1505
     mov rax, 0
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-184]
     pop rbx
     cmp rax, rbx
     jne .else_1505
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_343]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_344]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20640,22 +19454,23 @@ date_0_1_try_a_relative_item_at:
     jmp .if_end_1504
 .else_1505:
 .if_end_1504:
-    mov rax, [rbp-160]
+    mov rax, [rbp-128]
     test rax, rax
     jz .else_1507
     mov rax, 0
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-184]
     pop rbx
     cmp rax, rbx
     je .else_1507
-    mov qword [rbp-224], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-192], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_345]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1508
@@ -20700,7 +19515,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1519
-    mov qword [rbp-224], 1  ; the text was not a number
+    mov qword [rbp-192], 1  ; the text was not a number
 .cast_read_a_number_1519:
 .vr_store_1517:
     mov r11b, 0  ; new tag
@@ -20716,57 +19531,63 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1518:
 .dyn_cast_done_1511:
-    cmp qword [rbp-224], 0
+    cmp qword [rbp-192], 0
     je .cast_stored_1520
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1520:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     mov rax, 1
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
     call date_0_1_days_later
-    mov [rbp-232], rax  ; store the day after
+    mov [rbp-200], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_346]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-216]
+    mov rax, [rbp-184]
     push rax
-    mov rax, [rbp-232]
+    mov rax, [rbp-200]
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_weekday_on_or_after
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_347]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20775,22 +19596,23 @@ date_0_1_try_a_relative_item_at:
     jmp .if_end_1506
 .else_1507:
 .if_end_1506:
-    mov rax, [rbp-168]
+    mov rax, [rbp-136]
     test rax, rax
     jz .else_1522
     mov rax, 0
     push rax
-    mov rax, [rbp-216]
+    mov rax, [rbp-184]
     pop rbx
     cmp rax, rbx
     je .else_1522
-    mov qword [rbp-240], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-208], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_348]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1523
@@ -20835,7 +19657,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1534
-    mov qword [rbp-240], 1  ; the text was not a number
+    mov qword [rbp-208], 1  ; the text was not a number
 .cast_read_a_number_1534:
 .vr_store_1532:
     mov r11b, 0  ; new tag
@@ -20851,58 +19673,64 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1533:
 .dyn_cast_done_1526:
-    cmp qword [rbp-240], 0
+    cmp qword [rbp-208], 0
     je .cast_stored_1535
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1535:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     mov rax, 1
     INT_NEG
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
     call date_0_1_days_later
-    mov [rbp-248], rax  ; store the day before
+    mov [rbp-216], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_349]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-216]
+    mov rax, [rbp-184]
     push rax
-    mov rax, [rbp-248]
+    mov rax, [rbp-216]
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_weekday_on_or_before
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_350]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -20911,37 +19739,28 @@ date_0_1_try_a_relative_item_at:
     jmp .if_end_1521
 .else_1522:
 .if_end_1521:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_weekday_name_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-256], rax  ; store the bare weekday
+    mov [rbp-224], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-256]
+    mov rax, [rbp-224]
     pop rbx
     cmp rax, rbx
     je .else_1537
-    mov qword [rbp-264], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-232], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_351]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1538
@@ -20986,7 +19805,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1549
-    mov qword [rbp-264], 1  ; the text was not a number
+    mov qword [rbp-232], 1  ; the text was not a number
 .cast_read_a_number_1549:
 .vr_store_1547:
     mov r11b, 0  ; new tag
@@ -21002,49 +19821,55 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1548:
 .dyn_cast_done_1541:
-    cmp qword [rbp-264], 0
+    cmp qword [rbp-232], 0
     je .cast_stored_1550
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1550:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_352]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-256]
+    mov rax, [rbp-224]
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
     call date_0_1_the_weekday_on_or_after
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_353]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -21054,89 +19879,59 @@ date_0_1_try_a_relative_item_at:
 .else_1537:
 .if_end_1536:
     mov rax, 1
-    mov [rbp-272], rax  ; store the sign
+    mov [rbp-240], rax
     lea rax, [rel str_354]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-280], rax  ; store has a sign
+    mov [rbp-248], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-280]
+    mov rax, [rbp-248]
     pop rbx
     cmp rax, rbx
     jne .else_1552
     lea rax, [rel str_355]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-288], rax  ; store has a minus
-    mov rax, [rbp-288]
+    mov [rbp-256], rax
+    mov rax, [rbp-256]
     test rax, rax
     jz .else_1554
     mov rax, 1
     INT_NEG
-    mov [rbp-272], rax  ; store the sign
+    mov [rbp-240], rax
     mov rax, 1
-    mov [rbp-280], rax  ; store has a sign
+    mov [rbp-248], rax
     jmp .if_end_1553
 .else_1554:
 .if_end_1553:
     jmp .if_end_1551
 .else_1552:
 .if_end_1551:
-    mov rax, [rbp-280]
+    mov rax, [rbp-248]
     test rax, rax
     jz .else_1556
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     jmp .if_end_1555
 .else_1556:
 .if_end_1555:
@@ -21163,34 +19958,24 @@ date_0_1_try_a_relative_item_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-296], rax  ; store scratch
-    lea rax, [rbp-296]  ; the caller's scratch
+    mov [rbp-264], rax
+    lea rax, [rbp-264]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_read_some_digits_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-304], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-272], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-296]
-    push rax  ; save map pointer
     lea rax, [rel str_358]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-264]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1557
@@ -21252,49 +20037,55 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 3  ; new tag
 .vr_done_1567:
 .dyn_cast_done_1560:
-    cmp qword [rbp-304], 0
+    cmp qword [rbp-272], 0
     je .cast_stored_1568
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1568:
-    mov [rbp-312], rax  ; store digits matched
+    mov [rbp-280], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-312]
+    mov rax, [rbp-280]
     pop rbx
     cmp rax, rbx
     jne .else_1570
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_359]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_360]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -21305,11 +20096,11 @@ date_0_1_try_a_relative_item_at:
 .if_end_1569:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     ; Map key access (lookup)
-    mov rax, [rbp-296]
-    push rax  ; save map pointer
     lea rax, [rel str_361]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-264]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1571
@@ -21331,65 +20122,61 @@ date_0_1_try_a_relative_item_at:
     SET_LAST_ERROR 1  ; nothing in arithmetic
 .arith_not_nothing_1574:
     push rax
-    mov rax, [rbp-272]
+    mov rax, [rbp-240]
     pop rbx
     INT_MUL
-    mov [rbp-320], rax  ; store count
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-288], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-328], rax  ; store the spaces before the unit
+    mov [rbp-296], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-328]
+    mov rax, [rbp-296]
     pop rbx
     cmp rax, rbx
     jne .else_1576
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_362]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_363]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -21398,61 +20185,57 @@ date_0_1_try_a_relative_item_at:
     jmp .if_end_1575
 .else_1576:
 .if_end_1575:
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_read_a_unit_word_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-336], rax  ; store the unit
+    mov [rbp-304], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-336]
+    mov rax, [rbp-304]
     pop rbx
     cmp rax, rbx
     jne .else_1578
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_364]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_365]  ; literal map key
     push rax  ; save key pointer
     mov rax, 0
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     push rax  ; save return value
     call _dec_call_depth
@@ -21461,13 +20244,14 @@ date_0_1_try_a_relative_item_at:
     jmp .if_end_1577
 .else_1578:
 .if_end_1577:
-    mov qword [rbp-344], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-312], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_366]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1579
@@ -21512,7 +20296,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1590
-    mov qword [rbp-344], 1  ; the text was not a number
+    mov qword [rbp-312], 1  ; the text was not a number
 .cast_read_a_number_1590:
 .vr_store_1588:
     mov r11b, 0  ; new tag
@@ -21528,95 +20312,79 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1589:
 .dyn_cast_done_1582:
-    cmp qword [rbp-344], 0
+    cmp qword [rbp-312], 0
     je .cast_stored_1591
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1591:
-    mov [rbp-352], rax  ; store the position before ago
-    lea rax, [rbp-24]  ; the caller's reader
+    mov [rbp-320], rax
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     lea rax, [rel str_367]
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     call date_0_1_the_document_reads_ignoring_case
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov [rbp-360], rax  ; store has ago
+    mov [rbp-328], rax
     mov rax, 0
     push rax
-    mov rax, [rbp-360]
+    mov rax, [rbp-328]
     pop rbx
     cmp rax, rbx
     jne .else_1593
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_368]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-352]
+    mov rax, [rbp-320]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-24], rax  ; store new pointer for reader
     push rbx
-    mov rbx, [rbp-32]  ; where the caller keeps reader
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     jmp .if_end_1592
 .else_1593:
 .if_end_1592:
-    mov rax, [rbp-360]
+    mov rax, [rbp-328]
     test rax, rax
     jz .else_1595
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-320]
+    mov rax, [rbp-288]
     push rax
     mov rax, 0
     pop rbx
     INT_SUB
-    mov [rbp-320], rax  ; store count
+    mov [rbp-288], rax
     jmp .if_end_1594
 .else_1595:
 .if_end_1594:
-    mov qword [rbp-368], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-336], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_369]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1596
@@ -21661,7 +20429,7 @@ date_0_1_try_a_relative_item_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1607
-    mov qword [rbp-368], 1  ; the text was not a number
+    mov qword [rbp-336], 1  ; the text was not a number
 .cast_read_a_number_1607:
 .vr_store_1605:
     mov r11b, 0  ; new tag
@@ -21677,22 +20445,20 @@ date_0_1_try_a_relative_item_at:
     mov r11b, 0  ; new tag
 .vr_done_1606:
 .dyn_cast_done_1599:
-    cmp qword [rbp-368], 0
+    cmp qword [rbp-336], 0
     je .cast_stored_1608
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1608:
-    mov [rbp-112], rax  ; store base
+    mov [rbp-80], rax
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_370]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-320]
+    mov rax, [rbp-288]
     push rax
-    mov rax, [rbp-336]
+    mov rax, [rbp-304]
     push rax
-    mov rax, [rbp-112]
+    mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
@@ -21700,36 +20466,44 @@ date_0_1_try_a_relative_item_at:
     call date_0_1_apply_a_unit
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-40], rax  ; store new pointer for state
     push rbx
-    mov rbx, [rbp-48]  ; where the caller keeps state
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_371]  ; literal map key
     push rax  ; save key pointer
     mov rax, 1
     mov rdx, rax  ; value
     mov ecx, 3  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for outcome
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps outcome
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: parse the relative items at
 date_0_1_parse_the_relative_items_at:
-    FUNC_PROLOGUE 112
+    FUNC_PROLOGUE 80
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -21740,61 +20514,44 @@ date_0_1_parse_the_relative_items_at:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps document
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps document
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps reader
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps reader
     mov rax, rdx
-    mov [rbp-48], rax  ; where the caller keeps state
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-40], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps state
     mov rax, rcx
-    mov [rbp-64], rax  ; where the caller keeps result
-    mov rax, [rax]  ; the collection itself
-    mov [rbp-56], rax  ; param payload
+    mov [rbp-32], rax  ; cell: where the owner keeps result
     ; Map literal with 0 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
     push rax  ; save map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-104], rax  ; store map item
+    mov [rbp-72], rax
     xor rax, rax
-    mov [rbp-96], rax  ; store the position
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store items applied
+    mov [rbp-40], rax
     mov rax, 1
-    mov [rbp-80], rax  ; store still going
+    mov [rbp-48], rax
 .while_start_1609:
-    mov rax, [rbp-80]
+    mov rax, [rbp-48]
     test rax, rax
     jz .while_end_1610
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call date_0_1_skip_spaces
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    mov qword [rbp-88], 0  ; no cast of a text to a number has failed yet
+    mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-24]
-    push rax  ; save map pointer
     lea rax, [rel str_372]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1611
@@ -21839,7 +20596,7 @@ date_0_1_parse_the_relative_items_at:
     call _parse_i64
     cmp qword [rel _last_error], 0
     je .cast_read_a_number_1622
-    mov qword [rbp-88], 1  ; the text was not a number
+    mov qword [rbp-56], 1  ; the text was not a number
 .cast_read_a_number_1622:
 .vr_store_1620:
     mov r11b, 0  ; new tag
@@ -21855,14 +20612,14 @@ date_0_1_parse_the_relative_items_at:
     mov r11b, 0  ; new tag
 .vr_done_1621:
 .dyn_cast_done_1614:
-    cmp qword [rbp-88], 0
+    cmp qword [rbp-56], 0
     je .cast_stored_1623
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1623:
-    mov [rbp-96], rax  ; store the position
+    mov [rbp-64], rax
     mov rax, 0
-    mov [rbp-80], rax  ; store still going
+    mov [rbp-48], rax
     ; Map literal with 1 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -21877,53 +20634,37 @@ date_0_1_parse_the_relative_items_at:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-104], rax  ; store item
-    mov rax, [rbp-8]
+    mov [rbp-72], rax
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
-    mov rax, [rbp-96]
+    mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
     jg .else_1625
-    lea rax, [rbp-104]  ; the caller's item
+    lea rax, [rbp-72]
     push rax
-    lea rax, [rbp-40]  ; the caller's state
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
-    lea rax, [rbp-24]  ; the caller's reader
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-16]  ; where document's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     pop rdx
     pop rcx
     call date_0_1_try_a_relative_item_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    push rbx
-    mov rbx, [rbp-40]  ; state as the call left it
-    push rcx
-    mov rcx, [rbp-48]  ; where our caller keeps state
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
-    push rbx
-    mov rbx, [rbp-24]  ; reader as the call left it
-    push rcx
-    mov rcx, [rbp-32]  ; where our caller keeps reader
-    mov [rcx], rbx  ; the caller grows too
-    pop rcx
-    pop rbx
     jmp .if_end_1624
 .else_1625:
 .if_end_1624:
     ; Map key access (lookup)
-    mov rax, [rbp-104]
-    push rax  ; save map pointer
     lea rax, [rel str_374]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1628
@@ -21942,29 +20683,32 @@ date_0_1_parse_the_relative_items_at:
 .copyin_done_1630:
     test rax, rax
     jz .else_1627
-    inc qword [rbp-72]
+    inc qword [rbp-40]
     mov rax, 1
-    mov [rbp-80], rax  ; store still going
+    mov [rbp-48], rax
     jmp .if_end_1626
 .else_1627:
 .if_end_1626:
     jmp .while_start_1609
 .while_end_1610:
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-56]
-    push rax  ; save map pointer
     lea rax, [rel str_375]  ; literal map key
     push rax  ; save key pointer
-    mov rax, [rbp-72]
+    mov rax, [rbp-40]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-32]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-56], rax  ; store new pointer for result
     push rbx
-    mov rbx, [rbp-64]  ; where the caller keeps result
-    mov [rbx], rax  ; the caller grows too
+    mov rbx, [rbp-32]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
     pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
@@ -21985,10 +20729,10 @@ date_0_1_the_moment_described_by:
     push rax
     pop rdi
     call date_0_1_the_trimmed_text_of
-    mov [rbp-24], rax  ; store trimmed
+    mov [rbp-24], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer document
+    mov [rbp-32], rax
     mov rdi, [rbp-32]
     push rdi
     call _buffer_clear
@@ -22013,7 +20757,7 @@ date_0_1_the_moment_described_by:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-40], rax  ; store reader
+    mov [rbp-40], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22037,12 +20781,12 @@ date_0_1_the_moment_described_by:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-48], rax  ; store outcome
-    lea rax, [rbp-48]  ; the caller's outcome
+    mov [rbp-48], rax
+    lea rax, [rbp-48]
     push rax
-    lea rax, [rbp-40]  ; the caller's reader
+    lea rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the cell holding document
+    lea rax, [rbp-32]
     push rax
     pop rdi
     pop rsi
@@ -22050,11 +20794,11 @@ date_0_1_the_moment_described_by:
     call date_0_1_try_an_absolute_moment_at
     mov qword [rbp-56], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-48]
-    push rax  ; save map pointer
     lea rax, [rel str_379]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1631
@@ -22121,7 +20865,7 @@ date_0_1_the_moment_described_by:
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
 .cast_stored_1642:
-    mov [rbp-64], rax  ; store has an absolute prefix
+    mov [rbp-64], rax
     ; Map literal with 1 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22136,21 +20880,19 @@ date_0_1_the_moment_described_by:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-72], rax  ; store state
+    mov [rbp-72], rax
     mov rax, [rbp-64]
     test rax, rax
     jz .else_1644
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_381]  ; literal map key
     push rax  ; save key pointer
     ; Map key access (lookup)
-    mov rax, [rbp-48]
-    push rax  ; save map pointer
     lea rax, [rel str_382]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-48]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
     je .copyin_is_list_1645
@@ -22167,12 +20909,32 @@ date_0_1_the_moment_described_by:
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
 .copyin_done_1647:
+    cmp r11d, 4  ; copy-in check (#111)
+    je .copyin_is_list_1648
+    cmp r11d, 5
+    je .copyin_is_map_1649
+    jmp .copyin_done_1650
+.copyin_is_list_1648:
+    mov rdi, rax
+    call _copy_list
+    mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
+    jmp .copyin_done_1650
+.copyin_is_map_1649:
+    mov rdi, rax
+    call _copy_map
+    mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
+.copyin_done_1650:
     mov rdx, rax  ; value
     mov ecx, r11d  ; forward runtime tag from r11
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-72], rax  ; store new pointer for state
+    mov [rbp-72], rax
     jmp .if_end_1643
 .else_1644:
 .if_end_1643:
@@ -22181,22 +20943,25 @@ date_0_1_the_moment_described_by:
     mov rax, [rbp-64]
     pop rbx
     cmp rax, rbx
-    jne .else_1649
+    jne .else_1652
     ; Set map's key to value (insert/replace)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_383]  ; literal map key
     push rax  ; save key pointer
     mov rax, [rbp-16]
     mov rdx, rax  ; value
     mov ecx, 0  ; value type tag
+    push rdx  ; value
+    push rcx  ; value type tag
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rcx  ; value type tag
+    pop rdx  ; value
     pop rsi  ; key pointer
-    pop rdi  ; map pointer
     call _map_insert
-    mov [rbp-72], rax  ; store new pointer for state
-    jmp .if_end_1648
-.else_1649:
-.if_end_1648:
+    mov [rbp-72], rax
+    jmp .if_end_1651
+.else_1652:
+.if_end_1651:
     ; Map literal with 1 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22211,14 +20976,14 @@ date_0_1_the_moment_described_by:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-80], rax  ; store result
-    lea rax, [rbp-80]  ; the caller's result
+    mov [rbp-80], rax
+    lea rax, [rbp-80]
     push rax
-    lea rax, [rbp-72]  ; the caller's state
+    lea rax, [rbp-72]
     push rax
-    lea rax, [rbp-40]  ; the caller's reader
+    lea rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the cell holding document
+    lea rax, [rbp-32]
     push rax
     pop rdi
     pop rsi
@@ -22227,262 +20992,262 @@ date_0_1_the_moment_described_by:
     call date_0_1_parse_the_relative_items_at
     mov qword [rbp-88], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-80]
-    push rax  ; save map pointer
     lea rax, [rel str_385]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-80]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1650
+    je .copyin_is_list_1653
     cmp r11d, 5
-    je .copyin_is_map_1651
-    jmp .copyin_done_1652
-.copyin_is_list_1650:
+    je .copyin_is_map_1654
+    jmp .copyin_done_1655
+.copyin_is_list_1653:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1652
-.copyin_is_map_1651:
+    jmp .copyin_done_1655
+.copyin_is_map_1654:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1652:
+.copyin_done_1655:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1653  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1656  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1654
+    je .vr_int_1657
     cmp r11, 2  ; float?
-    je .vr_flt_1655
+    je .vr_flt_1658
     cmp r11, 1  ; string/text?
-    je .vr_str_1656
+    je .vr_str_1659
     cmp r11, 3  ; boolean?
-    je .vr_bool_1657
-    jmp .vr_fail_1658
-.vr_int_1654:
+    je .vr_bool_1660
+    jmp .vr_fail_1661
+.vr_int_1657:
     ; integer -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1660
-.vr_flt_1655:
+    jmp .vr_done_1663
+.vr_flt_1658:
     ; float -> integer
     RAX_TO_XMM0
     cvttsd2si rax, xmm0
     mov r11b, 0  ; new tag
-    jmp .vr_done_1660
-.vr_str_1656:
+    jmp .vr_done_1663
+.vr_str_1659:
     ; text -> number
     mov rdi, rax
     call _parse_i64
     cmp qword [rel _last_error], 0
-    je .cast_read_a_number_1661
+    je .cast_read_a_number_1664
     mov qword [rbp-88], 1  ; the text was not a number
-.cast_read_a_number_1661:
-.vr_store_1659:
+.cast_read_a_number_1664:
+.vr_store_1662:
     mov r11b, 0  ; new tag
-    jmp .vr_done_1660
-.vr_bool_1657:
+    jmp .vr_done_1663
+.vr_bool_1660:
     ; boolean -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1660
-.vr_fail_1658:
+    jmp .vr_done_1663
+.vr_fail_1661:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 0  ; new tag
-.vr_done_1660:
-.dyn_cast_done_1653:
+.vr_done_1663:
+.dyn_cast_done_1656:
     cmp qword [rbp-88], 0
-    je .cast_stored_1662
+    je .cast_stored_1665
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
-.cast_stored_1662:
-    mov [rbp-96], rax  ; store items applied
+.cast_stored_1665:
+    mov [rbp-96], rax
     mov rax, 0
-    mov [rbp-104], rax  ; store had at least one thing
+    mov [rbp-104], rax
     mov rax, [rbp-64]
     test rax, rax
-    jz .else_1664
+    jz .else_1667
     mov rax, 1
-    mov [rbp-104], rax  ; store had at least one thing
-    jmp .if_end_1663
-.else_1664:
-.if_end_1663:
+    mov [rbp-104], rax
+    jmp .if_end_1666
+.else_1667:
+.if_end_1666:
     mov rax, 0
     push rax
     mov rax, [rbp-96]
     pop rbx
     cmp rax, rbx
-    jle .else_1666
+    jle .else_1669
     mov rax, 1
-    mov [rbp-104], rax  ; store had at least one thing
-    jmp .if_end_1665
-.else_1666:
-.if_end_1665:
+    mov [rbp-104], rax
+    jmp .if_end_1668
+.else_1669:
+.if_end_1668:
     mov rax, 0
     push rax
     mov rax, [rbp-104]
     pop rbx
     cmp rax, rbx
-    jne .else_1668
+    jne .else_1671
     mov rax, 0
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
     FUNC_EPILOGUE
-    jmp .if_end_1667
-.else_1668:
-.if_end_1667:
+    jmp .if_end_1670
+.else_1671:
+.if_end_1670:
     mov qword [rbp-112], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_386]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-40]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1669
+    je .copyin_is_list_1672
     cmp r11d, 5
-    je .copyin_is_map_1670
-    jmp .copyin_done_1671
-.copyin_is_list_1669:
+    je .copyin_is_map_1673
+    jmp .copyin_done_1674
+.copyin_is_list_1672:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1671
-.copyin_is_map_1670:
+    jmp .copyin_done_1674
+.copyin_is_map_1673:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1671:
+.copyin_done_1674:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1672  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1675  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1673
+    je .vr_int_1676
     cmp r11, 2  ; float?
-    je .vr_flt_1674
+    je .vr_flt_1677
     cmp r11, 1  ; string/text?
-    je .vr_str_1675
+    je .vr_str_1678
     cmp r11, 3  ; boolean?
-    je .vr_bool_1676
-    jmp .vr_fail_1677
-.vr_int_1673:
+    je .vr_bool_1679
+    jmp .vr_fail_1680
+.vr_int_1676:
     ; integer -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1679
-.vr_flt_1674:
+    jmp .vr_done_1682
+.vr_flt_1677:
     ; float -> integer
     RAX_TO_XMM0
     cvttsd2si rax, xmm0
     mov r11b, 0  ; new tag
-    jmp .vr_done_1679
-.vr_str_1675:
+    jmp .vr_done_1682
+.vr_str_1678:
     ; text -> number
     mov rdi, rax
     call _parse_i64
     cmp qword [rel _last_error], 0
-    je .cast_read_a_number_1680
+    je .cast_read_a_number_1683
     mov qword [rbp-112], 1  ; the text was not a number
-.cast_read_a_number_1680:
-.vr_store_1678:
+.cast_read_a_number_1683:
+.vr_store_1681:
     mov r11b, 0  ; new tag
-    jmp .vr_done_1679
-.vr_bool_1676:
+    jmp .vr_done_1682
+.vr_bool_1679:
     ; boolean -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1679
-.vr_fail_1677:
+    jmp .vr_done_1682
+.vr_fail_1680:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 0  ; new tag
-.vr_done_1679:
-.dyn_cast_done_1672:
+.vr_done_1682:
+.dyn_cast_done_1675:
     cmp qword [rbp-112], 0
-    je .cast_stored_1681
+    je .cast_stored_1684
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
-.cast_stored_1681:
-    mov [rbp-120], rax  ; store the final position
+.cast_stored_1684:
+    mov [rbp-120], rax
     mov rax, [rbp-32]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
     mov rax, [rbp-120]
     pop rbx
     cmp rax, rbx
-    jg .else_1683
+    jg .else_1686
     mov rax, 0
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
     FUNC_EPILOGUE
-    jmp .if_end_1682
-.else_1683:
-.if_end_1682:
+    jmp .if_end_1685
+.else_1686:
+.if_end_1685:
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_387]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1684
+    je .copyin_is_list_1687
     cmp r11d, 5
-    je .copyin_is_map_1685
-    jmp .copyin_done_1686
-.copyin_is_list_1684:
+    je .copyin_is_map_1688
+    jmp .copyin_done_1689
+.copyin_is_list_1687:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1686
-.copyin_is_map_1685:
+    jmp .copyin_done_1689
+.copyin_is_map_1688:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1686:
+.copyin_done_1689:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1687  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1690  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1688
+    je .vr_int_1691
     cmp r11, 2  ; float?
-    je .vr_flt_1689
+    je .vr_flt_1692
     cmp r11, 1  ; string/text?
-    je .vr_str_1690
+    je .vr_str_1693
     cmp r11, 3  ; boolean?
-    je .vr_bool_1691
-    jmp .vr_fail_1692
-.vr_int_1688:
+    je .vr_bool_1694
+    jmp .vr_fail_1695
+.vr_int_1691:
     ; integer -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1694
-.vr_flt_1689:
+    jmp .vr_done_1697
+.vr_flt_1692:
     ; float -> integer
     RAX_TO_XMM0
     cvttsd2si rax, xmm0
     mov r11b, 0  ; new tag
-    jmp .vr_done_1694
-.vr_str_1690:
+    jmp .vr_done_1697
+.vr_str_1693:
     ; text -> number
     mov rdi, rax
     call _parse_i64
-.vr_store_1693:
+.vr_store_1696:
     mov r11b, 0  ; new tag
-    jmp .vr_done_1694
-.vr_bool_1691:
+    jmp .vr_done_1697
+.vr_bool_1694:
     ; boolean -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1694
-.vr_fail_1692:
+    jmp .vr_done_1697
+.vr_fail_1695:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 0  ; new tag
-.vr_done_1694:
-.dyn_cast_done_1687:
+.vr_done_1697:
+.dyn_cast_done_1690:
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -22500,10 +21265,10 @@ date_0_1_reads_as_a_description:
     push rax
     pop rdi
     call date_0_1_the_trimmed_text_of
-    mov [rbp-16], rax  ; store trimmed
+    mov [rbp-16], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-24], rax  ; store buffer document
+    mov [rbp-24], rax
     mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
@@ -22528,7 +21293,7 @@ date_0_1_reads_as_a_description:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-32], rax  ; store reader
+    mov [rbp-32], rax
     ; Map literal with 2 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22552,12 +21317,12 @@ date_0_1_reads_as_a_description:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-40], rax  ; store outcome
-    lea rax, [rbp-40]  ; the caller's outcome
+    mov [rbp-40], rax
+    lea rax, [rbp-40]
     push rax
-    lea rax, [rbp-32]  ; the caller's reader
+    lea rax, [rbp-32]
     push rax
-    lea rax, [rbp-24]  ; the cell holding document
+    lea rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
@@ -22565,78 +21330,78 @@ date_0_1_reads_as_a_description:
     call date_0_1_try_an_absolute_moment_at
     mov qword [rbp-48], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-40]
-    push rax  ; save map pointer
     lea rax, [rel str_391]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-40]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1695
+    je .copyin_is_list_1698
     cmp r11d, 5
-    je .copyin_is_map_1696
-    jmp .copyin_done_1697
-.copyin_is_list_1695:
+    je .copyin_is_map_1699
+    jmp .copyin_done_1700
+.copyin_is_list_1698:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1697
-.copyin_is_map_1696:
+    jmp .copyin_done_1700
+.copyin_is_map_1699:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1697:
+.copyin_done_1700:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1698  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1701  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1699
+    je .vr_int_1702
     cmp r11, 2  ; float?
-    je .vr_flt_1700
+    je .vr_flt_1703
     cmp r11, 1  ; string/text?
-    je .vr_str_1701
+    je .vr_str_1704
     cmp r11, 3  ; boolean?
-    je .vr_bool_1702
-    jmp .vr_fail_1703
-.vr_int_1699:
+    je .vr_bool_1705
+    jmp .vr_fail_1706
+.vr_int_1702:
     ; integer -> boolean
     BOOL_FROM_RAX
     mov r11b, 3  ; new tag
-    jmp .vr_done_1705
-.vr_flt_1700:
+    jmp .vr_done_1708
+.vr_flt_1703:
     ; float -> boolean
     BOOL_FROM_RAX
     mov r11b, 3  ; new tag
-    jmp .vr_done_1705
-.vr_str_1701:
+    jmp .vr_done_1708
+.vr_str_1704:
     ; text -> boolean
     test rax, rax
-    jz .vr_bool_1702_str_false
+    jz .vr_bool_1705_str_false
     mov rdi, rax
     call _text_to_boolean
-    jmp .vr_store_1704
-.vr_bool_1702_str_false:
+    jmp .vr_store_1707
+.vr_bool_1705_str_false:
     xor rax, rax
-.vr_store_1704:
+.vr_store_1707:
     mov r11b, 3  ; new tag
-    jmp .vr_done_1705
-.vr_bool_1702:
+    jmp .vr_done_1708
+.vr_bool_1705:
     ; boolean -> boolean (no-op)
     mov r11b, 3  ; new tag
-    jmp .vr_done_1705
-.vr_fail_1703:
+    jmp .vr_done_1708
+.vr_fail_1706:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 3  ; new tag
-.vr_done_1705:
-.dyn_cast_done_1698:
+.vr_done_1708:
+.dyn_cast_done_1701:
     cmp qword [rbp-48], 0
-    je .cast_stored_1706
+    je .cast_stored_1709
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
-.cast_stored_1706:
-    mov [rbp-56], rax  ; store has an absolute prefix
+.cast_stored_1709:
+    mov [rbp-56], rax
     ; Map literal with 1 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22651,7 +21416,7 @@ date_0_1_reads_as_a_description:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-64], rax  ; store state
+    mov [rbp-64], rax
     ; Map literal with 1 pair(s)
     mov rdi, 8  ; capacity hint
     call _map_new
@@ -22666,14 +21431,14 @@ date_0_1_reads_as_a_description:
     call _map_insert
     push rax  ; save (possibly reallocated) map pointer
     pop rax  ; final map pointer in rax
-    mov [rbp-72], rax  ; store result
-    lea rax, [rbp-72]  ; the caller's result
+    mov [rbp-72], rax
+    lea rax, [rbp-72]
     push rax
-    lea rax, [rbp-64]  ; the caller's state
+    lea rax, [rbp-64]
     push rax
-    lea rax, [rbp-32]  ; the caller's reader
+    lea rax, [rbp-32]
     push rax
-    lea rax, [rbp-24]  ; the cell holding document
+    lea rax, [rbp-24]
     push rax
     pop rdi
     pop rsi
@@ -22682,185 +21447,185 @@ date_0_1_reads_as_a_description:
     call date_0_1_parse_the_relative_items_at
     mov qword [rbp-80], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-72]
-    push rax  ; save map pointer
     lea rax, [rel str_394]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-72]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1707
+    je .copyin_is_list_1710
     cmp r11d, 5
-    je .copyin_is_map_1708
-    jmp .copyin_done_1709
-.copyin_is_list_1707:
+    je .copyin_is_map_1711
+    jmp .copyin_done_1712
+.copyin_is_list_1710:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1709
-.copyin_is_map_1708:
+    jmp .copyin_done_1712
+.copyin_is_map_1711:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1709:
+.copyin_done_1712:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1710  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1713  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1711
+    je .vr_int_1714
     cmp r11, 2  ; float?
-    je .vr_flt_1712
+    je .vr_flt_1715
     cmp r11, 1  ; string/text?
-    je .vr_str_1713
+    je .vr_str_1716
     cmp r11, 3  ; boolean?
-    je .vr_bool_1714
-    jmp .vr_fail_1715
-.vr_int_1711:
+    je .vr_bool_1717
+    jmp .vr_fail_1718
+.vr_int_1714:
     ; integer -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1717
-.vr_flt_1712:
+    jmp .vr_done_1720
+.vr_flt_1715:
     ; float -> integer
     RAX_TO_XMM0
     cvttsd2si rax, xmm0
     mov r11b, 0  ; new tag
-    jmp .vr_done_1717
-.vr_str_1713:
+    jmp .vr_done_1720
+.vr_str_1716:
     ; text -> number
     mov rdi, rax
     call _parse_i64
     cmp qword [rel _last_error], 0
-    je .cast_read_a_number_1718
+    je .cast_read_a_number_1721
     mov qword [rbp-80], 1  ; the text was not a number
-.cast_read_a_number_1718:
-.vr_store_1716:
+.cast_read_a_number_1721:
+.vr_store_1719:
     mov r11b, 0  ; new tag
-    jmp .vr_done_1717
-.vr_bool_1714:
+    jmp .vr_done_1720
+.vr_bool_1717:
     ; boolean -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1717
-.vr_fail_1715:
+    jmp .vr_done_1720
+.vr_fail_1718:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 0  ; new tag
-.vr_done_1717:
-.dyn_cast_done_1710:
+.vr_done_1720:
+.dyn_cast_done_1713:
     cmp qword [rbp-80], 0
-    je .cast_stored_1719
+    je .cast_stored_1722
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
-.cast_stored_1719:
-    mov [rbp-88], rax  ; store items applied
+.cast_stored_1722:
+    mov [rbp-88], rax
     mov rax, 0
-    mov [rbp-96], rax  ; store had at least one thing
+    mov [rbp-96], rax
     mov rax, [rbp-56]
     test rax, rax
-    jz .else_1721
+    jz .else_1724
     mov rax, 1
-    mov [rbp-96], rax  ; store had at least one thing
-    jmp .if_end_1720
-.else_1721:
-.if_end_1720:
+    mov [rbp-96], rax
+    jmp .if_end_1723
+.else_1724:
+.if_end_1723:
     mov rax, 0
     push rax
     mov rax, [rbp-88]
     pop rbx
     cmp rax, rbx
-    jle .else_1723
+    jle .else_1726
     mov rax, 1
-    mov [rbp-96], rax  ; store had at least one thing
-    jmp .if_end_1722
-.else_1723:
-.if_end_1722:
+    mov [rbp-96], rax
+    jmp .if_end_1725
+.else_1726:
+.if_end_1725:
     mov rax, 0
     push rax
     mov rax, [rbp-96]
     pop rbx
     cmp rax, rbx
-    jne .else_1725
+    jne .else_1728
     mov rax, 0
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
     FUNC_EPILOGUE
-    jmp .if_end_1724
-.else_1725:
-.if_end_1724:
+    jmp .if_end_1727
+.else_1728:
+.if_end_1727:
     mov qword [rbp-104], 0  ; no cast of a text to a number has failed yet
     ; Map key access (lookup)
-    mov rax, [rbp-32]
-    push rax  ; save map pointer
     lea rax, [rel str_395]  ; literal map key
-    mov rsi, rax  ; key pointer
-    pop rdi  ; map pointer
+    push rax  ; key pointer
+    mov rax, [rbp-32]
+    mov rdi, rax  ; map pointer, loaded last
+    pop rsi  ; key pointer
     call _map_lookup
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_1726
+    je .copyin_is_list_1729
     cmp r11d, 5
-    je .copyin_is_map_1727
-    jmp .copyin_done_1728
-.copyin_is_list_1726:
+    je .copyin_is_map_1730
+    jmp .copyin_done_1731
+.copyin_is_list_1729:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_1728
-.copyin_is_map_1727:
+    jmp .copyin_done_1731
+.copyin_is_map_1730:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_1728:
+.copyin_done_1731:
     ; #115: a dynamically-typed value is cast to its destination's type
     test rax, rax
-    jz .dyn_cast_done_1729  ; a miss: #91 gives the destination's empty value next
+    jz .dyn_cast_done_1732  ; a miss: #91 gives the destination's empty value next
     cmp r11, 0  ; integer?
-    je .vr_int_1730
+    je .vr_int_1733
     cmp r11, 2  ; float?
-    je .vr_flt_1731
+    je .vr_flt_1734
     cmp r11, 1  ; string/text?
-    je .vr_str_1732
+    je .vr_str_1735
     cmp r11, 3  ; boolean?
-    je .vr_bool_1733
-    jmp .vr_fail_1734
-.vr_int_1730:
+    je .vr_bool_1736
+    jmp .vr_fail_1737
+.vr_int_1733:
     ; integer -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1736
-.vr_flt_1731:
+    jmp .vr_done_1739
+.vr_flt_1734:
     ; float -> integer
     RAX_TO_XMM0
     cvttsd2si rax, xmm0
     mov r11b, 0  ; new tag
-    jmp .vr_done_1736
-.vr_str_1732:
+    jmp .vr_done_1739
+.vr_str_1735:
     ; text -> number
     mov rdi, rax
     call _parse_i64
     cmp qword [rel _last_error], 0
-    je .cast_read_a_number_1737
+    je .cast_read_a_number_1740
     mov qword [rbp-104], 1  ; the text was not a number
-.cast_read_a_number_1737:
-.vr_store_1735:
+.cast_read_a_number_1740:
+.vr_store_1738:
     mov r11b, 0  ; new tag
-    jmp .vr_done_1736
-.vr_bool_1733:
+    jmp .vr_done_1739
+.vr_bool_1736:
     ; boolean -> integer (no-op)
     mov r11b, 0  ; new tag
-    jmp .vr_done_1736
-.vr_fail_1734:
+    jmp .vr_done_1739
+.vr_fail_1737:
     ; unsupported source tag for cast
     xor rax, rax
     SET_LAST_ERROR 1
     mov r11b, 0  ; new tag
-.vr_done_1736:
-.dyn_cast_done_1729:
+.vr_done_1739:
+.dyn_cast_done_1732:
     cmp qword [rbp-104], 0
-    je .cast_stored_1738
+    je .cast_stored_1741
     xor eax, eax  ; a text was not a number: the default
     SET_LAST_ERROR 1  ; the cast's failure outlives the rest of the value
-.cast_stored_1738:
-    mov [rbp-112], rax  ; store the final position
+.cast_stored_1741:
+    mov [rbp-112], rax
     mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax

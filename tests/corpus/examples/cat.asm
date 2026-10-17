@@ -99,7 +99,7 @@ _start:
 
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-104], rax  ; store buffer staged output
+    mov [rbp-104], rax
     mov qword [rbp-8], 0
     mov rax, [rbp-8]
     mov [rel gvar_4], rax
@@ -350,7 +350,7 @@ _start:
     push rax
     pop rdi
     call read_the_file
-    mov [rbp-104], rax  ; store buffer staged output
+    mov [rbp-104], rax
     mov rdi, [rbp-88]
     test rdi, rdi
     js .skip_fd_41  ; skip if invalid fd
@@ -361,10 +361,10 @@ _start:
     SET_LAST_ERROR 1
 .write_done_42:
     ; Clear buffer contents
-    mov rax, [rbp-104]  ; local staged output
+    mov rax, [rbp-104]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-104], rax  ; buffer (unchanged pointer)
+    mov [rbp-104], rax
     ; exit program
     mov rax, 0
     mov rdi, rax  ; exit code
@@ -434,7 +434,7 @@ _start:
     push rax
     pop rdi
     call read_the_file
-    mov [rbp-104], rax  ; store buffer staged output
+    mov [rbp-104], rax
     mov rdi, [rbp-88]
     test rdi, rdi
     js .skip_fd_51  ; skip if invalid fd
@@ -445,10 +445,10 @@ _start:
     SET_LAST_ERROR 1
 .write_done_52:
     ; Clear buffer contents
-    mov rax, [rbp-104]  ; local staged output
+    mov rax, [rbp-104]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-104], rax  ; buffer (unchanged pointer)
+    mov [rbp-104], rax
 .foreach_continue_44:
     inc qword [rbp-120]
     jmp .foreach_start_43
@@ -525,11 +525,11 @@ read_the_file:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_21  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local content
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-24], rsi  ; store new pointer for content
+    mov [rbp-24], rsi
     jmp .readline_done_22
 .skip_fd_21:
     SET_LAST_ERROR 1
@@ -588,21 +588,21 @@ read_the_file:
     SET_LAST_ERROR 1
 .write_done_31:
     ; Clear buffer contents
-    mov rax, [rbp-16]  ; local staged output
+    mov rax, [rbp-16]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-16], rax  ; buffer (unchanged pointer)
+    mov [rbp-16], rax
     jmp .if_end_28
 .else_29:
 .if_end_28:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_32  ; skip if invalid fd
-    mov rax, [rbp-24]  ; local content
+    mov rax, [rbp-24]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_line_into_buffer
-    mov [rbp-24], rsi  ; store new pointer for content
+    mov [rbp-24], rsi
     jmp .readline_done_33
 .skip_fd_32:
     SET_LAST_ERROR 1

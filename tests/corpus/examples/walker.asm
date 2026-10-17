@@ -45,11 +45,11 @@ _start:
     sub rsp, 128
 
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
-    jnz .list_mmap_ok_23
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
+    jnz .list_mmap_ok_35
     EXIT 1
-.list_mmap_ok_23:
+.list_mmap_ok_35:
     push rax  ; save list pointer
     mov qword [rax], 8  ; capacity
     mov qword [rax + 8], 0  ; length
@@ -57,11 +57,11 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_0], rax  ; global store list echoed
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
-    jnz .list_mmap_ok_24
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
+    jnz .list_mmap_ok_36
     EXIT 1
-.list_mmap_ok_24:
+.list_mmap_ok_36:
     push rax  ; save list pointer
     mov qword [rax], 8  ; capacity
     mov qword [rax + 8], 0  ; length
@@ -69,8 +69,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_1], rax  ; global store list samples
     ; List literal with 3 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_3
     EXIT 1
 .list_mmap_ok_3:
@@ -109,6 +109,12 @@ _start:
     mov [rbp-16], rax  ; list length
     mov qword [rbp-24], 0  ; index
 .foreach_start_4:
+    mov rax, [rel gvar_1]
+    mov [rbp-8], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-24]  ; index
+    cmp rax, rcx
+    jge .foreach_end_6  ; the list is shorter now
     mov rax, [rbp-24]  ; index
     cmp rax, [rbp-16]  ; compare with length
     jge .foreach_end_6
@@ -139,6 +145,22 @@ _start:
 .copyin_done_9:
     mov [rbp-32], rax  ; store in item
     mov rax, [rbp-32]
+    movzx r9d, byte [rbp-40]  ; runtime tag for copy-in check (#111)
+    cmp r9d, 4  ; copy-in check (#111)
+    je .copyin_is_list_10
+    cmp r9d, 5
+    je .copyin_is_map_11
+    jmp .copyin_done_12
+.copyin_is_list_10:
+    mov rdi, rax
+    call _copy_list
+    mov r9d, 4  ; restore the tag `_copy_list`'s syscall clobbered
+    jmp .copyin_done_12
+.copyin_is_map_11:
+    mov rdi, rax
+    call _copy_map
+    mov r9d, 5  ; restore the tag `_copy_map`'s syscall clobbered
+.copyin_done_12:
     movzx r11, byte [rbp-40]  ; value tag (shadow slot)
     push r11  ; value param tag word
     push rax
@@ -150,11 +172,11 @@ _start:
     jmp .foreach_start_4
 .foreach_end_6:
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
-    jnz .list_mmap_ok_10
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
+    jnz .list_mmap_ok_13
     EXIT 1
-.list_mmap_ok_10:
+.list_mmap_ok_13:
     push rax  ; save list pointer
     mov qword [rax], 8  ; capacity
     mov qword [rax + 8], 0  ; length
@@ -166,10 +188,16 @@ _start:
     LIST_LENGTH rax  ; get length (offset 8)
     mov [rbp-56], rax  ; list length
     mov qword [rbp-64], 0  ; index
-.foreach_start_11:
+.foreach_start_14:
+    mov rax, [rel gvar_1]
+    mov [rbp-48], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-64]  ; index
+    cmp rax, rcx
+    jge .foreach_end_16  ; the list is shorter now
     mov rax, [rbp-64]  ; index
     cmp rax, [rbp-56]  ; compare with length
-    jge .foreach_end_13
+    jge .foreach_end_16
     mov rbx, [rbp-48]  ; list pointer
     mov r11, [rbx]  ; capacity
     shl r11, 3  ; * element size (8)
@@ -181,41 +209,73 @@ _start:
     add rbx, rax
     mov rax, [rbx]  ; get element
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_14
+    je .copyin_is_list_17
     cmp r11d, 5
-    je .copyin_is_map_15
-    jmp .copyin_done_16
-.copyin_is_list_14:
+    je .copyin_is_map_18
+    jmp .copyin_done_19
+.copyin_is_list_17:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_16
-.copyin_is_map_15:
+    jmp .copyin_done_19
+.copyin_is_map_18:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_16:
+.copyin_done_19:
     mov [rbp-72], rax  ; store in item
     ; Append value to list
-    mov rax, [rel gvar_0]  ; global mirror echoed
-    push rax  ; save list pointer
     mov rax, [rbp-72]
+    movzx r9d, byte [rbp-80]  ; runtime tag for copy-in check (#111)
+    cmp r9d, 4  ; copy-in check (#111)
+    je .copyin_is_list_20
+    cmp r9d, 5
+    je .copyin_is_map_21
+    jmp .copyin_done_22
+.copyin_is_list_20:
+    mov rdi, rax
+    call _copy_list
+    mov r9d, 4  ; restore the tag `_copy_list`'s syscall clobbered
+    jmp .copyin_done_22
+.copyin_is_map_21:
+    mov rdi, rax
+    call _copy_map
+    mov r9d, 5  ; restore the tag `_copy_map`'s syscall clobbered
+.copyin_done_22:
     movzx r11, byte [rbp-80]  ; value tag (shadow slot)
     push r11  ; value param tag word
     push rax
     pop rdi
     pop rsi
     call echo
+    cmp r11d, 4  ; copy-in check (#111)
+    je .copyin_is_list_23
+    cmp r11d, 5
+    je .copyin_is_map_24
+    jmp .copyin_done_25
+.copyin_is_list_23:
+    mov rdi, rax
+    call _copy_list
+    mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
+    jmp .copyin_done_25
+.copyin_is_map_24:
+    mov rdi, rax
+    call _copy_map
+    mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
+.copyin_done_25:
     push rax  ; save value to append
     mov edx, r11d  ; forward runtime tag from r11
+    push rdx  ; element type tag
+    mov rax, [rel gvar_0]  ; global mirror echoed
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
     mov [rel gvar_0], rax  ; store new pointer for echoed
-.foreach_continue_12:
+.foreach_continue_15:
     inc qword [rbp-64]
-    jmp .foreach_start_11
-.foreach_end_13:
+    jmp .foreach_start_14
+.foreach_end_16:
     PRINT_STR str_5, str_5_len
     PRINT_NEWLINE
     mov rax, [rel gvar_0]
@@ -223,10 +283,16 @@ _start:
     LIST_LENGTH rax  ; get length (offset 8)
     mov [rbp-96], rax  ; list length
     mov qword [rbp-104], 0  ; index
-.foreach_start_17:
+.foreach_start_26:
+    mov rax, [rel gvar_0]
+    mov [rbp-88], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-104]  ; index
+    cmp rax, rcx
+    jge .foreach_end_28  ; the list is shorter now
     mov rax, [rbp-104]  ; index
     cmp rax, [rbp-96]  ; compare with length
-    jge .foreach_end_19
+    jge .foreach_end_28
     mov rbx, [rbp-88]  ; list pointer
     mov r11, [rbx]  ; capacity
     shl r11, 3  ; * element size (8)
@@ -238,32 +304,48 @@ _start:
     add rbx, rax
     mov rax, [rbx]  ; get element
     cmp r11d, 4  ; copy-in check (#111)
-    je .copyin_is_list_20
+    je .copyin_is_list_29
     cmp r11d, 5
-    je .copyin_is_map_21
-    jmp .copyin_done_22
-.copyin_is_list_20:
+    je .copyin_is_map_30
+    jmp .copyin_done_31
+.copyin_is_list_29:
     mov rdi, rax
     call _copy_list
     mov r11d, 4  ; restore the tag `_copy_list`'s syscall clobbered
-    jmp .copyin_done_22
-.copyin_is_map_21:
+    jmp .copyin_done_31
+.copyin_is_map_30:
     mov rdi, rax
     call _copy_map
     mov r11d, 5  ; restore the tag `_copy_map`'s syscall clobbered
-.copyin_done_22:
+.copyin_done_31:
     mov [rbp-112], rax  ; store in item
     mov rax, [rbp-112]
+    movzx r9d, byte [rbp-120]  ; runtime tag for copy-in check (#111)
+    cmp r9d, 4  ; copy-in check (#111)
+    je .copyin_is_list_32
+    cmp r9d, 5
+    je .copyin_is_map_33
+    jmp .copyin_done_34
+.copyin_is_list_32:
+    mov rdi, rax
+    call _copy_list
+    mov r9d, 4  ; restore the tag `_copy_list`'s syscall clobbered
+    jmp .copyin_done_34
+.copyin_is_map_33:
+    mov rdi, rax
+    call _copy_map
+    mov r9d, 5  ; restore the tag `_copy_map`'s syscall clobbered
+.copyin_done_34:
     movzx r11, byte [rbp-120]  ; value tag (shadow slot)
     push r11  ; value param tag word
     push rax
     pop rdi
     pop rsi
     call name_the_type
-.foreach_continue_18:
+.foreach_continue_27:
     inc qword [rbp-104]
-    jmp .foreach_start_17
-.foreach_end_19:
+    jmp .foreach_start_26
+.foreach_end_28:
 
     ; Exit program
     EXIT 0
