@@ -27,6 +27,3 @@ Print "Word list [\"hello\", \"world\"]:".
 A list called words is ["hello", "world"].
 For each word in words,
     print the word.
-Print "".
-
-Print "Done!".

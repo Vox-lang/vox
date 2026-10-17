@@ -10,7 +10,8 @@ A buffer called 'next grid' is 800 bytes in size.
 
 (Step off one edge of the board and come back on at the opposite edge)
 To wrap with a number called position and a number called step and a number called 'board size'.
-    Return a number, {{{position subtract 1} add step add 'board size'} modulo 'board size'} add 1.
+    A number called 'cells past the first' is {position subtract 1} add step add 'board size'.
+    Return a number, {'cells past the first' modulo 'board size'} add 1.
 
 To 'cell index' with a number called row and a number called column.
     Return a number, {{row subtract 1} multiply width} add column.
