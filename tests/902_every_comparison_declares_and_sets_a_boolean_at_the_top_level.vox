@@ -1,0 +1,48 @@
+(docs/BUGS_FOUND.md #153: each comparison, written both ways round, as the
+ value of a declaration and of a Set at the top level.)
+
+a number called heat is 4.
+a number called limit is 6.
+
+a boolean called 'heat matches' is heat is limit.
+a boolean called 'limit matches' is limit is heat.
+Print "is: {heat matches} {limit matches}".
+
+a boolean called 'heat differs' is heat is not limit.
+a boolean called 'limit differs' is limit is not heat.
+Print "is not: {heat differs} {limit differs}".
+
+a boolean called 'heat higher' is heat is greater than limit.
+a boolean called 'limit higher' is limit is greater than heat.
+Print "is greater than: {heat higher} {limit higher}".
+
+a boolean called 'heat lower' is heat is less than or equal to limit.
+a boolean called 'limit lower' is limit is less than or equal to heat.
+Print "is less than or equal to: {heat lower} {limit lower}".
+
+a boolean called 'both positive' is heat is positive and limit is greater than 5.
+a boolean called 'both small' is limit is less than 5 and heat is positive.
+Print "and: {both positive} {both small}".
+
+a boolean called 'either six' is heat is 6 or limit is 6.
+a boolean called 'neither six' is limit is 4 or heat is 6.
+Print "or: {either six} {neither six}".
+
+a boolean called 'heat unmatched' is not heat is limit.
+a boolean called 'only one' is not heat is 4 and limit is 6.
+Print "not: {heat unmatched} {only one}".
+
+Set 'heat matches' to limit is limit.
+Set 'limit matches' to heat is not heat.
+Print "Set is: {heat matches} {limit matches}".
+
+Set 'heat higher' to limit is greater than heat.
+Set 'limit higher' to heat is greater than limit.
+Print "Set is greater than: {heat higher} {limit higher}".
+
+Set 'both positive' to limit is 6 and heat is 4.
+Set 'either six' to heat is 5 or limit is 5.
+Print "Set and, or: {both positive} {either six}".
+
+Set 'only one' to not limit is 6.
+Print "Set not: {only one}".

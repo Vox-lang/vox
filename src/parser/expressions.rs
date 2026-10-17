@@ -5,6 +5,18 @@ impl Parser {
         self.parse_or_expr()
     }
 
+    /// The value written by a declaration, a `Set` or an assignment: the
+    /// grammar's whole `expr`, comparisons and `not`/`and`/`or` included,
+    /// exactly what `Return` reads. The `is` that makes the sentence a
+    /// declaration is consumed before this is called, so in
+    /// `a boolean called same is x is y.` the second `is` belongs to the
+    /// value. BUGS_FOUND #153: these slots read only `parse_expression` (the
+    /// arithmetic level), stopped at that second `is`, and left it to be
+    /// misread as the start of a new statement.
+    pub(crate) fn parse_value(&mut self) -> Result<Expr, Box<CompileError>> {
+        self.parse_condition()
+    }
+
     pub(crate) fn parse_or_expr(&mut self) -> Result<Expr, Box<CompileError>> {
         let mut left = self.parse_and_expr()?;
         
@@ -84,8 +96,13 @@ impl Parser {
         self.skip_noise();
         
         // Check for "subject1, subject2, and subject3 are predicate" pattern
-        // Only enter this pattern if we can see "are" coming up ahead
+        // Only enter this pattern if we can see "are" coming up ahead. The
+        // subject list is read speculatively: a comma after a value can also
+        // end it and start the next action of a clause (`set snapshot to steps,
+        // if door, and lift are true then, ...`), so a list that does not
+        // reach `are` rewinds to the comma and leaves it to the caller.
         if *self.current() == Token::Comma && self.has_are_ahead() {
+            let comma_pos = self.pos;
             // Collect subjects for potential "are" pattern
             let mut subjects = vec![left.clone()];
             
@@ -104,7 +121,10 @@ impl Parser {
                     break;
                 }
                 
-                let subject = self.parse_primary()?;
+                let Ok(subject) = self.parse_primary() else {
+                    self.pos = comma_pos;
+                    return Ok(left);
+                };
                 subjects.push(subject);
                 self.skip_noise();
             }
@@ -153,7 +173,8 @@ impl Parser {
                 return Ok(result.unwrap());
             }
             
-            // Not an "are" pattern, return left as-is (shouldn't normally happen)
+            // Not an "are" pattern: the comma belongs to the caller.
+            self.pos = comma_pos;
             return Ok(left);
         }
         

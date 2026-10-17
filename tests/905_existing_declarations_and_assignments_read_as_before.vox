@@ -1,0 +1,19 @@
+(docs/BUGS_FOUND.md #153: reading a full expression as the value changes no
+ sentence that already compiled. Each of these is the form it always was.)
+
+To 'add numbers' with a number called first and a number called second. Return a number, first add second.
+
+a number called total is 5.
+a text called greeting is "a".
+a boolean called ready is true.
+the total is 'add numbers' of total and 2.
+Set total to total add 1.
+total is total multiply 2.
+Set a number called steps to 1.
+Create a text called label to "made".
+a value called 'meter reading' is "357".
+'meter reading' is a number.
+Print "{total} {greeting} {ready} {steps} {label} {'meter reading' add 1}".
+Set pid to 0.
+If pid is 0 then, set ready to false. Otherwise, set ready to true.
+Print "{ready}".

@@ -570,7 +570,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             return Ok(Statement::SetThingField { base, path, value });
         }
 
@@ -592,7 +592,7 @@ impl Parser {
             if let Some(target_type) = self.try_parse_scalar_type_noun_after_is() {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
                 return Ok(declaration);
             }
