@@ -1,0 +1,50 @@
+(expand - the vas front end as a command, for the expansion check and the
+ refusal tests. It preprocesses one assembly source with vas and writes
+ the expansion, one statement per line, to the output path. On an error
+ it writes vas's messages to standard error instead and exits with the
+ number of errors, at most 255.
+
+ Usage: expand <source .asm> <coreasm directory> <output path> [<definitions>]
+
+ The definitions are names to define first, as nasm's -D defines them:
+ one argument of words separated by spaces, each NAME or NAME=VALUE.)
+
+see "../../../tools/vas/vas.vox".
+
+(Each global here has a name that no function in vas.vox gives a variable
+ of another type. Vox refuses a function's variable whose type differs
+ from a global declared above the function, where the manual says the
+ variable shadows the global: a Vox bug, reported, not yet numbered.
+ vas.vox is seen above every global, so the bug cannot reach it, and the
+ names are kept apart so that it never will.)
+
+(A number after at borrows the descriptor the process already has rather
+ than opening a path, so there is nothing here that can fail.)
+Open a file for writing called 'standard error' at 2.
+
+a list called 'the command arguments' is [].
+append each 'command argument' from arguments's all to 'the command arguments'.
+a number called 'how many were given' is 'the command arguments''s length.
+a number called 'the fewest arguments' is 3.
+a number called 'the most arguments' is 4.
+
+If 'how many were given' is less than 'the fewest arguments' or 'how many were given' is greater than 'the most arguments' then,
+    Write "usage: expand <source .asm> <coreasm directory> <output path> [<definitions>]\n" to 'standard error',
+    Exit 2.
+
+a text called 'the source to expand' is element 1 of 'the command arguments'.
+a text called 'the coreasm to use' is element 2 of 'the command arguments'.
+a text called 'the output to write' is element 3 of 'the command arguments'.
+a text called 'the names to define' is "".
+If 'how many were given' is 'the most arguments' then, set 'the names to define' to element 4 of 'the command arguments'.
+
+a number called 'the error count' is 'expand file with definitions' of 'the source to expand' and 'the coreasm to use' and 'the output to write' and 'the names to define'.
+If 'the error count' is greater than 0 then,
+    a text called 'the messages to show' is 'assembler diagnostics' of 'the output to write',
+    Write 'the messages to show' to 'standard error'.
+
+(An exit status holds 0 to 255, so a larger count is given as 255, the
+ most it can say.)
+a number called 'the highest exit status' is 255.
+If 'the error count' is greater than 'the highest exit status' then, set 'the error count' to 'the highest exit status'.
+Exit 'the error count'.

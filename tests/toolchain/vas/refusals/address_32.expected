@@ -1,0 +1,1 @@
+address_32.asm:3: addressing memory through the register eax is outside the NASM subset vas accepts

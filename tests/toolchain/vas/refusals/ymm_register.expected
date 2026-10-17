@@ -1,0 +1,1 @@
+ymm_register.asm:3: the register ymm0 is outside the NASM subset vas accepts

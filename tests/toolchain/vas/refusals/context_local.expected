@@ -1,0 +1,1 @@
+context_local.asm:3: the context-local name %$loop is outside the NASM subset vas accepts

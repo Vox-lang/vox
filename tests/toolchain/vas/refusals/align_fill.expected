@@ -1,0 +1,1 @@
+align_fill.asm:3: align with a fill of its own is outside the NASM subset vas accepts

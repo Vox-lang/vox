@@ -1,0 +1,1 @@
+abs_memory.asm:3: abs in a memory operand is outside the NASM subset vas accepts
