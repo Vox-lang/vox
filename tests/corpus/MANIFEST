@@ -1,0 +1,57 @@
+# The assembly corpus, written by tests/toolchain/corpus.sh. Do not edit by hand.
+# compiler: vox v0.4.16 By Josjuar Lister 2026
+#
+# Columns: the .asm file (relative to tests/corpus), how it is built
+# (program: nasm -f elf64, then ld; library: nasm -f elf64 -DPIC, then
+# ld -shared), its source (relative to its own repository), and the
+# corpus library a program links against (- for none).
+#
+# file	kind	source	needs
+coreutils/base64.asm	program	base64/base64.vox	-
+coreutils/cat.asm	program	cat/cat.vox	-
+coreutils/cut.asm	program	cut/cut.vox	-
+coreutils/echo.asm	program	echo/echo.vox	-
+coreutils/mkdir.asm	program	mkdir/mkdir.vox	-
+coreutils/mount.asm	program	mount/mount.vox	-
+coreutils/rm.asm	program	rm/rm.vox	-
+coreutils/rmdir.asm	program	rmdir/rmdir.vox	-
+coreutils/umount.asm	program	umount/umount.vox	-
+coreutils/wc.asm	program	wc/wc.vox	-
+coreutils/write.asm	program	write/write.vox	-
+coreutils/xxd.asm	program	xxd/xxd.vox	-
+examples/and_keyword.asm	program	examples/and_keyword.vox	-
+examples/args_and_env.asm	program	examples/args_and_env.vox	-
+examples/arithmetic.asm	program	examples/arithmetic.vox	-
+examples/binary.asm	program	examples/binary.vox	-
+examples/casting.asm	program	examples/casting.vox	-
+examples/cat.asm	program	examples/cat.vox	-
+examples/controller.asm	program	examples/controller.vox	-
+examples/delivery.asm	program	examples/delivery.vox	-
+examples/expansion.asm	program	examples/expansion.vox	-
+examples/file_secure.asm	program	examples/file_secure.vox	-
+examples/fizzbuzz.asm	program	examples/fizzbuzz.vox	-
+examples/format_strings.asm	program	examples/format_strings.vox	-
+examples/greet.asm	program	examples/greet.vox	-
+examples/hello.asm	program	examples/hello.vox	-
+examples/initramfs.asm	program	examples/initramfs.vox	-
+examples/life.asm	program	examples/life.vox	-
+examples/lists.asm	program	examples/lists.vox	-
+examples/map.asm	program	examples/map.vox	-
+examples/mathkit_consumer.asm	program	examples/mathkit_consumer.vox	examples/mathkit_lib.asm
+examples/mathkit_lib.asm	library	examples/mathkit_lib.vox	-
+examples/menu.asm	program	examples/menu.vox	-
+examples/nested.asm	program	examples/nested.vox	-
+examples/pi.asm	program	examples/pi.vox	-
+examples/sh.asm	program	examples/sh.vox	-
+examples/supervisor.asm	program	examples/supervisor.vox	-
+examples/time.asm	program	examples/time.vox	-
+examples/walker.asm	program	examples/walker.vox	-
+vox-libs/date.asm	library	date/date.vox	-
+vox-libs/process.asm	library	process/process.vox	-
+vox-libs/textkit.asm	library	textkit/textkit.vox	-
+voxos/init.asm	program	system/init.vox	-
+voxos/initramfs.asm	program	system/initramfs.vox	-
+voxos/sh.asm	program	system/sh.vox	-
+#
+# Sources that did not compile, with the compiler's message:
+# skipped: vox-libs/json/json.vox	error: cannot cast "malformed" to a number: it does not begin with a digit a number is written as it would be in Vox source, after an optional '-': digits with an optional fractional part, like "42" or "2.5", or a whole number after 0x, 0b or 0o, like "0x1F" --> json/json.vox:108:53
