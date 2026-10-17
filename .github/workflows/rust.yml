@@ -24,3 +24,6 @@ jobs:
 
       - name: Run test script
         run: ./test.sh
+
+      - name: Assemble and link the toolchain corpus
+        run: bash tests/toolchain/run.sh
