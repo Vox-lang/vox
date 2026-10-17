@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #154: `the <name> is <format string>.` writes a text
+ exactly as `Set <name> to <format string>.` does.)
+
+a text called path is "a.txt".
+a text called note is "".
+the note is "processed {path}".
+Print note.

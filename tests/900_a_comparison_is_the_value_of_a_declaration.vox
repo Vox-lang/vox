@@ -1,0 +1,7 @@
+(docs/BUGS_FOUND.md #153: the first `is` after the name belongs to the
+ declaration, and everything after it is the value, a comparison included.)
+
+a number called x is 3.
+a number called y is 3.
+a boolean called same is x is y.
+Print "{same}".

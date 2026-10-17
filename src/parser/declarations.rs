@@ -266,7 +266,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             return Ok(Statement::ByteSet { buffer, index, value });
         }
         
@@ -288,7 +288,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             return Ok(Statement::ElementSet { list, index, value });
         }
 
@@ -303,7 +303,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             return Ok(Statement::SetThingField { base, path, value });
         }
 
@@ -321,7 +321,7 @@ impl Parser {
                 if *self.current() == Token::To {
                     self.advance();
                     self.skip_noise();
-                    let value = self.parse_expression()?;
+                    let value = self.parse_value()?;
                     return Ok(Statement::MapSet { map, key: *key, value });
                 }
             }
@@ -418,7 +418,7 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
-                let value = Some(self.parse_expression()?);
+                let value = Some(self.parse_value()?);
                 return Ok(Statement::VarDecl {
                     name,
                     var_type: Some(Type::Time),
@@ -435,7 +435,7 @@ impl Parser {
                 }
                 self.advance();
                 self.skip_noise();
-                let value = Some(self.parse_expression()?);
+                let value = Some(self.parse_value()?);
                 return Ok(Statement::VarDecl {
                     name,
                     var_type: Some(Type::File),
@@ -478,12 +478,12 @@ impl Parser {
             let value = if matches!(self.current(), Token::To | Token::Equals | Token::Is) {
                 self.advance();
                 self.skip_noise();
-                Some(self.parse_expression()?)
+                Some(self.parse_value()?)
             } else if matches!(self.current(), Token::Period | Token::Comma | Token::EOF | Token::ParagraphBreak) {
                 None
             } else {
                 // Try to parse an expression (for cases without explicit "to")
-                Some(self.parse_expression()?)
+                Some(self.parse_value()?)
             };
 
             return Ok(Statement::VarDecl {
@@ -512,12 +512,12 @@ impl Parser {
         let value = if matches!(self.current(), Token::To | Token::Equals | Token::Is) {
             self.advance();
             self.skip_noise();
-            Some(self.parse_expression()?)
+            Some(self.parse_value()?)
         } else if matches!(self.current(), Token::Period | Token::Comma | Token::EOF | Token::ParagraphBreak) {
             None
         } else {
             // Try to parse an expression (for cases without explicit "to")
-            Some(self.parse_expression()?)
+            Some(self.parse_value()?)
         };
 
         // `Set after to nudged of before.` declares `after` from what the
@@ -702,7 +702,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = Some(self.parse_expression()?);
+            let value = Some(self.parse_value()?);
             return Ok(Statement::VarDecl {
                 name,
                 var_type: Some(Type::File),
@@ -719,7 +719,7 @@ impl Parser {
             }
             self.advance();
             self.skip_noise();
-            let value = Some(self.parse_expression()?);
+            let value = Some(self.parse_value()?);
             return Ok(Statement::VarDecl {
                 name,
                 var_type: Some(Type::Time),
@@ -814,7 +814,7 @@ impl Parser {
         let value = if matches!(self.current(), Token::Is | Token::Equals) {
             self.advance();
             self.skip_noise();
-            Some(self.parse_expression()?)
+            Some(self.parse_value()?)
         } else {
             None
         };
@@ -872,7 +872,7 @@ impl Parser {
             if let Some(target_type) = self.try_parse_scalar_type_noun_after_is() {
                 return Ok(Statement::ValueRetype { name, target_type });
             }
-            let value = self.parse_expression()?;
+            let value = self.parse_value()?;
             if let Some(declaration) = self.thing_declaration_by_inference(&name, &value) {
                 return Ok(declaration);
             }

@@ -1,0 +1,14 @@
+(docs/BUGS_FOUND.md #153: a comparison value ends where the sentence says it
+ does. A comma after it still starts the clause's next action, even one that
+ opens with a list of subjects, and those lists read as values too.)
+
+a boolean called 'door open' is true.
+a boolean called 'lift moving' is true.
+a number called steps is 0.
+a number called snapshot is 0.
+While steps is less than 2,
+    set snapshot to steps, if 'door open', and 'lift moving' are true then, print "both at {snapshot}".
+    increment steps.
+
+a boolean called 'all set' is 'door open', and 'lift moving' are true.
+Print "{all set}".

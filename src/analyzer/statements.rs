@@ -1005,16 +1005,10 @@ impl Analyzer {
                     }
                 }
 
-                if matches!(value, Expr::FormatString { .. })
-                    && self.is_variable_available(name)
-                    && !self.is_buffer_variable(name)
-                {
-                    self.push_error(
-                        format!("Format-string assignment requires a buffer destination: {}", name),
-                        Some(name),
-                    );
-                }
-
+                // A format string is a text value, so `the note is
+                // "processed {path}".` writes a text, a `value` or a buffer
+                // exactly as `Set note to ...` does, and the type lock below
+                // refuses it for every other destination (BUGS_FOUND #154).
                 self.analyze_expr(value);
 
                 if !brings_the_name_into_being {
