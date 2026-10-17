@@ -1,0 +1,32 @@
+(docs/BUGS_FOUND.md #154: number, text and specifier holes, reassigned with
+ `the ... is` and the bare `... is` into a text, a value and a buffer, at the
+ top level and inside a function.)
+
+a number called files is 255.
+a float called ratio is 2.5.
+a text called path is "a.txt".
+a text called note is "".
+a value called anything is 0.
+a buffer called line is 64 bytes in size.
+
+To report.
+    a text called summary is "".
+    the summary is "{files} files, {ratio:.2} ratio, {path}".
+    Print summary.
+    summary is "{files:x} {files:06} {path:7}|".
+    Print summary.
+    the anything is "inside {files:b}".
+    Print anything.
+    the note is "from the function {path}".
+
+the note is "{files} files at {ratio:.1}".
+Print note.
+note is "{path} and {files:X}".
+Print note.
+the anything is "{path} {files:o}".
+Print anything.
+Print anything's type.
+the line is "buffer {files:04x}".
+Print line.
+report.
+Print note.

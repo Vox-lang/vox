@@ -101,6 +101,8 @@ A named list or map is its own copy, lists and maps compare by contents, and a p
   or map carried by a `value` a function returns is copied when it is
   appended or stored in a map, so freeing the outer collection leaves the
   original whole.
+- **A comparison is the value of a declaration or a `Set`.** `a boolean called same is x is y.` and `Set same to x is greater than y.` store the comparison, as `Return a boolean, x is y.` does; `not`, `and`, `or` and `x, y, and z are true` read the same way in a value. The first `is` after the name is the declaration's, and a number declared from a comparison is refused as a boolean. (#153)
+- **`the note is "processed {path}".` reassigns a text from a format string**, exactly as `Set note to "processed {path}".` does, for a text, a `value` and a buffer. Writing one into a number is refused by the type check, with the caret on that statement. (#154)
 
 ## [0.4.16] - 2026-10-15
 

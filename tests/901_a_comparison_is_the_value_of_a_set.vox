@@ -1,0 +1,8 @@
+(docs/BUGS_FOUND.md #153: `Set` takes a comparison as its value, as a
+ declaration and a `Return` do.)
+
+a number called x is 3.
+a number called y is 3.
+a boolean called same is false.
+Set same to x is y.
+Print "{same}".
