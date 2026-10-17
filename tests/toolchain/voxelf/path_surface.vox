@@ -1,0 +1,26 @@
+(Calls voxelf through libvoxelf.so the way a host that is not Vox will:
+ 'link and keep the diagnostics' with three paths, answering a number, then
+ 'linker diagnostics' for what went wrong. Takes a manifest that links, one
+ that does not, and the directory to write into.)
+
+see voxelf version "0.1" from "libvoxelf.lib".
+
+a list called 'paths given' is arguments's all.
+a text called 'good manifest' is element 1 of 'paths given'.
+a text called 'bad manifest' is element 2 of 'paths given'.
+a text called 'output directory' is element 3 of 'paths given'.
+a text called 'good output' is "{output directory}/linked".
+a text called 'bad output' is "{output directory}/refused".
+
+a number called 'good errors' is 'link and keep the diagnostics' of 'good manifest' and 'good output' and "_start".
+Print "the good manifest links with {good errors} errors".
+a text called 'good diagnostics' is 'linker diagnostics' of 'good output'.
+Print "and leaves these diagnostics: [{good diagnostics}]".
+
+a number called 'bad errors' is 'link and keep the diagnostics' of 'bad manifest' and 'bad output' and "_start".
+Print "the bad manifest links with {bad errors} errors:".
+a text called 'bad diagnostics' is 'linker diagnostics' of 'bad output'.
+Print 'bad diagnostics' without newline.
+(Reading the diagnostics removes them, so a second reading finds none)
+a text called 'second reading' is 'linker diagnostics' of 'bad output'.
+Print "and asked again, it says: [{second reading}]".

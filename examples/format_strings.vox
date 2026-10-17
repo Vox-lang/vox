@@ -67,6 +67,3 @@ Print "Total: ${price:.2}".
 
 A float called ratio is 0.756.
 Print "Progress: {ratio multiply 100:.1}%".
-
-Print "".
-Print "Done.".
