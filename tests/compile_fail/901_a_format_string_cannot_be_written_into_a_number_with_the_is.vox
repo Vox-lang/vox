@@ -1,0 +1,6 @@
+(docs/BUGS_FOUND.md #154: a format string is a text, so the type lock refuses
+ it for a number, and the caret is on the statement that writes it.)
+
+a number called count is 0.
+a text called path is "a.txt".
+the count is "processed {path}".

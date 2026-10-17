@@ -13,6 +13,10 @@ The VS Code extension highlights octal literals, `isn't` and `aren't`, character
 ### Changed
 - Examples: `life.vox` names the cell count its wrap works from, a hole holding a whole name writes it bare (`{the copy}`) and `casting.vox` casts in the hole (`{age as text}`), the van in `delivery.vox` is called `van`, `cat --version` prints no stale number, and the closing `Done!` lines are gone. `arithmetic.vox` says its sums with `plus`, `minus` and `times`, `sh.vox` names the bytes that end a word, `binary.vox` writes its hex dump from a list, the helpers in `supervisor.vox` and `walker.vox` read as English where they are called (`'exit code' of status`, `'name the type' of item`), `cat.vox` names are lower case, and `pi.vox`, `controller.vox` and `delivery.vox` each lose a line of commentary.
 
+### Fixed
+- **A comparison is the value of a declaration or a `Set`.** `a boolean called same is x is y.` and `Set same to x is greater than y.` store the comparison, as `Return a boolean, x is y.` does; `not`, `and`, `or` and `x, y, and z are true` read the same way in a value. The first `is` after the name is the declaration's, and a number declared from a comparison is refused as a boolean. (#153)
+- **`the note is "processed {path}".` reassigns a text from a format string**, exactly as `Set note to "processed {path}".` does, for a text, a `value` and a buffer. Writing one into a number is refused by the type check, with the caret on that statement. (#154)
+
 ## [0.4.16] - 2026-10-15
 
 Vox now installs with one mise command, as a single static binary that runs on any x86-64 Linux.
