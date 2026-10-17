@@ -1,0 +1,3 @@
+inner: ["a", "x"]
+inner: ["b", "x"]
+outer: [["a"], ["b"]]

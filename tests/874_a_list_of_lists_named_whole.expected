@@ -1,0 +1,2 @@
+outer: [["a"], ["b"]]
+duplicate: [["a"], ["b"], "more"]

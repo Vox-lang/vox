@@ -1,0 +1,11 @@
+(Returning a parameter's list hands back a copy, so changing the result
+ leaves the caller's list as it was.)
+To 'pass back' with a list called items.
+    Return a list, items.
+
+a list called xs is ["a"].
+a list called ys is 'pass back' of xs.
+Set element 1 of ys to "Z".
+append "b" to ys.
+Print "xs: {xs}".
+Print "ys: {ys}".

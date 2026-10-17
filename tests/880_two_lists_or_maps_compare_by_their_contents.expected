@@ -1,0 +1,12 @@
+flat lists equal
+nested lists equal
+a deep difference is seen
+a number is not a float
+different lengths differ
+a named copy is equal
+after the append they differ
+a freed list equals an empty one
+maps equal in any order
+a missing key differs
+a changed value differs
+a named copy is equal

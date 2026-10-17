@@ -396,29 +396,6 @@ impl CodeGenerator {
         self.emit_indent("add rsp, 8");
     }
 
-    /// `a list called taken is note's tags.` - a list or a map read out of a
-    /// field into a variable is a copy, as one read out of a list is: the
-    /// field stays the thing's own. The statement stores the field's
-    /// collection, then the stored one is replaced by its copy. A buffer
-    /// variable copies its source already.
-    pub(crate) fn copy_out_of_collection_field(&mut self, stmt: &Statement) {
-        let (Statement::VarDecl { name, value: Some(Expr::Identifier(source)), .. }
-        | Statement::Assignment { name, value: Expr::Identifier(source) }) = stmt
-        else {
-            return;
-        };
-        let Some(collection @ (Type::List(_) | Type::Map(_))) =
-            self.collection_fields.get(source).cloned()
-        else {
-            return;
-        };
-        if self.emit_load_named_var_addr(name) {
-            self.emit_indent(&format!("mov rdi, rax  ; {} takes a copy of {}", name, source));
-            self.emit_collection_copy(&collection);
-            self.emit_store_back_after_realloc(name, "rax");
-        }
-    }
-
     /// Leave in rax a copy of the list, map or buffer in rdi.
     pub(crate) fn emit_collection_copy(&mut self, collection: &Type) {
         match collection {
@@ -470,6 +447,22 @@ impl CodeGenerator {
     /// A call is deliberately not one of these: it hands back an address, not
     /// a place, and the analyzer keeps one out of these positions (plan 310
     /// §5 - what a call returns is copied into a variable first).
+    /// One owning place: a thing is never stored inside a list, a map
+    /// or a `value`. A thing's collection fields are owning places a
+    /// parameter's cell may name, and that is safe only because a thing sits
+    /// inline in a frame or `.bss`, never inside a block that growth can
+    /// move. The analyzer refuses the store; this keeps codegen from ever
+    /// emitting one should that refusal be lost.
+    pub(crate) fn assert_not_a_thing_in_a_collection(&self, value: &Expr, into: &str) {
+        let is_a_thing = self.thing_place(value).is_some()
+            || matches!(value, Expr::FunctionCall { name, .. } if self.thing_returned_by_call(name).is_some());
+        assert!(
+            !is_a_thing,
+            "internal compiler error: a thing would be stored inside {}, which one owning place forbids",
+            into
+        );
+    }
+
     pub(crate) fn thing_place(&self, value: &Expr) -> Option<(String, ThingPlace)> {
         let (thing, base, offset) = match value {
             Expr::Identifier(name) => (self.thing_of_variable(name)?, name, 0u64),
@@ -580,6 +573,34 @@ impl CodeGenerator {
         for (offset, field) in scalar_slots(&self.things, &thing) {
             let left_operand = left_place.operand(offset);
             let right_operand = right_place.operand(offset);
+            // A list or map field compares by its contents, and a buffer
+            // field by its bytes, as two lists, maps or buffers do.
+            match &field.field_type {
+                Type::List(_) | Type::Map(_) => {
+                    let routine = self.collection_equality_routine(&field.field_type);
+                    self.emit_indent(&format!("mov rdi, qword {}  ; {}", left_operand, field.name));
+                    self.emit_indent(&format!("mov rsi, qword {}", right_operand));
+                    self.emit_indent(&format!("call {}", routine));
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent(&format!("jz {}", differs));
+                    continue;
+                }
+                Type::Buffer => {
+                    self.uses_strings = true;
+                    self.uses_buffers = true;
+                    self.emit_indent(&format!("mov rdi, qword {}  ; {}", left_operand, field.name));
+                    self.emit_indent(&format!("mov rsi, qword {}", right_operand));
+                    self.emit_indent("mov rdx, [rdi + BUF_LENGTH_OFFSET]");
+                    self.emit_indent("mov rcx, [rsi + BUF_LENGTH_OFFSET]");
+                    self.emit_indent("add rdi, BUF_DATA_OFFSET");
+                    self.emit_indent("add rsi, BUF_DATA_OFFSET");
+                    self.emit_indent("call _mem_eq");
+                    self.emit_indent("test rax, rax");
+                    self.emit_indent(&format!("jz {}", differs));
+                    continue;
+                }
+                _ => {}
+            }
             if matches!(field.field_type, Type::String) {
                 // Two texts are equal when their bytes are, wherever each
                 // copy's bytes happen to live.

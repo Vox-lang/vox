@@ -1,0 +1,11 @@
+(A list returned from a parameter is the caller's own copy: returning a
+ freed list gives an empty list that takes appends.)
+To 'give back' with a list called items.
+  Return a list, items.
+
+a list called xs is ["a"].
+Free xs.
+a list called back is 'give back' of xs.
+append "d" to back.
+On error print "append to the returned copy refused".
+Print "back: {back}".

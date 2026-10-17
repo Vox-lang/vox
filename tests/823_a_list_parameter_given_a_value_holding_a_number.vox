@@ -1,0 +1,9 @@
+(A `value` that does not hold a list when the call is made: the call is not
+ made, and the error flag is set.)
+a value called box is 5.
+To 'count' with a list called items.
+    Print "items: {items's length}".
+
+'count' of box.
+On error print "the call was skipped".
+Print "box: {box}".

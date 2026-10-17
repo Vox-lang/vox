@@ -1,0 +1,9 @@
+(`m's values` gives a list of its own: a list or map value is copied, as
+ every read-out of a collection is, so freeing that list (which frees the
+ collections it holds) leaves the map whole.)
+a map called shelf is {"fruit": ["apple"], "meta": {"n": 1}}.
+a list called vals is shelf's values.
+Free vals.
+Print "shelf: {shelf}".
+a list called again is shelf's values.
+Print "again: {again}".

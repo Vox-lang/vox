@@ -1,0 +1,10 @@
+(A top-level buffer is one variable, held in one place, whichever way it is
+ declared. Here it is declared with no value, and a function grows it by
+ its name: the top level reads the grown buffer afterwards.)
+To 'fill'.
+    For each number from 1 to 3000, append "abcdefgh" to hold.
+
+Create a buffer called hold.
+append "a" to hold.
+'fill'.
+Print "after fill: {hold's size}".

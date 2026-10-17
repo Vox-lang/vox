@@ -185,6 +185,15 @@ impl Analyzer {
                 // has already routed those through `validate_import_call_args`,
                 // whose own type check would otherwise report the same
                 // mismatch a second time.
+                // A buffer parameter is the caller's buffer: the call hands
+                // the function the place where the caller keeps it. Only a
+                // buffer has such a place, so anything else is refused here,
+                // whatever it holds (a `value` never holds a buffer).
+                Some((param_name, Type::Buffer)) => {
+                    let param_name = param_name.clone();
+                    self.check_buffer_argument(name, &param_name, arg);
+                    self.analyze_expr(arg);
+                }
                 Some((param_name, param_type)) => {
                     let (param_name, param_type) = (param_name.clone(), param_type.clone());
                     if !self.check_nothing_argument(name, &param_name, &param_type, arg)
@@ -197,6 +206,54 @@ impl Analyzer {
                 None => self.analyze_expr(arg),
             }
         }
+    }
+
+    /// An argument to a `buffer` parameter must be a buffer: a buffer
+    /// variable (a parameter included), a thing's buffer field, or a call
+    /// that returns a buffer (the call site keeps that one for the length of
+    /// the call). Returns true iff an error was reported.
+    fn check_buffer_argument(&mut self, function: &str, param_name: &str, arg: &Expr) -> bool {
+        let is_a_buffer = match arg {
+            Expr::Identifier(name) if self.is_buffer_variable(name) => true,
+            Expr::ThingField { .. } => self.field_value_type(arg) == Some(Type::Buffer),
+            _ => self.provable_value_type(arg) == Some(Type::Buffer),
+        };
+        if is_a_buffer {
+            return false;
+        }
+        let spelled = self.render_value_hint(arg);
+        let written = !spelled.contains("<value>");
+        let what = if written { format!("`{}`", spelled) } else { "this argument".to_string() };
+        let kind = match self.provable_value_type(arg) {
+            Some(Type::Buffer) | None => "not a buffer".to_string(),
+            Some(actual) => format!("{}, not a buffer", self.typed_phrase(&actual)),
+        };
+        let message = format!(
+            "'{}' takes a buffer called {}, and {} is {}",
+            function, param_name, what, kind
+        );
+        // The form that works: a buffer variable made from the argument's
+        // text. A literal is written as it is; anything else goes through a
+        // format-string hole, and one that itself holds a quoted key goes
+        // through a text first, since a hole cannot hold quotes.
+        let make = if matches!(arg, Expr::StringLit(_)) {
+            format!("`a buffer called {} is {}.`", param_name, spelled)
+        } else if written && !spelled.contains('"') {
+            format!("`a buffer called {} is \"{{{}}}\".`", param_name, spelled)
+        } else if written {
+            format!(
+                "`a text called '{0} text' is {1}.` then `a buffer called {0} is \"{{'{0} text'}}\".`",
+                param_name, spelled
+            )
+        } else {
+            format!("a buffer variable holding its text, and passing that")
+        };
+        let hint = format!(
+            "a buffer parameter is the caller's own buffer, so pass a buffer variable; {} makes one",
+            make
+        );
+        self.push_error_with_hint(message, Some(function), Some(&hint));
+        true
     }
 
     /// Plan 270 G4: a bare or quoted identifier in *expression* position
@@ -283,6 +340,11 @@ impl Analyzer {
         }
         for (i, arg) in args.iter().enumerate() {
             let (pname, ptype) = &imp.params[i];
+            // A buffer parameter is judged with every other call's, in
+            // `analyze_call_arguments`, which refuses anything but a buffer.
+            if matches!(ptype, Type::Buffer) {
+                continue;
+            }
             let Some(actual) = self.static_expr_category(arg) else {
                 continue; // dynamically typed — trusted, as local calls are
             };

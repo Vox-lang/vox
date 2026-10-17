@@ -1,0 +1,12 @@
+(The map twin of test 812: a map passed as two parameters is one map.)
+To 'merge' of a map called first and a map called second.
+    For each number from 1 to 20, Set first's "{number}" to number.
+    Print "second sees: {second's length}".
+    Set second's "via second" to 99.
+    Print "first sees: {first's length}".
+
+a map called stock is {"pears": 1}.
+'merge' of stock and stock.
+Print "stock length: {stock's length}".
+a number called last is stock's "via second".
+Print "via second: {last}".

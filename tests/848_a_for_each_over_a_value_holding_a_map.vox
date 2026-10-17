@@ -1,0 +1,9 @@
+(A `value` that holds a map when a `For each` begins: the error flag is set
+ and the body does not run. A map's keys are walked by naming the map.)
+a value called box is {"k": 1, "j": 2}.
+For each item in box, print item.
+On error print "the value holds no list".
+a map called stock is box.
+a text called names is "keys:".
+For each name in stock's keys, Set names to "{names} {name}".
+Print names.

@@ -1,0 +1,118 @@
+(Unit tests for voxelf's header writers and its layout.
+
+ The expected bytes are written out by hand from executables ld linked for
+ two example programs, hello.vox and pi.vox, built by Vox 0.4.16: the ELF
+ header of the first, and two program headers of the second. Each writer is
+ handed the values those headers hold and must give back the same bytes.)
+
+see "../../../tools/voxelf/voxelf.vox".
+
+a number called passes is 0.
+a number called failures is 0.
+
+(Compares what a writer wrote with what it should have written, byte for
+ byte, and names the first byte that differs.)
+To 'expect the bytes' with a text called 'what was written' and a buffer called written and a list called expected.
+    a number called 'bytes wanted' is expected's length.
+    a number called 'bytes written' is written's size.
+    If 'bytes written' is not 'bytes wanted' then,
+        Print "FAIL {what was written}: {bytes written} bytes written, {bytes wanted} expected",
+        increment failures,
+        Return.
+    For each position from 1 to 'bytes wanted',
+        a number called 'byte wanted' is element position of expected,
+        a number called 'byte written' is byte position of written,
+        If 'byte written' is not 'byte wanted' then,
+            Print "FAIL {what was written}: byte {position} is {byte written:02x}, expected {byte wanted:02x}",
+            increment failures,
+            Return..
+    increment passes.
+
+To 'expect the number' with a text called 'what was worked out' and a number called answer and a number called 'answer wanted'.
+    If answer is 'answer wanted' then, increment passes, Return.
+    Print "FAIL {what was worked out}: {answer:x}, expected {answer wanted:x}".
+    increment failures.
+
+(hello's ELF header: entry 0x4001df, three program headers, and seven
+ section headers starting 5400 bytes into the file.)
+Create a buffer called 'elf header'.
+'append the elf header' with 'elf header' and 0x4001DF and 3 and 5400 and 7.
+'expect the bytes' with "the ELF header" and 'elf header' and [
+    0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x02, 0x00, 0x3E, 0x00, 0x01, 0x00, 0x00, 0x00, 0xDF, 0x01, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x38, 0x00, 0x03, 0x00, 0x40, 0x00, 0x07, 0x00, 0x06, 0x00].
+
+(pi's writable segment: read and write, from offset 0x2038 and address
+ 0x403038, 0x2a8 bytes of file and 0x10b50 of memory, on page alignment.)
+Create a buffer called 'data segment header'.
+'append a program header' with 'data segment header' and 'the loadable segment type' and 'read and write' and 0x2038 and 0x403038 and 0x2A8 and 0x10B50 and 0x1000.
+'expect the bytes' with "the writable segment's program header" and 'data segment header' and [
+    0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x38, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x38, 0x30, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x30, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xA8, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].
+
+(pi's stack header: PT_GNU_STACK, read and write, nothing else but an
+ alignment of 16.)
+Create a buffer called 'stack header'.
+'append a program header' with 'stack header' and 'the stack segment type' and 'read and write' and 0 and 0 and 0 and 0 and 16.
+'expect the bytes' with "the stack's program header" and 'stack header' and [
+    0x51, 0xE5, 0x74, 0x64, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00].
+
+(hello's sections, placed as ld places them: the code after the three
+ program headers at the next multiple of 16, the data on the next page, and
+ the zero-filled data after it in memory, at the file offset where the
+ data's bytes stop.)
+Create a buffer called diagnostics.
+a list called 'hello sections' is [
+    {"name": ".text", "kind": "text", "size": 303, "alignment": 16},
+    {"name": ".data", "kind": "data", "size": 102, "alignment": 16},
+    {"name": ".bss", "kind": "bss", "size": 32, "alignment": 16}].
+a list called placed is 'place the sections' with 'hello sections' and 0x400000 and diagnostics.
+'expect the number' with "how many sections were placed" and placed's length and 3.
+a map called 'placed text' is element 1 of placed.
+a map called 'placed data' is element 2 of placed.
+a map called 'placed zeros' is element 3 of placed.
+'expect the number' with "the address of .text" and 'placed text''s "address" and 0x4000F0.
+'expect the number' with "the file offset of .text" and 'placed text''s "file offset" and 0xF0.
+'expect the number' with "the address of .data" and 'placed data''s "address" and 0x401000.
+'expect the number' with "the file offset of .data" and 'placed data''s "file offset" and 0x1000.
+'expect the number' with "the address of .bss" and 'placed zeros''s "address" and 0x401070.
+'expect the number' with "the file offset of .bss" and 'placed zeros''s "file offset" and 0x1066.
+
+(Read-only data gets a page of its own, between the code and the data, and
+ so a fourth program header, which moves the code along by 56 bytes.)
+a list called 'pi sections' is [
+    {"name": ".text", "kind": "text", "size": 7328, "alignment": 16},
+    {"name": ".rodata", "kind": "rodata", "size": 52, "alignment": 16},
+    {"name": ".data", "kind": "data", "size": 680, "alignment": 16},
+    {"name": ".bss", "kind": "bss", "size": 67745, "alignment": 16}].
+a list called 'pi placed' is 'place the sections' with 'pi sections' and 0x400000 and diagnostics.
+a map called 'pi text' is element 1 of 'pi placed'.
+a map called 'pi read-only data' is element 2 of 'pi placed'.
+a map called 'pi data' is element 3 of 'pi placed'.
+'expect the number' with "the address of pi's .text" and 'pi text''s "address" and 0x400120.
+'expect the number' with "the address of pi's .rodata" and 'pi read-only data''s "address" and 0x402000.
+'expect the number' with "the address of pi's .data" and 'pi data''s "address" and 0x403000.
+
+(A layout that cannot be honoured is refused, with one diagnostic for each
+ thing wrong and the error flag raised.)
+Create a buffer called complaints.
+a list called 'bad sections' is [
+    {"name": ".data", "kind": "data", "size": 8, "alignment": 3},
+    {"name": ".code", "kind": "code", "size": 8, "alignment": 16}].
+a boolean called 'the flag went up' is false.
+a list called refused is 'place the sections' with 'bad sections' and 0x400000 and complaints.
+On error set 'the flag went up' to true.
+'expect the number' with "how many bad sections were placed" and refused's length and 0.
+a number called 'complaints made' is 'the number of diagnostics in' with complaints.
+'expect the number' with "how many complaints there were" and 'complaints made' and 3.
+If 'the flag went up' then, increment passes.
+Otherwise, Print "FAIL the error flag stayed down after a refused layout", increment failures.
+
+Print "voxelf headers and layout: {passes} passed, {failures} failed".
+If failures is greater than 0 then, Exit 1.

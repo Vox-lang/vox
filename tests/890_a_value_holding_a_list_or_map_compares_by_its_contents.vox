@@ -1,0 +1,42 @@
+(Wherever a list or a map is held - a `value`, a map read, a list element, a
+ loop variable, `'s first` - `is` compares it by its contents, written
+ either way round. A `value` holding a number still compares as before.)
+a list called letters is [1, 2].
+a value called box is letters.
+a value called other is box.
+a list called outer is [[1, 2]].
+a list called mixed is [[1, 2], "two"].
+a map called shelf is {"k": [1, 2]}.
+a map called cellar is {"m": {"a": 1}}.
+a map called kept is {"a": 1}.
+
+To 'hold the same' with a value called left and a value called right.
+    Return a boolean, left is right.
+
+
+If box is letters then, print "a value and a list: equal".
+If letters is box then, print "a list and a value: equal".
+If other is box then, print "two values: equal".
+If shelf's "k" is letters then, print "a map read and a list: equal".
+If letters is shelf's "k" then, print "a list and a map read: equal".
+If shelf's "k" is box then, print "a map read and a value: equal".
+If element 1 of mixed is letters then, print "a mixed element and a list: equal".
+If letters is element 1 of mixed then, print "a list and a mixed element: equal".
+If element 1 of outer is box then, print "an element and a value: equal".
+If cellar's "m" is kept then, print "a map read and a map: equal".
+If kept is cellar's "m" then, print "a map and a map read: equal".
+For each inner in mixed,
+    If inner is letters then, print "a loop variable and a list: equal"..
+If mixed's first is box then, print "first and a value: equal".
+
+append 3 to letters.
+If box is not letters then, print "a value and a grown list: not equal".
+If letters is not shelf's "k" then, print "a grown list and a map read: not equal".
+Print "as answers, after the list grew: {'hold the same' of box and other}, {'hold the same' of box and letters}".
+
+a value called five is 5.
+a value called 'another five' is 5.
+a value called word is "five".
+If five is 'another five' then, print "two numbers in values: equal".
+If five is not word then, print "a number and a text in values: not equal".
+If five is not box then, print "a number and a list in values: not equal".

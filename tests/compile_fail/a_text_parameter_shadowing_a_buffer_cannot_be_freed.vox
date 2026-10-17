@@ -1,0 +1,8 @@
+(Inside the function, hold is the text parameter, not the top-level buffer of the same name.)
+a buffer called hold is "abc".
+
+To 'drop' with a text called hold.
+    Free hold.
+
+'drop' of "zz".
+Print "hold {hold}".

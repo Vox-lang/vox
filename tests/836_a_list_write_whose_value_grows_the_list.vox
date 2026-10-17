@@ -1,0 +1,13 @@
+(A statement works out its value before it touches the list it writes:
+ the value's call grows the list, and the write lands in the grown list
+ (docs/BUGS_FOUND.md #143 (f)).)
+To 'grow' with a list called items.
+    For each number from 1 to 20, append the number to items.
+    Return a number, 99.
+
+a list called xs is [1, 2].
+Set element 1 of xs to 'grow' of xs.
+Print "first: {element 1 of xs}, length: {xs's length}".
+a list called ys is [1, 2].
+append 'grow' of ys to ys.
+Print "last: {ys's last}, length: {ys's length}".

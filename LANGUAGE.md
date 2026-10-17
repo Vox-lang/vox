@@ -625,6 +625,16 @@ the x is 10.
 the counter is the counter add 1.
 ```
 
+### Naming copies
+
+Giving a list or a map a name gives the name its own copy, as it does a
+number, a text, a buffer or a thing. `a list called ys is xs.`, `Set ys to
+xs.`, `ys is xs.`, `the ys is xs.`, `Return a list, xs.` and storing `xs` in
+a `value` each make an independent list: changing one never changes the
+other, and a list or map holding others is copied all the way down. A copy
+of a list that has been freed is an empty list of its own: appending to it
+works, and freeing it is an ordinary `Free`.
+
 ### Type Immutability
 
 **A variable's type is fixed at its declaration and never changes**:
@@ -856,14 +866,17 @@ Key points:
   parameters support `'s length`/`'s empty`/`'s keys`/`'s values` and
   keyed access, and print as a whole map (`print holder.`, `"{holder}"`);
   file parameters support file properties.
-- A `buffer` parameter **is** the caller's buffer, and stays the caller's
-  buffer across a growth: an `append`, a `resize`, or a byte written past
-  the current capacity moves the block, and the caller's variable follows
-  it there. Declaring a buffer of the same name inside the function names
-  a different buffer from that point on and leaves the caller's alone;
-  `Set <parameter> to ...` is not a rebinding: on a buffer it copies
-  bytes into the buffer the parameter already names, so the caller sees
-  the new bytes.
+- A `buffer` parameter **is** the caller's buffer, so its argument is a
+  buffer: a variable, a field or a call that returns one, and anything
+  else is a compile error. A buffer returned from a parameter or a
+  top-level variable is a copy. It stays the caller's buffer across a
+  growth: an `append`, a `resize`, or a byte written past the current
+  capacity moves the block, and the caller's variable (and a second
+  parameter given the same buffer) follows it there. Declaring a buffer of
+  the same name inside the function names a different buffer (in a branch
+  or loop body, until that body ends) and leaves the caller's alone; `Set
+  <parameter> to ...` is not a rebinding: it copies bytes into that same
+  buffer, so the caller sees them.
 - Buffers declared **inside** a function body work with every
   initializer form, including format strings (`is " {devname}\n"`).
 - A function call's declared return type is tracked through
@@ -874,9 +887,10 @@ Key points:
 
 A `list` or `map` parameter names the caller's collection, not a copy of
 it. Whatever the function does to it - setting an element, appending,
-inserting a key, growing it past whatever size it started at - is what the
-caller's variable holds when the call returns, however many calls deep the
-collection was passed:
+inserting a key, growing it past whatever size it started at, replacing it
+with `Set`, freeing it - is what the caller's variable holds from that
+moment, however many calls deep the collection was passed. A list passed
+as two parameters is one list under both:
 
 ```
 To 'add one to' with a list called items.
@@ -888,15 +902,33 @@ a list called xs is ["a"].
 Print xs's length.    (prints: 3)
 ```
 
-This is the opposite of a `thing` parameter, which **is** a copy (see
-[Things](#things) below): a thing has no reference to share, and a
-collection is nothing but one. Only a variable can be written back to - a
+A `thing` parameter, by contrast, **is** a copy (see [Things](#things)
+below). A list or map parameter is the one place where Vox shares a
+collection without being told to: the function works on the caller's
+collection itself, the way an `append` written at the call would. Only a
+variable can be written back to - a
 collection built at the call itself (`'the size of' of [1, 2, 3]`) has
 nowhere to return growth to, so the function may read and grow it freely
 but the growth goes nowhere once the call ends.
 
+Declaring a list or map of the parameter's name inside the function (`a list
+called items is [].`) names a new collection from that point on and leaves
+the caller's alone. Declared in only some branches of an `If`, or in a loop
+body, the new collection lasts as long as that body, and after it the name
+is the parameter again (see [Declarations in Branches](#declarations-in-branches)).
+
+A `value` passed to a `list` or `map` parameter gives the function a copy of
+the list or map it holds, because a `value` holds its own copy of whatever
+is stored in it. If the `value` does not hold a list (or a map, for a `map`
+parameter) when the call is made, the call is not made: the error flag is
+set, and a call used as a value gives the empty value of the function's
+return type.
+
 A `.so` with a `list` or `map` parameter and the programs that `see` it must
-be built by the same version of Vox.
+be built by the same version of Vox. A list, map or buffer behaves the same
+whichever side of the boundary acts on it: grown, freed or written in the
+library, it is exactly what the program sees afterwards, and a list freed on
+one side refuses writes on the other.
 
 ### Function Calls
 
@@ -1435,8 +1467,8 @@ a text called note is "the point is {origin}".
 
 `is` between two values of the same thing compares those same fields at
 the same depth; `is not` is its negation. A text field compares by its
-characters, wherever each copy's text is stored; comparing two things
-that hold a list, a map or a buffer field is a compile error. Like printing, the
+characters, wherever each copy's text is stored, a list or map field by
+its contents and a buffer field by its bytes. Like printing, the
 comparison is written out by the compiler, so it recurses into nested
 things:
 
@@ -2030,6 +2062,11 @@ x is 0
 
 Note: `the` is optional before variable names in comparisons.
 
+Two lists are equal when they have the same length and each element equals
+the element in the same place, nested lists and maps included; a number and
+a float are different elements. Two maps are equal when they hold the same
+keys, each with an equal value, in whatever order.
+
 **An ordering comparison takes a `value` once it is a number.** A
 `value`'s type is only known at runtime, so `is greater than`, `is less
 than`, their `or equal to` forms and their `not` forms are a compile error
@@ -2402,6 +2439,15 @@ For each <variable> in <list>, <statement>.
 a list called nums is [1, 2, 3].
 For each n in nums, print the n.
 ```
+
+A `For each` over a list walks the elements the list had when the loop
+began, reading each one as it is when the loop reaches it. If the body
+empties the list (`Free`), the loop ends; if the body replaces the whole
+list (`Set nums to [...]`), the loop goes on through the new list, up to
+whichever of the two lists is shorter. A `For each` over a `value` ends if
+the body stores something other than a list in it, and a `value` that does
+not hold a list when the loop begins sets the error flag, and the loop body
+does not run.
 
 A period closes only the `for each`'s own innermost open clause; to close it together with something nested inside it, stack periods (see [Closing more than one level](#closing-more-than-one-level)).
 
@@ -2849,6 +2895,8 @@ runtime tag; see [Things](#things).
 The `value` type is a declared dynamic type that carries its runtime tag
 *alongside* its payload across the call, so a single function can accept
 "whatever this slot holds" and ask `is a ...` inside to find out which.
+Storing a list or map in a `value`, or passing one to a `value` parameter,
+stores a copy.
 
 Declare a `value` parameter with `with a value called x`, return one
 with `Return a value, <expr>`, and a `value` local with
@@ -3856,8 +3904,8 @@ releases the list and every collection it holds: a nested list or map
 element is freed too, recursively, before the list itself is. A `list`
 function parameter is the caller's list (see
 [A collection parameter is the caller's collection](#a-collection-parameter-is-the-callers-collection)),
-so freeing one empties the caller's own variable too, exactly as growth
-through a parameter already does.
+so freeing one empties the list under every name that reaches it: the
+caller's variable, and any other parameter naming it.
 
 #### Buffer Byte Access
 

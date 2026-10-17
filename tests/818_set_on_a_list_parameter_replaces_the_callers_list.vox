@@ -1,0 +1,9 @@
+(A list parameter is the caller's list, so `Set` on it replaces the
+ caller's list, exactly as an append to it grows the caller's list.)
+To 'replace it' with a list called items.
+    Set items to ["new"].
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'replace it' of xs.
+Print "xs: {xs}".

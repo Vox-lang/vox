@@ -63,6 +63,50 @@ section .text
     pop rbx
 %endmacro
 
+; A list's or map's first block: the same page-rounded anonymous mapping
+; HEAP_ALLOC makes, but NOT entered in alloc_table. That table belongs to
+; `Allocate`d raw blocks and `HEAP_FREE`; a collection block is freed by its
+; own routine (`_free_list`, from the block's header), so an entry for it
+; would outlive the block it names. Returns the block in rax, or 0.
+%macro COLLECTION_ALLOC 1
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+
+    mov rsi, %1
+    add rsi, 4095
+    and rsi, ~4095
+
+    mov rax, 9
+    mov rdi, 0
+    mov rdx, 3
+    mov r10, 0x22
+    mov r8, -1
+    mov r9, 0
+    syscall
+
+    cmp rax, -4096          ; raw mmap returns -errno in [-4095,-1]
+    jbe %%collection_alloc_done
+    xor rax, rax
+
+%%collection_alloc_done:
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+%endmacro
+
 %macro HEAP_FREE 1
     push rax
     push rbx

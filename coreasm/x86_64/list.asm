@@ -6,16 +6,15 @@ section .data
     _err_list_bounds_len: equ 32
 
     ; The shared header `Free` points a released list's variable at
-    ; (docs/BUGS_FOUND.md #109, the `Free` statement) - mirrors
-    ; `_released_buffer_header` (resource_buffer.asm): capacity 0, length 0,
-    ; element size 8, matching the real header layout above. Every list read
-    ; on it is naturally empty (length 0 fails every bounds check before any
-    ; data byte past this header is touched), and `_list_append` below
-    ; refuses it by comparing the pointer against this label's own ADDRESS,
-    ; not against the shape (a real list can legitimately reach capacity 0
-    ; too, mid-growth) - only THIS instance must never be grown or
-    ; double-freed.
-    _released_list_header: dq 0, 0, 8
+    ; (docs/BUGS_FOUND.md #109, the `Free` statement): capacity 0, length 0,
+    ; and element size 0, which is the mark of a released list. A live list's
+    ; element size is always 8, so the mark is read off the header itself,
+    ; not off this label's address: a library has its own copy of this
+    ; header, and a list freed on one side of a `.so` boundary must be
+    ; recognised as freed on the other. Every read is naturally empty (length
+    ; 0 fails every bounds check before any data byte past the header is
+    ; touched); `_list_append` and `_free_list` refuse a marked list.
+    _released_list_header: dq 0, 0, 0
 
 section .bss
     ; Dedup table for deep free (docs/BUGS_FOUND.md #109): `Free` on a list
@@ -424,16 +423,14 @@ section .text
 ; List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
 ;
 _list_append:
-    ; Refuse a pointer that IS the shared released header (append after
-    ; `Free`) before touching anything - identity check, so a list mid-growth
-    ; that has genuinely reached capacity 0 (never happens today, but shape
-    ; alone must not be trusted) is never confused with this one shared
-    ; instance. docs/BUGS_FOUND.md #109.
-    lea rax, [rel _released_list_header]
-    cmp rdi, rax
+    ; Refuse a released list (append after `Free`) before touching anything:
+    ; element size 0 is the mark, whichever module's header it is
+    ; (docs/BUGS_FOUND.md #109).
+    mov rax, rdi
+    cmp qword [rdi + LIST_ELEMSIZE_OFFSET], 0
     jne .list_append_live
     SET_LAST_ERROR 1  ; refused: this list is freed
-    ret               ; rax already holds the header - unchanged
+    ret               ; rax holds the header - unchanged
 
 .list_append_live:
     push rbx
@@ -672,11 +669,9 @@ _free_visit_or_skip:
 ; block, page-rounded or not - always reaches into the mapping's last page.
 global _free_list
 _free_list:
-    ; Refuse a pointer that IS the shared released header (a double `Free`)
-    ; before touching anything - identity check, same shape as
-    ; `_free_buffer`/`_list_append` above.
-    lea rax, [rel _released_list_header]
-    cmp rdi, rax
+    ; Refuse a released list (a double `Free`) before touching anything: the
+    ; mark is element size 0, the same check `_list_append` makes above.
+    cmp qword [rdi + LIST_ELEMSIZE_OFFSET], 0
     jne .free_list_live
     SET_LAST_ERROR 1  ; already freed
     ret
@@ -776,6 +771,13 @@ _copy_list:
     mov r12, [rbx + LIST_CAPACITY_OFFSET]      ; r12 = capacity
     mov r13, [rbx + LIST_ELEMSIZE_OFFSET]      ; r13 = element size
     mov r14, [rbx + LIST_LENGTH_OFFSET]        ; r14 = length
+    ; A copy of a released list is a new, live, empty list of its own: it
+    ; takes element size 8, never the released mark, so it accepts appends
+    ; and its own `Free` is an ordinary first one.
+    test r13, r13
+    jnz .copy_list_source_live
+    mov r13, 8
+.copy_list_source_live:
     mov rax, r12
     imul rax, r13
     add rax, r12                                ; + tag bytes (1 per slot)
@@ -1138,3 +1140,100 @@ _list_render_to_buffer:
 
 %endif
 
+
+; ============================================================================
+; LIST EQUALITY
+; ============================================================================
+; `is equal to` between two lists compares their contents (LANGUAGE.md
+; "Comparisons"): equal lengths, then slot by slot. Two slots are equal when
+; their tags are equal and their payloads are equal by that tag: numbers,
+; booleans and `nothing` by value, floats as floats, texts by their
+; characters, nested lists and maps by these same rules. Assembled only for a
+; program that compares two lists or two maps, which also pulls in
+; string.asm for `_str_eq`.
+%ifdef __COLLECTION_EQUALITY__
+
+; _slot_equal - Args: rdi = payload a, rsi = payload b, edx = tag a,
+; ecx = tag b. Returns: rax = 1 if equal, 0 if not. Preserves the
+; callee-saved registers (every routine it hands off to does).
+global _slot_equal
+_slot_equal:
+    cmp edx, ecx
+    jne .slot_not_equal
+    cmp edx, LIST_TAG_STRING
+    je _str_eq
+    cmp edx, LIST_TAG_LIST
+    je _list_equal
+    cmp edx, LIST_TAG_MAP
+    je .slot_map
+    cmp edx, LIST_TAG_FLOAT
+    je .slot_float
+    cmp rdi, rsi
+    jne .slot_not_equal
+    mov rax, 1
+    ret
+.slot_float:
+    movq xmm0, rdi
+    movq xmm1, rsi
+    ucomisd xmm0, xmm1
+    jp .slot_not_equal
+    jne .slot_not_equal
+    mov rax, 1
+    ret
+.slot_map:
+%ifdef __MAP_ASM_INCLUDED__
+    jmp _map_equal
+%endif
+.slot_not_equal:
+    xor eax, eax
+    ret
+
+; _list_equal - Args: rdi = list a, rsi = list b. Returns: rax = 1 if they
+; hold equal contents, 0 if not. A released list is empty, so it equals any
+; other empty list.
+global _list_equal
+_list_equal:
+    cmp rdi, rsi
+    jne .list_equal_walk
+    mov rax, 1
+    ret
+.list_equal_walk:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, [r12 + LIST_LENGTH_OFFSET]
+    cmp r14, [r13 + LIST_LENGTH_OFFSET]
+    jne .list_equal_no
+    xor r15, r15
+.list_equal_next:
+    cmp r15, r14
+    jge .list_equal_yes
+    LIST_TAG_ADDR rbx, r12, r15
+    movzx edx, byte [rbx]
+    LIST_TAG_ADDR rbx, r13, r15
+    movzx ecx, byte [rbx]
+    mov rdi, [r12 + LIST_DATA_OFFSET + r15*8]
+    mov rsi, [r13 + LIST_DATA_OFFSET + r15*8]
+    call _slot_equal
+    test rax, rax
+    jz .list_equal_no
+    inc r15
+    jmp .list_equal_next
+.list_equal_yes:
+    mov rax, 1
+    jmp .list_equal_done
+.list_equal_no:
+    xor eax, eax
+.list_equal_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+%endif ; __COLLECTION_EQUALITY__

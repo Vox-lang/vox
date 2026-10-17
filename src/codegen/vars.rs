@@ -135,7 +135,7 @@ impl CodeGenerator {
     /// old pointer must not move before that read finishes, and this runs
     /// after it has); if the OWNED flag says the current pointer is this
     /// variable's own, free it (struct = data pointer - `BUF_DATA_OFFSET`,
-    /// `_free_buffer` unregisters it from `buf_table` if present and always
+    /// `_free_buffer` clears its buffer-record entry if it has one and always
     /// munmaps, docs/BUGS_FOUND.md #108's coreasm half); store the new
     /// value; set the flag from the new value's own provenance. A BSS flag
     /// starts zero-filled ("not owned"), so the very first write to a given
@@ -377,18 +377,123 @@ impl CodeGenerator {
         }
     }
 
+    /// A top-level list, map or buffer lives in its `.bss` label alone. A
+    /// variable of another type declared under the same name earlier, in a
+    /// branch (a file opened inside an `If`), left a frame slot behind; that
+    /// slot was the other variable's, so the declaration lets go of it and
+    /// takes the label.
+    pub(crate) fn forget_frame_slot_of_another_type(&mut self, name: &str, declared: &Type) {
+        if self.in_function_codegen
+            || !matches!(declared, Type::List(_) | Type::Map(_) | Type::Buffer)
+            || !self.variables.contains_key(name)
+            || self.global_var_label(name).is_none()
+        {
+            return;
+        }
+        let same_type = self
+            .declared_types
+            .get(name)
+            .is_some_and(|before| std::mem::discriminant(before) == std::mem::discriminant(declared));
+        if !same_type {
+            self.variables.remove(name);
+        }
+    }
+
+    /// A file opened in a branch at the top level has a frame slot, mirrored
+    /// into the name's global label so functions can reach it. A top-level
+    /// list, map or buffer declared under the same name further down owns
+    /// that label: the two are different variables, so the file keeps to
+    /// its slot and leaves the label to its owner.
+    pub(crate) fn emit_mirror_file_to_global(&mut self, name: &str, offset: i64) {
+        if matches!(
+            self.global_var_types.get(name),
+            Some(Type::List(_) | Type::Map(_) | Type::Buffer)
+        ) || matches!(
+            self.variable_types.get(name),
+            Some(VarType::List | VarType::Map | VarType::Buffer)
+        ) {
+            return;
+        }
+        self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+    }
+
     pub(crate) fn emit_mirror_stack_var_to_global_if_needed(&mut self, name: &str, offset: i64) {
         if !self.in_function_codegen {
             if let Some(label) = self.global_var_label(name).cloned() {
+                // One owning place: a list, map or buffer is held by exactly
+                // one word. A top-level one lives in its `.bss` label alone,
+                // so a frame slot mirrored into that label would be a second
+                // holder, the shape that let a function grow or free a buffer
+                // the top level then read from its stale slot.
+                assert!(
+                    !matches!(
+                        self.variable_types.get(name),
+                        Some(VarType::List | VarType::Map | VarType::Buffer)
+                    ),
+                    "internal compiler error: the {} '{}' would have two holders, \
+                     a frame slot and its global label",
+                    match self.variable_types.get(name) {
+                        Some(VarType::List) => "list",
+                        Some(VarType::Map) => "map",
+                        _ => "buffer",
+                    },
+                    name
+                );
                 self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
                 self.emit_indent(&format!("mov [rel {}], rax", label));
             }
         }
     }
 
+    /// True when the frame slot at `offset` holds a cell: the address of the
+    /// word that owns a `list`, `map` or `buffer` parameter's collection.
+    pub(crate) fn is_cell_slot(&self, offset: i64) -> bool {
+        self.cell_slots.contains(&offset)
+    }
+
+    /// Load into `reg` what the variable in the slot at `offset` holds. For a
+    /// cell, that is the block the owning word holds NOW, read through the
+    /// cell at this point of use: a parameter never keeps a copy of it.
+    pub(crate) fn emit_load_slot(&mut self, reg: &str, offset: i64) {
+        if self.is_cell_slot(offset) {
+            self.emit_indent(&format!("mov {}, [rbp-{}]  ; cell: where the owner keeps it", reg, offset));
+            self.emit_indent(&format!("mov {0}, [{0}]  ; the collection, as it is now", reg));
+        } else {
+            self.emit_indent(&format!("mov {}, [rbp-{}]", reg, offset));
+        }
+    }
+
+    /// Store `reg` into the variable in the slot at `offset`. For a cell, the
+    /// store lands in the owning word, so the caller's variable (and every
+    /// other name of it) holds the new block from this moment on. Changes no
+    /// register and no flag.
+    pub(crate) fn emit_store_slot(&mut self, offset: i64, reg: &str) {
+        if self.is_cell_slot(offset) {
+            let scratch = if reg == "rbx" { "rcx" } else { "rbx" };
+            self.emit_indent(&format!("push {}", scratch));
+            self.emit_indent(&format!("mov {}, [rbp-{}]  ; cell: where the owner keeps it", scratch, offset));
+            self.emit_indent(&format!("mov [{}], {}  ; the owner holds the new block", scratch, reg));
+            self.emit_indent(&format!("pop {}", scratch));
+        } else {
+            self.emit_indent(&format!("mov [rbp-{}], {}", offset, reg));
+        }
+    }
+
+    /// Leave in `reg` the address of the word that owns the variable in the
+    /// slot at `offset`: the slot itself, or, for a cell, the word it names.
+    /// This is what a `list`, `map` or `buffer` argument carries, so a name
+    /// that is itself a parameter passes its owner on, however deep the calls.
+    pub(crate) fn emit_slot_owner_address(&mut self, reg: &str, offset: i64) {
+        if self.is_cell_slot(offset) {
+            self.emit_indent(&format!("mov {}, [rbp-{}]  ; cell: the owner's address, passed on", reg, offset));
+        } else {
+            self.emit_indent(&format!("lea {}, [rbp-{}]", reg, offset));
+        }
+    }
+
     pub(crate) fn emit_load_named_var_into_rax(&mut self, name: &str) -> bool {
         if let Some(offset) = self.get_var(name) {
-            self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+            self.emit_load_slot("rax", offset);
             true
         } else if let Some(label) = self.global_var_label(name).cloned() {
             self.emit_indent(&format!("mov rax, [rel {}]", label));
@@ -403,7 +508,7 @@ impl CodeGenerator {
     /// top-level/branch-declared names. Returns true if the name was found.
     pub(crate) fn emit_load_named_var_addr(&mut self, name: &str) -> bool {
         if let Some(offset) = self.get_var(name) {
-            self.emit_indent(&format!("mov rax, [rbp-{}]  ; local {}", offset, name));
+            self.emit_load_slot("rax", offset);
             true
         } else if let Some(label) = self.global_var_label(name).cloned() {
             self.emit_indent(&format!("mov rax, [rel {}]  ; global mirror {}", label, name));
@@ -415,37 +520,12 @@ impl CodeGenerator {
 
     /// Store a (possibly reallocated) pointer back to a named variable,
     /// resolving the name through the local function frame first and then
-    /// through the global BSS mirror. At top level, stack variables are also
-    /// mirrored to their global label so branch and function bodies see the
-    /// updated value.
+    /// through the global BSS label. A parameter's store goes through its
+    /// cell into the owning word (`emit_store_slot`), so growth or `Free`
+    /// through a parameter is the owner's growth or `Free` at that moment.
     pub(crate) fn emit_store_back_after_realloc(&mut self, name: &str, new_ptr_reg: &str) -> bool {
         if let Some(offset) = self.get_var(name) {
-            self.emit_indent(&format!(
-                "mov [rbp-{}], {}  ; store new pointer for {}",
-                offset, new_ptr_reg, name
-            ));
-            // A `buffer` parameter's slot is only the callee's copy; the
-            // caller's own copy has to follow the reallocation in the same
-            // breath or it is left pointing at freed memory (#90). A no-op
-            // for every other name, including a `list` or `map`.
-            self.emit_buffer_param_cell_writeback(offset, new_ptr_reg);
-            // BUGS_FOUND #75: a `list`/`map` parameter's slot is this frame's
-            // copy of a pointer the CALLER also holds. Writing only here left
-            // the caller pointing at the block the collection outgrew, so
-            // every append past its capacity was dropped and its block leaked.
-            // The parameter's word is the address of the caller's storage
-            // (see `emit_collection_argument_address`); write the new pointer
-            // through it too. rbx is callee-saved and never a `new_ptr_reg`,
-            // and nothing between the push and the pop touches the stack.
-            if let Some(back_slot) = self.collection_backing_slots.get(name).copied() {
-                self.emit_indent("push rbx");
-                self.emit_indent(&format!(
-                    "mov rbx, [rbp-{}]  ; where the caller keeps {}",
-                    back_slot, name
-                ));
-                self.emit_indent(&format!("mov [rbx], {}  ; the caller grows too", new_ptr_reg));
-                self.emit_indent("pop rbx");
-            }
+            self.emit_store_slot(offset, new_ptr_reg);
             self.emit_mirror_stack_var_to_global_if_needed(name, offset);
             true
         } else if let Some(label) = self.global_var_label(name).cloned() {
@@ -462,7 +542,7 @@ impl CodeGenerator {
     pub(crate) fn emit_store_rax_to_target(&mut self, target: &VarTarget, name: &str) {
         match target {
             VarTarget::Local(offset) => {
-                self.emit_indent(&format!("mov [rbp-{}], rax  ; store {}", offset, name));
+                self.emit_store_slot(*offset, "rax");
             }
             VarTarget::Global(label) => {
                 self.emit_indent(
@@ -821,9 +901,137 @@ impl CodeGenerator {
         conditional.sort_by(|a, b| a.0.cmp(b.0));
         for (name, ty) in conditional {
             let offset = self.get_var(name).unwrap_or_else(|| self.alloc_var(name));
+            // A parameter's cell is the caller's, never a default's to fill:
+            // a declaration of its name made only on some path names a
+            // collection of its own, which exists only on that path.
+            if self.is_cell_slot(offset) {
+                continue;
+            }
             let target = VarTarget::Local(offset);
             self.emit_type_default(ty, &target, name);
             self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+        }
+    }
+
+    /// The slot a declaration gets when it gives a name a new meaning inside
+    /// a function: a parameter's name (never its cell), a top-level name
+    /// (shadowed), or an outer local of another type. One slot per name per
+    /// function, shared by every such declaration (one is live at a time),
+    /// so a name declared in every branch of an `If` names one variable
+    /// after it.
+    pub(crate) fn fresh_slot_for_redeclared_parameter(&mut self, name: &str) -> i64 {
+        let slot = match self.redeclared_parameter_slots.get(name) {
+            Some(&slot) => slot,
+            None => {
+                self.stack_offset += 8;
+                self.redeclared_parameter_slots.insert(name.to_string(), self.stack_offset);
+                self.stack_offset
+            }
+        };
+        self.variables.insert(name.to_string(), slot);
+        slot
+    }
+
+    /// Whether a typed declaration of `name` as `declared` inside a function
+    /// gives it a new meaning, and so a slot of its own: the name is a
+    /// parameter's cell, a top-level name, or an outer local of another type.
+    pub(crate) fn declaration_shadows(&self, name: &str, declared: &Type) -> bool {
+        if !self.in_function_codegen {
+            return false;
+        }
+        match self.get_var(name) {
+            Some(slot) => {
+                self.is_cell_slot(slot)
+                    || self
+                        .declared_types
+                        .get(name)
+                        .is_some_and(|outer| std::mem::discriminant(outer) != std::mem::discriminant(declared))
+            }
+            None => self.global_var_label(name).is_some(),
+        }
+    }
+
+    /// What every name visible at this point of a function means: its slot
+    /// (or none, for a top-level name read through its label) and what
+    /// codegen knows about it, so a body that runs only on some paths can be
+    /// generated and the names put back when it ends. Empty at the top level.
+    pub(crate) fn outer_bindings(&self, except: Option<&str>) -> Vec<OuterBinding> {
+        if !self.in_function_codegen {
+            return Vec::new();
+        }
+        let mut names: Vec<&String> = self
+            .variables
+            .keys()
+            .chain(self.global_var_labels.keys())
+            .filter(|name| Some(name.as_str()) != except)
+            .collect();
+        names.sort();
+        names.dedup();
+        names.into_iter().map(|name| self.binding_of(name)).collect()
+    }
+
+    fn binding_of(&self, name: &str) -> OuterBinding {
+        OuterBinding {
+            name: name.to_string(),
+            slot: self.get_var(name),
+            variable_type: self.variable_types.get(name).cloned(),
+            declared_type: self.declared_types.get(name).cloned(),
+            element_type: self.list_element_types.get(name).cloned(),
+            tag_slot: self.mixed_tag_slots.get(name).copied(),
+            thing: self.thing_vars.get(name).cloned(),
+        }
+    }
+
+    fn apply_binding(&mut self, binding: &OuterBinding) {
+        let name = binding.name.clone();
+        match binding.slot {
+            Some(slot) => self.variables.insert(name.clone(), slot),
+            None => self.variables.remove(&name),
+        };
+        match &binding.variable_type {
+            Some(t) => self.variable_types.insert(name.clone(), t.clone()),
+            None => self.variable_types.remove(&name),
+        };
+        match &binding.declared_type {
+            Some(t) => self.declared_types.insert(name.clone(), t.clone()),
+            None => self.declared_types.remove(&name),
+        };
+        match &binding.element_type {
+            Some(t) => self.list_element_types.insert(name.clone(), t.clone()),
+            None => self.list_element_types.remove(&name),
+        };
+        match binding.tag_slot {
+            Some(t) => self.mixed_tag_slots.insert(name.clone(), t),
+            None => self.mixed_tag_slots.remove(&name),
+        };
+        match &binding.thing {
+            Some(t) => self.thing_vars.insert(name, t.clone()),
+            None => self.thing_vars.remove(&name),
+        };
+    }
+
+    /// Put every name back as `outer_bindings` found it. Returns the names
+    /// the body gave a new slot, each with the meaning the body gave it.
+    pub(crate) fn rebind_outer(&mut self, outer: &[OuterBinding]) -> Vec<OuterBinding> {
+        let mut changed = Vec::new();
+        for binding in outer {
+            let now = self.binding_of(&binding.name);
+            if now.slot != binding.slot {
+                changed.push(now);
+                self.apply_binding(binding);
+            }
+        }
+        changed
+    }
+
+    /// After a chain that declares a name in every branch, the name is that
+    /// declaration's variable, in the slot the branches share. The branches
+    /// may have filled a list with different kinds of element, so every
+    /// element read dispatches on the slot's own tag.
+    pub(crate) fn bind_redeclared(&mut self, binding: &OuterBinding) {
+        self.apply_binding(binding);
+        if self.variable_types.get(&binding.name) == Some(&VarType::List) {
+            self.list_element_types.insert(binding.name.clone(), VarType::Mixed);
         }
     }
 
@@ -848,6 +1056,19 @@ impl CodeGenerator {
         }
     }
 
+}
+
+/// A name as codegen knew it at one point of a function (see
+/// `outer_bindings`).
+#[derive(Clone)]
+pub(crate) struct OuterBinding {
+    pub(crate) name: String,
+    pub(crate) slot: Option<i64>,
+    variable_type: Option<VarType>,
+    declared_type: Option<Type>,
+    element_type: Option<VarType>,
+    tag_slot: Option<i64>,
+    thing: Option<String>,
 }
 
 /// The storage class a declared type is read as. The declaration is the

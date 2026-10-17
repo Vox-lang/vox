@@ -1,0 +1,11 @@
+(A buffer passed as two parameters is one buffer under both: growth through
+ one, which may move the buffer, is what the other reads.)
+To 'merge' of a buffer called first and a buffer called second.
+    For each number from 1 to 3000, append "abcdefgh" to first.
+    Print "second sees: {second's size}".
+    append "Z" to second.
+    Print "first sees: {first's size}".
+
+a buffer called hold is "a".
+'merge' of hold and hold.
+Print "hold size: {hold's size}".

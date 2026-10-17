@@ -6,14 +6,101 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-The VS Code extension highlights octal literals, `isn't` and `aren't`, character escapes and the current library headers.
+A named list or map is its own copy, lists and maps compare by contents, and a parameter always sees its caller's collection.
 
 - VS Code extension: `0o17` and `0O755` scope as octal numbers; `isn't` and `aren't` scope as one operator; character literals take `\n`, `\\` and `\'`; `Library` and `See` headers take a bare or single-quoted name; words that are no longer reserved (`count`, `first`, `size`, `automatic`, `enable` and the like) render as ordinary names, and still scope as properties after a possessive. Folding starts at a `To` or thing definition, and the extension's licence is stated as GPL-3.0-or-later.
 
 ### Changed
+- **Giving a list or map a name gives the name its own copy.** `a list
+  called ys is xs.`, `Set ys to xs.`, `ys is xs.`, `Return a list, xs.`,
+  storing a list in a `value` and passing one to a `value` parameter each
+  make an independent copy, nested lists and maps included, so changing
+  one never changes the other. A copy of a freed list is an empty list of
+  its own. A list or map parameter still works on the caller's collection
+  itself. (#128, #143)
+- **`is equal to` compares two lists or two maps by their contents.** Two
+  lists are equal when they have the same length and equal elements in the
+  same places; two maps are equal when they hold the same keys with equal
+  values, in any order. Nested lists and maps compare the same way.
+- **Two things that hold a list, map or buffer field can be compared.** A
+  list or map field compares by its contents and a buffer field by its
+  bytes; this was a compile error.
+- **A buffer parameter takes a buffer.** It is the caller's own buffer,
+  so an argument that is not a buffer (a text, a `value`, a list element, a
+  map value, a call that returns a text) is a compile error that names the
+  way to make one: `a buffer called data is "{box}".`
+- **A list or map parameter given a `value` receives a copy.** A `value`
+  holds its own copy of whatever is stored in it, so `'add to' of box`
+  (where `box` is a `value` holding a list) gives the function a copy: the
+  function's changes stay in it, and `box` keeps the list it held. A `value`
+  that does not hold a list (or a map, for a `map` parameter) when the call
+  is made: the call is not made, the error flag is set, and a call used as a
+  value gives the empty value of the function's return type.
+- **Declaring a parameter's name again names a new collection.** `a list
+  called items is [].` inside a function whose list parameter is `items`
+  makes a list of the function's own and leaves the caller's alone, as a
+  buffer parameter already did. Declared in only some branches of an `If`,
+  or in a loop body, the new list lasts as long as its condition; after it,
+  the name is the parameter again.
+- **A loop variable is the loop's own, even under a buffer's name.** In a
+  `For each` or an `each` expansion whose variable is named like a top-level
+  buffer, the name holds the loop's element, during the loop and after it,
+  so `append` to it, `Free` of it and passing it where a buffer is wanted are
+  compile errors. Give the loop variable a name of its own to reach the
+  buffer.
+- **A `For each` over a `value` that holds a map sets the error flag** and
+  its body does not run. Walk a map's keys by naming the map: `a map called
+  stock is box.` then `For each name in stock's keys, ...`.
 - Examples: `life.vox` names the cell count its wrap works from, a hole holding a whole name writes it bare (`{the copy}`) and `casting.vox` casts in the hole (`{age as text}`), the van in `delivery.vox` is called `van`, `cat --version` prints no stale number, and the closing `Done!` lines are gone. `arithmetic.vox` says its sums with `plus`, `minus` and `times`, `sh.vox` names the bytes that end a word, `binary.vox` writes its hex dump from a list, the helpers in `supervisor.vox` and `walker.vox` read as English where they are called (`'exit code' of status`, `'name the type' of item`), `cat.vox` names are lower case, and `pi.vox`, `controller.vox` and `delivery.vox` each lose a line of commentary.
 
 ### Fixed
+- **`Get current time into` a name declared as something other than a
+  time is a compile error** that names the variable and its type. It used
+  to replace the variable with a time, so the declared text or number was
+  lost. (#152)
+- **A list, map or buffer passed as two parameters is one collection under
+  both parameters.** Growth, `Free` and writes through either parameter are seen
+  through the other and by the caller; a buffer grown or freed through one
+  of two parameters no longer stops the program. (#139, #140, #143)
+- **A function's collection parameter always reads the caller's collection
+  as it is now.** Freeing a list by its top-level name inside a function
+  empties the parameter that names it, and `Set items to [...]` on a list
+  parameter replaces the caller's list. (#143)
+- **A statement works out its value, index or key before it touches the
+  collection it writes.** `Set element 1 of xs to 'grow' of xs.`, `append
+  'grow' of ys to ys.`, `Set m's "k" to ...`, `Set byte N of ...` and
+  `Resize` see the growth the call made, as do the reads `element N of`,
+  `byte N of` and a map read with a computed key. `Set element` and `Set
+  byte` now work out their value even when the index is out of range; the
+  error flag is set exactly as before. (#143)
+- **A `For each` reads each element as it is when the loop reaches it.** It
+  walks the elements the list had when the loop began and stops early if
+  the list becomes shorter, so `Free` in the body ends the loop and a `Set`
+  in the body is seen whether or not the list has grown. A walk over a
+  buffer that the body grows or frees is safe, and a `For each` over a
+  `value` ends when the body stores something other than a list in it.
+  (#143)
+- **A top-level buffer declared with no value is one variable.** `Create a
+  buffer called hold.`, `a buffer called hold.` and `a buffer called hold is
+  16 bytes in size.` grown or freed by a function through the name no
+  longer stop the program at the next top-level read.
+- **A list, map or buffer behaves the same on both sides of a library
+  boundary.** A buffer a library grows or frees no longer stops the program
+  at exit, a list freed on one side refuses writes on the other, and a
+  second `Free` on the other side is refused without touching the program's
+  memory. A host that unloads a library and keeps running still gets back
+  the buffers the library made.
+- **A buffer appended to itself reads what it appends after it grows.**
+  `append hold to hold.`, the same through two parameters naming one
+  buffer, and a format string that reads the buffer it is appended to all
+  copy the buffer's own bytes, wherever growth has moved it.
+- **A buffer a function returns is the caller's own.** One named by a
+  parameter or held by a top-level variable is returned as a copy, so the
+  caller can grow or free the result and leave the original alone.
+- **`m's values` gives copies of the lists and maps a map holds,** and a list
+  or map carried by a `value` a function returns is copied when it is
+  appended or stored in a map, so freeing the outer collection leaves the
+  original whole.
 - **A comparison is the value of a declaration or a `Set`.** `a boolean called same is x is y.` and `Set same to x is greater than y.` store the comparison, as `Return a boolean, x is y.` does; `not`, `and`, `or` and `x, y, and z are true` read the same way in a value. The first `is` after the name is the declaration's, and a number declared from a comparison is refused as a boolean. (#153)
 - **`the note is "processed {path}".` reassigns a text from a format string**, exactly as `Set note to "processed {path}".` does, for a text, a `value` and a buffer. Writing one into a number is refused by the type check, with the caret on that statement. (#154)
 

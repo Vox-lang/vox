@@ -1,5 +1,6 @@
 use super::*;
 use super::untyped_returns::UntypedPosition;
+use super::scope::NameKinds;
 
 /// A short, human-readable name for a statement kind, used in the shared-mode
 /// top-level diagnostic. Only called for statements that are NOT one of the
@@ -543,6 +544,35 @@ impl Analyzer {
     }
 
     pub(crate) fn analyze_statement(&mut self, stmt: &Statement) {
+        // Inside a function, a loop or `On error` body runs only on some
+        // paths, so a name it declares lasts as long as the body; after it
+        // the name means what it meant before (`outer_kinds`). The loop's
+        // own variable is bound by the loop itself and keeps its last value
+        // afterwards, so it is left as the loop made it. `If` handles its
+        // own branches.
+        let loop_variable = match stmt {
+            Statement::ForRange { variable, .. } | Statement::ForEach { variable, .. } => Some(variable.as_str()),
+            _ => None,
+        };
+        if self.in_function_scope
+            && matches!(
+                stmt,
+                Statement::While { .. }
+                    | Statement::ForRange { .. }
+                    | Statement::ForEach { .. }
+                    | Statement::Repeat { .. }
+                    | Statement::OnError { .. }
+            )
+        {
+            let outer = self.outer_kinds(loop_variable);
+            self.analyze_statement_unscoped(stmt);
+            self.restore_outer_kinds(&outer);
+            return;
+        }
+        self.analyze_statement_unscoped(stmt);
+    }
+
+    fn analyze_statement_unscoped(&mut self, stmt: &Statement) {
         match stmt {
             // A thing definition declares a type: it introduces no variable,
             // touches no runtime dependency, and emits no code. Registry
@@ -701,6 +731,11 @@ impl Analyzer {
                         self.analyze_expr(v);
                     }
                     return;
+                }
+                // Inside a function only: the top level keeps its own rules
+                // for a declaration over a buffer or a `value`.
+                if let (Some(vt), true) = (var_type, self.in_function_scope) {
+                    self.forget_other_kinds(name, vt);
                 }
                 // Register the declared type in the type-specific sets,
                 // mirroring the top-level pre-pass. That pre-pass only
@@ -1062,12 +1097,35 @@ impl Analyzer {
                 // the branch a missing name was declared in (below).
                 let mut branch_results: Vec<(BranchKind, AnalysisEnv)> = Vec::new();
 
+                // Inside a function each branch starts from what the names
+                // meant before the `If`; a name declared in every branch of a
+                // chain with an `Otherwise` keeps its new kind after it, and
+                // one declared in only some branches is the outer name again.
+                let outer = self.outer_kinds(None);
+                let mut declared_in_every_branch: Option<Vec<(String, NameKinds)>> = None;
+                let mut note_branch = |this: &mut Self| {
+                    let after: Vec<(String, NameKinds)> = outer
+                        .iter()
+                        .filter(|(name, kinds)| &this.kind_of(name) != kinds)
+                        .map(|(name, _)| (name.clone(), this.kind_of(name)))
+                        .collect();
+                    this.restore_outer_kinds(&outer);
+                    declared_in_every_branch = Some(match declared_in_every_branch.take() {
+                        None => after,
+                        Some(so_far) => after
+                            .into_iter()
+                            .filter(|(name, _)| so_far.iter().any(|(other, _)| other == name))
+                            .collect(),
+                    });
+                };
+
                 let guard_key = Self::simple_guard_key(condition);
                 let (then_env, then_terminates) = self.analyze_block_in_scope(
                     then_block,
                     &branch_env,
                     guard_key.as_deref(),
                 );
+                note_branch(self);
                 branch_results.push((BranchKind::Then, then_env.clone()));
                 if !then_terminates {
                     continuing_envs.push(then_env);
@@ -1079,6 +1137,7 @@ impl Analyzer {
                     self.analyze_expr(cond);
                     self.apply_env(&saved_env);
                     let (elif_env, elif_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
+                    note_branch(self);
                     branch_results.push((BranchKind::ButIf, elif_env.clone()));
                     if !elif_terminates {
                         continuing_envs.push(elif_env);
@@ -1087,6 +1146,7 @@ impl Analyzer {
 
                 if let Some(block) = else_block {
                     let (else_env, else_terminates) = self.analyze_block_in_scope(block, &branch_env, None);
+                    note_branch(self);
                     branch_results.push((BranchKind::Otherwise, else_env.clone()));
                     if !else_terminates {
                         continuing_envs.push(else_env);
@@ -1094,6 +1154,12 @@ impl Analyzer {
                 } else {
                     // No else means the original incoming scope can continue unchanged.
                     continuing_envs.push(branch_env.clone());
+                }
+
+                if else_block.is_some() {
+                    for (name, kinds) in declared_in_every_branch.unwrap_or_default() {
+                        self.set_kind_of(&name, &kinds);
+                    }
                 }
 
                 let merged_env = self.merge_continuing_envs(&continuing_envs, &branch_env);
@@ -1132,7 +1198,7 @@ impl Analyzer {
                 // same rule as `Set`/`is` (plan 294 finding 2: this used to
                 // leave the old label in place and segfault when the
                 // formatter dereferenced the loop counter as a pointer).
-                self.bind_variable_type(
+                let refused = self.bind_variable_type(
                     variable,
                     Type::Integer,
                     "this for-range loop",
@@ -1140,6 +1206,13 @@ impl Analyzer {
                     &[format!("each {} ", variable)],
                     true,
                 );
+                // The loop variable is a number from here on, whatever a name
+                // it shadows was (the type lock above has already judged a
+                // name it may not take).
+                if !refused {
+                    self.forget_other_kinds(variable, &Type::Integer);
+                    self.scalar_types.insert(variable.clone(), Type::Integer);
+                }
                 // The loop's own bounds, walked directly: `analyze_expr`
                 // refuses a bare range everywhere a value is expected
                 // (bug #56), and this is the one position where one belongs.
@@ -1163,6 +1236,16 @@ impl Analyzer {
                 // rest of the pass is not reasoning about a loop that cannot
                 // run.
                 self.check_loop_collection(variable, collection);
+                // The loop variable is an element (or a byte) from here on,
+                // whatever a name it shadows was: no set but the ones this
+                // arm writes below may still claim it.
+                let collection_names_the_variable =
+                    matches!(collection, Expr::Identifier(n) if n == variable);
+                let collection_was_a_buffer = matches!(collection, Expr::Identifier(n) if self.is_buffer_variable(n));
+                if !collection_names_the_variable {
+                    self.forget_other_kinds(variable, &Type::Value);
+                    self.value_typed_names.remove(variable.as_str());
+                }
                 self.variables.insert(variable.clone());
                 // The element category is unknown (lists may be mixed), so a
                 // label left over from a previous use of this name - e.g. a
@@ -1176,10 +1259,7 @@ impl Analyzer {
                 // type `byte N of <buffer>` yields (Type::Integer) - never a
                 // list element, so it skips the mixed/element-type
                 // machinery below entirely.
-                let collection_is_buffer = match collection {
-                    Expr::Identifier(n) => self.is_buffer_variable(n),
-                    _ => false,
-                };
+                let collection_is_buffer = collection_was_a_buffer;
                 if collection_is_buffer {
                     self.value_typed_names.remove(variable.as_str());
                     self.scalar_types.insert(variable.clone(), Type::Integer);
@@ -1499,6 +1579,7 @@ impl Analyzer {
                     // not known here, so its Close is not warned about.
                     self.borrowed_files.remove(param_name);
                     self.files_opened_by_path_in_a_branch.remove(param_name);
+                    self.forget_other_kinds(param_name, param_type);
                     match param_type {
                         Type::Thing(thing) => {
                             // A thing parameter holds a copy of the caller's
@@ -1653,6 +1734,9 @@ impl Analyzer {
                 if redeclaration_conflict {
                     self.analyze_expr(size);
                     return;
+                }
+                if self.in_function_scope {
+                    self.forget_other_kinds(name, &Type::Buffer);
                 }
                 self.buffer_variables.insert(name.clone());
                 self.analyze_expr(size);
@@ -2137,6 +2221,33 @@ impl Analyzer {
             }
             
             Statement::GetTime { into } => {
+                // A declared variable keeps its type (LANGUAGE.md "Type
+                // Immutability"): `Get current time into` takes a time, or a
+                // name not yet declared, which it declares as one.
+                if self.is_variable_available(into) {
+                    let declared = if self.value_typed_names.contains(into) {
+                        Some(Type::Value)
+                    } else if let Some(thing) = self.thing_vars.get(into) {
+                        Some(Type::Thing(thing.clone()))
+                    } else {
+                        self.named_value_type(into)
+                    };
+                    if declared != Some(Type::Time) {
+                        let what = match &declared {
+                            Some(t) => format!("is {}", self.typed_phrase(t)),
+                            None => "is already declared".to_string(),
+                        };
+                        self.push_error_with_hint(
+                            format!(
+                                "'{}' {}, so it cannot take the current time: a variable's type is fixed at its declaration",
+                                into, what
+                            ),
+                            Some(into),
+                            Some("get the time into a time, or into a name not yet declared - `Get current time into now.` - and read it through its properties"),
+                        );
+                        return;
+                    }
+                }
                 self.variables.insert(into.clone());
                 // The variable is a time (LANGUAGE.md "Getting Current
                 // Time"), read through its properties (bug #137).
