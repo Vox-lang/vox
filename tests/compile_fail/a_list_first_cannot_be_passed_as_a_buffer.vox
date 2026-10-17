@@ -1,0 +1,7 @@
+(A buffer parameter is the caller's own buffer; a list's first element is not one.)
+a list called xs is ["a"].
+To 'grow' with a buffer called data.
+    append "x" to data.
+    Print "data {data's size}".
+
+'grow' of xs's first.

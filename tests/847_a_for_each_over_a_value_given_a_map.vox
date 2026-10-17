@@ -1,0 +1,4 @@
+(As test 846, with a map stored in the `value`: the loop ends too.)
+a value called box is ["a", "b", "c"].
+For each item in box, print item, box is {"k": 1}.
+Print "box: {box}".

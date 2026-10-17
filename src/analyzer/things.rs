@@ -944,33 +944,9 @@ impl Analyzer {
         }
         match (&left_thing, &right_thing) {
             // The feature: the same thing on both sides, compared field by
-            // field and recursing through whatever those fields nest. The
-            // manual says how a text field compares and not how a list, a map
-            // or a buffer field does, so a thing holding one is refused
-            // rather than compared by a rule nobody wrote.
-            (Some(left_thing), Some(right_thing)) if left_thing == right_thing => {
-                if let Some((path, _, field)) =
-                    collection_fields(&self.things, left_thing).into_iter().next()
-                {
-                    self.push_error(
-                        format!(
-                            "'{}' and '{}' cannot be compared with `is`, because a {} holds \
-                             a {} ('{}')\n  \
-                             `is` compares two things field by field, and a list, a map or a \
-                             buffer field is not one it compares.\n  \
-                             Compare the fields you need instead - {}'s fields are: {}",
-                            render_thing_operand(left),
-                            render_thing_operand(right),
-                            left_thing,
-                            self.type_name(&field.field_type),
-                            path.join("'s "),
-                            left_thing,
-                            self.fields_of(left_thing)
-                        ),
-                        Some(thing_operand_symbol(left)),
-                    );
-                }
-            }
+            // field and recursing through whatever those fields nest; a list,
+            // a map or a buffer field compares by its contents.
+            (Some(left_thing), Some(right_thing)) if left_thing == right_thing => {}
             (Some(left_thing), Some(right_thing)) => {
                 self.push_error(
                     format!(

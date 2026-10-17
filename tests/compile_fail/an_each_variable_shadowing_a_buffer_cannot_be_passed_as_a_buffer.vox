@@ -1,0 +1,12 @@
+(In the expansion, hold is an element of the list, not the top-level buffer of the same name.)
+a buffer called hold is "abc".
+
+To 'grow' with a buffer called data.
+    For each k from 1 to 3000, append "abcdefgh" to data.
+    Print "grew {data's size}".
+
+To 'shadow'.
+    'grow' of each hold from ["x", "y"].
+
+'shadow'.
+Print "hold {hold's size}".

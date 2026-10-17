@@ -1,0 +1,17 @@
+(A list or map placed inside another collection is a copy. That holds for
+ one carried by a `value` a function returns, so freeing the outer list
+ leaves the list the `value` was given untouched.)
+a list called kept is ["a"].
+To 'hand over'.
+    a value called v is kept.
+    Return a value, v.
+
+a list called outer is [].
+append 'hand over' to outer.
+a map called shelf is {}.
+Set shelf's "k" to 'hand over'.
+append "b" to kept.
+Print "outer: {outer}".
+Print "shelf: {shelf}".
+Free outer.
+Print "kept: {kept}".

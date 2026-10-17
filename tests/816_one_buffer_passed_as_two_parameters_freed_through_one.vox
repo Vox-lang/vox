@@ -1,0 +1,12 @@
+(`Free` through one of two buffer parameters naming one buffer empties it
+ under both names, and the caller's.)
+To 'merge' of a buffer called first and a buffer called second.
+    Free first.
+    Print "second sees: {second's size}".
+    append "after" to second.
+    On error print "the append was refused".
+    Print "second now: {second}".
+
+a buffer called hold is "ab".
+'merge' of hold and hold.
+Print "hold: {hold}".

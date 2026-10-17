@@ -1,0 +1,13 @@
+(Growth can move a buffer, so a byte read or write that held the buffer
+ across a call growing it would touch released memory. The index and the
+ value are worked out first, then the buffer is read or written as it is.)
+To 'grow' with a buffer called data.
+    For each number from 1 to 3000, append "abcdefgh" to data.
+    Return a number, 2.
+
+a buffer called hold is "AB".
+a number called b is byte {'grow' of hold} of hold.
+Print "byte: {b}, size: {hold's size}".
+a buffer called spot is "AB".
+Set byte 1 of spot to 'grow' of spot.
+Print "first byte: {byte 1 of spot}, size: {spot's size}".

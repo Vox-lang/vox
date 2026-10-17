@@ -1,0 +1,9 @@
+(Inside the loop, hold is an element of the list, not the top-level buffer of the same name.)
+a buffer called hold is "abc".
+
+To 'drop'.
+    For each hold in ["x", "y"],
+        Free hold.
+
+'drop'.
+Print "hold {hold's size}".

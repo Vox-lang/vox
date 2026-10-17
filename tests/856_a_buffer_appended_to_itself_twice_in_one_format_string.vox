@@ -1,0 +1,12 @@
+(A format string is appended to a buffer part by part, in place, so the
+ second hole reads the buffer after the first hole's text has been added.
+ Both appends grow the buffer.)
+To 'merge' of a buffer called first and a buffer called second.
+    append "{second}{second}" to first.
+    Print "first {first's size} second {second's size}".
+
+a buffer called hold is "abc".
+For each number from 1 to 1000, append "abcdefgh" to hold.
+Print "hold {hold's size}".
+'merge' of hold and hold.
+Print "hold {hold's size}".

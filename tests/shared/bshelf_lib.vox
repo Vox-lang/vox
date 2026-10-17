@@ -1,0 +1,13 @@
+(A library that writes into, or frees, a buffer it is handed: the program's
+ buffer is exactly what the library leaves, and the program exits cleanly.)
+Library bshelf version "1.0".
+
+To 'add bytes' with a buffer called data.
+    append "added" to data.
+    On error print "library: refused".
+
+To 'drop bytes' with a buffer called data.
+    Free data.
+
+To 'fill' with a buffer called data.
+    For each number from 1 to 3000, append "abcdefgh" to data.

@@ -1,0 +1,4 @@
+shelf: {"pears": 1, "plums": 2}
+box: {"pears": 1}
+not a list: the call was skipped
+box: {"pears": 1}

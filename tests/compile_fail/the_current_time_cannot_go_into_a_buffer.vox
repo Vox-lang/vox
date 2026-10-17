@@ -1,0 +1,3 @@
+(A declared buffer keeps its type: the current time cannot be put in it.)
+a buffer called here is "ab".
+Get current time into here.

@@ -1,0 +1,26 @@
+(A buffer a function returns is the caller's own. One named by a parameter
+ or held by a global is handed back as a copy, so growing or freeing the
+ result leaves the original alone; one the function made is handed back as
+ it is.)
+a buffer called kept is "xy".
+To 'give back' with a buffer called data.
+    Return a buffer, data.
+
+To 'give kept'.
+    Return a buffer, kept.
+
+To 'make one'.
+    a buffer called fresh is "new".
+    Return a buffer, fresh.
+
+a buffer called hold is "ab".
+a buffer called other is 'give back' of hold.
+For each number from 1 to 3000, append "abcdefgh" to other.
+Print "other {other's size}".
+Print "hold {hold's size}".
+a buffer called spare is 'give kept'.
+Free spare.
+Print "kept {kept}".
+a buffer called made is 'make one'.
+append "er" to made.
+Print "made {made}".

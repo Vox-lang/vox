@@ -1,0 +1,3 @@
+(A declared boolean keeps its type: the current time cannot be put in it.)
+a boolean called here is true.
+Get current time into here.

@@ -1,0 +1,12 @@
+(A Set inside a function makes the global its own copy: the two globals
+ change independently afterwards.)
+a list called roster is ["a"].
+a list called spare is [].
+To 'keep a spare'.
+    Set spare to roster.
+    append "from function" to spare.
+
+'keep a spare'.
+append "later" to roster.
+Print "roster: {roster}".
+Print "spare: {spare}".

@@ -1,0 +1,14 @@
+(A list field given to a value parameter beside an `each` clause is copied
+ for every call, so each call sees the field as it was when it was made.)
+A thing called note has
+  a list called items.
+
+a note called memo.
+append "a" to memo's items.
+
+To 'look' with a value called kept and a number called round.
+    append "b" to memo's items.
+    Print "round {round} kept: {kept}".
+
+'look' of memo's items and each round from [1, 2].
+Print "memo: {memo's items}".

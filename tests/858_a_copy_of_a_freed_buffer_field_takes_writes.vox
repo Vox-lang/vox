@@ -1,0 +1,14 @@
+(A copy of a thing whose buffer field was freed holds an empty buffer of its
+ own, which takes writes as any new buffer does: it was never freed. The
+ original's field stays freed.)
+A thing called note has
+  a buffer called body.
+
+a note called memo.
+append "ab" to memo's body.
+Free memo's body.
+a note called copied is memo.
+append "fresh" to copied's body.
+On error print "the copy refused the append".
+Print "copied: {copied's body}, size {copied's body's size}".
+Print "memo: {memo's body's size}".

@@ -2,4 +2,6 @@ counted: [3, 2, 1]
 counted last: 1
 sounded: ["ping", "pong", "ping", "pong"]
 sounded last: pong
-noted last: aliased
+kept last: into a copy
+noted last: through the parameter
+noted length: 1

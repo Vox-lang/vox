@@ -1,0 +1,11 @@
+(A library that appends to, or frees, a list it is handed. A list freed on
+ one side of the boundary is empty and refuses writes on the other, and a
+ second `Free` on the other side is refused too, never unmapping the
+ program's own memory.)
+Library shelf version "1.0".
+
+To 'add to' with a list called items.
+    append "added" to items.
+
+To 'drop' with a list called items.
+    Free items.

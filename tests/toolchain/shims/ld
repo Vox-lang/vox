@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# A stand-in for ld, put first on PATH so the Vox compiler calls it in place
+# of the real one. A static link of one object is done by vox-elf instead:
+# the object's source, which the nasm stand-in recorded in OBJECT.source, is
+# assembled by tools/voxelf/nasm-image.sh into an image and a manifest, and
+# vox-elf writes the executable. Everything vox-elf does not do, a shared
+# library or a program that needs the dynamic loader, is passed straight to
+# the real ld.
+#
+# Environment:
+#   REAL_LD       the real ld (default /usr/bin/ld)
+#   REAL_NASM     the real nasm, which nasm-image.sh is given (default
+#                 /usr/bin/nasm)
+#   VOXELF_BUILD  the directory holding a built vox-elf (default
+#                 ${TMPDIR:-/tmp}/voxelf-build); built there with
+#                 VOXELF_SRC/build.sh when it is missing
+#   VOXELF_SRC    the tools/voxelf directory (default: the one in the Vox
+#                 tree this file sits in)
+#   SHIM_LOG      the file every decision is appended to
+#                 (default ${TMPDIR:-/tmp}/vox-toolchain-shims.log)
+set -uo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+real_ld=${REAL_LD:-/usr/bin/ld}
+real_nasm=${REAL_NASM:-/usr/bin/nasm}
+voxelf_build=${VOXELF_BUILD:-${TMPDIR:-/tmp}/voxelf-build}
+voxelf_src=${VOXELF_SRC:-$(cd "$here/../../.." && pwd)/tools/voxelf}
+log=${SHIM_LOG:-${TMPDIR:-/tmp}/vox-toolchain-shims.log}
+
+note() { printf 'ld-shim [%s] %s\n' "$$" "$*" >> "$log"; }
+
+# The two shapes the compiler writes: -o OUTPUT OBJECT for a static program,
+# and -shared --version-script=... or -dynamic-linker ... -l... for the rest.
+output="" objects=() dynamic=""
+arguments=("$@")
+index=0
+while [ "$index" -lt "${#arguments[@]}" ]; do
+    word=${arguments[$index]}
+    case $word in
+        -o) index=$((index + 1)); output=${arguments[$index]:-} ;;
+        -o*) output=${word#-o} ;;
+        -shared|--shared|-pie|--pie) dynamic=${dynamic:-$word} ;;
+        -dynamic-linker|--dynamic-linker|-rpath|--rpath) dynamic=${dynamic:-$word}; index=$((index + 1)) ;;
+        -dynamic-linker=*|--dynamic-linker=*|-rpath=*|--rpath=*|-l*|--version-script*) dynamic=${dynamic:-$word} ;;
+        -L*) ;;
+        -*) dynamic=${dynamic:-"option $word, which this shim does not read"} ;;
+        *) objects+=("$word") ;;
+    esac
+    index=$((index + 1))
+done
+
+# A passed-through link leaves no record behind, so the compiler's working
+# directory ends up holding what it would with the real ld.
+pass_through() {
+    local candidate
+    for candidate in "${objects[@]}"; do rm -f "$candidate.source"; done
+    note "passed through ($1): $real_ld ${arguments[*]}"
+    exec "$real_ld" "${arguments[@]}"
+}
+
+if [ -n "$dynamic" ]; then
+    pass_through "dynamic or shared link: $dynamic"
+fi
+if [ "${#objects[@]}" -ne 1 ] || [ -z "$output" ]; then
+    pass_through "not one object and one output"
+fi
+object=${objects[0]}
+if [ ! -f "$object.source" ]; then
+    pass_through "no $object.source: the object was not assembled by the nasm shim"
+fi
+
+asm=$(sed -n 's/^asm //p' "$object.source")
+include=$(sed -n 's/^include //p' "$object.source")
+if [ ! -f "$asm" ]; then
+    note "FAILED: $object.source names $asm, which no longer exists"
+    echo "ld shim: the source of $object, $asm, no longer exists" >&2
+    exit 1
+fi
+
+# vox-elf is itself a Vox program, so building it must use the real tools,
+# never these stand-ins: this directory is taken off PATH for the build.
+if [ ! -x "$voxelf_build/vox-elf" ]; then
+    clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$here" | paste -sd: -)
+    note "building vox-elf into $voxelf_build from $voxelf_src"
+    if ! PATH=$clean_path bash "$voxelf_src/build.sh" "$voxelf_build" >> "$log" 2>&1; then
+        note "FAILED: could not build vox-elf"
+        echo "ld shim: could not build vox-elf from $voxelf_src" >&2
+        exit 1
+    fi
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/vox-ld-shim.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+stem=$work/program
+
+# nasm-image.sh calls nasm by name; the real one's directory goes first so
+# its assemblies never reach the nasm stand-in.
+if ! PATH="$(dirname "$real_nasm"):$PATH" VOX_ELF="$voxelf_build/vox-elf" NASM_INCLUDE="$include" \
+        bash "$voxelf_src/nasm-image.sh" "$asm" "$stem" > "$work/image.log" 2>&1; then
+    note "FAILED: nasm-image.sh could not assemble $asm: $(tr '\n' ' ' < "$work/image.log")"
+    cat "$work/image.log" >&2
+    exit 1
+fi
+if ! "$voxelf_build/vox-elf" "$stem.manifest" -o "$output" > "$work/link.log" 2>&1; then
+    note "FAILED: vox-elf could not link $asm into $output: $(tr '\n' ' ' < "$work/link.log")"
+    cat "$work/link.log" >&2
+    exit 1
+fi
+chmod 755 "$output"
+rm -f "$object.source"
+note "linked with vox-elf: $output from $asm (object $object)"
+exit 0

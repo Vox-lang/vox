@@ -1,0 +1,9 @@
+(The map twin of test 829.)
+To 'maybe replace' with a map called shelf and a number called choice.
+    If choice is 1 then, a map called shelf is {"local": 1}. Otherwise, a map called shelf is {"other": 1}.
+    Set shelf's "x" to 2.
+    Print "inside: {shelf}".
+
+a map called stock is {"old": 1}.
+'maybe replace' of stock and 0.
+Print "stock: {stock}".
