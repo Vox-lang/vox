@@ -146,7 +146,7 @@ _start:
     sub rsp, 160
 
     lea rax, [rel str_20]  ; empty text
-    mov [rbp-152], rax  ; store text first argument
+    mov [rbp-152], rax
     mov rax, 0
     mov [rbp-8], rax
     mov rax, [rbp-8]
@@ -325,8 +325,8 @@ _start:
     shl rax, 3
     add rax, r13  ; + type tag bytes (1 per slot)
     add rax, 24
-    HEAP_ALLOC rax  ; size in rax; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .arglist_mmap_ok_20
     EXIT 1
 .arglist_mmap_ok_20:
@@ -388,6 +388,12 @@ _start:
     mov [rbp-128], rax  ; list length
     mov qword [rbp-136], 0  ; index
 .foreach_start_25:
+    mov rax, [rel gvar_7]
+    mov [rbp-120], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-136]  ; index
+    cmp rax, rcx
+    jge .foreach_end_27  ; the list is shorter now
     mov rax, [rbp-136]  ; index
     cmp rax, [rbp-128]  ; compare with length
     jge .foreach_end_27
@@ -450,7 +456,7 @@ _start:
     lea rax, [rel str_20]  ; empty text for out-of-range positional read
     SET_LAST_ERROR 1  ; out of range
 .arg_first_done_32:
-    mov [rbp-152], rax  ; store first argument
+    mov [rbp-152], rax
     PRINT_STR str_21, str_21_len
     mov rax, [rbp-152]
     mov rdi, rax

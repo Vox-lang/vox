@@ -294,8 +294,8 @@ _start:
     shl rax, 3
     add rax, r13  ; + type tag bytes (1 per slot)
     add rax, 24
-    HEAP_ALLOC rax  ; size in rax; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .argraw_mmap_ok_27
     EXIT 1
 .argraw_mmap_ok_27:

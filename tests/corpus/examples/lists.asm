@@ -57,8 +57,8 @@ _start:
     PRINT_STR str_1, str_1_len
     PRINT_NEWLINE
     ; List literal with 3 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_0
     EXIT 1
 .list_mmap_ok_0:
@@ -92,6 +92,12 @@ _start:
     mov [rbp-16], rax  ; list length
     mov qword [rbp-24], 0  ; index
 .foreach_start_1:
+    mov rax, [rel gvar_2]
+    mov [rbp-8], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-24]  ; index
+    cmp rax, rcx
+    jge .foreach_end_3  ; the list is shorter now
     mov rax, [rbp-24]  ; index
     cmp rax, [rbp-16]  ; compare with length
     jge .foreach_end_3
@@ -112,11 +118,11 @@ _start:
     PRINT_NEWLINE
     PRINT_STR str_3, str_3_len
     ; Element access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save list pointer
     mov rax, 2
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_5  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -141,8 +147,8 @@ _start:
     PRINT_STR str_4, str_4_len
     PRINT_NEWLINE
     ; List literal with 3 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_7
     EXIT 1
 .list_mmap_ok_7:
@@ -179,6 +185,12 @@ _start:
     mov [rbp-48], rax  ; list length
     mov qword [rbp-56], 0  ; index
 .foreach_start_8:
+    mov rax, [rel gvar_1]
+    mov [rbp-40], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-56]  ; index
+    cmp rax, rcx
+    jge .foreach_end_10  ; the list is shorter now
     mov rax, [rbp-56]  ; index
     cmp rax, [rbp-48]  ; compare with length
     jge .foreach_end_10
@@ -243,11 +255,11 @@ _start:
     PRINT_STR str_9, str_9_len
     PRINT_NEWLINE
     ; Element access (1-indexed) with bounds check
-    mov rax, [rel gvar_1]
-    push rax  ; save list pointer
     mov rax, 100
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_1]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_18  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -277,8 +289,8 @@ _start:
     PRINT_STR str_11, str_11_len
     PRINT_NEWLINE
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_21
     EXIT 1
 .list_mmap_ok_21:
@@ -308,6 +320,12 @@ _start:
     mov [rbp-80], rax  ; list length
     mov qword [rbp-88], 0  ; index
 .foreach_start_22:
+    mov rax, [rel gvar_3]
+    mov [rbp-72], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-88]  ; index
+    cmp rax, rcx
+    jge .foreach_end_24  ; the list is shorter now
     mov rax, [rbp-88]  ; index
     cmp rax, [rbp-80]  ; compare with length
     jge .foreach_end_24

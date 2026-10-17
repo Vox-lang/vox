@@ -65,8 +65,8 @@ _start:
     sub rsp, 160
 
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_21
     EXIT 1
 .list_mmap_ok_21:
@@ -77,8 +77,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_0], rax  ; global store list crafts
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_22
     EXIT 1
 .list_mmap_ok_22:
@@ -89,8 +89,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_1], rax  ; global store list materials
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_23
     EXIT 1
 .list_mmap_ok_23:
@@ -101,8 +101,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_2], rax  ; global store list tools
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_24
     EXIT 1
 .list_mmap_ok_24:
@@ -113,8 +113,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_3], rax  ; global store list weekdays
     ; List literal with 3 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_0
     EXIT 1
 .list_mmap_ok_0:
@@ -151,6 +151,12 @@ _start:
     mov [rbp-16], rax  ; list length
     mov qword [rbp-24], 0  ; index
 .foreach_start_1:
+    mov rax, [rel gvar_0]
+    mov [rbp-8], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-24]  ; index
+    cmp rax, rcx
+    jge .foreach_end_3  ; the list is shorter now
     mov rax, [rbp-24]  ; index
     cmp rax, [rbp-16]  ; compare with length
     jge .foreach_end_3
@@ -171,8 +177,8 @@ _start:
     PRINT_STR str_5, str_5_len
     PRINT_NEWLINE
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_4
     EXIT 1
 .list_mmap_ok_4:
@@ -197,8 +203,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_2], rax  ; global store tools
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_5
     EXIT 1
 .list_mmap_ok_5:
@@ -228,6 +234,12 @@ _start:
     mov [rbp-48], rax  ; list length
     mov qword [rbp-56], 0  ; index
 .foreach_start_6:
+    mov rax, [rel gvar_2]
+    mov [rbp-40], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-56]  ; index
+    cmp rax, rcx
+    jge .foreach_end_8  ; the list is shorter now
     mov rax, [rbp-56]  ; index
     cmp rax, [rbp-48]  ; compare with length
     jge .foreach_end_8
@@ -243,6 +255,12 @@ _start:
     mov [rbp-80], rax  ; list length
     mov qword [rbp-88], 0  ; index
 .foreach_start_9:
+    mov rax, [rel gvar_1]
+    mov [rbp-72], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-88]  ; index
+    cmp rax, rcx
+    jge .foreach_end_11  ; the list is shorter now
     mov rax, [rbp-88]  ; index
     cmp rax, [rbp-80]  ; compare with length
     jge .foreach_end_11
@@ -270,8 +288,8 @@ _start:
     PRINT_STR str_11, str_11_len
     PRINT_NEWLINE
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_12
     EXIT 1
 .list_mmap_ok_12:
@@ -301,6 +319,12 @@ _start:
     mov [rbp-112], rax  ; list length
     mov qword [rbp-120], 0  ; index
 .foreach_start_13:
+    mov rax, [rel gvar_3]
+    mov [rbp-104], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-120]  ; index
+    cmp rax, rcx
+    jge .foreach_end_15  ; the list is shorter now
     mov rax, [rbp-120]  ; index
     cmp rax, [rbp-112]  ; compare with length
     jge .foreach_end_15
@@ -316,6 +340,12 @@ _start:
     mov [rbp-144], rax  ; list length
     mov qword [rbp-152], 0  ; index
 .foreach_start_16:
+    mov rax, [rel gvar_0]
+    mov [rbp-136], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-152]  ; index
+    cmp rax, rcx
+    jge .foreach_end_18  ; the list is shorter now
     mov rax, [rbp-152]  ; index
     cmp rax, [rbp-144]  ; compare with length
     jge .foreach_end_18

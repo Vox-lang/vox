@@ -65,19 +65,19 @@ _start:
 
     FLOAT_LOAD float_8
     XMM0_TO_RAX
-    mov [rbp-24], rax  ; store float largest
+    mov [rbp-24], rax
     FLOAT_LOAD float_9
     XMM0_TO_RAX
-    mov [rbp-16], rax  ; store float middle
+    mov [rbp-16], rax
     FLOAT_LOAD float_10
     XMM0_TO_RAX
-    mov [rbp-32], rax  ; store float product
+    mov [rbp-32], rax
     FLOAT_LOAD float_11
     XMM0_TO_RAX
-    mov [rbp-8], rax  ; store float smallest
+    mov [rbp-8], rax
     FLOAT_LOAD float_12
     XMM0_TO_RAX
-    mov [rbp-40], rax  ; store float term
+    mov [rbp-40], rax
     PRINT_STR str_0, str_0_len
     PRINT_NEWLINE
     PRINT_STR str_1, str_1_len
@@ -107,7 +107,7 @@ _start:
     cmp rax, rbx
     jge .while_end_1
     mov rax, [rel gvar_0]
-    mov [rbp-8], rax  ; store smallest
+    mov [rbp-8], rax
     FLOAT_LOAD float_3
     XMM0_TO_RAX
     push rax
@@ -117,7 +117,7 @@ _start:
     RAX_TO_XMM1
     FLOAT_ADD
     XMM0_TO_RAX
-    mov [rbp-16], rax  ; store middle
+    mov [rbp-16], rax
     FLOAT_LOAD float_4
     XMM0_TO_RAX
     push rax
@@ -127,7 +127,7 @@ _start:
     RAX_TO_XMM1
     FLOAT_ADD
     XMM0_TO_RAX
-    mov [rbp-24], rax  ; store largest
+    mov [rbp-24], rax
     mov rax, [rbp-16]
     push rax
     mov rax, [rbp-8]
@@ -136,7 +136,7 @@ _start:
     RAX_TO_XMM1
     FLOAT_MUL
     XMM0_TO_RAX
-    mov [rbp-32], rax  ; store product
+    mov [rbp-32], rax
     mov rax, [rbp-24]
     push rax
     mov rax, [rbp-32]
@@ -155,7 +155,7 @@ _start:
     RAX_TO_XMM1
     FLOAT_DIV
     XMM0_TO_RAX
-    mov [rbp-40], rax  ; store term
+    mov [rbp-40], rax
     mov rax, [rel gvar_1]
     push rax
     mov rax, [rbp-40]
