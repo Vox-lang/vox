@@ -479,9 +479,7 @@ _start:
     mov rax, 4096
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-8], rax  ; buffer struct pointer
-    mov rax, [rbp-8]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rax  ; buffer partbuf
     lea rax, [rel str_57]
     push rax  ; new value for root_device, across its old one's free check
     cmp byte [rel gvar_5_owned], 0  ; was the current root_device owned?
@@ -504,7 +502,7 @@ _start:
     jz .while_end_44  ; 1=equal
     lea rdi, [rel str_59]
     FILE_OPEN_READ rdi
-    mov [rbp-16], rax  ; file descriptor
+    mov [rbp-8], rax  ; file descriptor
     test rax, rax
     jns .file_ok_45  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -515,33 +513,29 @@ _start:
     mov rdi, rax
     call _register_fd  ; track for auto-cleanup
 .file_done_46:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_47  ; skip if invalid fd
-    mov rax, [rbp-8]  ; local partbuf
+    mov rax, [rel gvar_4]  ; global mirror partbuf
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-8], rsi  ; store new pointer for partbuf
-    mov rax, [rbp-8]
-    mov [rel gvar_4], rax
+    mov [rel gvar_4], rsi  ; store new pointer for partbuf
     jmp .read_done_48
 .skip_fd_47:
     SET_LAST_ERROR 1
 .read_done_48:
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_49  ; skip if invalid fd
     call _unregister_fd  ; remove from tracking
-    mov rdi, [rbp-16]
+    mov rdi, [rbp-8]
     FILE_CLOSE rdi
 .skip_fd_49:
-    lea rax, [rel gvar_4]  ; the cell holding partbuf
+    lea rax, [rel gvar_4]  ; where partbuf is kept
     push rax
     pop rdi
     call find_root_device
-    mov rcx, [rel gvar_4]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; the top level's copy follows it
     push rax  ; new value for root_device, across its old one's free check
     cmp byte [rel gvar_5_owned], 0  ; was the current root_device owned?
     je .text_not_owned_50
@@ -746,103 +740,103 @@ _start:
 ; User-defined functions
 ; Function: contains token
 contains_token:
-    FUNC_PROLOGUE 96
+    FUNC_PROLOGUE 80
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps hay
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps hay
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rax, 64
     mov rdi, rax  ; buffer size
     call _alloc_buffer_sized
-    mov [rbp-32], rax  ; buffer struct pointer
-    mov rdi, [rbp-32]
+    mov [rbp-24], rax  ; buffer struct pointer
+    mov rdi, [rbp-24]
     push rdi
     call _buffer_clear
     mov rdi, rax
     pop rsi  ; discard original pointer copy
     lea rsi, [rel str_3]
     mov rdx, str_3_len
-    mov rdi, [rbp-32]
+    mov rdi, [rbp-24]
     call _buffer_append_bytes
-    mov [rbp-32], rax
-    mov rax, [rbp-24]
-    mov rdi, [rbp-32]
+    mov [rbp-24], rax
+    mov rax, [rbp-16]
+    mov rdi, [rbp-24]
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-32], rax
+    mov [rbp-24], rax
     lea rsi, [rel str_4]
     mov rdx, str_4_len
-    mov rdi, [rbp-32]
+    mov rdi, [rbp-24]
     call _buffer_append_bytes
-    mov [rbp-32], rax
+    mov [rbp-24], rax
     mov rax, 1
-    mov [rbp-40], rax  ; store hay index
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store needle index
+    mov [rbp-40], rax
     mov rax, 0
-    mov [rbp-56], rax  ; store mismatch
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-64], rax  ; store hay byte
+    mov [rbp-56], rax
     mov rax, 0
-    mov [rbp-72], rax  ; store needle byte
+    mov [rbp-64], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
-    mov rax, [rbp-8]
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_SUB
     pop rbx
     INT_ADD
-    mov [rbp-80], rax  ; store top
+    mov [rbp-72], rax
     mov rax, 0
-    mov [rbp-88], rax  ; store found
+    mov [rbp-80], rax
 .while_start_3:
-    mov rax, [rbp-80]
+    mov rax, [rbp-72]
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     pop rbx
     cmp rax, rbx
     jg .while_end_4
     mov rax, 0
-    mov [rbp-56], rax  ; store mismatch
+    mov [rbp-48], rax
     mov rax, 1
-    mov [rbp-48], rax  ; store needle index
+    mov [rbp-40], rax
 .while_start_5:
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jg .while_end_6
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-48]
-    push rax
     mov rax, [rbp-40]
+    push rax
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
     pop rbx
     INT_SUB
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_8  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -859,13 +853,13 @@ contains_token:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_9:
-    mov [rbp-64], rax  ; store hay byte
+    mov [rbp-56], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-32]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-40]
+    push rax  ; index
+    mov rax, [rbp-24]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_11  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -882,36 +876,36 @@ contains_token:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_12:
-    mov [rbp-72], rax  ; store needle byte
-    mov rax, [rbp-72]
-    push rax
+    mov [rbp-64], rax
     mov rax, [rbp-64]
-    pop rbx
-    cmp rax, rbx
-    je .else_14
-    mov rax, 1
-    mov [rbp-56], rax  ; store mismatch
-    jmp .if_end_13
-.else_14:
-.if_end_13:
-    inc qword [rbp-48]
-    jmp .while_start_5
-.while_end_6:
-    mov rax, 0
     push rax
     mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
+    je .else_14
+    mov rax, 1
+    mov [rbp-48], rax
+    jmp .if_end_13
+.else_14:
+.if_end_13:
+    inc qword [rbp-40]
+    jmp .while_start_5
+.while_end_6:
+    mov rax, 0
+    push rax
+    mov rax, [rbp-48]
+    pop rbx
+    cmp rax, rbx
     jne .else_16
     mov rax, 1
-    mov [rbp-88], rax  ; store found
+    mov [rbp-80], rax
     jmp .if_end_15
 .else_16:
 .if_end_15:
-    inc qword [rbp-40]
+    inc qword [rbp-32]
     jmp .while_start_3
 .while_end_4:
-    mov rax, [rbp-88]
+    mov rax, [rbp-80]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -924,21 +918,16 @@ find_root_device:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps hay
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps hay
     mov rax, 1
     push rax
     lea rax, [rel str_5]
     push rax
-    mov rax, [rbp-16]  ; where hay's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call contains_token
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     pop rbx
     cmp rax, rbx
     jne .else_18
@@ -954,14 +943,11 @@ find_root_device:
     push rax
     lea rax, [rel str_7]
     push rax
-    mov rax, [rbp-16]  ; where hay's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call contains_token
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     pop rbx
     cmp rax, rbx
     jne .else_20
@@ -977,14 +963,11 @@ find_root_device:
     push rax
     lea rax, [rel str_9]
     push rax
-    mov rax, [rbp-16]  ; where hay's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call contains_token
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     pop rbx
     cmp rax, rbx
     jne .else_22
@@ -1000,14 +983,11 @@ find_root_device:
     push rax
     lea rax, [rel str_11]
     push rax
-    mov rax, [rbp-16]  ; where hay's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call contains_token
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     pop rbx
     cmp rax, rbx
     jne .else_24

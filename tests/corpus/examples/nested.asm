@@ -32,8 +32,8 @@ _start:
     sub rsp, 96
 
     ; List literal with 4 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_0
     EXIT 1
 .list_mmap_ok_0:
@@ -50,8 +50,8 @@ _start:
     pop rbx  ; get list pointer
     push rbx ; save it back
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_1
     EXIT 1
 .list_mmap_ok_1:
@@ -88,8 +88,8 @@ _start:
     pop rbx  ; get list pointer
     push rbx ; save it back
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_2
     EXIT 1
 .list_mmap_ok_2:
@@ -106,8 +106,8 @@ _start:
     pop rbx  ; get list pointer
     push rbx ; save it back
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_3
     EXIT 1
 .list_mmap_ok_3:
@@ -149,11 +149,11 @@ _start:
     PRINT_NEWLINE
     mov qword [rbp-8], 0  ; no cast of a text to a number has failed yet
     ; Element access (1-indexed) with bounds check
-    mov rax, [rel gvar_1]
-    push rax  ; save list pointer
     mov rax, 2
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_1]
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_5  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -199,8 +199,8 @@ _start:
     je .dyn_cast_collection_done_10
     SET_LAST_ERROR 1
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_11
     EXIT 1
 .list_mmap_ok_11:
@@ -214,8 +214,8 @@ _start:
     test rax, rax
     jnz .miss_empty_done_12
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_13
     EXIT 1
 .list_mmap_ok_13:
@@ -246,6 +246,12 @@ _start:
     mov [rbp-24], rax  ; list length
     mov qword [rbp-32], 0  ; index
 .foreach_start_15:
+    mov rax, [rel gvar_0]
+    mov [rbp-16], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-32]  ; index
+    cmp rax, rcx
+    jge .foreach_end_17  ; the list is shorter now
     mov rax, [rbp-32]  ; index
     cmp rax, [rbp-24]  ; compare with length
     jge .foreach_end_17
@@ -288,6 +294,12 @@ _start:
     mov [rbp-64], rax  ; list length
     mov qword [rbp-72], 0  ; index
 .foreach_start_21:
+    mov rax, [rel gvar_1]
+    mov [rbp-56], rax  ; the list as it is now
+    mov rcx, [rax + 8]  ; its length now
+    mov rax, [rbp-72]  ; index
+    cmp rax, rcx
+    jge .foreach_end_23  ; the list is shorter now
     mov rax, [rbp-72]  ; index
     cmp rax, [rbp-64]  ; compare with length
     jge .foreach_end_23

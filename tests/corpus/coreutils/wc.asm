@@ -124,23 +124,23 @@ _start:
 
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-144], rax  ; store buffer content
+    mov [rbp-136], rax
     xor rax, rax
-    mov [rbp-168], rax  ; store how many bytes
+    mov [rbp-160], rax
     xor rax, rax
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     lea rax, [rel str_12]  ; empty text
-    mov [rbp-216], rax  ; store text name
+    mov [rbp-208], rax
     xor rax, rax
-    mov [rbp-224], rax  ; store this width
+    mov [rbp-216], rax
     xor rax, rax
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
     mov [rel gvar_6], rax  ; global store buffer report
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_148
     EXIT 1
 .list_mmap_ok_148:
@@ -151,8 +151,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_7], rax  ; global store list the byte counts
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_149
     EXIT 1
 .list_mmap_ok_149:
@@ -163,8 +163,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_8], rax  ; global store list the files counted
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_150
     EXIT 1
 .list_mmap_ok_150:
@@ -175,8 +175,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_9], rax  ; global store list the line counts
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_151
     EXIT 1
 .list_mmap_ok_151:
@@ -505,9 +505,7 @@ _start:
     CLEAR_LAST_ERROR
 .skip_error_93:
     call _alloc_buffer
-    mov [rbp-128], rax  ; buffer struct pointer
-    mov rax, [rbp-128]
-    mov [rel gvar_6], rax
+    mov [rel gvar_6], rax  ; buffer report
     mov rax, 0
     mov [rel gvar_3], rax  ; global store failed to open a file
     call _get_parsed_argc
@@ -525,11 +523,11 @@ _start:
     jle .fd_ok_96
     jmp .fd_invalid_97
 .fd_ok_96:
-    mov [rbp-136], rax  ; borrowed file descriptor
+    mov [rbp-128], rax  ; borrowed file descriptor
     CLEAR_LAST_ERROR
     jmp .fd_done_98
 .fd_invalid_97:
-    mov qword [rbp-136], -1  ; invalid fd
+    mov qword [rbp-128], -1  ; invalid fd
     SET_LAST_ERROR 22  ; EINVAL
 .fd_done_98:
     mov rax, [rel _last_error]
@@ -549,56 +547,56 @@ _start:
     EXIT rdi
     CLEAR_LAST_ERROR
 .skip_error_99:
-    mov rax, [rbp-136]
+    mov rax, [rbp-128]
     push rax
     pop rdi
     call read_all_of
-    mov [rbp-144], rax  ; store buffer content
+    mov [rbp-136], rax
     mov rax, 0
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     mov rax, [rel gvar_15]
     test rax, rax
     jz .else_101
-    lea rax, [rbp-144]  ; the cell holding content
+    lea rax, [rbp-136]
     push rax
     pop rdi
     call count_the_lines_in
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     jmp .if_end_100
 .else_101:
 .if_end_100:
     mov rax, 0
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     mov rax, [rel gvar_16]
     test rax, rax
     jz .else_103
-    lea rax, [rbp-144]  ; the cell holding content
+    lea rax, [rbp-136]
     push rax
     pop rdi
     call count_the_words_in
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     jmp .if_end_102
 .else_103:
 .if_end_102:
-    mov rax, [rbp-144]
+    mov rax, [rbp-136]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-168], rax  ; store how many bytes
-    mov rax, [rbp-168]
+    mov [rbp-160], rax
+    mov rax, [rbp-160]
     push rax
     pop rdi
     call the_width_for_one_file
     mov [rel gvar_17], rax  ; global store width
-    lea rax, [rel gvar_6]  ; the cell holding report
+    lea rax, [rel gvar_6]  ; where report is kept
     push rax
     lea rax, [rel str_27]
     push rax
     mov rax, [rel gvar_17]
     push rax
-    mov rax, [rbp-168]
-    push rax
     mov rax, [rbp-160]
     push rax
     mov rax, [rbp-152]
+    push rax
+    mov rax, [rbp-144]
     push rax
     pop rdi
     pop rsi
@@ -607,12 +605,10 @@ _start:
     pop r8
     pop r9
     call write_the_counts_row
-    mov rcx, [rel gvar_6]  ; the buffer may have moved
-    mov [rbp-128], rcx  ; the top level's copy follows it
     mov rdi, [rbp-120]
     test rdi, rdi
     js .skip_fd_104  ; skip if invalid fd
-    mov rsi, [rbp-128]
+    mov rsi, [rel gvar_6]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_105
 .skip_fd_104:
@@ -629,8 +625,8 @@ _start:
 .else_95:
 .if_end_94:
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_106
     EXIT 1
 .list_mmap_ok_106:
@@ -641,8 +637,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_8], rax  ; global store the files counted
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_107
     EXIT 1
 .list_mmap_ok_107:
@@ -653,8 +649,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_9], rax  ; global store the line counts
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_108
     EXIT 1
 .list_mmap_ok_108:
@@ -665,8 +661,8 @@ _start:
     pop rax  ; list pointer in rax
     mov [rel gvar_10], rax  ; global store the word counts
     ; List literal with 0 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_109
     EXIT 1
 .list_mmap_ok_109:
@@ -683,16 +679,16 @@ _start:
     mov rax, 0
     mov [rel gvar_11], rax  ; global store total bytes
     call _get_parsed_argc
-    mov [rbp-176], rax  ; arg count
-    mov qword [rbp-184], 0
+    mov [rbp-168], rax  ; arg count
+    mov qword [rbp-176], 0
 .foreach_start_110:
-    mov rax, [rbp-184]  ; index
-    cmp rax, [rbp-176]  ; compare with count
+    mov rax, [rbp-176]  ; index
+    cmp rax, [rbp-168]  ; compare with count
     jge .foreach_end_112
     mov rdi, rax
     call _get_parsed_arg
-    mov [rbp-192], rax  ; store in filename
-    mov rax, [rbp-192]
+    mov [rbp-184], rax  ; store in filename
+    mov rax, [rbp-184]
     push rax  ; save original value (struct ptr if buffer)
     mov rdi, rax  ; comparison ptr in rdi
     lea rax, [rel str_28]
@@ -708,7 +704,7 @@ _start:
 .treating_done_114:
     mov rdi, rax  ; path pointer
     FILE_OPEN_READ rdi
-    mov [rbp-136], rax  ; file descriptor
+    mov [rbp-128], rax  ; file descriptor
     test rax, rax
     jns .file_ok_115  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -726,7 +722,7 @@ _start:
     mov rdi, rax
     PRINT_CSTR rdi
     PRINT_STR str_30, str_30_len
-    mov rax, [rbp-192]
+    mov rax, [rbp-184]
     mov rdi, rax
     PRINT_CSTR rdi
     PRINT_STR str_31, str_31_len
@@ -737,103 +733,107 @@ _start:
     jmp .foreach_continue_111
     CLEAR_LAST_ERROR
 .skip_error_117:
-    mov rax, [rbp-136]
+    mov rax, [rbp-128]
     push rax
     pop rdi
     call read_all_of
-    mov [rbp-144], rax  ; store buffer content
+    mov [rbp-136], rax
     mov rax, 0
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     mov rax, [rel gvar_15]
     test rax, rax
     jz .else_119
-    lea rax, [rbp-144]  ; the cell holding content
+    lea rax, [rbp-136]
     push rax
     pop rdi
     call count_the_lines_in
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     jmp .if_end_118
 .else_119:
 .if_end_118:
     mov rax, 0
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     mov rax, [rel gvar_16]
     test rax, rax
     jz .else_121
-    lea rax, [rbp-144]  ; the cell holding content
+    lea rax, [rbp-136]
     push rax
     pop rdi
     call count_the_words_in
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     jmp .if_end_120
 .else_121:
 .if_end_120:
-    mov rax, [rbp-144]
+    mov rax, [rbp-136]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-168], rax  ; store how many bytes
+    mov [rbp-160], rax
     ; Append value to list
-    mov rax, [rel gvar_8]  ; global mirror the files counted
-    push rax  ; save list pointer
-    mov rax, [rbp-192]
+    mov rax, [rbp-184]
     push rax  ; save value to append
     mov edx, 1  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rel gvar_8]  ; global mirror the files counted
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
     mov [rel gvar_8], rax  ; store new pointer for the files counted
     ; Append value to list
-    mov rax, [rel gvar_9]  ; global mirror the line counts
-    push rax  ; save list pointer
-    mov rax, [rbp-152]
+    mov rax, [rbp-144]
     push rax  ; save value to append
     mov edx, 0  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rel gvar_9]  ; global mirror the line counts
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
     mov [rel gvar_9], rax  ; store new pointer for the line counts
     ; Append value to list
-    mov rax, [rel gvar_10]  ; global mirror the word counts
-    push rax  ; save list pointer
-    mov rax, [rbp-160]
+    mov rax, [rbp-152]
     push rax  ; save value to append
     mov edx, 0  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rel gvar_10]  ; global mirror the word counts
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
     mov [rel gvar_10], rax  ; store new pointer for the word counts
     ; Append value to list
-    mov rax, [rel gvar_7]  ; global mirror the byte counts
-    push rax  ; save list pointer
-    mov rax, [rbp-168]
+    mov rax, [rbp-160]
     push rax  ; save value to append
     mov edx, 0  ; element type tag
+    push rdx  ; element type tag
+    mov rax, [rel gvar_7]  ; global mirror the byte counts
+    mov rdi, rax  ; list ptr, loaded last
+    pop rdx  ; element type tag
     pop rsi  ; value to append
-    pop rdi  ; list ptr
     call _list_append
     mov [rel gvar_7], rax  ; store new pointer for the byte counts
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-152]
+    mov rax, [rbp-144]
     push rax
     mov rax, [rel gvar_12]
     pop rbx
     INT_ADD
     mov [rel gvar_12], rax  ; global store total lines
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-160]
+    mov rax, [rbp-152]
     push rax
     mov rax, [rel gvar_13]
     pop rbx
     INT_ADD
     mov [rel gvar_13], rax  ; global store total words
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-168]
+    mov rax, [rbp-160]
     push rax
     mov rax, [rel gvar_11]
     pop rbx
     INT_ADD
     mov [rel gvar_11], rax  ; global store total bytes
 .foreach_continue_111:
-    inc qword [rbp-184]
+    inc qword [rbp-176]
     jmp .foreach_start_110
 .foreach_end_112:
     mov rax, [rel gvar_8]
@@ -856,20 +856,20 @@ _start:
 .else_123:
 .if_end_122:
     mov rax, 1
-    mov [rbp-200], rax
+    mov [rbp-192], rax
     mov rax, [rel gvar_4]
     inc rax
-    mov [rbp-208], rax
+    mov [rbp-200], rax
 .for_start_124:
-    mov rax, [rbp-200]
-    cmp rax, [rbp-208]
+    mov rax, [rbp-192]
+    cmp rax, [rbp-200]
     jge .for_end_126
     ; Element access (1-indexed) with bounds check
+    mov rax, [rbp-192]
+    push rax  ; index
     mov rax, [rel gvar_8]
-    push rax  ; save list pointer
-    mov rax, [rbp-200]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_128  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -893,13 +893,13 @@ _start:
     jnz .miss_empty_done_130
     lea rax, [rel str_12]  ; empty text
 .miss_empty_done_130:
-    mov [rbp-216], rax  ; store name
+    mov [rbp-208], rax
     ; Element access (1-indexed) with bounds check
+    mov rax, [rbp-192]
+    push rax  ; index
     mov rax, [rel gvar_9]
-    push rax  ; save list pointer
-    mov rax, [rbp-200]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_132  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -918,13 +918,13 @@ _start:
     add rax, rbx
     mov rax, [rax]  ; get element
 .elem_done_133:
-    mov [rbp-152], rax  ; store lines
+    mov [rbp-144], rax
     ; Element access (1-indexed) with bounds check
+    mov rax, [rbp-192]
+    push rax  ; index
     mov rax, [rel gvar_10]
-    push rax  ; save list pointer
-    mov rax, [rbp-200]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_135  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -943,13 +943,13 @@ _start:
     add rax, rbx
     mov rax, [rax]  ; get element
 .elem_done_136:
-    mov [rbp-160], rax  ; store words
+    mov [rbp-152], rax
     ; Element access (1-indexed) with bounds check
+    mov rax, [rbp-192]
+    push rax  ; index
     mov rax, [rel gvar_7]
-    push rax  ; save list pointer
-    mov rax, [rbp-200]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; list pointer in rbx
+    mov rbx, rax  ; list pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .elem_err_138  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get length (offset 8)
@@ -968,34 +968,34 @@ _start:
     add rax, rbx
     mov rax, [rax]  ; get element
 .elem_done_139:
-    mov [rbp-168], rax  ; store how many bytes
+    mov [rbp-160], rax
     mov rax, [rel gvar_17]
-    mov [rbp-224], rax  ; store this width
+    mov [rbp-216], rax
     mov rax, 1
     push rax
     mov rax, [rel gvar_4]
     pop rbx
     cmp rax, rbx
     jne .else_141
-    mov rax, [rbp-168]
+    mov rax, [rbp-160]
     push rax
     pop rdi
     call the_width_for_one_file
-    mov [rbp-224], rax  ; store this width
+    mov [rbp-216], rax
     jmp .if_end_140
 .else_141:
 .if_end_140:
-    lea rax, [rel gvar_6]  ; the cell holding report
+    lea rax, [rel gvar_6]  ; where report is kept
+    push rax
+    mov rax, [rbp-208]
     push rax
     mov rax, [rbp-216]
-    push rax
-    mov rax, [rbp-224]
-    push rax
-    mov rax, [rbp-168]
     push rax
     mov rax, [rbp-160]
     push rax
     mov rax, [rbp-152]
+    push rax
+    mov rax, [rbp-144]
     push rax
     pop rdi
     pop rsi
@@ -1004,10 +1004,8 @@ _start:
     pop r8
     pop r9
     call write_the_counts_row
-    mov rcx, [rel gvar_6]  ; the buffer may have moved
-    mov [rbp-128], rcx  ; the top level's copy follows it
 .for_continue_125:
-    inc qword [rbp-200]
+    inc qword [rbp-192]
     jmp .for_start_124
 .for_end_126:
     mov rax, 1
@@ -1016,7 +1014,7 @@ _start:
     pop rbx
     cmp rax, rbx
     jle .else_143
-    lea rax, [rel gvar_6]  ; the cell holding report
+    lea rax, [rel gvar_6]  ; where report is kept
     push rax
     lea rax, [rel str_32]
     push rax
@@ -1035,15 +1033,13 @@ _start:
     pop r8
     pop r9
     call write_the_counts_row
-    mov rcx, [rel gvar_6]  ; the buffer may have moved
-    mov [rbp-128], rcx  ; the top level's copy follows it
     jmp .if_end_142
 .else_143:
 .if_end_142:
     mov rdi, [rbp-120]
     test rdi, rdi
     js .skip_fd_144  ; skip if invalid fd
-    mov rsi, [rbp-128]
+    mov rsi, [rel gvar_6]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_145
 .skip_fd_144:
@@ -1079,7 +1075,7 @@ _start:
 ; User-defined functions
 ; Function: write the byte
 write_the_byte:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -1088,51 +1084,50 @@ write_the_byte:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps output
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-16]  ; local output
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-8]
+    push rax  ; value
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_26  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_25  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_26  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-16], rax  ; store new pointer for output
-    mov rcx, [rbp-24]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_25  ; grown buffer now has space
 .bset_err_26:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_27
 .bset_ok_25:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-8]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_28  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1185,14 +1180,14 @@ how_many_digits_in:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, 1
-    mov [rbp-16], rax  ; store how many
+    mov [rbp-16], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 10
     push rax
     mov rax, [rbp-8]
     pop rbx
     INT_DIV
-    mov [rbp-24], rax  ; store remaining
+    mov [rbp-24], rax
 .while_start_31:
     mov rax, 0
     push rax
@@ -1207,7 +1202,7 @@ how_many_digits_in:
     mov rax, [rbp-24]
     pop rbx
     INT_DIV
-    mov [rbp-24], rax  ; store remaining
+    mov [rbp-24], rax
     jmp .while_start_31
 .while_end_32:
     mov rax, [rbp-16]
@@ -1231,9 +1226,7 @@ write_padded:
     mov rax, rsi
     mov [rbp-16], rax  ; param payload
     mov rax, rdx
-    mov [rbp-32], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps output
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, [rbp-8]
     push rax
@@ -1243,43 +1236,42 @@ write_padded:
     mov rax, [rbp-16]
     pop rbx
     INT_SUB
-    mov [rbp-40], rax  ; store spaces to write
-    mov rax, [rbp-40]
-    mov [rbp-48], rax
+    mov [rbp-32], rax
+    mov rax, [rbp-32]
+    mov [rbp-40], rax
 .repeat_start_33:
-    cmp qword [rbp-48], 0
+    cmp qword [rbp-40], 0
     jle .repeat_end_35
-    mov rax, [rbp-32]  ; where output's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-32]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-24], rcx  ; this frame's copy follows it
 .repeat_continue_34:
-    dec qword [rbp-48]
+    dec qword [rbp-40]
     jmp .repeat_start_33
 .repeat_end_35:
     mov rax, [rbp-8]
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-24]  ; cell: where the owner keeps it
+    mov rdi, [rdi]  ; the collection, as it is now
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-24], rax
-    mov rcx, [rbp-32]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     call _dec_call_depth
     FUNC_EPILOGUE
 
 ; Function: write a space when
 write_a_space_when:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -1288,22 +1280,17 @@ write_a_space_when:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps output
     mov rax, [rbp-8]
     test rax, rax
     jz .else_37
-    mov rax, [rbp-24]  ; where output's owner keeps it
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-24]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-16], rcx  ; this frame's copy follows it
     jmp .if_end_36
 .else_37:
 .if_end_36:
@@ -1370,34 +1357,34 @@ separates_words:
 
 ; Function: count the lines in
 count_the_lines_in:
-    FUNC_PROLOGUE 48
+    FUNC_PROLOGUE 32
     push rdi  ; save arg word
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     mov rax, 0
-    mov [rbp-24], rax  ; store how many
+    mov [rbp-16], rax
     mov rax, 1
-    mov [rbp-32], rax
-    mov rax, [rbp-8]
+    mov [rbp-24], rax
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     inc rax
-    mov [rbp-40], rax
+    mov [rbp-32], rax
 .for_start_38:
-    mov rax, [rbp-32]
-    cmp rax, [rbp-40]
+    mov rax, [rbp-24]
+    cmp rax, [rbp-32]
     jge .for_end_40
     mov rax, 10
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-32]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-24]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_44  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1417,15 +1404,15 @@ count_the_lines_in:
     pop rbx
     cmp rax, rbx
     jne .else_42
-    inc qword [rbp-24]
+    inc qword [rbp-16]
     jmp .if_end_41
 .else_42:
 .if_end_41:
 .for_continue_39:
-    inc qword [rbp-32]
+    inc qword [rbp-24]
     jmp .for_start_38
 .for_end_40:
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -1438,36 +1425,36 @@ count_the_words_in:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     xor rax, rax
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     xor rax, rax
-    mov [rbp-56], rax  ; store the character
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-24], rax  ; store how many
+    mov [rbp-16], rax
     mov rax, 0
-    mov [rbp-32], rax  ; store inside a word
-    mov rax, [rbp-8]
+    mov [rbp-24], rax
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
-    mov [rbp-40], rax  ; store total
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store position
+    mov [rbp-40], rax
 .while_start_46:
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jge .while_end_47
-    inc qword [rbp-48]
+    inc qword [rbp-40]
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-40]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_49  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1484,104 +1471,104 @@ count_the_words_in:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_50:
-    mov [rbp-56], rax  ; store the character
+    mov [rbp-48], rax
     mov rax, 0
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     mov rax, 32
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_52
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_51
 .else_52:
 .if_end_51:
     mov rax, 10
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_54
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_53
 .else_54:
 .if_end_53:
     mov rax, 9
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_56
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_55
 .else_56:
 .if_end_55:
     mov rax, 13
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_58
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_57
 .else_58:
 .if_end_57:
     mov rax, 11
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_60
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_59
 .else_60:
 .if_end_59:
     mov rax, 12
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_62
     mov rax, 1
-    mov [rbp-64], rax  ; store it separates
+    mov [rbp-56], rax
     jmp .if_end_61
 .else_62:
 .if_end_61:
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     test rax, rax
     jz .else_64
     mov rax, 0
-    mov [rbp-32], rax  ; store inside a word
+    mov [rbp-24], rax
     jmp .if_end_63
 .else_64:
 .if_end_63:
     mov rax, 0
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     pop rbx
     cmp rax, rbx
     jne .else_66
     mov rax, 0
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_66
     mov rax, 1
-    mov [rbp-32], rax  ; store inside a word
-    inc qword [rbp-24]
+    mov [rbp-24], rax
+    inc qword [rbp-16]
     jmp .if_end_65
 .else_66:
 .if_end_65:
     jmp .while_start_46
 .while_end_47:
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -1602,11 +1589,11 @@ read_all_of:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_67  ; skip if invalid fd
-    mov rax, [rbp-16]  ; local chunk
+    mov rax, [rbp-16]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-16], rsi  ; store new pointer for chunk
+    mov [rbp-16], rsi
     jmp .read_done_68
 .skip_fd_67:
     SET_LAST_ERROR 1
@@ -1625,11 +1612,11 @@ read_all_of:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_72  ; skip if invalid fd
-    mov rax, [rbp-16]  ; local chunk
+    mov rax, [rbp-16]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-16], rsi  ; store new pointer for chunk
+    mov [rbp-16], rsi
     jmp .read_done_73
 .skip_fd_72:
     SET_LAST_ERROR 1
@@ -1707,15 +1694,13 @@ write_the_counts_row:
     mov rax, r8
     mov [rbp-40], rax  ; param payload
     mov rax, r9
-    mov [rbp-56], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-48], rax  ; param payload
+    mov [rbp-48], rax  ; cell: where the owner keeps output
     mov rax, 0
-    mov [rbp-64], rax  ; store a column is written
+    mov [rbp-56], rax
     mov rax, [rel gvar_15]
     test rax, rax
     jz .else_78
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
     mov rax, [rbp-32]
     push rax
@@ -1725,28 +1710,22 @@ write_the_counts_row:
     pop rsi
     pop rdx
     call write_padded
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     mov rax, 1
-    mov [rbp-64], rax  ; store a column is written
+    mov [rbp-56], rax
     jmp .if_end_77
 .else_78:
 .if_end_77:
     mov rax, [rel gvar_16]
     test rax, rax
     jz .else_80
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     pop rdi
     pop rsi
     call write_a_space_when
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
     mov rax, [rbp-32]
     push rax
@@ -1756,28 +1735,22 @@ write_the_counts_row:
     pop rsi
     pop rdx
     call write_padded
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     mov rax, 1
-    mov [rbp-64], rax  ; store a column is written
+    mov [rbp-56], rax
     jmp .if_end_79
 .else_80:
 .if_end_79:
     mov rax, [rel gvar_14]
     test rax, rax
     jz .else_82
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-56]
     push rax
     pop rdi
     pop rsi
     call write_a_space_when
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
     mov rax, [rbp-32]
     push rax
@@ -1787,11 +1760,8 @@ write_the_counts_row:
     pop rsi
     pop rdx
     call write_padded
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     mov rax, 1
-    mov [rbp-64], rax  ; store a column is written
+    mov [rbp-56], rax
     jmp .if_end_81
 .else_82:
 .if_end_81:
@@ -1804,36 +1774,32 @@ write_the_counts_row:
     jnz .not_true_85
     jmp .else_84
 .not_true_85:
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
     mov rax, 32
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     mov rax, [rbp-40]
-    mov rdi, [rbp-48]
+    mov rdi, [rbp-48]  ; cell: where the owner keeps it
+    mov rdi, [rdi]  ; the collection, as it is now
     mov rsi, rax
     call _buffer_append_cstr
-    mov [rbp-48], rax
-    mov rcx, [rbp-56]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-48]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     jmp .if_end_83
 .else_84:
 .if_end_83:
-    mov rax, [rbp-56]  ; where output's owner keeps it
+    mov rax, [rbp-48]  ; cell: the owner's address, passed on
     push rax
     mov rax, 10
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-56]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-48], rcx  ; this frame's copy follows it
     call _dec_call_depth
     FUNC_EPILOGUE
 

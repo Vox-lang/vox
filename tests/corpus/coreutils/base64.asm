@@ -111,11 +111,11 @@ _start:
 
     push rbp
     mov rbp, rsp
-    sub rsp, 160
+    sub rsp, 144
 
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-128], rax  ; store buffer content
+    mov [rbp-120], rax
     lea rax, [rel str_0]
     push rax  ; new value for Program Version, across its old one's free check
     cmp byte [rel gvar_1_owned], 0  ; was the current Program Version owned?
@@ -273,15 +273,11 @@ _start:
     mov [rel gvar_0], rax
     mov byte [rel gvar_0_owned], 0  ; Program owned flag
     call _alloc_buffer
-    mov [rbp-104], rax  ; buffer struct pointer
-    mov rax, [rbp-104]
-    mov [rel gvar_2], rax
-    mov rdi, [rbp-104]
+    mov [rel gvar_2], rax  ; buffer alphabet
+    mov rdi, [rel gvar_2]
     lea rsi, [rel str_10]
     mov rdx, str_10_len
     call _buffer_append_bytes
-    mov [rbp-104], rax
-    mov rax, [rbp-104]
     mov [rel gvar_2], rax
     mov rax, 0
     mov [rel gvar_3], rax  ; global store characters on this line
@@ -355,14 +351,14 @@ _start:
     jle .fd_ok_176
     jmp .fd_invalid_177
 .fd_ok_176:
-    mov [rbp-112], rax  ; borrowed file descriptor
+    mov [rbp-104], rax  ; borrowed file descriptor
     CLEAR_LAST_ERROR
     jmp .fd_done_178
 .fd_invalid_177:
-    mov qword [rbp-112], -1  ; invalid fd
+    mov qword [rbp-104], -1  ; invalid fd
     SET_LAST_ERROR 22  ; EINVAL
 .fd_done_178:
-    mov rax, [rbp-112]
+    mov rax, [rbp-104]
     mov [rel gvar_4], rax
     mov rax, [rel _last_error]
     test rax, rax
@@ -396,11 +392,11 @@ _start:
     jle .fd_ok_186
     jmp .fd_invalid_187
 .fd_ok_186:
-    mov [rbp-120], rax  ; borrowed file descriptor
+    mov [rbp-112], rax  ; borrowed file descriptor
     CLEAR_LAST_ERROR
     jmp .fd_done_188
 .fd_invalid_187:
-    mov qword [rbp-120], -1  ; invalid fd
+    mov qword [rbp-112], -1  ; invalid fd
     SET_LAST_ERROR 22  ; EINVAL
 .fd_done_188:
     mov rax, [rel _last_error]
@@ -420,14 +416,14 @@ _start:
     EXIT rdi
     CLEAR_LAST_ERROR
 .skip_error_189:
-    mov rax, [rbp-120]
+    mov rax, [rbp-112]
     push rax
     pop rdi
     call read_all_of
-    mov [rbp-128], rax  ; store buffer content
-    mov rax, [rbp-112]
+    mov [rbp-120], rax
+    mov rax, [rbp-104]
     push rax
-    lea rax, [rbp-128]  ; the cell holding content
+    lea rax, [rbp-120]
     push rax
     pop rdi
     pop rsi
@@ -443,16 +439,16 @@ _start:
 .else_185:
 .if_end_184:
     call _get_parsed_argc
-    mov [rbp-136], rax  ; arg count
-    mov qword [rbp-144], 0
+    mov [rbp-128], rax  ; arg count
+    mov qword [rbp-136], 0
 .foreach_start_190:
-    mov rax, [rbp-144]  ; index
-    cmp rax, [rbp-136]  ; compare with count
+    mov rax, [rbp-136]  ; index
+    cmp rax, [rbp-128]  ; compare with count
     jge .foreach_end_192
     mov rdi, rax
     call _get_parsed_arg
-    mov [rbp-152], rax  ; store in filename
-    mov rax, [rbp-152]
+    mov [rbp-144], rax  ; store in filename
+    mov rax, [rbp-144]
     push rax  ; save original value (struct ptr if buffer)
     mov rdi, rax  ; comparison ptr in rdi
     lea rax, [rel str_32]
@@ -468,7 +464,7 @@ _start:
 .treating_done_194:
     mov rdi, rax  ; path pointer
     FILE_OPEN_READ rdi
-    mov [rbp-120], rax  ; file descriptor
+    mov [rbp-112], rax  ; file descriptor
     test rax, rax
     jns .file_ok_195  ; jump if success (non-negative)
     neg rax  ; convert to positive errno
@@ -486,7 +482,7 @@ _start:
     mov rdi, rax
     PRINT_CSTR rdi
     PRINT_STR str_34, str_34_len
-    mov rax, [rbp-152]
+    mov rax, [rbp-144]
     mov rdi, rax
     PRINT_CSTR rdi
     PRINT_STR str_35, str_35_len
@@ -500,20 +496,20 @@ _start:
     EXIT rdi
     CLEAR_LAST_ERROR
 .skip_error_197:
-    mov rax, [rbp-120]
+    mov rax, [rbp-112]
     push rax
     pop rdi
     call read_all_of
-    mov [rbp-128], rax  ; store buffer content
-    mov rax, [rbp-112]
+    mov [rbp-120], rax
+    mov rax, [rbp-104]
     push rax
-    lea rax, [rbp-128]  ; the cell holding content
+    lea rax, [rbp-120]
     push rax
     pop rdi
     pop rsi
     call write_the_answer_for
 .foreach_continue_191:
-    inc qword [rbp-144]
+    inc qword [rbp-136]
     jmp .foreach_start_190
 .foreach_end_192:
     ; exit program
@@ -533,7 +529,7 @@ _start:
 ; User-defined functions
 ; Function: write the byte
 write_the_byte:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -542,51 +538,50 @@ write_the_byte:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps output
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps output
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-16]  ; local output
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-8]
+    push rax  ; value
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_17  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_16  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_17  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-16], rax  ; store new pointer for output
-    mov rcx, [rbp-24]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_16  ; grown buffer now has space
 .bset_err_17:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_18
 .bset_ok_16:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-8]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_19  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -671,11 +666,11 @@ read_all_of:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_25  ; skip if invalid fd
-    mov rax, [rbp-16]  ; local chunk
+    mov rax, [rbp-16]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-16], rsi  ; store new pointer for chunk
+    mov [rbp-16], rsi
     jmp .read_done_26
 .skip_fd_25:
     SET_LAST_ERROR 1
@@ -694,11 +689,11 @@ read_all_of:
     mov rdi, [rbp-8]
     test rdi, rdi
     js .skip_fd_30  ; skip if invalid fd
-    mov rax, [rbp-16]  ; local chunk
+    mov rax, [rbp-16]
     mov rsi, rax  ; buffer struct
     mov qword [rsi + 8], 0  ; reset buffer length
     call _read_into_buffer  ; auto-grows if needed
-    mov [rbp-16], rsi  ; store new pointer for chunk
+    mov [rbp-16], rsi
     jmp .read_done_31
 .skip_fd_30:
     SET_LAST_ERROR 1
@@ -727,16 +722,16 @@ the_digit_for:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     mov rax, [rbp-8]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_34  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -760,7 +755,7 @@ the_digit_for:
 
 ; Function: encode the group at
 encode_the_group_at:
-    FUNC_PROLOGUE 96
+    FUNC_PROLOGUE 80
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -771,13 +766,9 @@ encode_the_group_at:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps content
     mov rax, rdx
-    mov [rbp-40], rax  ; where the caller keeps encoded
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps encoded
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -794,28 +785,29 @@ encode_the_group_at:
     INT_MUL
     pop rbx
     INT_ADD
-    mov [rbp-48], rax  ; store the first byte
+    mov [rbp-32], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_SUB
     pop rbx
     INT_ADD
-    mov [rbp-56], rax  ; store bytes in this group
+    mov [rbp-40], rax
     mov rax, 3
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_37
     mov rax, 3
-    mov [rbp-56], rax  ; store bytes in this group
+    mov [rbp-40], rax
     jmp .if_end_36
 .else_37:
 .if_end_36:
@@ -823,11 +815,12 @@ encode_the_group_at:
     mov rax, 16
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-32]
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_39  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -847,10 +840,10 @@ encode_the_group_at:
     pop rbx
     mov cl, bl
     shl rax, cl
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     mov rax, 1
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_42
@@ -859,16 +852,17 @@ encode_the_group_at:
     mov rax, 8
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_44  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -889,31 +883,32 @@ encode_the_group_at:
     mov cl, bl
     shl rax, cl
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     or rax, rbx
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     jmp .if_end_41
 .else_42:
 .if_end_41:
     mov rax, 2
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_47
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 2
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_49  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -931,16 +926,14 @@ encode_the_group_at:
     mov al, [rbx + rcx]
 .byte_done_50:
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     or rax, rbx
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     jmp .if_end_46
 .else_47:
 .if_end_46:
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -950,7 +943,7 @@ encode_the_group_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 18
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     mov cl, bl
     shr rax, cl
@@ -958,8 +951,10 @@ encode_the_group_at:
     and rax, rbx
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_52  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -976,10 +971,8 @@ encode_the_group_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_53:
-    mov [rbp-72], rax  ; store first character
+    mov [rbp-56], rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -989,7 +982,7 @@ encode_the_group_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 12
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     mov cl, bl
     shr rax, cl
@@ -997,8 +990,10 @@ encode_the_group_at:
     and rax, rbx
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_55  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1015,18 +1010,16 @@ encode_the_group_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_56:
-    mov [rbp-80], rax  ; store second character
+    mov [rbp-64], rax
     mov rax, 61
-    mov [rbp-88], rax  ; store third character
+    mov [rbp-72], rax
     mov rax, 1
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_58
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -1036,7 +1029,7 @@ encode_the_group_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 6
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     mov cl, bl
     shr rax, cl
@@ -1044,8 +1037,10 @@ encode_the_group_at:
     and rax, rbx
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_60  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1062,34 +1057,34 @@ encode_the_group_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_61:
-    mov [rbp-88], rax  ; store third character
+    mov [rbp-72], rax
     jmp .if_end_57
 .else_58:
 .if_end_57:
     mov rax, 61
-    mov [rbp-96], rax  ; store fourth character
+    mov [rbp-80], rax
     mov rax, 2
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_63
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rel gvar_2]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 63
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     and rax, rbx
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rel gvar_2]
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_65  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1106,7 +1101,7 @@ encode_the_group_at:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_66:
-    mov [rbp-96], rax  ; store fourth character
+    mov [rbp-80], rax
     jmp .if_end_62
 .else_63:
 .if_end_62:
@@ -1114,47 +1109,48 @@ encode_the_group_at:
     test rax, rax
     jz .else_68
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-32]  ; local encoded
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-56]
+    push rax  ; value
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_70  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_69  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_70  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-32], rax  ; store new pointer for encoded
-    mov rcx, [rbp-40]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_69  ; grown buffer now has space
 .bset_err_70:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_71
 .bset_ok_69:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-72]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_72  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1164,47 +1160,48 @@ encode_the_group_at:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_71:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-32]  ; local encoded
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-64]
+    push rax  ; value
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_74  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_73  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_74  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-32], rax  ; store new pointer for encoded
-    mov rcx, [rbp-40]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_73  ; grown buffer now has space
 .bset_err_74:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_75
 .bset_ok_73:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-80]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_76  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1214,47 +1211,48 @@ encode_the_group_at:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_75:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-32]  ; local encoded
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-72]
+    push rax  ; value
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_78  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_77  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_78  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-32], rax  ; store new pointer for encoded
-    mov rcx, [rbp-40]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_77  ; grown buffer now has space
 .bset_err_78:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_79
 .bset_ok_77:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-88]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_80  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1264,47 +1262,48 @@ encode_the_group_at:
     mov [rbx + rcx], dl  ; write byte
 .bset_done_79:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-32]  ; local encoded
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-80]
+    push rax  ; value
+    mov rax, [rbp-24]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_82  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_81  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_82  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-32], rax  ; store new pointer for encoded
-    mov rcx, [rbp-40]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-24]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_81  ; grown buffer now has space
 .bset_err_82:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_83
 .bset_ok_81:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-96]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_84  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1313,13 +1312,10 @@ encode_the_group_at:
     BUFFER_DATA_ADDR rbx  ; skip to buffer data area
     mov [rbx + rcx], dl  ; write byte
 .bset_done_83:
-    mov rax, [rbp-40]  ; where encoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call close_the_line_if_it_is_full
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -1327,46 +1323,34 @@ encode_the_group_at:
     jmp .if_end_67
 .else_68:
 .if_end_67:
-    mov rax, [rbp-40]  ; where encoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
+    push rax
+    mov rax, [rbp-56]
+    push rax
+    pop rdi
+    pop rsi
+    call emit_one_character
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
+    push rax
+    mov rax, [rbp-64]
+    push rax
+    pop rdi
+    pop rsi
+    call emit_one_character
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     mov rax, [rbp-72]
     push rax
     pop rdi
     pop rsi
     call emit_one_character
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
-    mov rax, [rbp-40]  ; where encoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     mov rax, [rbp-80]
     push rax
     pop rdi
     pop rsi
     call emit_one_character
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
-    mov rax, [rbp-40]  ; where encoded's owner keeps it
-    push rax
-    mov rax, [rbp-88]
-    push rax
-    pop rdi
-    pop rsi
-    call emit_one_character
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
-    mov rax, [rbp-40]  ; where encoded's owner keeps it
-    push rax
-    mov rax, [rbp-96]
-    push rax
-    pop rdi
-    pop rsi
-    call emit_one_character
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
     call _dec_call_depth
     FUNC_EPILOGUE
 
@@ -1377,9 +1361,7 @@ close_the_line_if_it_is_full:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps staged
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps staged
     mov rax, 0
     push rax
     mov rax, [rel gvar_9]
@@ -1414,47 +1396,48 @@ close_the_line_if_it_is_full:
 .else_88:
 .if_end_87:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-8]  ; local staged
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-8]
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 10
+    push rax  ; value
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_90  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_89  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_90  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-8], rax  ; store new pointer for staged
-    mov rcx, [rbp-16]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-8]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_89  ; grown buffer now has space
 .bset_err_90:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_91
 .bset_ok_89:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 10
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_92  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1470,7 +1453,7 @@ close_the_line_if_it_is_full:
 
 ; Function: emit one character
 emit_one_character:
-    FUNC_PROLOGUE 32
+    FUNC_PROLOGUE 16
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
@@ -1479,51 +1462,50 @@ emit_one_character:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps staged
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps staged
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-16]  ; local staged
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, [rbp-8]
+    push rax  ; value
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_94  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_93  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_94  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-16], rax  ; store new pointer for staged
-    mov rcx, [rbp-24]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_93  ; grown buffer now has space
 .bset_err_94:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_95
 .bset_ok_93:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, [rbp-8]
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_96  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1560,47 +1542,48 @@ emit_one_character:
 .else_100:
 .if_end_99:
     ; Set byte N of buffer to value (with bounds check)
-    mov rax, [rbp-16]  ; local staged
-    mov rbx, rax  ; buffer ptr
-    push rbx  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx (1-indexed)
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index (1-indexed)
+    CLEAR_LAST_ERROR
+    mov rax, 10
+    push rax  ; value
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer ptr, loaded last
+    pop rdx  ; value in rdx
+    pop rcx  ; index in rcx (1-indexed)
     cmp rcx, 1
     jl .bset_err_102  ; index < 1 is error
-    mov rdx, [rbx]  ; get buffer capacity (offset 0)
-    cmp rcx, rdx
+    mov r8, [rbx]  ; get buffer capacity (offset 0)
+    cmp rcx, r8
     jle .bset_ok_101  ; index <= capacity is OK
-    mov rdx, [rbx + 16]  ; buffer flags
-    test rdx, 1  ; BUF_FLAG_FIXED
+    mov r8, [rbx + 16]  ; buffer flags
+    test r8, 1  ; BUF_FLAG_FIXED
     jnz .bset_err_102  ; fixed buffer overflow
+    push rdx  ; save value across grow call
     push rcx  ; save index across grow call
     mov rdi, rbx  ; buffer pointer
     mov rsi, rcx  ; required capacity = index
     call _grow_buffer
     mov rbx, rax  ; new buffer pointer
-    mov [rbp-16], rax  ; store new pointer for staged
-    mov rcx, [rbp-24]  ; where the caller keeps this buffer
-    mov [rcx], rax  ; the caller's buffer follows the realloc (#90)
+    push rbx
+    mov rbx, [rbp-16]  ; cell: where the owner keeps it
+    mov [rbx], rax  ; the owner holds the new block
+    pop rbx
     pop rcx  ; restore 1-indexed position
+    pop rdx  ; restore value
     jmp .bset_ok_101  ; grown buffer now has space
 .bset_err_102:
     SET_LAST_ERROR 1  ; set error flag
     jmp .bset_done_103
 .bset_ok_101:
-    CLEAR_LAST_ERROR  ; clear error on success
-    push rbx  ; save buffer pointer
-    push rcx  ; save 1-indexed position
-    mov rax, 10
-    mov rdx, rax  ; value in rdx
-    pop rcx  ; 1-indexed position in rcx
-    pop rbx  ; buffer pointer in rbx
     cmp rcx, [rbx + 8]  ; compare index with current length
     jle .bset_noupd_104  ; skip if length already >= index
     mov [rbx + 8], rcx  ; extend length to include this byte
@@ -1623,13 +1606,11 @@ encode_into:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     call _alloc_buffer
-    mov [rbp-32], rax  ; buffer struct pointer
+    mov [rbp-24], rax  ; buffer struct pointer
     mov rax, 0
     mov [rel gvar_3], rax  ; global store characters on this line
     mov rax, 0
@@ -1656,57 +1637,55 @@ encode_into:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 2
     push rax
-    mov rax, [rbp-8]
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
     pop rbx
     INT_DIV
-    mov [rbp-40], rax  ; store how many groups
+    mov [rbp-32], rax
     mov rax, 0
-    mov [rbp-48], rax  ; store group
+    mov [rbp-40], rax
 .while_start_107:
-    mov rax, [rbp-40]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jge .while_end_108
-    inc qword [rbp-48]
-    lea rax, [rbp-32]  ; the cell holding staged
+    inc qword [rbp-40]
+    lea rax, [rbp-24]
     push rax
-    mov rax, [rbp-16]  ; where content's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-40]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call encode_the_group_at
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     mov rax, 65535
     push rax
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     cmp rax, rbx
     jle .else_110
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_111  ; skip if invalid fd
-    mov rsi, [rbp-32]
+    mov rsi, [rbp-24]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_112
 .skip_fd_111:
     SET_LAST_ERROR 1
 .write_done_112:
     ; Clear buffer contents
-    mov rax, [rbp-32]  ; local staged
+    mov rax, [rbp-24]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-32], rax  ; buffer (unchanged pointer)
+    mov [rbp-24], rax
     jmp .if_end_109
 .else_110:
 .if_end_109:
@@ -1724,7 +1703,7 @@ encode_into:
     pop rbx
     cmp rax, rbx
     jle .else_114
-    lea rax, [rbp-32]  ; the cell holding staged
+    lea rax, [rbp-24]
     push rax
     mov rax, 10
     push rax
@@ -1734,20 +1713,20 @@ encode_into:
     jmp .if_end_113
 .else_114:
 .if_end_113:
-    mov rdi, [rbp-24]
+    mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_115  ; skip if invalid fd
-    mov rsi, [rbp-32]
+    mov rsi, [rbp-24]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_116
 .skip_fd_115:
     SET_LAST_ERROR 1
 .write_done_116:
     ; Clear buffer contents
-    mov rax, [rbp-32]  ; local staged
+    mov rax, [rbp-24]
     mov rdi, rax  ; buffer
     call _buffer_clear
-    mov [rbp-32], rax  ; buffer (unchanged pointer)
+    mov [rbp-24], rax
     call _dec_call_depth
     FUNC_EPILOGUE
 
@@ -1885,40 +1864,38 @@ the_value_of_the_digit:
 
 ; Function: lift the digits out of
 lift_the_digits_out_of:
-    FUNC_PROLOGUE 80
+    FUNC_PROLOGUE 64
     push rdi  ; save arg word
     push rsi  ; save arg word
     call _check_call_depth
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     mov rax, rsi
-    mov [rbp-32], rax  ; where the caller keeps digits
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps digits
     xor rax, rax
-    mov [rbp-64], rax  ; store the character
-    mov rax, 0
-    mov [rbp-40], rax  ; store where the padding began
-    mov rax, 1
     mov [rbp-48], rax
-    mov rax, [rbp-8]
+    mov rax, 0
+    mov [rbp-24], rax
+    mov rax, 1
+    mov [rbp-32], rax
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     inc rax
-    mov [rbp-56], rax
+    mov [rbp-40], rax
 .for_start_127:
-    mov rax, [rbp-48]
-    cmp rax, [rbp-56]
+    mov rax, [rbp-32]
+    cmp rax, [rbp-40]
     jge .for_end_129
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-8]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-32]
+    push rax  ; index
+    mov rax, [rbp-8]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_131  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -1935,10 +1912,10 @@ lift_the_digits_out_of:
     xor rax, rax
     mov al, [rbx + rcx]
 .byte_done_132:
-    mov [rbp-64], rax  ; store the character
+    mov [rbp-48], rax
     mov rax, 10
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_134
@@ -1949,24 +1926,24 @@ lift_the_digits_out_of:
 .if_end_133:
     mov rax, 61
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_136
     mov rax, 0
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jne .else_136
-    mov rax, [rbp-48]
-    mov [rbp-40], rax  ; store where the padding began
+    mov rax, [rbp-32]
+    mov [rbp-24], rax
     jmp .if_end_135
 .else_136:
 .if_end_135:
     mov rax, 61
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     cmp rax, rbx
     jne .else_138
@@ -1977,7 +1954,7 @@ lift_the_digits_out_of:
 .if_end_137:
     mov rax, 0
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     push rax
     pop rdi
     call the_value_of_the_digit
@@ -1986,27 +1963,27 @@ lift_the_digits_out_of:
     jge .else_140
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-72], rax
-    mov rdi, [rbp-72]
+    mov [rbp-56], rax
+    mov rdi, [rbp-56]
     lea rsi, [rel str_13]
     mov rdx, str_13_len
     call _buffer_append_bytes
-    mov [rbp-72], rax
-    mov rax, [rbp-48]
-    mov rdi, [rbp-72]
+    mov [rbp-56], rax
+    mov rax, [rbp-32]
+    mov rdi, [rbp-56]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-72], rax
-    mov rdi, [rbp-72]
+    mov [rbp-56], rax
+    mov rdi, [rbp-56]
     lea rsi, [rel str_14]
     mov rdx, str_14_len
     call _buffer_append_bytes
-    mov [rbp-72], rax
-    mov rax, [rbp-72]
+    mov [rbp-56], rax
+    mov rax, [rbp-56]
     BUFFER_DATA_ADDR rax  ; buffer data area
     push rax
     pop rdi
@@ -2023,33 +2000,33 @@ lift_the_digits_out_of:
 .if_end_139:
     mov rax, 0
     push rax
-    mov rax, [rbp-40]
+    mov rax, [rbp-24]
     pop rbx
     cmp rax, rbx
     jle .else_142
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-80], rax
-    mov rdi, [rbp-80]
+    mov [rbp-64], rax
+    mov rdi, [rbp-64]
     lea rsi, [rel str_15]
     mov rdx, str_15_len
     call _buffer_append_bytes
-    mov [rbp-80], rax
-    mov rax, [rbp-40]
-    mov rdi, [rbp-80]
+    mov [rbp-64], rax
+    mov rax, [rbp-24]
+    mov rdi, [rbp-64]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-80], rax
-    mov rdi, [rbp-80]
+    mov [rbp-64], rax
+    mov rdi, [rbp-64]
     lea rsi, [rel str_16]
     mov rdx, str_16_len
     call _buffer_append_bytes
-    mov [rbp-80], rax
-    mov rax, [rbp-80]
+    mov [rbp-64], rax
+    mov rax, [rbp-64]
     BUFFER_DATA_ADDR rax  ; buffer data area
     push rax
     pop rdi
@@ -2064,18 +2041,15 @@ lift_the_digits_out_of:
     jmp .if_end_141
 .else_142:
 .if_end_141:
-    mov rax, [rbp-32]  ; where digits's owner keeps it
+    mov rax, [rbp-16]  ; cell: the owner's address, passed on
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-32]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-24], rcx  ; this frame's copy follows it
 .for_continue_128:
-    inc qword [rbp-48]
+    inc qword [rbp-32]
     jmp .for_start_127
 .for_end_129:
     call _dec_call_depth
@@ -2083,7 +2057,7 @@ lift_the_digits_out_of:
 
 ; Function: decode the group at
 decode_the_group_at:
-    FUNC_PROLOGUE 64
+    FUNC_PROLOGUE 48
     push rdi  ; save arg word
     push rsi  ; save arg word
     push rdx  ; save arg word
@@ -2094,13 +2068,9 @@ decode_the_group_at:
     mov rax, rdi
     mov [rbp-8], rax  ; param payload
     mov rax, rsi
-    mov [rbp-24], rax  ; where the caller keeps digits
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-16], rax  ; param payload
+    mov [rbp-16], rax  ; cell: where the owner keeps digits
     mov rax, rdx
-    mov [rbp-40], rax  ; where the caller keeps decoded
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-32], rax  ; param payload
+    mov [rbp-24], rax  ; cell: where the owner keeps decoded
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
@@ -2117,28 +2087,29 @@ decode_the_group_at:
     INT_MUL
     pop rbx
     INT_ADD
-    mov [rbp-48], rax  ; store the first digit
+    mov [rbp-32], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     push rax
-    mov rax, [rbp-16]
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_SUB
     pop rbx
     INT_ADD
-    mov [rbp-56], rax  ; store digits in this group
+    mov [rbp-40], rax
     mov rax, 4
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_144
     mov rax, 4
-    mov [rbp-56], rax  ; store digits in this group
+    mov [rbp-40], rax
     jmp .if_end_143
 .else_144:
 .if_end_143:
@@ -2146,11 +2117,12 @@ decode_the_group_at:
     mov rax, 18
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
-    mov rax, [rbp-48]
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    mov rax, [rbp-32]
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_146  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -2173,22 +2145,23 @@ decode_the_group_at:
     pop rbx
     mov cl, bl
     shl rax, cl
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 12
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 1
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_149  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -2212,13 +2185,13 @@ decode_the_group_at:
     mov cl, bl
     shl rax, cl
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     or rax, rbx
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     mov rax, 2
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_152
@@ -2227,16 +2200,17 @@ decode_the_group_at:
     mov rax, 6
     push rax
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 2
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_154  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -2260,31 +2234,32 @@ decode_the_group_at:
     mov cl, bl
     shl rax, cl
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     or rax, rbx
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     jmp .if_end_151
 .else_152:
 .if_end_151:
     mov rax, 3
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_157
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     ; Byte access (1-indexed) with bounds check
-    mov rax, [rbp-16]
-    push rax  ; save buffer pointer
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 3
     push rax
-    mov rax, [rbp-48]
+    mov rax, [rbp-32]
     pop rbx
     INT_ADD
-    mov rcx, rax  ; index in rcx
-    pop rbx  ; buffer pointer in rbx
+    push rax  ; index
+    mov rax, [rbp-16]  ; cell: where the owner keeps it
+    mov rax, [rax]  ; the collection, as it is now
+    mov rbx, rax  ; buffer pointer, loaded last
+    pop rcx  ; index in rcx
     cmp rcx, 1
     jl .byte_err_159  ; index < 1 is error
     mov rdx, [rbx + 8]  ; get buffer length (offset 8)
@@ -2305,14 +2280,14 @@ decode_the_group_at:
     pop rdi
     call the_value_of_the_digit
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     or rax, rbx
-    mov [rbp-64], rax  ; store packed
+    mov [rbp-48], rax
     jmp .if_end_156
 .else_157:
 .if_end_156:
-    mov rax, [rbp-40]  ; where decoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
@@ -2320,7 +2295,7 @@ decode_the_group_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 16
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     mov cl, bl
     shr rax, cl
@@ -2330,16 +2305,13 @@ decode_the_group_at:
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
     mov rax, 2
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_162
-    mov rax, [rbp-40]  ; where decoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
@@ -2347,7 +2319,7 @@ decode_the_group_at:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 8
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     mov cl, bl
     shr rax, cl
@@ -2357,33 +2329,27 @@ decode_the_group_at:
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
     jmp .if_end_161
 .else_162:
 .if_end_161:
     mov rax, 3
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-40]
     pop rbx
     cmp rax, rbx
     jle .else_164
-    mov rax, [rbp-40]  ; where decoded's owner keeps it
+    mov rax, [rbp-24]  ; cell: the owner's address, passed on
     push rax
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 255
     push rax
-    mov rax, [rbp-64]
+    mov rax, [rbp-48]
     pop rbx
     and rax, rbx
     push rax
     pop rdi
     pop rsi
     call write_the_byte
-    mov rcx, [rbp-40]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-32], rcx  ; this frame's copy follows it
     jmp .if_end_163
 .else_164:
 .if_end_163:
@@ -2397,31 +2363,26 @@ the_decoding_of:
     call _check_call_depth
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     call _alloc_buffer
-    mov [rbp-24], rax  ; buffer struct pointer
-    lea rax, [rbp-24]  ; the cell holding digits
+    mov [rbp-16], rax  ; buffer struct pointer
+    lea rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where content's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call lift_the_digits_out_of
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     call _alloc_buffer
-    mov [rbp-32], rax  ; buffer struct pointer
+    mov [rbp-24], rax  ; buffer struct pointer
     mov rax, 0
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     cmp rax, rbx
     jne .else_166
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -2434,7 +2395,7 @@ the_decoding_of:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 4
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_MOD
@@ -2443,28 +2404,28 @@ the_decoding_of:
     jne .else_168
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-40], rax
-    mov rdi, [rbp-40]
+    mov [rbp-32], rax
+    mov rdi, [rbp-32]
     lea rsi, [rel str_17]
     mov rdx, str_17_len
     call _buffer_append_bytes
-    mov [rbp-40], rax
-    mov rax, [rbp-24]
+    mov [rbp-32], rax
+    mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
-    mov rdi, [rbp-40]
+    mov rdi, [rbp-32]
     mov rsi, rax
     mov rdx, 0
     mov rcx, 0
     mov r8, 0
     mov r9, 0
     call _buffer_append_formatted_int
-    mov [rbp-40], rax
-    mov rdi, [rbp-40]
+    mov [rbp-32], rax
+    mov rdi, [rbp-32]
     lea rsi, [rel str_18]
     mov rdx, str_18_len
     call _buffer_append_bytes
-    mov [rbp-40], rax
-    mov rax, [rbp-40]
+    mov [rbp-32], rax
+    mov rax, [rbp-32]
     BUFFER_DATA_ADDR rax  ; buffer data area
     push rax
     pop rdi
@@ -2485,37 +2446,37 @@ the_decoding_of:
     CLEAR_LAST_ERROR  ; clear error before arithmetic
     mov rax, 3
     push rax
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     BUFFER_LENGTH rax  ; buffer length/size
     pop rbx
     INT_ADD
     pop rbx
     INT_DIV
-    mov [rbp-48], rax  ; store how many groups
+    mov [rbp-40], rax
     mov rax, 1
-    mov [rbp-56], rax
-    mov rax, [rbp-48]
+    mov [rbp-48], rax
+    mov rax, [rbp-40]
     inc rax
-    mov [rbp-64], rax
+    mov [rbp-56], rax
 .for_start_169:
-    mov rax, [rbp-56]
-    cmp rax, [rbp-64]
+    mov rax, [rbp-48]
+    cmp rax, [rbp-56]
     jge .for_end_171
-    lea rax, [rbp-32]  ; the cell holding decoded
+    lea rax, [rbp-24]
     push rax
-    lea rax, [rbp-24]  ; the cell holding digits
+    lea rax, [rbp-16]
     push rax
-    mov rax, [rbp-56]
+    mov rax, [rbp-48]
     push rax
     pop rdi
     pop rsi
     pop rdx
     call decode_the_group_at
 .for_continue_170:
-    inc qword [rbp-56]
+    inc qword [rbp-48]
     jmp .for_start_169
 .for_end_171:
-    mov rax, [rbp-32]
+    mov rax, [rbp-24]
     push rax  ; save return value
     call _dec_call_depth
     pop rax  ; restore return value
@@ -2530,29 +2491,24 @@ write_the_answer_for:
     pop rsi  ; restore arg word
     pop rdi  ; restore arg word
     mov rax, rdi
-    mov [rbp-16], rax  ; where the caller keeps content
-    mov rax, [rax]  ; ...and the buffer itself
-    mov [rbp-8], rax  ; param payload
+    mov [rbp-8], rax  ; cell: where the owner keeps content
     mov rax, rsi
-    mov [rbp-24], rax  ; param payload
+    mov [rbp-16], rax  ; param payload
     mov rdi, 1024  ; default buffer size
     call _alloc_buffer
-    mov [rbp-32], rax  ; store buffer decoded
+    mov [rbp-24], rax
     mov rax, [rel gvar_8]
     test rax, rax
     jz .else_181
-    mov rax, [rbp-16]  ; where content's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     call the_decoding_of
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
-    mov [rbp-32], rax  ; store buffer decoded
-    mov rdi, [rbp-24]
+    mov [rbp-24], rax
+    mov rdi, [rbp-16]
     test rdi, rdi
     js .skip_fd_182  ; skip if invalid fd
-    mov rsi, [rbp-32]
+    mov rsi, [rbp-24]
     FILE_WRITE_BUF rdi, rsi
     jmp .write_done_183
 .skip_fd_182:
@@ -2565,16 +2521,13 @@ write_the_answer_for:
     jmp .if_end_180
 .else_181:
 .if_end_180:
-    mov rax, [rbp-24]
+    mov rax, [rbp-16]
     push rax
-    mov rax, [rbp-16]  ; where content's owner keeps it
+    mov rax, [rbp-8]  ; cell: the owner's address, passed on
     push rax
     pop rdi
     pop rsi
     call encode_into
-    mov rcx, [rbp-16]  ; where this buffer's owner keeps it
-    mov rcx, [rcx]  ; the buffer may have moved
-    mov [rbp-8], rcx  ; this frame's copy follows it
     call _dec_call_depth
     FUNC_EPILOGUE
 

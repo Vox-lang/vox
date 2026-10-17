@@ -270,8 +270,8 @@ _start:
     PRINT_STR str_22, str_22_len
     PRINT_NEWLINE
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_15
     EXIT 1
 .list_mmap_ok_15:
@@ -309,8 +309,8 @@ _start:
     mov rax, [rbx]  ; get element
     mov [rbp-32], rax  ; store in shirt
     ; List literal with 2 elements (capacity 8)
-    HEAP_ALLOC 96  ; size; returns ptr or 0
-    test rax, rax  ; HEAP_ALLOC returns 0 on failure
+    COLLECTION_ALLOC 96  ; size; returns ptr or 0
+    test rax, rax  ; COLLECTION_ALLOC returns 0 on failure
     jnz .list_mmap_ok_19
     EXIT 1
 .list_mmap_ok_19:

@@ -12,7 +12,8 @@ program, kept in the repository so the assembler (vas) and the ELF writer
 
 `MANIFEST` lists each file, whether it is a program or a library, its source
 path relative to its own repository, the corpus library a program links
-against, and the compiler version that wrote the whole corpus. It also lists
+against, and the compiler that wrote the whole corpus: its version line and,
+when known, the commit it was built from. It also lists
 every source that did not compile, with the compiler's message.
 
 ## Regenerating
