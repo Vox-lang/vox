@@ -1,0 +1,6 @@
+(A copy grows alone, past its first block, and the original keeps its one
+ element.)
+a list called counts is [0].
+a list called tally is counts.
+For each number from 1 to 10, append the number to tally.
+Print "counts has {counts's length}, tally has {tally's length}".

@@ -1,0 +1,9 @@
+(A top-level buffer of a fixed size, freed by a function through its name:
+ the top level reads it afterwards as the empty buffer `Free` leaves.)
+To 'drop'.
+    Free hold.
+
+a buffer called hold is 16 bytes in size.
+append "a" to hold.
+'drop'.
+Print "after drop: {hold's size}".

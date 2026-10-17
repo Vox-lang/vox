@@ -1,0 +1,9 @@
+(The map twin of test 830.)
+To 'replace' with a map called shelf.
+    a map called shelf is {"new": 1}.
+    Set shelf's "x" to 2.
+    Print "inside: {shelf}".
+
+a map called stock is {"old": 1}.
+'replace' of stock.
+Print "stock: {stock}".

@@ -1,0 +1,12 @@
+(Each function passes on the list parameter it was given, so the function
+ thirty calls deep grows the caller's own list.)
+To 'fill' with a list called items.
+    For each number from 1 to 40, append the number to items.
+
+To 'go down' with a list called items and a number called depth.
+    If depth is 30, 'fill' of items.
+    If depth is less than 30, 'go down' of items and depth add 1.
+
+a list called xs is [0].
+'go down' of xs and 1.
+Print "length: {xs's length}, last: {xs's last}".

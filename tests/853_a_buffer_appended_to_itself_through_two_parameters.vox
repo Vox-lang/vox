@@ -1,0 +1,11 @@
+(One buffer passed as two parameters and appended to itself: the append
+ grows the buffer, which can move it, and reads what it appends from the
+ moved buffer.)
+To 'merge' of a buffer called first and a buffer called second.
+    append second to first.
+    Print "first {first's size} second {second's size}".
+
+a buffer called hold is "abc".
+For each number from 1 to 400, append "abcdefgh" to hold.
+'merge' of hold and hold.
+Print "hold {hold's size}".

@@ -1,0 +1,12 @@
+(A `value` parameter passed on to a list parameter is a `value` like any
+ other: the list parameter receives a copy of its list.)
+To 'add to' with a list called items.
+    append "c" to items.
+
+To 'outer' with a value called v.
+    'add to' of v.
+    Print "v: {v}".
+
+a value called box is ["a"].
+'outer' of box.
+Print "box: {box}".

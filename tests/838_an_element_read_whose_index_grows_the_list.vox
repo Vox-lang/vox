@@ -1,0 +1,9 @@
+(A read works out its index before it reads the list: the index's call
+ grows the list, and the read sees the grown list.)
+To 'grow' with a list called items.
+    For each number from 1 to 20, append the number to items.
+    Return a number, 22.
+
+a list called xs is [1, 2].
+a number called k is element {'grow' of xs} of xs.
+Print "k: {k}, length: {xs's length}".

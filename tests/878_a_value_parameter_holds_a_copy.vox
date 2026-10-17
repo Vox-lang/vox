@@ -1,0 +1,10 @@
+(A list passed to a value parameter is copied into it: freeing the list by
+ its own name inside the function leaves the parameter whole
+ (docs/BUGS_FOUND.md #143 (d)).)
+a list called xs is ["a", "b"].
+To 'look at' with a value called v.
+    Free xs.
+    Print "v: {v}".
+
+'look at' of xs.
+Print "xs: {xs}".

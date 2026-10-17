@@ -1,0 +1,13 @@
+(`Get current time into` takes a time, or a name not yet declared, which it
+ declares as one: at the top level, over a time already declared, and
+ inside a function.)
+Get current time into now.
+a time called later is current time.
+Get current time into later.
+If now's year is greater than 2000 then, print "now is a time".
+If later's year is greater than 2000 then, print "later is a time".
+To stamp.
+    Get current time into moment.
+    If moment's hour is less than 24 then, print "moment is a time".
+
+stamp.

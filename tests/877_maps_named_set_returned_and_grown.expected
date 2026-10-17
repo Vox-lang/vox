@@ -1,0 +1,6 @@
+declared from a name: stock 1, 'the copy' 1
+set from a name: stock 1, spare 2
+is from a name: stock 2, other 1
+stored in a value: stock 3, held {"k": 1, "j": 3}
+returned: stock 3, returned 4
+grown: counts 1, tally 41

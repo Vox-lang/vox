@@ -1,0 +1,5 @@
+(A body that replaces the whole list sends the loop on through the new
+ list, up to whichever of the two lists is shorter.)
+a list called xs is [1, 2, 3].
+For each n in xs, print n, Set xs to [7, 8].
+Print "xs: {xs}".

@@ -1,0 +1,15 @@
+(A value holds its own copy of what is stored in it, and a list named from
+ a value holding a list is a copy too; storing a new list in one value
+ leaves another named from it alone.)
+a value called box is ["a"].
+a list called xs is box.
+append "b" to xs.
+Print "box: {box}".
+Print "xs: {xs}".
+a value called first is ["a"].
+a value called second is first.
+second is ["a", "b"].
+a value called third is ["x"].
+a value called fourth is third.
+Print "first: {first}, second: {second}".
+Print "third: {third}, fourth: {fourth}".

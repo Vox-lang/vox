@@ -1,54 +1,20 @@
 use super::*;
 
 impl CodeGenerator {
-    /// Store a (possibly reallocated) buffer pointer into the slot at
-    /// `[rbp-offset]` and, when that slot belongs to a `buffer` parameter,
-    /// on through the cell where the CALLER keeps its own copy.
-    ///
-    /// docs/BUGS_FOUND.md #90. A parameter's slot is the callee's private
-    /// copy of the pointer, so before this every reallocation inside a
-    /// function stopped at the callee's frame. For a list that was a stale
-    /// read (#75); for a buffer it is worse, because `_reallocate_buffer`
-    /// RELEASES the block it grew out of - `mremap` consumes the old mapping
-    /// and the mmap fallback `munmap`s it - so the caller was left holding
-    /// unmapped memory. The next read of the caller's buffer segfaulted.
-    ///
-    /// The write-back happens HERE, at the reallocation, and not when the
-    /// call returns: between the two the callee can call another function
-    /// that reaches the same buffer through its global mirror, and that read
-    /// must not land in the freed block either.
-    ///
-    /// `rcx` (or `rdx`, when the new pointer is itself in rcx) carries the
-    /// cell address. A call's result is still live in rax and a `value`
-    /// result's tag in r11, so neither may be touched.
-    pub(crate) fn emit_store_buffer_ptr_to_slot(&mut self, offset: i64, reg: &str, note: &str) {
-        self.emit_indent(&format!("mov [rbp-{}], {}{}", offset, reg, note));
-        self.emit_buffer_param_cell_writeback(offset, reg);
-    }
-
-    /// The second half of `emit_store_buffer_ptr_to_slot`, for the sites that
-    /// have already written the slot themselves.
-    pub(crate) fn emit_buffer_param_cell_writeback(&mut self, offset: i64, reg: &str) {
-        let cell = match self.buffer_param_cells.get(&offset) {
-            Some(cell) => *cell,
-            None => return,
-        };
-        let scratch = if reg == "rcx" { "rdx" } else { "rcx" };
-        self.emit_indent(&format!(
-            "mov {}, [rbp-{}]  ; where the caller keeps this buffer",
-            scratch, cell
-        ));
-        self.emit_indent(&format!(
-            "mov [{}], {}  ; the caller's buffer follows the realloc (#90)",
-            scratch, reg
-        ));
+    /// Store a (possibly reallocated) buffer pointer into the buffer variable
+    /// in the slot at `offset`. A `buffer` parameter's slot is a cell, so the
+    /// store lands in the owning word at the reallocation itself
+    /// (`emit_store_slot`): `_reallocate_buffer` releases the block it grew
+    /// out of, and no name may be left holding it (docs/BUGS_FOUND.md #90).
+    pub(crate) fn emit_store_buffer_ptr_to_slot(&mut self, offset: i64, reg: &str, _note: &str) {
+        self.emit_store_slot(offset, reg);
     }
 
     pub(crate) fn emit_clear_buffer_target(&mut self, target: &VarTarget) {
         self.uses_buffers = true;
         match target {
             VarTarget::Local(offset) => {
-                self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                self.emit_load_slot("rdi", *offset);
                 self.emit_indent("call _buffer_clear");
                 self.emit_store_buffer_ptr_to_slot(*offset, "rax", "");
             }
@@ -121,7 +87,7 @@ impl CodeGenerator {
 
     pub(crate) fn emit_clear_buffer_slot(&mut self, offset: i64) {
         self.uses_buffers = true;
-        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_load_slot("rdi", offset);
         self.emit_indent("call _buffer_clear");
         self.emit_store_buffer_ptr_to_slot(offset, "rax", "");
     }
@@ -129,7 +95,7 @@ impl CodeGenerator {
     pub(crate) fn emit_append_literal_to_buffer_slot(&mut self, offset: i64, text: &str) {
         self.uses_buffers = true;
         let label = self.add_string(text);
-        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_load_slot("rdi", offset);
         self.emit_indent(&format!("lea rsi, [rel {}]", label));
         self.emit_indent(&format!("mov rdx, {}_len", label));
         self.emit_indent("call _buffer_append_bytes");
@@ -375,9 +341,9 @@ impl CodeGenerator {
     /// `mov` instructions separate the caller's tag load from the dispatch,
     /// so r11 still holds the tag when the comparisons run.
     pub(crate) fn emit_append_mixed_value_to_buffer_slot(&mut self, offset: i64, fmt: FormatSpec) {
-        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_load_slot("rdi", offset);
         self.emit_append_mixed_value_to_buffer_ptr(fmt);
-        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+        self.emit_store_slot(offset, "rax");
     }
 
     /// `{n:.N}` on a whole number, into a text or buffer destination.
@@ -439,7 +405,7 @@ impl CodeGenerator {
         value_type: Option<VarType>,
         fmt: FormatSpec,
     ) {
-        self.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+        self.emit_load_slot("rdi", offset);
         self.emit_append_runtime_value_to_buffer_ptr(value_type, fmt);
         self.emit_store_buffer_ptr_to_slot(offset, "rax", "");
     }
@@ -454,7 +420,7 @@ impl CodeGenerator {
         self.uses_buffers = true;
         let emit_dst_load = |this: &mut Self| {
             if let Some(offset) = dst_local {
-                this.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                this.emit_load_slot("rdi", offset);
             } else if let Some(label) = dst_global {
                 this.emit_indent(&format!("mov rdi, [rel {}]", label));
             }
@@ -513,7 +479,7 @@ impl CodeGenerator {
                     if let Some(src_offset) = self.get_var(name) {
                         self.uses_buffers = true;
                         emit_dst_load(self);
-                        self.emit_indent(&format!("mov rsi, [rbp-{}]", src_offset));
+                        self.emit_load_slot("rsi", src_offset);
                         self.emit_indent(if clear_first { "call _buffer_copy" } else { "call _buffer_append" });
                         emit_dst_store(self);
                         return true;

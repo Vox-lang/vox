@@ -1,0 +1,7 @@
+(As test 821, with growth past the list's first block.)
+a value called box is ["a", "b"].
+To 'grow' with a list called items.
+    For each number from 1 to 20, append the number to items.
+
+'grow' of box.
+Print "box: {box}".

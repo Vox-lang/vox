@@ -1,4 +1,5 @@
 use super::*;
+use super::vars::OuterBinding;
 
 impl CodeGenerator {
     pub fn generate(&mut self, program: &Program) -> String {
@@ -108,6 +109,9 @@ impl CodeGenerator {
         if self.uses_maps {
             result.push_str("%define __MAP_ASM_INCLUDED__\n");
         }
+        if self.uses_collection_equality {
+            result.push_str("%define __COLLECTION_EQUALITY__\n");
+        }
         // Conditional includes based on usage
         // map.asm depends on io.asm (PRINT macros), string.asm (_str_eq),
         // and list.asm (_list_print), so uses_maps forces all three on.
@@ -126,7 +130,8 @@ impl CodeGenerator {
         // The old monolithic resource.asm is split into four focused modules.
         // fd-tracking + buffer-lifecycle are co-included whenever any resource
         // user is live: _cleanup_all (emitted on this same gate) calls
-        // _cleanup_buffers + _cleanup_fds, and _read_into_buffer reads the fd
+        // _cleanup_fds, a library's _unload_library calls _cleanup_all and
+        // sweeps its buffer record, and _read_into_buffer reads the fd
         // tables - so buffer and fd always travel together.
         if self.uses_buffers || self.uses_files || self.uses_floats {
             result.push_str(&format!("%include \"coreasm/{}/resource_fd.asm\"\n", self.target_arch));
@@ -223,20 +228,22 @@ impl CodeGenerator {
         result.push_str("section .text\n");
         
         if self.shared_lib_mode {
-            // A C/Rust host unloads the .so through libc's atexit -> _dl_fini,
-            // which runs .fini_array. Register _cleanup_all there so the
-            // library closes its tracked fds/buffers regardless of who loaded
-            // it. A Vox host exits through sys_exit and never reaches
-            // _dl_fini, so it must call cleanup explicitly before exit. Gate
-            // the entry on the same condition that includes resource.asm,
-            // where _cleanup_all is defined: a runtime-light library tracks
+            // A C/Rust host unloads the .so with dlclose, or through libc's
+            // atexit -> _dl_fini, and either runs .fini_array. Register
+            // _unload_library there so the library closes its tracked fds and
+            // gives back the buffers it made, regardless of who loaded it: a
+            // host that unloads the library and keeps running gets them back.
+            // A Vox host exits through sys_exit and never reaches _dl_fini,
+            // so it must call cleanup explicitly before exit. Gate the entry
+            // on the same condition that includes resource_buffer.asm, where
+            // _unload_library is defined: a runtime-light library tracks
             // nothing and the symbol would otherwise be an undefined ref.
             if self.uses_buffers || self.uses_files || self.uses_floats {
                 // `write` so ld can place the RELATIVE relocation here without
                 // relaxing its read-only-segment check for the rest of the
                 // .so — a targeted fix, not a blanket `-z notext`.
                 result.push_str("section .fini_array progbits alloc write\n");
-                result.push_str("    dq _cleanup_all\n\n");
+                result.push_str("    dq _unload_library\n\n");
                 result.push_str("section .text\n");
             }
 
@@ -294,9 +301,35 @@ impl CodeGenerator {
     }
 
     pub(crate) fn generate_statement(&mut self, stmt: &Statement) {
+        // A loop or `On error` body runs only on some paths, so a name it
+        // gives a new meaning (a parameter's, a top-level one, an outer
+        // local's) has it for as long as the body; after it the name means
+        // what it did before (the branch-scoping rule of "Declarations in
+        // Branches"), as the analyzer reads it. The loop's own variable keeps
+        // the loop's binding afterwards. `If` handles its own branches.
+        if matches!(
+            stmt,
+            Statement::While { .. }
+                | Statement::ForRange { .. }
+                | Statement::ForEach { .. }
+                | Statement::Repeat { .. }
+                | Statement::OnError { .. }
+        ) {
+            let loop_variable = match stmt {
+                Statement::ForRange { variable, .. } | Statement::ForEach { variable, .. } => Some(variable.as_str()),
+                _ => None,
+            };
+            let outer = self.outer_bindings(loop_variable);
+            self.generate_statement_unscoped(stmt);
+            self.rebind_outer(&outer);
+            return;
+        }
+        self.generate_statement_unscoped(stmt);
+    }
+
+    fn generate_statement_unscoped(&mut self, stmt: &Statement) {
         let outer_marker = self.begin_cast_failure_marker(stmt);
         self.generate_statement_body(stmt);
-        self.copy_out_of_collection_field(stmt);
         self.cast_failure_marker = outer_marker;
     }
 
@@ -350,12 +383,26 @@ impl CodeGenerator {
                 // (`Set x to ...` / `the x is ...`) with no local in scope
                 // writes the global BSS mirror directly, matching the read
                 // path's local-then-global resolution.
+                if let Some(declared) = var_type {
+                    self.forget_frame_slot_of_another_type(name, declared);
+                }
                 let had_existing_slot = self.variables.contains_key(name);
                 // A write to a name that already holds a value, rather than
                 // the one that brings it into being: what a failed cast of a
                 // text to a number leaves standing (casts.rs).
                 let rewrites_a_value = var_type.is_none() && self.variable_types.contains_key(name);
-                let target = if had_existing_slot {
+                let redeclares_a_parameter = var_type
+                    .as_ref()
+                    .is_some_and(|declared| self.declaration_shadows(name, declared));
+                let target = if redeclares_a_parameter {
+                    // A typed declaration inside a function that gives a name
+                    // a new meaning (a `list`, `map` or `buffer` parameter's,
+                    // a top-level name's, an outer local's of another type)
+                    // names a new variable of this function's own from here
+                    // on, in a slot of its own; what the name meant before is
+                    // left alone.
+                    VarTarget::Local(self.fresh_slot_for_redeclared_parameter(name))
+                } else if had_existing_slot {
                     // A local slot already exists (branch-declared name, loop
                     // variable, function parameter, or local shadow).
                     VarTarget::Local(self.get_var(name).unwrap())
@@ -386,22 +433,6 @@ impl CodeGenerator {
                     VarTarget::Local(self.stack_offset)
                 };
 
-                // A *declaration* that lands on a slot already in use names a
-                // different thing from here on, so a `buffer` parameter's slot
-                // stops being the caller's buffer: `a buffer called sink is
-                // "..."` inside a function whose parameter is `sink` allocates
-                // its own buffer, and growing THAT must not reach out through
-                // the caller's cell (docs/BUGS_FOUND.md #90). Rebinding stays
-                // local, exactly as it does for a list or map parameter (#75).
-                // A bare assignment (`Set sink to ...`, which arrives with no
-                // declared type) is not a rebinding: on a buffer it copies
-                // bytes into the buffer the name already denotes, so it keeps
-                // the cell.
-                if var_type.is_some() {
-                    if let Some(offset) = target.local_offset() {
-                        self.buffer_param_cells.remove(&offset);
-                    }
-                }
 
                 // Track variable type from declaration
                 if let Some(ref t) = var_type {
@@ -421,6 +452,11 @@ impl CodeGenerator {
                             // Top-level `value`: tag lives in BSS, paired with
                             // the payload's own global mirror.
                             self.ensure_global_value_tag_label(name);
+                        } else if redeclares_a_parameter {
+                            // The tag slot of a new meaning is shared the same
+                            // way its payload slot is.
+                            let tag_slot = self.fresh_slot_for_redeclared_parameter(&format!("{}_mixtag", name));
+                            self.mixed_tag_slots.insert(name.clone(), tag_slot);
                         } else if !self.mixed_tag_slots.contains_key(name) {
                             let tag_slot = self.alloc_var(&format!("{}_mixtag", name));
                             self.mixed_tag_slots.insert(name.clone(), tag_slot);
@@ -798,9 +834,16 @@ impl CodeGenerator {
                             self.unprovable_scalars.remove(name);
                         }
                         self.emit_dynamic_value_collection_guard(val, cast_slot_type);
-                        self.emit_empty_value_if_missed(val, slot_type);
+                        self.emit_empty_value_if_missed(val, slot_type.clone());
+                        // Naming copies: a list or map named from another
+                        // name is this name's own copy.
+                        if is_value_var || matches!(slot_type, Some(VarType::List | VarType::Map)) {
+                            self.emit_copy_on_naming(val, false);
+                        }
                         if !is_text_target && !is_value_var {
-                            let kept = rewrites_a_value.then(|| target.operand());
+                            let kept = (rewrites_a_value
+                                && !target.local_offset().is_some_and(|slot| self.is_cell_slot(slot)))
+                            .then(|| target.operand());
                             self.emit_keep_value_if_cast_failed(kept.as_deref());
                         }
                         // docs/BUGS_FOUND.md #108: a global `freeable_texts`
@@ -993,10 +1036,19 @@ impl CodeGenerator {
                         // #91, the assignment half of the declaration guard.
                         self.emit_empty_value_if_missed(
                             value, self.variable_types.get(name).cloned());
-                        if !is_value_local {
+                        // Naming copies (see the declaration above).
+                        if matches!(
+                            self.variable_types.get(name),
+                            Some(VarType::List | VarType::Map | VarType::Mixed)
+                        ) {
+                            self.emit_copy_on_naming(value, false);
+                        }
+                        if !is_value_local && !self.is_cell_slot(offset) {
                             self.emit_keep_value_if_cast_failed(Some(&format!("[rbp-{}]", offset)));
                         }
-                        self.emit_indent(&format!("mov [rbp-{}], rax", offset));
+                        // A parameter's store goes through its cell, so it
+                        // replaces the caller's collection.
+                        self.emit_store_slot(offset, "rax");
                         // Reassigning a `value` local must update its shadow tag
                         // slot too, or the runtime tag would go stale.
                         if let Some(&tag_slot) = self.mixed_tag_slots.get(name) {
@@ -1064,6 +1116,13 @@ impl CodeGenerator {
                         // #91, the global mirror of the same guard.
                         self.emit_empty_value_if_missed(
                             value, self.variable_types.get(name).cloned());
+                        // Naming copies (see the declaration above).
+                        if matches!(
+                            self.variable_types.get(name),
+                            Some(VarType::List | VarType::Map | VarType::Mixed)
+                        ) {
+                            self.emit_copy_on_naming(value, false);
+                        }
                         // docs/BUGS_FOUND.md #108: see the declaration-site
                         // comment above (`Statement::VarDecl`) - the same
                         // free-on-`Set` applies here for the `the x is ...`
@@ -1103,6 +1162,10 @@ impl CodeGenerator {
                     self.declare_untyped_from_value(name, value);
                     self.generate_expr(value);
                     self.emit_keep_value_if_cast_failed(None);
+                    // Naming copies (see the declaration above).
+                    if matches!(self.variable_types.get(name), Some(VarType::List | VarType::Map)) {
+                        self.emit_copy_on_naming(value, false);
+                    }
                     let offset = self.alloc_var(name);
                     self.emit_indent(&format!("mov [rbp-{}], rax", offset));
                 }
@@ -1115,12 +1178,30 @@ impl CodeGenerator {
             Statement::If { condition, then_block, else_if_blocks, else_block } => {
                 let end_label = self.new_label("if_end");
                 let else_label = self.new_label("else");
+                // Inside a function every branch starts from what the names
+                // meant before the `If`. A name declared in EVERY branch of a
+                // chain with an `Otherwise` names that new variable after the
+                // chain; a name declared in only some is scoped to its
+                // condition, and means what it did before after the chain.
+                let outer = self.outer_bindings(None);
+                let mut redeclared_in_every_branch: Option<Vec<OuterBinding>> = None;
+                let mut note_branch = |this: &mut Self| {
+                    let here = this.rebind_outer(&outer);
+                    redeclared_in_every_branch = Some(match redeclared_in_every_branch.take() {
+                        None => here,
+                        Some(so_far) => here
+                            .into_iter()
+                            .filter(|binding| so_far.iter().any(|other| other.name == binding.name))
+                            .collect(),
+                    });
+                };
                 
                 self.generate_condition(condition, &else_label);
                 
                 for s in then_block {
                     self.generate_statement(s);
                 }
+                note_branch(self);
                 self.emit_indent(&format!("jmp {}", end_label));
                 
                 self.emit(&format!("{}:", else_label));
@@ -1138,6 +1219,7 @@ impl CodeGenerator {
                         for s in block {
                             self.generate_statement(s);
                         }
+                        note_branch(self);
                         self.emit_indent(&format!("jmp {}", end_label));
                         if next_label != end_label {
                             self.emit(&format!("{}:", next_label));
@@ -1148,6 +1230,12 @@ impl CodeGenerator {
                 if let Some(block) = else_block {
                     for s in block {
                         self.generate_statement(s);
+                    }
+                }
+                note_branch(self);
+                if else_block.is_some() {
+                    for binding in redeclared_in_every_branch.unwrap_or_default() {
+                        self.bind_redeclared(&binding);
                     }
                 }
                 
@@ -1368,6 +1456,11 @@ impl CodeGenerator {
                         || self.current_function_return_type == Some(Type::Value)
                     {
                         self.generate_expr_as_text(v);
+                        // A list or map handed back in a `value` is the
+                        // caller's own, as for a list or map return below.
+                        if self.current_function_return_type == Some(Type::Value) {
+                            self.emit_copy_on_naming(v, true);
+                        }
                     } else {
                         self.generate_expr(v); // leaves return payload in RAX
                         // A list or a map field handed back is the caller's
@@ -1378,6 +1471,32 @@ impl CodeGenerator {
                             {
                                 self.emit_indent("mov rdi, rax");
                                 self.emit_collection_copy(&collection);
+                            }
+                        }
+                        // A list or map handed back is the caller's own: one
+                        // named by a parameter or held by a global is copied;
+                        // one of this function's own frame is moved out.
+                        if matches!(
+                            self.current_function_return_type,
+                            Some(Type::List(_)) | Some(Type::Map(_))
+                        ) {
+                            self.emit_copy_on_naming(v, true);
+                        }
+                        // A buffer handed back is the caller's own: a buffer
+                        // named by a parameter or held by a global is copied,
+                        // so the caller never holds a block another name
+                        // owns. A buffer of this function's own frame is
+                        // moved, since nothing outlives the frame to hold it.
+                        if self.current_function_return_type == Some(Type::Buffer) {
+                            if let Expr::Identifier(source) = v {
+                                let owned_by_this_frame = self
+                                    .get_var(source)
+                                    .is_some_and(|slot| !self.is_cell_slot(slot));
+                                if !owned_by_this_frame {
+                                    self.uses_buffers = true;
+                                    self.emit_indent("mov rdi, rax");
+                                    self.emit_indent("call _buffer_duplicate  ; the caller gets its own buffer");
+                                }
                             }
                         }
                     }
@@ -1462,17 +1581,10 @@ impl CodeGenerator {
                 let saved_thing_vars = self.thing_vars.clone();
                 let saved_mixed_tag_slots = self.mixed_tag_slots.clone();
                 // Per-frame, like `variables` itself: a slot offset means
-                // nothing outside the frame it was allocated in (#90).
-                let saved_buffer_param_cells =
-                    std::mem::take(&mut self.buffer_param_cells);
-                // #75's backing slots are frame offsets, so they are as
-                // function-local as `self.variables` - but the map is keyed by
-                // parameter name in the same flat namespace `mixed_tag_slots`
-                // uses, so it needs the same clone-and-restore. It starts EMPTY
-                // for each function: an outer function's `items` offset would
-                // otherwise be read as this frame's.
-                let saved_collection_backing_slots =
-                    std::mem::take(&mut self.collection_backing_slots);
+                // nothing outside the frame it was allocated in.
+                let saved_cell_slots = std::mem::take(&mut self.cell_slots);
+                let saved_redeclared_parameter_slots =
+                    std::mem::take(&mut self.redeclared_parameter_slots);
                 // `mixed_lists`/`unprovable_scalars` are a flat, unscoped set
                 // just like `variable_types`, so they need the same
                 // clone-and-restore isolation: a function's own locals must not
@@ -1569,25 +1681,13 @@ impl CodeGenerator {
                         let tag_slot = self.alloc_var(&format!("{}_mixtag", param_name));
                         self.mixed_tag_slots.insert(param_name.clone(), tag_slot);
                     }
-                    // docs/BUGS_FOUND.md #90: a `buffer` parameter's argument
-                    // word is the ADDRESS of the caller's copy of the pointer,
-                    // parked in a hidden `{name}_cell` slot - the shape a
-                    // `value`'s shadow tag slot already has - so a
-                    // reallocation inside this function can reach the caller
-                    // before it reads the block that was just freed.
-                    if matches!(param_type, Type::Buffer) {
-                        if let Some(payload) = self.get_var(param_name) {
-                            let cell_slot = self.alloc_var(&format!("{}_cell", param_name));
-                            self.buffer_param_cells.insert(payload, cell_slot);
+                    // A `list`, `map` or `buffer` parameter's slot holds its
+                    // cell: the address of the word that owns the collection.
+                    // Every use goes through it; nothing keeps a copy.
+                    if matches!(param_type, Type::List(_) | Type::Map(_) | Type::Buffer) {
+                        if let Some(slot) = self.get_var(param_name) {
+                            self.cell_slots.insert(slot);
                         }
-                    }
-                    // BUGS_FOUND #75: a collection parameter's word is the
-                    // address of the caller's storage. Keep it in a shadow
-                    // slot beside the parameter's own, so a realloc anywhere
-                    // in the body can write the new pointer back through it.
-                    if matches!(param_type, Type::List(_) | Type::Map(_)) {
-                        let back_slot = self.alloc_var(&format!("{}_backptr", param_name));
-                        self.collection_backing_slots.insert(param_name.clone(), back_slot);
                     }
                 }
 
@@ -1772,38 +1872,16 @@ impl CodeGenerator {
                     if let Some(offset) = payload_off {
                         // Payload word.
                         self.emit_indent(&read_argument_word(word_index));
-                        // docs/BUGS_FOUND.md #90: a `buffer` parameter's word
-                        // is the ADDRESS of the caller's copy of the pointer.
-                        // Park it in the hidden cell first, then take this
-                        // frame's own copy of the buffer out of it. Only rax is
-                        // touched, so the later parameters still sitting in
-                        // rsi/rdx/rcx are safe (the `thing` copies below are
-                        // deferred for exactly that reason). The cell slot is
-                        // looked up by name because body codegen may have
-                        // disowned the offset since (a redeclaration of the
-                        // parameter's name names a different buffer).
-                        if matches!(param_type, Type::Buffer) {
-                            if let Some(cell) = self.get_var(&format!("{}_cell", param_name)) {
-                                self.emit_indent(&format!(
-                                    "mov [rbp-{}], rax  ; where the caller keeps {}",
-                                    cell, param_name
-                                ));
-                                self.emit_indent("mov rax, [rax]  ; ...and the buffer itself");
-                            }
-                        }
-                        // BUGS_FOUND #75: a collection's word is the address of
-                        // the caller's storage. Park the address, then read the
-                        // pointer out of it into the parameter's own slot - so
-                        // the body sees exactly what it saw before, and the
-                        // store-back path has somewhere to write.
-                        if let Some(back_slot) = self.collection_backing_slots.get(param_name).copied() {
+                        // A `list`, `map` or `buffer` parameter's word is its
+                        // cell, the owner's address, and is kept as it is.
+                        if self.is_cell_slot(offset) {
                             self.emit_indent(&format!(
-                                "mov [rbp-{}], rax  ; where the caller keeps {}",
-                                back_slot, param_name
+                                "mov [rbp-{}], rax  ; cell: where the owner keeps {}",
+                                offset, param_name
                             ));
-                            self.emit_indent("mov rax, [rax]  ; the collection itself");
+                        } else {
+                            self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
                         }
-                        self.emit_indent(&format!("mov [rbp-{}], rax  ; param payload", offset));
                         if let Type::Thing(thing) = param_type {
                             things_to_copy.push((thing.clone(), offset));
                         }
@@ -1862,8 +1940,8 @@ impl CodeGenerator {
                 self.declared_types = saved_declared_types;
                 self.thing_vars = saved_thing_vars;
                 self.mixed_tag_slots = saved_mixed_tag_slots;
-                self.buffer_param_cells = saved_buffer_param_cells;
-                self.collection_backing_slots = saved_collection_backing_slots;
+                self.cell_slots = saved_cell_slots;
+                self.redeclared_parameter_slots = saved_redeclared_parameter_slots;
                 self.mixed_lists = saved_mixed_lists;
                 self.unprovable_scalars = saved_unprovable_scalars;
                 self.list_element_types = saved_list_element_types;
@@ -1943,6 +2021,12 @@ impl CodeGenerator {
                 // runs zero times, never faulting.
                 if self.is_buffer_expr(collection) {
                     self.uses_buffers = true;
+                    // One owning place: a named buffer is read again from
+                    // its owning word at every iteration, since the body can
+                    // grow (move) or free it; the walk stops at the length it
+                    // began with or the current length, whichever is less.
+                    let named = matches!(collection, Expr::Identifier(name)
+                        if self.get_var(name).is_some() || self.global_var_label(name).is_some());
                     self.generate_expr(collection);
                     let buf_ptr = self.alloc_var(&format!("{}_buf", variable));
                     self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer pointer", buf_ptr));
@@ -1963,6 +2047,14 @@ impl CodeGenerator {
 
                     self.emit(&format!("{}:", start_label));
 
+                    if named {
+                        self.generate_expr(collection);
+                        self.emit_indent(&format!("mov [rbp-{}], rax  ; the buffer as it is now", buf_ptr));
+                        self.emit_indent("mov rcx, [rax + 8]  ; its length now");
+                        self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
+                        self.emit_indent("cmp rax, rcx");
+                        self.emit_indent(&format!("jg {}  ; past the buffer's last byte now", end_label));
+                    }
                     self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
                     self.emit_indent(&format!("cmp rax, [rbp-{}]  ; compare with length", buf_len));
                     self.emit_indent(&format!("jg {}  ; past last byte", end_label));
@@ -2065,6 +2157,26 @@ impl CodeGenerator {
                 // include gate faithful. (A literal or `map's keys`/`values`
                 // collection already set it; this is idempotent for them.)
                 self.uses_lists = true;
+                // One owning place: a named list is read again from its
+                // owning word at the top of every iteration, so a change the
+                // body makes (growth, `Free`, `Set`) is what the loop reads; it
+                // walks the elements present when it began, and stops early if
+                // the list becomes shorter. A name whose type only the run
+                // time knows (a `value`) must hold a list when the loop begins
+                // (otherwise the error flag is set and the body never runs),
+                // and the loop ends as soon as it holds anything else.
+                let named = matches!(collection, Expr::Identifier(name)
+                        if self.get_var(name).is_some() || self.global_var_label(name).is_some());
+                let tagged = named && self.mixed_element_tag_slot(collection).is_some();
+                if tagged {
+                    let holds_a_list = self.new_label("foreach_holds_a_list");
+                    self.emit_load_value_tag(collection);
+                    self.emit_indent(&format!("cmp r11, {}  ; does it hold a list?", TAG_LIST));
+                    self.emit_indent(&format!("je {}", holds_a_list));
+                    self.emit_indent("SET_LAST_ERROR 1  ; it holds no list: the body does not run");
+                    self.emit_indent(&format!("jmp {}", end_label));
+                    self.emit(&format!("{}:", holds_a_list));
+                }
                 self.generate_expr(collection);
                 let list_ptr = self.alloc_var(&format!("{}_list", variable));
                 self.emit_indent(&format!("mov [rbp-{}], rax  ; list pointer", list_ptr));
@@ -2096,6 +2208,20 @@ impl CodeGenerator {
                 };
                 
                 self.emit(&format!("{}:", start_label));
+
+                if named {
+                    if tagged {
+                        self.emit_load_value_tag(collection);
+                        self.emit_indent(&format!("cmp r11, {}  ; still a list?", TAG_LIST));
+                        self.emit_indent(&format!("jne {}  ; given something else: the loop ends", end_label));
+                    }
+                    self.generate_expr(collection);
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; the list as it is now", list_ptr));
+                    self.emit_indent("mov rcx, [rax + 8]  ; its length now");
+                    self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
+                    self.emit_indent("cmp rax, rcx");
+                    self.emit_indent(&format!("jge {}  ; the list is shorter now", end_label));
+                }
                 
                 // Check if index < length
                 self.emit_indent(&format!("mov rax, [rbp-{}]  ; index", index_var));
@@ -2154,22 +2280,38 @@ impl CodeGenerator {
             
             // File I/O statements
             Statement::BufferDecl { name, size } => {
-                // Reuse an existing slot for the same buffer name, exactly like
-                // VarDecl reassignment. This ensures a buffer declared in both
-                // branches of an if/otherwise pair shares a single stack slot,
-                // so code after the branch reads the slot that was actually
-                // written at runtime.
-                let offset = if let Some(&existing) = self.variables.get(name) {
+                self.forget_frame_slot_of_another_type(name, &Type::Buffer);
+                // A top-level buffer with a `.bss` label lives in that label
+                // and nowhere else, like every other top-level collection: the
+                // top level and every function read and write the one word, so
+                // a function that grows or frees the buffer by its name leaves
+                // nothing stale behind for the top level to read.
+                let top_level_label = if !self.in_function_codegen && !self.variables.contains_key(name) {
+                    self.global_var_label(name).cloned()
+                } else {
+                    None
+                };
+                // Otherwise reuse an existing slot for the same buffer name,
+                // exactly like VarDecl reassignment. This ensures a buffer
+                // declared in both branches of an if/otherwise pair shares a
+                // single stack slot, so code after the branch reads the slot
+                // that was actually written at runtime.
+                let offset = if top_level_label.is_some() {
+                    0
+                } else if self.declaration_shadows(name, &Type::Buffer) {
+                    // Declaring a buffer inside a function under a name that
+                    // means something else (a parameter, a top-level name, an
+                    // outer local of another type) names a buffer of this
+                    // function's own from here on, in a slot of its own; what
+                    // the name meant before is left alone.
+                    self.fresh_slot_for_redeclared_parameter(name)
+                } else if let Some(&existing) = self.variables.get(name) {
                     existing
                 } else {
                     self.stack_offset += 8;
                     self.variables.insert(name.clone(), self.stack_offset);
                     self.stack_offset
                 };
-                // Declaring over a `buffer` parameter's slot names a buffer of
-                // this function's own from here on; it is no longer the
-                // caller's (docs/BUGS_FOUND.md #90, and the VarDecl arm above).
-                self.buffer_param_cells.remove(&offset);
                 self.variable_types.insert(name.clone(), VarType::Buffer);
                 // Register the declared type so the `type` property reports
                 // `Buffer (static)` (LANGUAGE.md:3202), not the runtime tag.
@@ -2202,11 +2344,14 @@ impl CodeGenerator {
                     self.emit_indent("call _alloc_buffer");
                 }
                 self.uses_buffers = true;
-                self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer struct pointer", offset));
-
-                // Top-level/branch-declared buffers must be mirrored into BSS
-                // so functions can read (and write) them via the global label.
-                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                if let Some(label) = top_level_label {
+                    self.emit_indent(&format!("mov [rel {}], rax  ; buffer {}", label, name));
+                } else {
+                    self.emit_indent(&format!("mov [rbp-{}], rax  ; buffer struct pointer", offset));
+                    // A branch-declared buffer with a label is mirrored into
+                    // BSS so functions can read (and write) it via the label.
+                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                }
             }
             
             Statement::ByteSet { buffer, index, value } => {
@@ -2216,29 +2361,35 @@ impl CodeGenerator {
                 let noupd_label = self.new_label("bset_noupd");
 
                 self.emit_indent("; Set byte N of buffer to value (with bounds check)");
-                // Get buffer pointer (local or global mirror)
-                self.emit_load_named_var_addr(buffer);
-                self.emit_indent("mov rbx, rax  ; buffer ptr");
-                self.emit_indent("push rbx  ; save buffer pointer");
-                // Get index
+                // One owning place: the index and the value first, the
+                // buffer's block last; growth moves a buffer, so a pointer
+                // loaded before a call in either could be a released block.
                 self.generate_expr(index);
-                self.emit_indent("mov rcx, rax  ; index in rcx (1-indexed)");
-                self.emit_indent("pop rbx  ; buffer pointer in rbx");
+                self.emit_indent("push rax  ; index (1-indexed)");
+                // The write's outcome decides the flag (see Set element).
+                self.emit_indent("CLEAR_LAST_ERROR");
+                self.generate_expr(value);
+                self.emit_indent("push rax  ; value");
+                self.emit_load_named_var_addr(buffer);
+                self.emit_indent("mov rbx, rax  ; buffer ptr, loaded last");
+                self.emit_indent("pop rdx  ; value in rdx");
+                self.emit_indent("pop rcx  ; index in rcx (1-indexed)");
 
                 // Bounds check: index must be >= 1
                 self.emit_indent("cmp rcx, 1");
                 self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
-                self.emit_indent("mov rdx, [rbx]  ; get buffer capacity (offset 0)");
-                self.emit_indent("cmp rcx, rdx");
+                self.emit_indent("mov r8, [rbx]  ; get buffer capacity (offset 0)");
+                self.emit_indent("cmp rcx, r8");
                 self.emit_indent(&format!("jle {}  ; index <= capacity is OK", ok_label));
 
                 // Index beyond current capacity: dynamic buffers auto-grow,
                 // fixed buffers are an error.
-                self.emit_indent("mov rdx, [rbx + 16]  ; buffer flags");
-                self.emit_indent("test rdx, 1  ; BUF_FLAG_FIXED");
+                self.emit_indent("mov r8, [rbx + 16]  ; buffer flags");
+                self.emit_indent("test r8, 1  ; BUF_FLAG_FIXED");
                 self.emit_indent(&format!("jnz {}  ; fixed buffer overflow", error_label));
 
                 // Grow dynamic buffer so the 1-indexed position fits.
+                self.emit_indent("push rdx  ; save value across grow call");
                 self.emit_indent("push rcx  ; save index across grow call");
                 self.emit_indent("mov rdi, rbx  ; buffer pointer");
                 self.emit_indent("mov rsi, rcx  ; required capacity = index");
@@ -2246,6 +2397,7 @@ impl CodeGenerator {
                 self.emit_indent("mov rbx, rax  ; new buffer pointer");
                 self.emit_store_back_after_realloc(buffer, "rax");
                 self.emit_indent("pop rcx  ; restore 1-indexed position");
+                self.emit_indent("pop rdx  ; restore value");
                 self.emit_indent(&format!("jmp {}  ; grown buffer now has space", ok_label));
 
                 // Error path: out of bounds
@@ -2255,14 +2407,6 @@ impl CodeGenerator {
 
                 // Success path: safe write
                 self.emit(&format!("{}:", ok_label));
-                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
-                self.emit_indent("push rbx  ; save buffer pointer");
-                self.emit_indent("push rcx  ; save 1-indexed position");
-                // Get value
-                self.generate_expr(value);
-                self.emit_indent("mov rdx, rax  ; value in rdx");
-                self.emit_indent("pop rcx  ; 1-indexed position in rcx");
-                self.emit_indent("pop rbx  ; buffer pointer in rbx");
                 // Update length = max(length, index) so reads see the written bytes
                 self.emit_indent("cmp rcx, [rbx + 8]  ; compare index with current length");
                 self.emit_indent(&format!("jle {}  ; skip if length already >= index", noupd_label));
@@ -2276,39 +2420,20 @@ impl CodeGenerator {
             }
             
             Statement::ElementSet { list, index, value } => {
+                self.assert_not_a_thing_in_a_collection(value, "a list");
                 let ok_label = self.new_label("eset_ok");
                 let error_label = self.new_label("eset_err");
                 let done_label = self.new_label("eset_done");
 
                 self.emit_indent("; Set element N of list to value (with bounds check)");
-                // Get list pointer (local or global mirror)
-                self.emit_load_named_var_addr(list);
-                self.emit_indent("mov rbx, rax  ; list ptr");
-                self.emit_indent("push rbx  ; save list pointer");
-                // Get index (1-indexed)
+                // One owning place: the index and the value are worked
+                // out first, and the list's block is loaded last, so a call in
+                // either that grows or frees the list is seen by the write.
                 self.generate_expr(index);
-                self.emit_indent("mov rcx, rax  ; index in rcx (1-indexed)");
-                self.emit_indent("pop rbx  ; list pointer in rbx");
-
-                // Bounds check: index must be >= 1 and <= length
-                self.emit_indent("cmp rcx, 1");
-                self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
-                self.emit_indent("mov rdx, [rbx + 8]  ; get list length (offset 8)");
-                self.emit_indent("cmp rcx, rdx");
-                self.emit_indent(&format!("jle {}  ; index <= length is OK", ok_label));
-
-                // Error path: out of bounds
-                self.emit(&format!("{}:", error_label));
-                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
-                self.emit_indent(&format!("jmp {}", done_label));
-
-                // Success path: safe write
-                self.emit(&format!("{}:", ok_label));
-                self.emit_indent("CLEAR_LAST_ERROR  ; clear error on success");
-                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
-                self.emit_indent("push rbx  ; save list pointer");
-                self.emit_indent("push rcx  ; save index");
-                // Get value
+                self.emit_indent("push rax  ; index (1-indexed)");
+                // The write's outcome decides the flag: out of bounds sets it
+                // below, and in bounds it is what the value left.
+                self.emit_indent("CLEAR_LAST_ERROR");
                 self.generate_expr(value);
                 // docs/BUGS_FOUND.md #111 (owner ruling, GitHub #34): a
                 // collection written into an existing slot is copied in,
@@ -2328,9 +2453,27 @@ impl CodeGenerator {
                     }
                     _ => {}
                 }
-                self.emit_indent("mov r8, rax  ; value in r8");
-                self.emit_indent("pop rcx  ; index in rcx");
-                self.emit_indent("pop rbx  ; list pointer in rbx");
+                self.emit_indent("push rax  ; value");
+                self.emit_load_named_var_addr(list);
+                self.emit_indent("mov rbx, rax  ; list ptr, loaded last");
+                self.emit_indent("pop r8  ; value in r8");
+                self.emit_indent("pop rcx  ; index in rcx (1-indexed)");
+
+                // Bounds check: index must be >= 1 and <= length
+                self.emit_indent("cmp rcx, 1");
+                self.emit_indent(&format!("jl {}  ; index < 1 is error", error_label));
+                self.emit_indent("mov rdx, [rbx + 8]  ; get list length (offset 8)");
+                self.emit_indent("cmp rcx, rdx");
+                self.emit_indent(&format!("jle {}  ; index <= length is OK", ok_label));
+
+                // Error path: out of bounds
+                self.emit(&format!("{}:", error_label));
+                self.emit_indent("SET_LAST_ERROR 1  ; set error flag");
+                self.emit_indent(&format!("jmp {}", done_label));
+
+                // Success path: safe write
+                self.emit(&format!("{}:", ok_label));
+                self.emit_indent("dec rcx  ; convert 1-indexed to 0-indexed");
                 // Write the slot's type tag:
                 // tag_addr = base + 24 + capacity*elem_size + index
                 self.emit_indent("mov rdx, [rbx]  ; capacity");
@@ -2381,11 +2524,11 @@ impl CodeGenerator {
             // — forgetting this corrupts the var after the first growth).
             // (stage 1e2, tag 5)
             Statement::MapSet { map, key, value } => {
+                self.assert_not_a_thing_in_a_collection(value, "a map");
                 self.uses_maps = true;
                 self.emit_indent("; Set map's key to value (insert/replace)");
-                // map pointer -> stack
-                self.emit_load_named_var_into_rax(map);
-                self.emit_indent("push rax  ; save map pointer");
+                // One owning place: the key and the value first, the
+                // map's block last.
                 // key -> stack (literal text; never a variable reference)
                 self.generate_text_key(key);
                 self.emit_indent("push rax  ; save key pointer");
@@ -2403,9 +2546,11 @@ impl CodeGenerator {
                     None => {
                         if let Some(loc) = self.mixed_element_tag_slot(value) {
                             self.emit_copy_if_collection_mem(&loc.operand());
+                        } else if self.expr_leaves_tag_in_r11(value) {
+                            // As in ListAppend: a tag forwarded only in r11 is
+                            // copied too, and stays in r11 for `_map_insert`.
+                            self.emit_copy_if_collection_reg("r11d");
                         }
-                        // See the matching note in ListAppend: an r11-only
-                        // forwarded tag is not covered here.
                     }
                     _ => {}
                 }
@@ -2428,8 +2573,13 @@ impl CodeGenerator {
                         }
                     }
                 }
+                self.emit_indent("push rdx  ; value");
+                self.emit_indent("push rcx  ; value type tag");
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("mov rdi, rax  ; map pointer, loaded last");
+                self.emit_indent("pop rcx  ; value type tag");
+                self.emit_indent("pop rdx  ; value");
                 self.emit_indent("pop rsi  ; key pointer");
-                self.emit_indent("pop rdi  ; map pointer");
                 self.emit_indent("call _map_insert");
                 // Store the (possibly reallocated) map pointer back.
                 self.emit_store_back_after_realloc(map, "rax");
@@ -2454,17 +2604,11 @@ impl CodeGenerator {
                                 self.emit_indent(&format!("mov [rel {}], rax", label));
                             }
                         }
-                        // Top-level/branch-declared buffers live in both a stack
-                        // slot and a BSS mirror. Any append that updated the stack
-                        // slot must also update the mirror so functions see the
-                        // possibly-reallocated pointer.
-                        if let Some(offset) = dst_local {
-                            self.emit_mirror_stack_var_to_global_if_needed(list, offset);
-                        }
                     }
                     return;
                 }
 
+                self.assert_not_a_thing_in_a_collection(value, "a list");
                 self.uses_lists = true;
                 self.emit_indent("; Append value to list");
                 
@@ -2498,11 +2642,10 @@ impl CodeGenerator {
                     }
                 }
                 
-                // Resolve list pointer (local slot or global mirror) and save it.
-                let list_ptr_loaded = self.emit_load_named_var_addr(list);
-                if list_ptr_loaded {
-                    self.emit_indent("push rax  ; save list pointer");
-
+                // One owning place: the value first, the list's block
+                // last, so a call in the value that grows the list is seen.
+                let list_is_known = self.get_var(list).is_some() || self.global_var_label(list).is_some();
+                if list_is_known {
                     // Check if the value is a buffer variable
                     let is_buffer_value = match value {
                         Expr::StringLit(name) | Expr::Identifier(name) => {
@@ -2554,14 +2697,13 @@ impl CodeGenerator {
                         None => {
                             if let Some(loc) = self.mixed_element_tag_slot(value) {
                                 self.emit_copy_if_collection_mem(&loc.operand());
+                            } else if self.expr_leaves_tag_in_r11(value) {
+                                // A tag forwarded only in r11 (a `value`
+                                // returned by a call) is copied the same way;
+                                // the copy leaves the tag in r11 for the
+                                // `_list_append` below.
+                                self.emit_copy_if_collection_reg("r11d");
                             }
-                            // A tag forwarded only through r11
-                            // (`expr_leaves_tag_in_r11`, below) is not
-                            // covered here: r11 does not survive the copy
-                            // call's own body, and re-reading it afterward
-                            // is not possible the way a shadow-slot memory
-                            // operand can be re-read. Documented as a known
-                            // gap.
                         }
                         _ => {}
                     }
@@ -2595,8 +2737,11 @@ impl CodeGenerator {
                             }
                         }
                     }
+                    self.emit_indent("push rdx  ; element type tag");
+                    self.emit_load_named_var_addr(list);
+                    self.emit_indent("mov rdi, rax  ; list ptr, loaded last");
+                    self.emit_indent("pop rdx  ; element type tag");
                     self.emit_indent("pop rsi  ; value to append");
-                    self.emit_indent("pop rdi  ; list ptr");
                     self.emit_indent("call _list_append");
 
                     // Store potentially new list pointer back to wherever it came from
@@ -2609,19 +2754,19 @@ impl CodeGenerator {
                 let dst_global = self.global_var_label(destination).cloned();
                 if dst_local.is_some() || dst_global.is_some() {
                     if !self.emit_copy_expr_into_buffer_slot(source, true, dst_local, dst_global.as_deref()) {
-                        // Fallback for non-buffer source expressions.
-                        // Load destination pointer into rdi, clear it, then append.
+                        // Fallback for non-buffer source expressions. One
+                        // owning place: the value first, then the
+                        // destination is loaded, cleared and appended to.
+                        self.generate_expr(source);
+                        self.emit_indent("push rax  ; the value, worked out first");
                         self.emit_load_named_var_addr(destination);
-                        self.emit_indent("mov rdi, rax  ; destination buffer");
-                        self.emit_indent("push rdi");
+                        self.emit_indent("mov rdi, rax  ; destination buffer, loaded last");
                         self.emit_indent("call _buffer_clear");
                         self.emit_indent("mov rdi, rax");
-                        self.emit_indent("push rdi");
-                        self.generate_expr(source);
+                        self.emit_indent("pop rax  ; the value");
                         let src_type = self.infer_expr_type(source);
                         let fmt_spec = self.parse_format_spec(None);
                         self.emit_append_runtime_value_to_buffer_ptr(src_type, fmt_spec);
-                        self.emit_indent("pop rdi  ; original destination buffer pointer");
                         if let Some(offset) = dst_local {
                             self.emit_store_buffer_ptr_to_slot(offset, "rax", "  ; updated destination pointer");
                         } else if let Some(ref label) = dst_global {
@@ -2696,7 +2841,7 @@ impl CodeGenerator {
                     self.emit_indent("SET_LAST_ERROR 22  ; EINVAL");
 
                     self.emit(&format!("{}:", fd_done_label));
-                    self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                    self.emit_mirror_file_to_global(name, offset);
                     return;
                 }
 
@@ -2746,7 +2891,7 @@ impl CodeGenerator {
                 self.emit_indent("call _register_fd  ; track for auto-cleanup");
                 
                 self.emit(&format!("{}:", done_label));
-                self.emit_mirror_stack_var_to_global_if_needed(name, offset);
+                self.emit_mirror_file_to_global(name, offset);
             }
             
             Statement::FileRead { source, buffer } => {
@@ -2903,7 +3048,7 @@ impl CodeGenerator {
                     Expr::Identifier(name) => {
                         if let Some(offset) = self.get_var(name) {
                             let var_type = self.variable_types.get(name).cloned();
-                            self.emit_indent(&format!("mov rsi, [rbp-{}]", offset));
+                            self.emit_load_slot("rsi", offset);
                             if matches!(var_type, Some(VarType::Buffer)) {
                                 self.emit_indent("FILE_WRITE_BUF rdi, rsi");
                             } else {
@@ -3471,12 +3616,16 @@ impl CodeGenerator {
             }
             
             Statement::BufferResize { name, new_size } => {
+                // One owning place: the size first, the buffer last.
+                self.generate_expr(new_size);
+                self.emit_indent("push rax  ; new size");
                 if self.emit_load_named_var_addr(name) {
-                    self.emit_indent("mov rdi, rax  ; buffer pointer");
-                    self.generate_expr(new_size);
-                    self.emit_indent("mov rsi, rax  ; new size");
+                    self.emit_indent("mov rdi, rax  ; buffer pointer, loaded last");
+                    self.emit_indent("pop rsi  ; new size");
                     self.emit_indent("call _realloc_buffer");
                     self.emit_store_back_after_realloc(name, "rax");
+                } else {
+                    self.emit_indent("pop rax  ; no such buffer");
                 }
             }
             
@@ -3713,6 +3862,32 @@ impl CodeGenerator {
                         if self.thing_compared(left, right).is_some() =>
                     {
                         self.emit_thing_equality(
+                            left,
+                            right,
+                            matches!(op, BinaryOperator::NotEqual),
+                        );
+                        self.emit_indent("test rax, rax");
+                        self.emit_indent(&format!("jz {}  ; 1=holds", false_label));
+                    }
+                    // Two lists, or two maps: equal when their contents are.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.collections_compared(left, right).is_some() =>
+                    {
+                        let kind = self.collections_compared(left, right).unwrap_or(Type::Unknown);
+                        self.emit_collection_equality(
+                            left,
+                            right,
+                            &kind,
+                            matches!(op, BinaryOperator::NotEqual),
+                        );
+                        self.emit_indent("test rax, rax");
+                        self.emit_indent(&format!("jz {}  ; 1=holds", false_label));
+                    }
+                    // A side whose tag may say list or map: by contents if so.
+                    BinaryOperator::Equal | BinaryOperator::NotEqual
+                        if self.tagged_collections_compared(left, right) =>
+                    {
+                        self.emit_tagged_collection_equality(
                             left,
                             right,
                             matches!(op, BinaryOperator::NotEqual),

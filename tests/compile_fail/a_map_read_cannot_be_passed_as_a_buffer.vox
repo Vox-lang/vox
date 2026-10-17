@@ -1,0 +1,7 @@
+(A buffer parameter is the caller's own buffer; a map value is not one.)
+a map called m is {"k": "v"}.
+To 'grow' with a buffer called data.
+    append "x" to data.
+    Print "data {data's size}".
+
+'grow' of m's "k".

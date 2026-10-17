@@ -1,0 +1,10 @@
+(A `value` holds its own copy of what is stored in it, so a list parameter
+ given a `value` holding a list receives a copy: the append stays in the
+ function's list.)
+a value called box is ["a", "b"].
+To 'add to' with a list called items.
+    append "c" to items.
+    Print "items: {items}".
+
+'add to' of box.
+Print "box: {box}".

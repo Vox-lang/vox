@@ -1,0 +1,9 @@
+(The keyed map read twin of test 838: the key's call grows the map, and
+ the read finds the key the call added.)
+To 'grow map' with a map called shelf.
+    For each number from 1 to 20, Set shelf's "{number}" to number.
+    Return a text, "15".
+
+a map called m is {"k": 1}.
+a number called n is m's "{'grow map' of m}".
+Print "n: {n}, length: {m's length}".

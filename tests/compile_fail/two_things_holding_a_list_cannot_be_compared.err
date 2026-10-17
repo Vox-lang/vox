@@ -1,2 +1,0 @@
-'first' and 'second' cannot be compared with `is`, because a note holds a list ('items')
-Compare the fields you need instead - note's fields are: title, items

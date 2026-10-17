@@ -1,0 +1,12 @@
+(A `value` holding a list, passed to a list parameter, gives the function a
+ copy of the list. The function stores a number in the `value` while it
+ runs; its own list is untouched by that.)
+a value called box is ["a", "b"].
+To 'look at' with a list called items.
+    box is 5.
+    Print "items: {items's length}".
+    append "c" to items.
+    Print "items: {items}".
+
+'look at' of box.
+Print "box: {box}".

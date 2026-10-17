@@ -19,6 +19,28 @@ fn type_property_display_name(t: &Type) -> Option<&'static str> {
 }
 
 impl CodeGenerator {
+    /// Leave a read's target block in rbx and its index in rcx. When the
+    /// target is a name, the index is worked out FIRST and the block loaded
+    /// last (one owning place): an index that calls a function which
+    /// grows or frees the target is then read against the target as it is
+    /// after the call, never a block loaded before it. Any other target is
+    /// an expression yielding a block of its own, evaluated in source order.
+    pub(crate) fn emit_target_then_index(&mut self, target: &Expr, index: &Expr, what: &str) {
+        if matches!(target, Expr::Identifier(_)) {
+            self.generate_expr(index);
+            self.emit_indent("push rax  ; index");
+            self.generate_expr(target);
+            self.emit_indent(&format!("mov rbx, rax  ; {} pointer, loaded last", what));
+            self.emit_indent("pop rcx  ; index in rcx");
+        } else {
+            self.generate_expr(target);
+            self.emit_indent(&format!("push rax  ; save {} pointer", what));
+            self.generate_expr(index);
+            self.emit_indent("mov rcx, rax  ; index in rcx");
+            self.emit_indent(&format!("pop rbx  ; {} pointer in rbx", what));
+        }
+    }
+
     pub(crate) fn is_float_expr(&self, expr: &Expr) -> bool {
         match expr {
             Expr::FloatLit(_) => true,
@@ -660,6 +682,19 @@ impl CodeGenerator {
                 {
                     self.emit_thing_equality(left, right, matches!(op, BinaryOperator::NotEqual));
                 }
+                // Two lists, or two maps: equal when their contents are.
+                else if let (true, Some(kind)) = (
+                    matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual),
+                    self.collections_compared(left, right),
+                ) {
+                    self.emit_collection_equality(left, right, &kind, matches!(op, BinaryOperator::NotEqual));
+                }
+                // A side whose tag may say list or map: by contents if so.
+                else if matches!(op, BinaryOperator::Equal | BinaryOperator::NotEqual)
+                    && self.tagged_collections_compared(left, right)
+                {
+                    self.emit_tagged_collection_equality(left, right, matches!(op, BinaryOperator::NotEqual));
+                }
                 // `x is nothing` / `x is not nothing` in expression position
                 // (stage 1e3): tag-6 equality, result 0/1 in rax. MUST precede
                 // the float/stringy/integer paths or `0 is nothing` would
@@ -1067,6 +1102,9 @@ impl CodeGenerator {
             }
 
             Expr::ListLit { elements } => {
+                for element in elements {
+                    self.assert_not_a_thing_in_a_collection(element, "a list");
+                }
                 // List structure: [capacity:8][length:8][elem_size:8][data...][tags...]
                 // Each element is 8 bytes, header is 24 bytes, plus one type
                 // tag byte per slot after the data region.
@@ -1079,17 +1117,18 @@ impl CodeGenerator {
                 // Every list allocation - a literal from source AND the
                 // synthesized empty list of the no-initializer default
                 // (`emit_type_default` -> `emit_empty_value_for`, bug #102) -
-                // flows through here and emits HEAP_ALLOC, so it sets the
+                // flows through here and emits COLLECTION_ALLOC (heap.asm), so it sets the
                 // codegen heap flag the include gate ORs with the analyzer's.
                 self.uses_heap = true;
                 self.emit_indent(&format!("; List literal with {} elements (capacity {})", elements.len(), capacity));
                 
-                // Allocate via HEAP_ALLOC (page-aligns the size, runs the
-                // -errno failure test, and tracks the block for HEAP_FREE).
-                // Returns the pointer in rax, or 0 on mmap failure.
+                // COLLECTION_ALLOC page-aligns the size and runs the -errno
+                // failure test like HEAP_ALLOC, but keeps the block out of
+                // `alloc_table`: a list is freed from its own header, so an
+                // entry there would outlive the block it names.
                 let mmap_ok = self.new_label("list_mmap_ok");
-                self.emit_indent(&format!("HEAP_ALLOC {}  ; size; returns ptr or 0", total_size));
-                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent(&format!("COLLECTION_ALLOC {}  ; size; returns ptr or 0", total_size));
+                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
                 self.emit_indent(&format!("jnz {}", mmap_ok));
                 self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
@@ -1170,6 +1209,9 @@ impl CodeGenerator {
             // tag in rcx via the same forwarding pattern as ListAppend.
             // (stage 1e2, tag 5)
             Expr::MapLit { pairs } => {
+                for (_, value) in pairs {
+                    self.assert_not_a_thing_in_a_collection(value, "a map");
+                }
                 self.uses_maps = true;
                 self.emit_indent(&format!(
                     "; Map literal with {} pair(s)",
@@ -1246,14 +1288,7 @@ impl CodeGenerator {
                 let is_mixed = self.list_expr_is_mixed(list);
                 
                 self.emit_indent("; List access (0-indexed) with bounds check");
-                // Get list pointer
-                self.generate_expr(list);
-                self.emit_indent("push rax  ; save list pointer");
-                
-                // Get index
-                self.generate_expr(index);
-                self.emit_indent("mov rcx, rax  ; index in rcx");
-                self.emit_indent("pop rbx  ; list pointer in rbx");
+                self.emit_target_then_index(list, index, "list");
                 
                 // Bounds check: index must be >= 0 and < length
                 self.emit_indent("cmp rcx, 0");
@@ -1312,7 +1347,7 @@ impl CodeGenerator {
                 // raw value for scalars/time). Falls back to global mirrors so
                 // top-level/branch-declared names are reachable inside functions.
                 let found = if let Some(off) = offset {
-                    self.emit_indent(&format!("mov rax, [rbp-{}]", off));
+                    self.emit_load_slot("rax", off);
                     true
                 } else if let Some(label) = self.global_var_label(object).cloned() {
                     self.emit_indent(&format!("mov rax, [rel {}]", label));
@@ -1774,11 +1809,12 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                // HEAP_ALLOC page-aligns, runs the -errno failure test, and
-                // tracks the block; size is in rax. Returns ptr in rax or 0.
+                // COLLECTION_ALLOC page-aligns and runs the -errno failure
+                // test; size is in rax. Returns ptr in rax or 0. A list block
+                // stays out of `alloc_table` (see the list literal above).
                 let mmap_ok = self.new_label("arglist_mmap_ok");
-                self.emit_indent("HEAP_ALLOC rax  ; size in rax; returns ptr or 0");
-                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0");
+                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
                 self.emit_indent(&format!("jnz {}", mmap_ok));
                 self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
@@ -1842,11 +1878,12 @@ impl CodeGenerator {
                 self.emit_indent("shl rax, 3");
                 self.emit_indent("add rax, r13  ; + type tag bytes (1 per slot)");
                 self.emit_indent(&format!("add rax, {}", LIST_DATA_OFFSET));
-                // HEAP_ALLOC page-aligns, runs the -errno failure test, and
-                // tracks the block; size is in rax. Returns ptr in rax or 0.
+                // COLLECTION_ALLOC page-aligns and runs the -errno failure
+                // test; size is in rax. Returns ptr in rax or 0. A list block
+                // stays out of `alloc_table` (see the list literal above).
                 let mmap_ok = self.new_label("argraw_mmap_ok");
-                self.emit_indent("HEAP_ALLOC rax  ; size in rax; returns ptr or 0");
-                self.emit_indent("test rax, rax  ; HEAP_ALLOC returns 0 on failure");
+                self.emit_indent("COLLECTION_ALLOC rax  ; size in rax; returns ptr or 0");
+                self.emit_indent("test rax, rax  ; COLLECTION_ALLOC returns 0 on failure");
                 self.emit_indent(&format!("jnz {}", mmap_ok));
                 self.emit_indent("EXIT 1");
                 self.emit(&format!("{}:", mmap_ok));
@@ -2443,13 +2480,7 @@ impl CodeGenerator {
                 let done_label = self.new_label("byte_done");
 
                 self.emit_indent("; Byte access (1-indexed) with bounds check");
-                // Get buffer pointer
-                self.generate_expr(buffer);
-                self.emit_indent("push rax  ; save buffer pointer");
-                // Get index
-                self.generate_expr(index);
-                self.emit_indent("mov rcx, rax  ; index in rcx");
-                self.emit_indent("pop rbx  ; buffer pointer in rbx");
+                self.emit_target_then_index(buffer, index, "buffer");
 
                 // Bounds check: index must be >= 1 and <= length
                 self.emit_indent("cmp rcx, 1");
@@ -2485,13 +2516,7 @@ impl CodeGenerator {
                 let is_mixed = self.list_expr_is_mixed(list);
                 
                 self.emit_indent("; Element access (1-indexed) with bounds check");
-                // Get list pointer
-                self.generate_expr(list);
-                self.emit_indent("push rax  ; save list pointer");
-                // Get index
-                self.generate_expr(index);
-                self.emit_indent("mov rcx, rax  ; index in rcx");
-                self.emit_indent("pop rbx  ; list pointer in rbx");
+                self.emit_target_then_index(list, index, "list");
                 
                 // Bounds check: index must be >= 1 and <= length
                 self.emit_indent("cmp rcx, 1");
@@ -2567,13 +2592,14 @@ impl CodeGenerator {
             Expr::MapAccess { map, key } => {
                 self.uses_maps = true;
                 self.emit_indent("; Map key access (lookup)");
-                // map pointer -> rax, save on stack
-                self.emit_load_named_var_into_rax(map);
-                self.emit_indent("push rax  ; save map pointer");
+                // One owning place: the key first (a dynamic key can
+                // call a function that grows the map), the map's block last.
                 // key -> rsi (literal text; never a variable reference)
                 self.generate_text_key(key);
-                self.emit_indent("mov rsi, rax  ; key pointer");
-                self.emit_indent("pop rdi  ; map pointer");
+                self.emit_indent("push rax  ; key pointer");
+                self.emit_load_named_var_into_rax(map);
+                self.emit_indent("mov rdi, rax  ; map pointer, loaded last");
+                self.emit_indent("pop rsi  ; key pointer");
                 self.emit_indent("call _map_lookup");
                 // rax = value, r11 = tag (set by _map_lookup); on miss
                 // _map_lookup sets _last_error=1, rax=0, r11=0.

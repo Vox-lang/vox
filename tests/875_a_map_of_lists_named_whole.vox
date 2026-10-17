@@ -1,0 +1,6 @@
+(A map holding lists is copied all the way down when it is named.)
+a map called shelf is {"k": [1]}.
+a map called other is shelf.
+Set other's "j" to [2].
+Print "shelf: {shelf}".
+Print "other: {other}".

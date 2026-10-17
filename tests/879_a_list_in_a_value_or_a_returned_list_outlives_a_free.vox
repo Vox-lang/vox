@@ -1,0 +1,13 @@
+(A list stored in a value, and a list returned from a parameter, are
+ copies: freeing the original afterwards leaves them whole.)
+a list called xs is ["a","b"].
+a value called box is xs.
+Free xs.
+Print "box {box}".
+a list called kept is ["a", "b"].
+To 'hand over' with a list called items.
+    Return a list, items.
+
+a list called got is 'hand over' of kept.
+Free kept.
+Print "got {got}".
