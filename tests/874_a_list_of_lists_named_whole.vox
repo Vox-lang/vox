@@ -1,0 +1,6 @@
+(A list holding lists is copied all the way down when it is named.)
+a list called outer is [["a"], ["b"]].
+a list called duplicate is outer.
+append "more" to duplicate.
+Print "outer: {outer}".
+Print "duplicate: {duplicate}".

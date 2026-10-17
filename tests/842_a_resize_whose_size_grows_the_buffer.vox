@@ -1,0 +1,9 @@
+(`Resize` works out the new size before it touches the buffer: the size's
+ call grows the buffer, and the resize applies to the grown buffer.)
+To 'grow' with a buffer called data.
+    For each number from 1 to 3000, append "abcdefgh" to data.
+    Return a number, 7.
+
+a buffer called sized is "AB".
+Resize sized to 'grow' of sized.
+Print "sized: {sized's size}".

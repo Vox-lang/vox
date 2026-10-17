@@ -1,0 +1,4 @@
+(A declared text keeps its type: the current time cannot be put in it.)
+a text called here is "hello".
+Get current time into here.
+Print "{here}".

@@ -1,0 +1,19 @@
+(A list declared in one branch inside a function, under the name of a
+ top-level buffer, lasts as long as the branch. After it, the name is the
+ top-level buffer again, on the call that took the branch and on the one
+ that did not.)
+a buffer called hold is "abc".
+
+To 'branchy' with a number called n.
+    If n is 1 then,
+        a list called hold is [1, 2],
+        Print "in branch {hold}".
+    For each k from 1 to 2000, append "QQQQQQQQ" to hold.
+    Print "after branch size {hold's size}".
+
+'branchy' of 1.
+a list called other is [5, 6, 7].
+Print "other {other}".
+'branchy' of 2.
+Print "top {hold's size}".
+Print "other {other}".

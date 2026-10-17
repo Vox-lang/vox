@@ -1,0 +1,8 @@
+(A `For each` walks the elements the list had when the loop began, reading
+ each one as it is when the loop reaches it: the `Set` in the body is seen
+ in both loops, whether or not the body has grown the list meanwhile.)
+a list called xs is [1, 2, 3].
+For each n in xs, Set element 3 of xs to 99, print n.
+a list called ys is [1, 2, 3].
+For each n in ys, append 0 to ys, append 0 to ys, append 0 to ys, append 0 to ys, append 0 to ys, append 0 to ys, Set element 3 of ys to 99, print n.
+Print ys's length.

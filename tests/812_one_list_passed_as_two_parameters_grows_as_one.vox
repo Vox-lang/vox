@@ -1,0 +1,13 @@
+(A list passed as two parameters is one list under both names, as it is
+ the caller's under each (docs/BUGS_FOUND.md #139): what grows through one
+ is seen through the other, and by the caller.)
+To 'merge' of a list called first and a list called second.
+    For each number from 1 to 20, append the number to first.
+    Print "second sees: {second's length}".
+    append "via second" to second.
+    Print "first sees: {first's length}".
+
+a list called xs is ["a"].
+'merge' of xs and xs.
+Print "xs length: {xs's length}".
+Print "xs last: {xs's last}".

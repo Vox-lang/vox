@@ -790,6 +790,123 @@ EOF
 }
 run_see_list_parameter_test
 
+# One owning place across a library boundary. A list or buffer the program
+# hands to a library is one collection on both sides: grown, freed or
+# written in the library, it is exactly what the program sees afterwards, a
+# list freed on one side refuses writes on the other, and the program exits
+# cleanly. A list freed on both sides is freed once: the second `Free` never
+# unmaps the program's own memory (checked by tests/cinterop/munmap_watch.c,
+# which reports every munmap and whether it lands in the program's image).
+# And a host that unloads a library and keeps running gets back the buffers
+# the library made (tests/cinterop/unload_host.c). Must never skip.
+run_one_owner_across_a_library_test() {
+    local work fail_msg="" fail_log=""
+    work="$(mktemp -d)"
+
+    run_owner_case() {
+        # $1 = case name, $2 = consumer source, $3 = expected stdout, $4 = expected exit
+        [[ -n "$fail_msg" ]] && return
+        printf '%s\n' "$2" >"$work/$1.vox"
+        if ! "$VOX_BIN" "$work/$1.vox" -o "$work/$1" >"$work/$1.log" 2>&1; then
+            fail_msg="one-owner/$1 (consumer build)"; fail_log="$work/$1.log"; return
+        fi
+        local out rc
+        out=$(cd "$work" && "./$1" 2>>"$work/$1.log")
+        rc=$?
+        if [[ "$out" != "$3" || "$rc" != "$4" ]]; then
+            fail_msg="one-owner/$1"
+            { echo "stdout:"; echo "$out"; echo "exit: $rc"; echo "expected:"; echo "$3"; echo "exit: $4"; cat "$work/$1.log"; } >"$work/$1.out"
+            fail_log="$work/$1.out"
+        fi
+    }
+
+    if ! command -v gcc >/dev/null 2>&1; then
+        fail_msg="one-owner (gcc not found - required toolchain, not optional)"
+    elif ! gcc -Wall -Wextra -Werror -std=gnu11 "$SCRIPT_DIR/tests/cinterop/munmap_watch.c" -o "$work/munmap_watch" >"$work/gcc.log" 2>&1 \
+         || ! gcc -Wall -Wextra -Werror -std=gnu11 "$SCRIPT_DIR/tests/cinterop/unload_host.c" -o "$work/unload_host" >>"$work/gcc.log" 2>&1; then
+        fail_msg="one-owner (gcc build of the watch and the host)"; fail_log="$work/gcc.log"
+    else
+        local lib
+        for lib in shelf bshelf scratch; do
+            if ! "$VOX_BIN" "$SCRIPT_DIR/tests/shared/${lib}_lib.vox" --shared -o "$work/lib$lib.so" >"$work/build.log" 2>&1; then
+                fail_msg="one-owner (library $lib build)"; fail_log="$work/build.log"; break
+            fi
+        done
+    fi
+
+    run_owner_case freed_in_the_program_written_in_the_library 'see shelf version "1.0" from "./libshelf.lib".
+a list called xs is ["a"].
+Free xs.
+'"'"'add to'"'"' of xs.
+Print "after add through the library: {xs'"'"'s length} {xs}".' \
+        'after add through the library: 0 []' 0
+
+    run_owner_case freed_in_the_library_written_in_the_program 'see shelf version "1.0" from "./libshelf.lib".
+a list called xs is ["a"].
+'"'"'drop'"'"' of xs.
+Print "after free in library: {xs'"'"'s length}".
+append "z" to xs.
+On error print "main: refused".
+Print "after append in main: {xs'"'"'s length} {xs}".' \
+        $'after free in library: 0\nmain: refused\nafter append in main: 0 []' 0
+
+    run_owner_case a_buffer_freed_in_the_library 'see bshelf version "1.0" from "./libbshelf.lib".
+a buffer called hold is "a".
+'"'"'drop bytes'"'"' of hold.
+Print "after drop: {hold'"'"'s size}".
+append "z" to hold.
+On error print "main: refused".' \
+        $'after drop: 0\nmain: refused' 0
+
+    run_owner_case a_buffer_grown_in_the_library 'see bshelf version "1.0" from "./libbshelf.lib".
+a buffer called hold is "a".
+'"'"'fill'"'"' of hold.
+Print "after fill: {hold'"'"'s size}".
+append "!" to hold.
+Print "after one more: {hold'"'"'s size}".' \
+        $'after fill: 24001\nafter one more: 24002' 0
+
+    # Freed in the program, then freed again in the library: the library
+    # refuses it, and nothing in the program's own image is unmapped.
+    run_owner_case freed_on_both_sides 'see shelf version "1.0" from "./libshelf.lib".
+a list called xs is ["a"].
+Free xs.
+'"'"'drop'"'"' of xs.
+Print "xs: {xs}".' \
+        'xs: []' 0
+    if [[ -z "$fail_msg" ]]; then
+        local watched
+        watched=$(cd "$work" && ./munmap_watch ./freed_on_both_sides 2>&1)
+        if grep -q "^munmap .* image$" <<<"$watched"; then
+            fail_msg="one-owner/freed_on_both_sides (a second Free unmapped the program's own memory)"
+            echo "$watched" >"$work/watch.log"; fail_log="$work/watch.log"
+        fi
+    fi
+
+    # A host that unloads the library and keeps running: the ten 64 KiB
+    # buffers the library made are all given back during dlclose.
+    if [[ -z "$fail_msg" ]]; then
+        local unload given
+        unload=$(cd "$work" && ./munmap_watch ./unload_host ./libscratch.so scratch_1_0_make_scratch 2>&1)
+        given=$(awk '/^mark$/{m++} /^munmap / && m==1 && $2>=65536 && $2<=69632 {n++} END{print n+0}' <<<"$unload")
+        if [[ "$given" != "10" ]] || ! grep -q "^host still running$" <<<"$unload"; then
+            fail_msg="one-owner/unload (expected the library's 10 buffers given back at dlclose, got $given)"
+            echo "$unload" >"$work/unload.log"; fail_log="$work/unload.log"
+        fi
+    fi
+
+    if [[ -n "$fail_msg" ]]; then
+        echo -e "  ${RED}FAIL${NC} $fail_msg"
+        [ -s "$fail_log" ] && sed 's/^/      /' "$fail_log" | head -25
+        ((FAILED++))
+    else
+        echo -e "  ${GREEN}PASS${NC} one-owner (a list or buffer is one collection across a library boundary; unload gives buffers back)"
+        ((PASSED++))
+    fi
+    rm -rf "$work"
+}
+run_one_owner_across_a_library_test
+
 # A4.2 — two versions of one library in one .so, each consumed from its own
 # program. Reuses the A2 flags .so (flags 0.1 and 1.0 in one binary); two
 # consumers `see` different versions and call hasflag(5), which must print 6

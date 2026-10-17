@@ -7,17 +7,34 @@
 ; one, so the %defines are visible at its assembly point.
 ;
 ; Co-included with resource_fd.asm whenever the resource runtime is
-; present: _read_into_buffer reads the fd seekability cache, and
-; _cleanup_all (fd) calls _cleanup_buffers. The two share the
+; present: _read_into_buffer reads the fd seekability cache, and a library's
+; `_unload_library` (below) calls `_cleanup_all` (fd). The two share the
 ; (uses_buffers || uses_files || uses_floats) gate.
+;
+; The buffer record. Each module (a program, or each `.so`) records the
+; buffers its own `_alloc_buffer*` mapped, in `buf_table`, so that a library
+; unloaded by a host that keeps running (`dlclose`, which runs `.fini_array`)
+; gives them back (`_sweep_buffer_record`). A buffer can be grown or freed by
+; ANOTHER module's code (a buffer parameter is the caller's buffer), so every
+; buffer carries the way back to its entry: the word just before its header,
+; BUF_RECORD, holds the ADDRESS of the `buf_table` entry that records it (0
+; when the table was full). Growth that moves the buffer writes the new
+; pointer through that address, and `Free` clears the entry through it, in
+; the same routine, whichever module runs it. No routine searches a table.
+; The pointer every name holds still points at BUF_CAPACITY, so only the
+; routines that map, move or unmap a buffer know the word is there: the
+; mapping starts BUF_PREFIX bytes earlier.
 %define MAX_BUFFERS 64
 ; Buffer structure offsets
+%define BUF_RECORD   -8     ; 8 bytes: address of this buffer's record entry, or 0
+%define BUF_PREFIX   8      ; bytes mapped before BUF_CAPACITY (the record word)
 %define BUF_CAPACITY 0      ; 8 bytes: allocated size
 %define BUF_LENGTH   8      ; 8 bytes: used length
 %define BUF_FLAGS    16     ; 8 bytes: flags (bit 0 = fixed size)
 %define BUF_DATA     24     ; data starts here
 ; Buffer flags
 %define BUF_FLAG_FIXED 1    ; Buffer has fixed size, no growing allowed
+%define BUF_FLAG_RELEASED 2 ; The released header: `Free` was here
 
 ; Initial buffer capacity
 %define INITIAL_BUF_CAP 4096
@@ -33,19 +50,21 @@ section .data
     ; (docs/BUGS_FOUND.md #107, the `Free` statement): capacity 0, length
     ; 0, BUF_FLAG_FIXED set, one reserved NUL-terminator byte - the same
     ; shape `_alloc_buffer_sized(0)` produces (bug #78's size guard), just
-    ; static instead of mmap'd. `_free_buffer` and `_realloc_buffer`/
-    ; `_reallocate_buffer` below check a buffer pointer against this
-    ; label's own ADDRESS before touching memory, not against its shape -
-    ; a real buffer can legitimately reach capacity 0 + BUF_FLAG_FIXED too
-    ; (bug #78), and only THIS instance must never be mremap'd/munmap'd.
-    _released_buffer_header: dq 0, 0, 1
+    ; static instead of mmap'd - plus BUF_FLAG_RELEASED, which is how
+    ; `_free_buffer` and `_realloc_buffer`/`_reallocate_buffer` below
+    ; recognise it before touching memory. A real buffer can legitimately
+    ; reach capacity 0 + BUF_FLAG_FIXED too (bug #78), so the shape alone
+    ; is not enough; and each library has its own copy of this header, so
+    ; its address is not enough either: a buffer freed on one side of a
+    ; `.so` boundary must be recognised on the other. Its record word is 0.
+                              dq 0
+    _released_buffer_header: dq 0, 0, BUF_FLAG_FIXED | BUF_FLAG_RELEASED
                               db 0
 
 section .bss
-    ; Buffer tracking table
-    ; Each entry: 8 bytes (pointer to buffer struct, 0 = unused)
+    ; The buffer record: each entry holds a buffer this module mapped (0 =
+    ; unused), and that buffer's BUF_RECORD word holds the entry's address.
     buf_table: resq MAX_BUFFERS
-    buf_count: resq 1
     ; Scratch buffer for _buffer_append_formatted_int (backwards decimal conversion)
     fmt_i64_buf: resb 128
     ; The buffer `Print` renders a padded float into before padding it
@@ -67,8 +86,8 @@ _alloc_buffer:
     push r10
     push r11
     
-    ; Allocate: header (16 bytes) + initial capacity + 1 for null terminator
-    mov rsi, INITIAL_BUF_CAP + BUF_DATA + 1
+    ; Allocate: record word + header + initial capacity + 1 for null terminator
+    mov rsi, INITIAL_BUF_CAP + BUF_DATA + 1 + BUF_PREFIX
     
     ; mmap anonymous memory
     mov rax, 9              ; SYS_MMAP
@@ -82,13 +101,14 @@ _alloc_buffer:
     ; Check for error (raw mmap returns -errno in [-4095,-1])
     cmp rax, -4096
     ja .failed
+    add rax, BUF_PREFIX     ; the buffer pointer is past the record word
     
     ; Initialize buffer header (dynamic buffer)
     mov qword [rax + BUF_CAPACITY], INITIAL_BUF_CAP
     mov qword [rax + BUF_LENGTH], 0
     mov qword [rax + BUF_FLAGS], 0       ; dynamic (not fixed)
     
-    ; Register buffer for tracking
+    ; Record it in this module's table
     push rax
     mov rdi, rax
     call _register_buffer
@@ -129,9 +149,10 @@ _alloc_buffer_sized:
     
     mov r12, rdi            ; save requested size
     
-    ; Allocate: header (24 bytes) + requested size + 1 for null terminator
+    ; Allocate: record word + header (24 bytes) + requested size + 1 for
+    ; the null terminator
     mov rsi, rdi
-    add rsi, BUF_DATA + 1
+    add rsi, BUF_DATA + 1 + BUF_PREFIX
     
     ; mmap anonymous memory
     mov rax, 9              ; SYS_MMAP
@@ -145,13 +166,14 @@ _alloc_buffer_sized:
     ; Check for error (raw mmap returns -errno in [-4095,-1])
     cmp rax, -4096
     ja .sized_failed
+    add rax, BUF_PREFIX     ; the buffer pointer is past the record word
     
     ; Initialize buffer header (fixed size buffer)
     mov [rax + BUF_CAPACITY], r12
     mov qword [rax + BUF_LENGTH], 0
     mov qword [rax + BUF_FLAGS], BUF_FLAG_FIXED  ; fixed size, no growing
     
-    ; Register buffer for tracking
+    ; Record it in this module's table
     push rax
     mov rdi, rax
     call _register_buffer
@@ -175,8 +197,11 @@ _alloc_buffer_sized:
     pop rbx
     ret
 
-; Register a buffer for tracking
-; Args: buffer pointer in rdi
+; Record a buffer this module just mapped: take a free entry of buf_table,
+; store the buffer there, and store the entry's address in the buffer's
+; BUF_RECORD word. A full table records nothing (BUF_RECORD = 0): that
+; buffer is simply not given back at unload, the cap the table always had.
+; Args: buffer pointer in rdi. Clobbers rax.
 global _register_buffer
 _register_buffer:
     push rbx
@@ -197,149 +222,120 @@ _register_buffer:
 
 .found_slot:
     mov [rbx + rcx*8], rdi
-    inc qword [rel buf_count]
+    lea rax, [rbx + rcx*8]
+    mov [rdi + BUF_RECORD], rax
+    jmp .registered
 
 .table_full:
+    mov qword [rdi + BUF_RECORD], 0
+
+.registered:
     pop rcx
     pop rbx
     ret
 
-; Unregister a buffer from tracking (without freeing)
-; Args: buffer pointer in rdi
+; Clear a buffer's record entry, through its own BUF_RECORD word, so it
+; works whichever module recorded the buffer and whichever module runs it.
+; Args: buffer pointer in rdi. Clobbers rax.
 global _unregister_buffer
 _unregister_buffer:
-    push rbx
-    push rcx
-
-    lea rbx, [rel buf_table]
-    xor rcx, rcx
-.find_unreg:
-    cmp rcx, MAX_BUFFERS
-    jge .not_found_unreg
-
-    mov rax, [rbx + rcx*8]
-    cmp rax, rdi
-    je .found_unreg
-
-    inc rcx
-    jmp .find_unreg
-
-.found_unreg:
-    mov qword [rbx + rcx*8], 0
-    dec qword [rel buf_count]
-    
-.not_found_unreg:
-    pop rcx
-    pop rbx
+    mov rax, [rdi + BUF_RECORD]
+    test rax, rax
+    jz .not_recorded
+    mov qword [rax], 0
+    mov qword [rdi + BUF_RECORD], 0
+.not_recorded:
     ret
 
-; Free a buffer and unregister it.
+; Free a buffer and clear its record entry.
 ; Args: buffer pointer in rdi
 ;
-; Always munmaps, whether or not the buffer is currently in buf_table - a
-; buffer allocated past MAX_BUFFERS live ones is never registered
-; (_register_buffer's .table_full silently skips it), so gating the munmap
-; on table presence left every such buffer mapped forever
-; (docs/BUGS_FOUND.md #108). Unregistering FIRST when it is found still
-; keeps the exit sweep (_cleanup_buffers) from touching this struct again.
+; Always munmaps, recorded or not - a buffer allocated past MAX_BUFFERS live
+; ones is never recorded, and gating the munmap on the record left every
+; such buffer mapped forever (docs/BUGS_FOUND.md #108).
 global _free_buffer
 _free_buffer:
-    ; Refuse a pointer that IS the shared released header (a double
-    ; `Free`) before touching anything - identity check, checked first,
-    ; so a caller that skips its own check (codegen no longer keeps one;
-    ; see `emit_free_buffer`) is still safe.
-    lea rax, [rel _released_buffer_header]
-    cmp rdi, rax
-    jne .free_buf_live
+    ; Refuse a released buffer (a double `Free`) before touching anything:
+    ; BUF_FLAG_RELEASED marks every module's released header, so a caller
+    ; that skips its own check (codegen keeps none; see `emit_free_buffer`)
+    ; is still safe.
+    test qword [rdi + BUF_FLAGS], BUF_FLAG_RELEASED
+    jz .free_buf_live
     SET_LAST_ERROR 1  ; already freed
     ret
 
 .free_buf_live:
-    push rbx
     push rcx
     push rsi
 
-    lea rbx, [rel buf_table]
-    ; Find and remove from table, if tracked
-    xor rcx, rcx
-.find_buf:
-    cmp rcx, MAX_BUFFERS
-    jge .munmap_buf
+    call _unregister_buffer
 
-    mov rax, [rbx + rcx*8]
-    cmp rax, rdi
-    je .found_buf
-
-    inc rcx
-    jmp .find_buf
-
-.found_buf:
-    mov qword [rbx + rcx*8], 0
-    dec qword [rel buf_count]
-
-.munmap_buf:
     mov rsi, [rdi + BUF_CAPACITY]
-    add rsi, BUF_DATA           ; total size
-    mov rax, 11                 ; SYS_MUNMAP
+    add rsi, BUF_DATA + 1 + BUF_PREFIX  ; the whole mapping
+    sub rdi, BUF_PREFIX                 ; which starts at the record word
+    mov rax, 11                         ; SYS_MUNMAP
     syscall
+    add rdi, BUF_PREFIX
     CLEAR_LAST_ERROR  ; released
 
     pop rsi
     pop rcx
-    pop rbx
     ret
 
-; Free all tracked buffers
-; Called before program exit
-global _cleanup_buffers
-_cleanup_buffers:
+; Give back every buffer this module's record still holds. Run only when a
+; library is unloaded (`_unload_library`, the `.fini_array` entry of a
+; `--shared` build): at process exit the kernel takes every mapping back
+; anyway, so a program's exit does not sweep.
+global _sweep_buffer_record
+_sweep_buffer_record:
     push rbx
-    push r12            ; use r12 for loop counter (preserved across syscall)
-    push r13
-    push r14
+    push r12
 
     lea rbx, [rel buf_table]
-    xor r12, r12        ; r12 = loop counter
-.free_loop:
+    xor r12, r12        ; r12 = index (rbx and r12 survive the syscall)
+.sweep_loop:
     cmp r12, MAX_BUFFERS
-    jge .done
+    jge .sweep_done
 
     mov rdi, [rbx + r12*8]
     test rdi, rdi
-    jz .next
+    jz .sweep_next
 
-    ; Save buffer pointer before syscall clobbers registers
-    mov r13, rdi
-
-    ; Get size and munmap (+1 for null terminator). rbx (table base) and
-    ; r12 (index) both survive the syscall: only rax/rcx/r11 are clobbered.
     mov rsi, [rdi + BUF_CAPACITY]
-    add rsi, BUF_DATA + 1
+    add rsi, BUF_DATA + 1 + BUF_PREFIX
+    sub rdi, BUF_PREFIX
     mov rax, 11             ; SYS_MUNMAP
     syscall
 
     mov qword [rbx + r12*8], 0
 
-.next:
+.sweep_next:
     inc r12
-    jmp .free_loop
-    
-.done:
-    mov qword [rel buf_count], 0
-    pop r14
-    pop r13
+    jmp .sweep_loop
+
+.sweep_done:
     pop r12
     pop rbx
+    ret
+
+; The `.fini_array` entry of a `--shared` library: what a host's `dlclose`
+; (or its exit through libc) runs. Close and flush the library's files, then
+; give back the buffers the library made.
+global _unload_library
+_unload_library:
+    call _cleanup_all
+    call _sweep_buffer_record
     ret
 
 ; Reallocate a buffer to an EXACT new capacity (no doubling).
 ; Args: rdi = buffer pointer, rsi = exact new capacity (must be >= BUF_LENGTH)
 ; Returns: new buffer pointer in rax (the OLD pointer on mmap failure, with
 ;          _last_error set to 1). The buffer may move.
-; Copies the existing BUF_LENGTH bytes, updates the buffer-table entry to the
-; new pointer, and frees the old allocation. The flags field is not copied: the
-; new region is freshly mmapped (zeroed), so it is a dynamic buffer (flags 0),
-; matching what _grow_buffer always produced.
+; Copies the existing BUF_LENGTH bytes, writes the new pointer into the
+; buffer's record entry (through BUF_RECORD), and frees the old allocation.
+; The flags field is not copied: the new region is freshly mmapped (zeroed),
+; so it is a dynamic buffer (flags 0), matching what _grow_buffer always
+; produced.
 global _reallocate_buffer
 _reallocate_buffer:
     ; Same guard as _free_buffer/_realloc_buffer, and for the same reason
@@ -347,11 +343,11 @@ _reallocate_buffer:
     ; BUF_FLAG_FIXED pointer out before reaching here (the released header
     ; is always fixed), so this is a belt-and-suspenders check for any
     ; future caller that does not.
-    lea rax, [rel _released_buffer_header]
-    cmp rdi, rax
-    jne .reallocate_buffer_live
+    mov rax, rdi
+    test qword [rdi + BUF_FLAGS], BUF_FLAG_RELEASED
+    jz .reallocate_buffer_live
     SET_LAST_ERROR 1  ; refused: this buffer is freed
-    ret               ; rax already holds the header - unchanged
+    ret               ; rax holds the header - unchanged
 
 .reallocate_buffer_live:
     push rbx
@@ -376,47 +372,38 @@ _reallocate_buffer:
     jle .mmap_alloc             ; not growing -> mmap path
 
     mov rsi, rax
-    add rsi, BUF_DATA + 1           ; old_total_size
+    add rsi, BUF_DATA + 1 + BUF_PREFIX  ; old_total_size
     mov rdx, r14
-    add rdx, BUF_DATA + 1           ; new_total_size
-    mov rdi, r12                    ; old_addr
+    add rdx, BUF_DATA + 1 + BUF_PREFIX  ; new_total_size
+    lea rdi, [r12 - BUF_PREFIX]         ; old_addr: the mapping's start
     mov r10, MREMAP_MAYMOVE         ; flags
     mov rax, SYS_MREMAP             ; 25
     syscall
     cmp rax, -4096
     ja .mmap_alloc                  ; mremap failed -> mmap path
 
-    ; mremap succeeded: rax = (possibly moved) buffer pointer. The existing
-    ; header bytes - including BUF_LENGTH and BUF_FLAGS - move with the
-    ; mapping, so only BUF_CAPACITY needs updating.
-    mov rbx, rax
+    ; mremap succeeded: rax = the (possibly moved) mapping. The record word
+    ; and the header bytes - including BUF_LENGTH and BUF_FLAGS - move with
+    ; it, so only BUF_CAPACITY needs updating.
+    lea rbx, [rax + BUF_PREFIX]
     mov [rbx + BUF_CAPACITY], r14
-    ; The old mapping was consumed by mremap - do NOT munmap it. Update
-    ; buf_table only if the pointer actually moved.
+    ; The old mapping was consumed by mremap - do NOT munmap it. The record
+    ; entry follows the buffer if it moved.
     cmp rbx, r12
     je .mremap_done
-    lea r11, [rel buf_table]
-    xor rcx, rcx
-.mremap_find_entry:
-    cmp rcx, MAX_BUFFERS
-    jge .mremap_no_entry
-    mov rax, [r11 + rcx*8]
-    cmp rax, r12
-    je .mremap_update_entry
-    inc rcx
-    jmp .mremap_find_entry
-.mremap_update_entry:
-    mov [r11 + rcx*8], rbx
-.mremap_no_entry:
+    mov rax, [rbx + BUF_RECORD]
+    test rax, rax
+    jz .mremap_done
+    mov [rax], rbx
 .mremap_done:
     mov rax, rbx            ; return new buffer
     jmp .done
 
 .mmap_alloc:
-    ; Allocate new buffer (+ header + 1 for null terminator)
+    ; Allocate new buffer (+ record word + header + 1 for null terminator)
     mov rax, 9              ; SYS_MMAP
     mov rsi, r14
-    add rsi, BUF_DATA + 1   ; total allocation size
+    add rsi, BUF_DATA + 1 + BUF_PREFIX  ; total allocation size
     xor rdi, rdi
     mov rdx, 3              ; PROT_READ | PROT_WRITE
     mov r10, 34             ; MAP_PRIVATE | MAP_ANONYMOUS
@@ -428,9 +415,17 @@ _reallocate_buffer:
     cmp rax, -4096
     ja .failed
 
-    mov rbx, rax            ; new buffer
+    lea rbx, [rax + BUF_PREFIX]  ; new buffer
 
-    ; Initialize new header (r14 survived the syscall)
+    ; Initialize new header (r14 survived the syscall). The buffer keeps its
+    ; record entry: the new block takes the old one's record word, and the
+    ; entry is pointed at the new block.
+    mov rax, [r12 + BUF_RECORD]
+    mov [rbx + BUF_RECORD], rax
+    test rax, rax
+    jz .reallocate_unrecorded
+    mov [rax], rbx
+.reallocate_unrecorded:
     mov [rbx + BUF_CAPACITY], r14
     mov rax, [r12 + BUF_LENGTH]
     mov [rbx + BUF_LENGTH], rax
@@ -443,26 +438,10 @@ _reallocate_buffer:
     mov rcx, [r12 + BUF_LENGTH]
     rep movsb
 
-    ; Update buffer table entry. No syscall between the lea and the uses
-    ; below, so a caller-saved scratch (r11) holds the base safely.
-    lea r11, [rel buf_table]
-    xor rcx, rcx
-.find_entry:
-    cmp rcx, MAX_BUFFERS
-    jge .no_entry
-    mov rax, [r11 + rcx*8]
-    cmp rax, r12
-    je .update_entry
-    inc rcx
-    jmp .find_entry
-.update_entry:
-    mov [r11 + rcx*8], rbx
-.no_entry:
-
-    ; Free old buffer (+1 for null terminator)
-    mov rdi, r12
+    ; Free old buffer (+ record word + 1 for null terminator)
+    lea rdi, [r12 - BUF_PREFIX]
     mov rsi, [r12 + BUF_CAPACITY]
-    add rsi, BUF_DATA + 1
+    add rsi, BUF_DATA + 1 + BUF_PREFIX
     mov rax, 11             ; SYS_MUNMAP
     syscall
 
@@ -832,12 +811,21 @@ _buffer_append:
     cmp rax, [r12 + BUF_CAPACITY]
     jle .append_have_space
 
+    ; A buffer appended to itself: growth can move it and release the old
+    ; block, so whether the source IS the destination is decided now, and
+    ; after the growth the source is the moved block too.
+    xor ebx, ebx
+    cmp r12, r13
+    sete bl
     mov rdi, r12
     mov rsi, rax
     call _grow_buffer
     test rax, rax
     jz .append_grow_failed
     mov r12, rax
+    test bl, bl
+    jz .append_have_space
+    mov r13, r12                    ; the source moved with the destination
 
 .append_have_space:
     lea rdi, [r12 + BUF_DATA]
@@ -945,12 +933,30 @@ _buffer_append_bytes:
     cmp rax, [r12 + BUF_CAPACITY]
     jle .append_bytes_have_space
 
+    ; Bytes that lie inside the destination's own data (a buffer's text
+    ; appended to that buffer) move with it: growth can release the old
+    ; block, so their offset is taken now and applied to the moved block.
+    ; rbx = offset into the data area, or -1 when the bytes are elsewhere.
+    mov rbx, -1
+    lea r9, [r12 + BUF_DATA]
+    cmp r13, r9
+    jb .append_bytes_grow
+    lea rcx, [r9 + r8]
+    cmp r13, rcx
+    ja .append_bytes_grow
+    mov rbx, r13
+    sub rbx, r9
+.append_bytes_grow:
     mov rdi, r12
     mov rsi, rax
     call _grow_buffer
     test rax, rax
     jz .append_bytes_grow_failed
     mov r12, rax
+    cmp rbx, -1
+    je .append_bytes_have_space
+    lea r13, [r12 + BUF_DATA]
+    add r13, rbx                    ; the same bytes, in the moved block
 
 .append_bytes_have_space:
     lea rdi, [r12 + BUF_DATA]
@@ -1478,6 +1484,19 @@ _buffer_duplicate:
     push rsi
     push r12
     mov r12, rdi
+    ; A copy of a released buffer is a fresh, empty, growing buffer of its
+    ; own, as a named copy of one is: it was never freed, so it takes
+    ; writes. (The released header is fixed at capacity 0, so without this
+    ; the copy would be a fixed buffer with no room at all.)
+    test qword [r12 + BUF_FLAGS], BUF_FLAG_RELEASED
+    jz .duplicate_live
+    call _alloc_buffer
+    test rax, rax
+    jnz .duplicate_done
+    mov qword [rel _last_error], 1
+    lea rax, [rel _released_buffer_header]
+    jmp .duplicate_done
+.duplicate_live:
     test qword [r12 + BUF_FLAGS], BUF_FLAG_FIXED
     jz .duplicate_growing
     mov rdi, [r12 + BUF_CAPACITY]
@@ -1517,17 +1536,16 @@ _buffer_clear:
 ; Note: For fixed buffers, this changes capacity. Data is preserved up to min(old_len, new_size)
 global _realloc_buffer
 _realloc_buffer:
-    ; Refuse the shared released header the same way _free_buffer does:
-    ; `Resize`d, it would fall through to the alloc+copy fallback below
-    ; and munmap this address - not page-aligned today so the syscall
-    ; happens to fail (EINVAL), but that is not a safety guarantee, and
-    ; the fallback would also hand back a freshly mmap'd buffer, silently
-    ; resurrecting a variable `Free` emptied (docs/BUGS_FOUND.md #107).
-    lea rax, [rel _released_buffer_header]
-    cmp rdi, rax
-    jne .realloc_buffer_live
+    ; Refuse a released buffer the same way _free_buffer does: `Resize`d,
+    ; it would fall through to the alloc+copy fallback below and munmap a
+    ; static header, and the fallback would also hand back a freshly mmap'd
+    ; buffer, silently resurrecting a variable `Free` emptied
+    ; (docs/BUGS_FOUND.md #107).
+    mov rax, rdi
+    test qword [rdi + BUF_FLAGS], BUF_FLAG_RELEASED
+    jz .realloc_buffer_live
     SET_LAST_ERROR 1  ; refused: this buffer is freed
-    ret               ; rax already holds the header - unchanged
+    ret               ; rax holds the header - unchanged
 
 .realloc_buffer_live:
     push rbx
@@ -1547,36 +1565,28 @@ _realloc_buffer:
     cmp r13, rax                     ; new_size > old_capacity ?
     jle .realloc_fallback            ; not growing -> alloc + copy path
     mov rsi, rax
-    add rsi, BUF_DATA + 1            ; old_total_size = old_capacity + BUF_DATA + 1
+    add rsi, BUF_DATA + 1 + BUF_PREFIX  ; old_total_size, from the record word
     mov rdx, r13
-    add rdx, BUF_DATA + 1            ; new_total_size = new_size + BUF_DATA + 1
-    mov rdi, r12                      ; old_addr
+    add rdx, BUF_DATA + 1 + BUF_PREFIX  ; new_total_size
+    lea rdi, [r12 - BUF_PREFIX]         ; old_addr: the mapping's start
     mov r10, MREMAP_MAYMOVE          ; flags
     mov rax, SYS_MREMAP              ; 25
     syscall
     cmp rax, -4096
     ja .realloc_fallback             ; mremap failed -> alloc + copy path
-    ; mremap succeeded: rax = (possibly moved) pointer. BUF_LENGTH (old_len,
-    ; which is <= old_capacity < new_size) and BUF_FLAGS are preserved by
-    ; mremap - only BUF_CAPACITY changes.
-    mov rbx, rax
+    ; mremap succeeded: rax = the (possibly moved) mapping. The record word,
+    ; BUF_LENGTH (old_len, which is <= old_capacity < new_size) and
+    ; BUF_FLAGS are preserved by mremap - only BUF_CAPACITY changes.
+    lea rbx, [rax + BUF_PREFIX]
     mov [rbx + BUF_CAPACITY], r13
     ; The old mapping was consumed by mremap - do NOT unregister_buffer or
-    ; munmap it. Update buf_table only if the pointer moved.
+    ; munmap it. The record entry follows the buffer if it moved.
     cmp rbx, r12
     je .realloc_mremap_return
-    lea r11, [rel buf_table]
-    xor rcx, rcx
-.realloc_find_entry:
-    cmp rcx, MAX_BUFFERS
-    jge .realloc_mremap_return
-    mov rax, [r11 + rcx*8]
-    cmp rax, r12
-    je .realloc_update_entry
-    inc rcx
-    jmp .realloc_find_entry
-.realloc_update_entry:
-    mov [r11 + rcx*8], rbx
+    mov rax, [rbx + BUF_RECORD]
+    test rax, rax
+    jz .realloc_mremap_return
+    mov [rax], rbx
 .realloc_mremap_return:
     mov rax, rbx
     pop r14
@@ -1627,15 +1637,15 @@ _realloc_buffer:
     mov rdx, [r12 + BUF_FLAGS]
     mov [rbx + BUF_FLAGS], rdx
 
-    ; Free old buffer (unregister from tracking)
+    ; Free old buffer (clear its record entry; the new one has its own)
     mov rdi, r12
     call _unregister_buffer
     
-    ; Free old buffer memory
+    ; Free old buffer memory, from its record word
     mov rax, 11             ; sys_munmap
-    mov rdi, r12
+    lea rdi, [r12 - BUF_PREFIX]
     mov rsi, [r12 + BUF_CAPACITY]
-    add rsi, BUF_DATA       ; total size including header
+    add rsi, BUF_DATA + 1 + BUF_PREFIX
     syscall
     
     ; Return new buffer pointer

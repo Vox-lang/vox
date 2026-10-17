@@ -1,0 +1,3 @@
+(A declared value keeps its type: the current time cannot be put in it.)
+a value called here is 1.
+Get current time into here.

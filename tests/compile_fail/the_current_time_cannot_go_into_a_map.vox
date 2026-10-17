@@ -1,0 +1,3 @@
+(A declared map keeps its type: the current time cannot be put in it.)
+a map called here is {}.
+Get current time into here.

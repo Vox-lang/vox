@@ -1,0 +1,13 @@
+(`Free` through one of two parameters naming one list empties it under
+ both names, and the caller's, and a later write through the other is
+ refused with the error flag (docs/BUGS_FOUND.md #140).)
+To 'merge' of a list called first and a list called second.
+    Free first.
+    Print "second sees: {second's length}".
+    append "after" to second.
+    On error print "the append was refused".
+    Print "second now: {second}".
+
+a list called xs is ["a", "b"].
+'merge' of xs and xs.
+Print "xs: {xs}".

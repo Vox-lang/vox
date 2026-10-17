@@ -48,7 +48,7 @@ impl CodeGenerator {
             }
             _ => {
                 if let Some(offset) = self.get_var(name) {
-                    self.emit_indent(&format!("mov rax, [rbp-{}]", offset));
+                    self.emit_load_slot("rax", offset);
                     FormatPartValue::Loaded(self.variable_types.get(name).cloned())
                 } else if let Some(label) = self.global_var_label(name).cloned() {
                     self.emit_indent(&format!("mov rax, [rel {}]", label));
@@ -151,7 +151,7 @@ impl CodeGenerator {
     ) {
         let load_dst = |this: &mut Self| {
             if let Some(offset) = dst_local {
-                this.emit_indent(&format!("mov rdi, [rbp-{}]", offset));
+                this.emit_load_slot("rdi", offset);
             } else if let Some(label) = dst_global {
                 this.emit_indent(&format!("mov rdi, [rel {}]", label));
             }

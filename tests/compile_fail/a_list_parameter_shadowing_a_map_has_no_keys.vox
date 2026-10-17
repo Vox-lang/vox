@@ -1,0 +1,7 @@
+(Inside the function, stock is the list parameter, not the top-level map of the same name, so it has no keys.)
+a map called stock is {"pears": 1}.
+
+To 'count keys' with a list called stock.
+    For each name in stock's keys, print name.
+
+'count keys' of ["a"].

@@ -1,0 +1,17 @@
+(The list field of a thing parameter passed on to a value parameter is a
+ copy: freeing the field through a list parameter leaves the value whole.)
+A thing called note has
+  a list called items.
+
+To 'look' with a value called kept and a list called items.
+    Free items.
+    Print "kept: {kept}".
+
+To 'pass on' with a note called given.
+    'look' of given's items and given's items.
+    Print "given: {given's items}".
+
+a note called memo.
+append "a" to memo's items.
+'pass on' of memo.
+Print "memo: {memo's items}".

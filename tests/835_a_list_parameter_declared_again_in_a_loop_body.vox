@@ -1,0 +1,12 @@
+(A loop body runs only on some paths, like a branch: a list declared in it
+ under a parameter's name lasts as long as the body, and after the loop the
+ name is the parameter again.)
+To 'loop' with a list called items.
+    a number called n is 0.
+    While n is less than 2, a list called items is ["local"], append "y" to items, Set n to n add 1.
+    append "x" to items.
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'loop' of xs.
+Print "xs: {xs}".

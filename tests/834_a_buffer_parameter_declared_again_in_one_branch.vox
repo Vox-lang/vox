@@ -1,0 +1,13 @@
+(The buffer twin of test 828: a buffer declared in a branch that did not
+ run leaves the caller's buffer as it was, and after the branch the name is
+ the parameter again.)
+To 'maybe replace' with a buffer called data and a number called choice.
+    If choice is 1 then, a buffer called data is "local".
+    append "x" to data.
+    Print "inside: {data}".
+
+a buffer called hold is "old".
+'maybe replace' of hold and 0.
+Print "hold: {hold}".
+'maybe replace' of hold and 1.
+Print "hold: {hold}".

@@ -1,0 +1,8 @@
+(The read-only half of test 819.)
+a value called box is ["a", "b"].
+To 'look at' with a list called items.
+    box is 5.
+    Print "items: {items's length}".
+
+'look at' of box.
+Print "box: {box}".

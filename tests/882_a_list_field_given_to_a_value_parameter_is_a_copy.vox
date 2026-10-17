@@ -1,0 +1,21 @@
+(A thing's list field passed to a value parameter is copied into it, as a
+ named list is: what the function then does to the field, by its own name,
+ is never seen through the parameter.)
+A thing called note has
+  a list called items.
+
+a note called memo.
+append "a" to memo's items.
+
+To 'look after freeing' with a value called kept.
+    Free memo's items.
+    Print "kept after a free: {kept}".
+
+To 'look after growing' with a value called kept.
+    For each step from 1 to 40, append step to memo's items.
+    Print "kept after growth: {kept}".
+
+'look after growing' of memo's items.
+Print "memo grew to {memo's items's length}".
+'look after freeing' of memo's items.
+Print "memo after the free: {memo's items}".

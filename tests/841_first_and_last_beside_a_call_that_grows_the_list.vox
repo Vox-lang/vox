@@ -1,0 +1,31 @@
+(`'s first` and `'s last` read the list as it is when they are reached.
+ The two operands of `add` are worked out right to left, so the read on the
+ left sees the call's change and the read on the right does not. The last
+ two reads name the list through one parameter while the call grows it
+ through another, and still read it as it is.)
+To 'replace front' with a list called items.
+    For each number from 1 to 20, append the number to items.
+    Set element 1 of items to 7.
+    Return a number, 1.
+
+To 'grow' with a list called items.
+    For each number from 1 to 20, append the number to items.
+    Return a number, 0.
+
+To 'read beside' with a list called first and a list called second.
+    a number called front is first's first add 'replace front' of second.
+    a number called back is first's last add 'grow' of second.
+    Print "front: {front}, back: {back}".
+
+a list called ys is [5].
+a number called total is ys's first add 'replace front' of ys.
+Print "total: {total}, length: {ys's length}".
+a list called zs is [5].
+a number called both is 'replace front' of zs add zs's first.
+Print "both: {both}, length: {zs's length}".
+a list called xs is [1, 2].
+a number called k is xs's last add 'grow' of xs.
+Print "k: {k}, length: {xs's length}".
+a list called ws is [5].
+'read beside' of ws and ws.
+Print "ws length: {ws's length}".

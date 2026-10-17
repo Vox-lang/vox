@@ -1,0 +1,9 @@
+(A loop variable over a list of lists holds its own copy of each element,
+ and a list parameter given it works on that copy, which the rest of the
+ loop body sees. The list being walked is untouched.)
+To 'mark' with a list called items.
+    append "x" to items.
+
+a list called outer is [["a"], ["b"]].
+For each inner in outer, 'mark' of inner, Print "inner: {inner}".
+Print "outer: {outer}".

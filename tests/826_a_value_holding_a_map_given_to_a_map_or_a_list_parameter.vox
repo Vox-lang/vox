@@ -1,0 +1,16 @@
+(A map parameter given a `value` holding a map receives a copy of the map.
+ A list parameter given the same `value` is not called: it does not hold a
+ list, so the error flag is set.)
+a value called box is {"pears": 1}.
+To 'stock up' with a map called shelf.
+    Set shelf's "plums" to 2.
+    Print "shelf: {shelf}".
+
+To 'count' with a list called items.
+    Print "items: {items's length}".
+
+'stock up' of box.
+Print "box: {box}".
+'count' of box.
+On error print "not a list: the call was skipped".
+Print "box: {box}".

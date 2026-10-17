@@ -1,0 +1,5 @@
+(Freeing the list a `For each` walks empties it, and the loop ends there
+ (docs/BUGS_FOUND.md #143 (e)).)
+a list called xs is ["a", "b", "c"].
+For each item in xs, print item, Free xs.
+Print "after: {xs's length}".

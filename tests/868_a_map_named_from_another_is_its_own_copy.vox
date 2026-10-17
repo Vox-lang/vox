@@ -1,0 +1,5 @@
+(The map twin of test 865.)
+a map called stock is {"apples": 3}.
+a map called snapshot is stock.
+Set stock's "pears" to 5.
+Print "stock: {stock's length}, snapshot: {snapshot's length}".

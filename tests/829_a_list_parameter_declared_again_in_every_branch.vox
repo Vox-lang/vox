@@ -1,0 +1,10 @@
+(Declared in every branch, the new list is the name's meaning after the
+ branches, and the caller's list is left alone.)
+To 'maybe replace' with a list called items and a number called choice.
+    If choice is 1 then, a list called items is ["local"]. Otherwise, a list called items is ["other"].
+    append "x" to items.
+    Print "inside: {items}".
+
+a list called xs is ["old"].
+'maybe replace' of xs and 0.
+Print "xs: {xs}".

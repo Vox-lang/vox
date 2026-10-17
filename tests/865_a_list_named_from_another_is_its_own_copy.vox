@@ -1,0 +1,7 @@
+(Giving a list a name gives the name its own copy: an append to the original
+ is not seen through the copy.)
+a list called groceries is ["eggs"].
+a list called 'the backup' is groceries.
+append "milk" to groceries.
+Print "groceries: {groceries}".
+Print "the backup: {'the backup'}".

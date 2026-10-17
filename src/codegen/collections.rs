@@ -1213,3 +1213,151 @@ impl CodeGenerator {
         }
     }
 }
+
+impl CodeGenerator {
+    /// Naming copies: a list or map given a name from another name is that
+    /// name's own copy, all the way down, so a later change through one never
+    /// reaches the other (LANGUAGE.md "Naming copies"). `rax` holds what the
+    /// source evaluated to and holds the copy afterwards. Only a source that
+    /// is itself a name is copied: a literal, a call's result and a read-out
+    /// (which already copies) are new values nobody else holds, and are
+    /// moved in as they are. A `value` (or a loop variable over a mixed
+    /// list) is copied when its runtime tag says list or map.
+    ///
+    /// `moving_out_of_this_frame` is set by `Return`: a function's own local
+    /// list dies with the frame, so returning it hands it over without a
+    /// copy; a parameter's (the caller's) or a top-level one is copied.
+    pub(crate) fn emit_copy_on_naming(&mut self, source: &Expr, moving_out_of_this_frame: bool) {
+        let Expr::Identifier(name) = source else { return };
+        let slot = self.get_var(name);
+        if slot.is_none() && self.global_var_label(name).is_none() {
+            return; // not a variable: a zero-argument call, a fresh value
+        }
+        // A thing's list or map field stays the thing's own wherever it is
+        // named from, a `Return` included: the thing outlives the statement.
+        let is_a_field = self.collection_fields.contains_key(name);
+        if moving_out_of_this_frame && !is_a_field && slot.is_some_and(|slot| !self.is_cell_slot(slot)) {
+            return;
+        }
+        match self.variable_types.get(name) {
+            Some(VarType::List) => {
+                let done = self.new_label("naming_copy_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", done));
+                self.emit_indent(&format!("mov rdi, rax  ; naming copies: {} gives a copy of its list", name));
+                self.uses_lists = true;
+                self.emit_indent("call _copy_list");
+                self.emit(&format!("{}:", done));
+            }
+            Some(VarType::Map) => {
+                let done = self.new_label("naming_copy_done");
+                self.emit_indent("test rax, rax");
+                self.emit_indent(&format!("jz {}", done));
+                self.emit_indent(&format!("mov rdi, rax  ; naming copies: {} gives a copy of its map", name));
+                self.uses_maps = true;
+                self.emit_indent("call _copy_map");
+                self.emit(&format!("{}:", done));
+            }
+            Some(VarType::Mixed) => {
+                if let Some(loc) = self.mixed_element_tag_slot(source) {
+                    self.emit_copy_if_collection_mem(&loc.operand());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl CodeGenerator {
+    /// The runtime routine that compares two lists (`_list_equal`) or two
+    /// maps (`_map_equal`) by their contents, and the switches that assemble
+    /// it (and `_str_eq`, which compares their texts).
+    pub(crate) fn collection_equality_routine(&mut self, kind: &Type) -> &'static str {
+        self.uses_collection_equality = true;
+        self.uses_strings = true;
+        self.uses_lists = true;
+        if matches!(kind, Type::Map(_)) {
+            self.uses_maps = true;
+            "_map_equal"
+        } else {
+            "_list_equal"
+        }
+    }
+
+    /// `xs is equal to ys` between two lists, or two maps: whether they hold
+    /// equal contents (LANGUAGE.md "Comparisons"). Some(kind) when both sides
+    /// are provably lists, or provably maps.
+    pub(crate) fn collections_compared(&self, left: &Expr, right: &Expr) -> Option<Type> {
+        match (self.infer_expr_type(left), self.infer_expr_type(right)) {
+            (Some(VarType::List), Some(VarType::List)) => Some(Type::List(Box::new(Type::Unknown))),
+            (Some(VarType::Map), Some(VarType::Map)) => Some(Type::Map(Box::new(Type::Unknown))),
+            _ => None,
+        }
+    }
+
+    /// Leave 1 in rax when the two lists (or maps) hold equal contents, else
+    /// 0; `negated` flips it for `is not equal to`.
+    pub(crate) fn emit_collection_equality(&mut self, left: &Expr, right: &Expr, kind: &Type, negated: bool) {
+        let routine = self.collection_equality_routine(kind);
+        self.generate_expr(right);
+        self.emit_indent("push rax  ; the right-hand collection");
+        self.generate_expr(left);
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("pop rsi");
+        self.emit_indent(&format!("call {}  ; compares the contents", routine));
+        if negated {
+            self.emit_indent("xor rax, 1  ; 1=equal -> 0=not equal");
+        }
+    }
+
+    /// `box is xs` where a side is a `value`, a map read, a mixed element or
+    /// a `value` call: only its runtime tag says whether it holds a list or
+    /// a map. True when one side carries such a tag and the other carries
+    /// one too or is provably a list or map; neither side is a text.
+    pub(crate) fn tagged_collections_compared(&self, left: &Expr, right: &Expr) -> bool {
+        let tagged = |side: &Expr| self.runtime_tag_source(side).is_some();
+        let comparable = |side: &Expr| {
+            tagged(side) || matches!(self.infer_expr_type(side), Some(VarType::List | VarType::Map))
+        };
+        (tagged(left) || tagged(right))
+            && comparable(left)
+            && comparable(right)
+            && !self.is_stringy_expr(left)
+            && !self.is_stringy_expr(right)
+    }
+
+    /// Leave 1 in rax when the two sides are equal, else 0 (`negated` flips
+    /// it). When either side's tag says list or map, the two compare by
+    /// their contents, as two lists or two maps do; otherwise their payloads
+    /// compare as before.
+    pub(crate) fn emit_tagged_collection_equality(&mut self, left: &Expr, right: &Expr, negated: bool) {
+        self.collection_equality_routine(&Type::List(Box::new(Type::Unknown)));
+        let by_contents = self.new_label("eq_by_contents");
+        let done = self.new_label("eq_done");
+        self.generate_expr(right);
+        self.emit_load_value_tag(right);
+        self.emit_indent("push rax  ; the right-hand side");
+        self.emit_indent("push r11  ; its tag");
+        self.generate_expr(left);
+        self.emit_load_value_tag(left);
+        self.emit_indent("mov rdi, rax");
+        self.emit_indent("movzx edx, r11b  ; the left-hand tag");
+        self.emit_indent("pop rcx");
+        self.emit_indent("movzx ecx, cl  ; the right-hand tag");
+        self.emit_indent("pop rsi");
+        for (register, tag) in [("edx", TAG_LIST), ("edx", TAG_MAP), ("ecx", TAG_LIST), ("ecx", TAG_MAP)] {
+            self.emit_indent(&format!("cmp {}, {}", register, tag));
+            self.emit_indent(&format!("je {}", by_contents));
+        }
+        self.emit_indent("xor eax, eax  ; neither holds a collection: the payloads compare");
+        self.emit_indent("cmp rdi, rsi");
+        self.emit_indent("sete al");
+        self.emit_indent(&format!("jmp {}", done));
+        self.emit(&format!("{}:", by_contents));
+        self.emit_indent("call _slot_equal  ; a list or a map compares by its contents");
+        self.emit(&format!("{}:", done));
+        if negated {
+            self.emit_indent("xor rax, 1  ; 1=equal -> 0=not equal");
+        }
+    }
+}
