@@ -2,7 +2,7 @@
 
 The register holds one entry per root cause: every defect in the compiler that is open today, and an index of every entry ever filed. A fixed entry keeps its number and moves, unchanged, to the archive of the release that fixed it, in [docs/bugs/](bugs/); a report that turned out not to be a compiler defect moves to [docs/bugs/not-bugs.md](bugs/not-bugs.md). The regression test each fix added, named in its entry, stays in the compiler's test suite.
 
-**Open entries: 2.** Wrong output on valid input: 0. Accepted invalid input: 0. Spurious compile error: 2. Crash: 0. Assembler rejected output: 0. Hang: 0.
+**Open entries: 8.** Wrong output on valid input: 6. Accepted invalid input: 0. Spurious compile error: 1. Crash: 1. Assembler rejected output: 0. Hang: 0.
 
 ## How an entry enters the register
 
@@ -16,75 +16,304 @@ By class, in this order: `wrong output on valid input`, `accepted invalid input`
 
 ## Open entries
 
-### 153. A comparison is refused as the value of a declaration or a `Set`
+### 156. An element of a list parameter named in a local, then appended, prints an address
 
 **Reproducer:**
 
 ```vox
-a number called x is 3.
-a number called y is 3.
-a boolean called same is x is y.
-Print "{same}".
+To 'copy over' with a list called sections and a list called placed.
+    a map called section is element 1 of sections.
+    append section to placed.
+
+a list called sections is [{"name": ".text", "size": 10}].
+a list called placed is [].
+'copy over' with sections and placed.
+Print "{placed}".
 ```
 
-- **Expected:** `same` is declared as `true` and the program prints `1`.
-- **Actual:** the declaration stops at the first `is` after `x` and reads the second `is` as the start of a new statement:
+- **Expected:** `[{"name": ".text", "size": 10}]`.
+- **Actual:**
 
 ```text
-$ vox comparison_into_boolean.vox -o comparison_into_boolean
-error: Expected a statement, got Is
-  --> comparison_into_boolean.vox:3:28
+$ vox copy_over.vox -o copy_over && ./copy_over
+[140602820956160]
 ```
 
-`Set same to x is y.` is refused the same way. The same comparison is accepted as a `Return` value (`Return a boolean, x is y.` answers `1`) and as a condition.
+The same with a text, `a text called name is element 1 of names.` then `append name to placed.`, prints `[4198561]` where `["alpha"]` is expected. Naming the element of a list declared at the top level, rather than a list parameter, and appending it stores the right element.
 
-**Class:** spurious compile error.
+**Class:** wrong output on valid input.
 
-**Phase:** parse.
+**Phase:** not yet told.
 
-**Claims:** LANGUAGE.md "Grammar Summary": `var_decl ::= ("a" | "an") type "called" name "is" expr "."`, with `expr` reaching `comparison ::= additive (comp_op additive)?`. LANGUAGE.md "Definition" returns a comparison as a value: `Return a boolean, the divisor modulo the dividend is 0.` LANGUAGE.md "Type Predicates": "A predicate result is itself a boolean value, so you can store one".
+**Claims:** LANGUAGE.md "Mixed-Type Lists": "Appending, `set element`, `element N of`, `first`/`last`, iteration, and `{...}` format interpolation all respect each element's actual type." LANGUAGE.md "A collection parameter is the caller's collection": a `list` parameter names the caller's collection, so what the function reads from it is what the caller's list holds.
 
 **Pile:** manual says X, compiler does Y.
 
 **Hits:** 1, first and last seen 2026-10-17.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16 and on main 9544ceb; confirmed by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
 
 ---
 
-### 154. A format string reassigned to a text with `the <name> is` is refused
+### 157. Two `value`s holding equal texts compare not equal
 
 **Reproducer:**
 
 ```vox
-a text called path is "a.txt".
-a text called note is "".
-the note is "processed {path}".
-Print note.
+a value called word is "ab".
+a value called 'same word' is "{word}".
+If word is 'same word' then, Print "word is same word".
+Otherwise, Print "word is not same word"..
 ```
 
-- **Expected:** the program prints `processed a.txt`.
-- **Actual:** the reassignment is refused, and the caret points at the declaration on line 2, not at the statement on line 3:
+- **Expected:** `word is same word`. Both `value`s hold the text `ab`.
+- **Actual:**
 
 ```text
-$ vox format_into_text.vox -o format_into_text
-error: Format-string assignment requires a buffer destination: note
-  --> format_into_text.vox:2:15
+$ vox value_equal.vox -o value_equal && ./value_equal
+word is not same word
 ```
 
-A plain literal (`the note is "plain".`) is accepted, and so is `Set note to "processed {path}".`, which prints `processed a.txt`.
+Two texts declared as `text` and holding the same characters compare equal.
 
-**Class:** spurious compile error.
+**Class:** wrong output on valid input.
 
-**Phase:** analysis (the message comes from the analyzer's assignment check).
+**Phase:** not yet told.
 
-**Claims:** LANGUAGE.md "Grammar Summary": `assignment ::= "the" name "is" expr "."`. LANGUAGE.md "Format Strings as Values": a format string "works as a text initializer or assignment", and "A text variable reassigned from a format string releases the string it no longer holds".
+**Claims:** LANGUAGE.md "Comparisons": "compare two texts with `is`", and "Equality (`is`, `is equal to`, `is not`) takes a `value` as it is". A `value` that holds a text is compared as that text.
 
 **Pile:** manual says X, compiler does Y.
 
 **Hits:** 1, first and last seen 2026-10-17.
 
-**State:** open. Registered 2026-10-17. Verified on vox 0.4.16 and on main 9544ceb; confirmed by TheJostler 2026-10-17. Root cause not yet investigated.
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+
+---
+
+### 158. A format string as the match of `treating` never fires over a text list
+
+**Reproducer:**
+
+```vox
+a text called word is "kiwi".
+print each name from ["kiwi"] treating "{word}" as "matched".
+print each name from ["kiwi"] treating word as "matched".
+```
+
+- **Expected:** `matched` on both lines. `"{word}"` is the text `kiwi`, the same as `word`.
+- **Actual:**
+
+```text
+$ vox treating_format.vox -o treating_format && ./treating_format
+kiwi
+matched
+```
+
+The format string as the match fires over a mixed list, and `treating word as` fires over the text list. The compiler gives no mismatch message.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Format Strings Everywhere": "Every statement that takes a string value accepts a format string: ... `treating` clauses". LANGUAGE.md "Inline Substitution with `treating`": "If the loop variable equals `<match>`, it's replaced with `<replacement>` for that iteration."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+
+---
+
+### 159. A width with `.0` on a whole number is one character short
+
+**Reproducer:**
+
+```vox
+a number called n is 63.
+Print "[{n:012.0}]".
+Print "[{n:12.0}]".
+Print "[{n:012.1}]".
+Print "[{n:012}]".
+```
+
+- **Expected:** twelve characters between the brackets on every line: `[000000000063]`, `[          63]`, `[0000000063.0]` and `[000000000063]`.
+- **Actual:**
+
+```text
+$ vox width_point_zero.vox -o width_point_zero && ./width_point_zero
+[00000000063]
+[         63]
+[0000000063.0]
+[000000000063]
+```
+
+The first two lines are eleven characters wide. `{n:012.1}`, `{n:012}` and, on a float, `{f:08.0}` are the right width.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Format Specifiers": "`{var:N}` pads out to `N` characters", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters. The precision decides the digits and the width decides the padding, on a number and a float alike."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
+
+---
+
+### 160. After an `Otherwise`, one closing period is lost
+
+**Reproducer:**
+
+```vox
+For each number from 1 to 2,
+    If the number is 1 then, Print "one".
+    Otherwise, Print "two"..
+Print "after the loop".
+```
+
+- **Expected:** `one`, `two`, `after the loop`. The period after `"two"` closes the `Otherwise`, which ends the `If` chain, and the second period closes the `For each`.
+- **Actual:**
+
+```text
+$ vox otherwise_periods.vox -o otherwise_periods && ./otherwise_periods
+one
+after the loop
+two
+after the loop
+```
+
+The second period closes nothing, so `Print "after the loop".` is read inside the loop body. The manual's own example of an empty `Otherwise,.` closing a chain needs the same extra period. `then, X..` and `But if ..., X..` close two levels correctly.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "The termination rule": "A period ends the innermost open clause ... One period closes one level; to close more than one, write more than one". LANGUAGE.md "Closing more than one level": "periods stack: write one period per level you want to close", and "An empty `Otherwise,.` closes an inner chain the same way".
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Root cause not yet investigated.
+
+---
+
+### 162. A list holding `nan` is equal to itself
+
+**Reproducer:** the manual has no `nan` literal. A `nan` is made here by subtracting a float that has overflowed from itself.
+
+```vox
+a float called huge is 1000000000000.0.
+Repeat 5 times, set huge to huge multiply huge.
+a float called unordered is huge subtract huge.
+If unordered is unordered then, Print "scalar: equal".
+Otherwise, Print "scalar: not equal"..
+a list called xs is [unordered].
+a list called zs is [unordered].
+If xs is xs then, Print "a list and itself: equal".
+Otherwise, Print "a list and itself: not equal"..
+If xs is zs then, Print "a list and a second list built the same way: equal".
+Otherwise, Print "a list and a second list built the same way: not equal"..
+```
+
+- **Expected:** `scalar: not equal`, `a list and itself: not equal`, `a list and a second list built the same way: not equal`. A list is equal when each element equals the element in the same place, and a `nan` does not equal itself.
+- **Actual:**
+
+```text
+$ vox nan_list.vox -o nan_list && ./nan_list
+scalar: not equal
+a list and itself: equal
+a list and a second list built the same way: not equal
+```
+
+A list holding `nan` answers differently for the same list and for an identical one, as if the same list were not compared element by element.
+
+**Class:** wrong output on valid input.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Comparisons": "Two lists are equal when they have the same length and each element equals the element in the same place, nested lists and maps included". A float that is not equal to itself makes any list holding it unequal to every list, itself included.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Decided under LANGUAGE.md's element-by-element rule on 2026-10-17.
+
+---
+
+### 161. `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused
+
+**Reproducer:**
+
+```vox
+a number called n is 63.
+Print "{n:0.2}".
+```
+
+- **Expected:** the program prints `63.00`. A width may be zero and composes with a precision.
+- **Actual:**
+
+```text
+$ vox zero_width_precision.vox -o zero_width_precision
+error: '0.2' is not a format specifier Vox knows
+  --> zero_width_precision.vox:2:11
+```
+
+`{n:00.2}` and `{n:0.0}` are refused the same way. `{n:0}`, `{n:00}` and `{n:1.2}` are accepted.
+
+**Class:** spurious compile error.
+
+**Phase:** analysis (the message comes from the format specifier check).
+
+**Claims:** LANGUAGE.md "Format Specifiers": "A width may be zero - `{var:0}` and `{var:00}` pad nothing", and "The two compose: `{var:8.2}` asks for two decimal places, padded out to eight characters."
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17, who gave the expected output. Root cause not yet investigated.
+
+---
+
+### 155. A file opened in a branch under a top-level buffer's name segfaults
+
+**Reproducer:**
+
+```vox
+a buffer called cupboard is "ab".
+a number called gate is 1.
+If gate is 1 then,
+    open a file called cupboard for writing at "cupboard.txt",
+    Close cupboard.
+Print "size {cupboard's size}".
+```
+
+- **Expected:** a compile error, because the name is already a buffer and a file cannot be bound to it.
+- **Actual:**
+
+```text
+$ vox file_over_buffer.vox -o file_over_buffer && ./file_over_buffer
+size Segmentation fault         (core dumped)
+```
+
+The program compiles without a message and stops on a signal at the read of `cupboard`.
+
+**Class:** crash.
+
+**Phase:** not yet told.
+
+**Claims:** LANGUAGE.md "Type Immutability": "A variable's type is fixed at its declaration and never changes", and reusing an already-declared name "as the target of `open ... called`" rejects a type that conflicts with the name's existing declaration. A program that vox accepts never stops on a signal.
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** open. Registered 2026-10-17. Verified on vox 0.4.16. Approved by TheJostler 2026-10-17. Root cause not yet investigated.
 
 ---
 
@@ -110,10 +339,10 @@ Every entry ever filed, by number. Number 113 was never used.
 | 14 | A `but if` chain is closed by a period that belongs to a nested clause | wrong output on valid input | fixed in 0.3.6 | [0.3.6](bugs/0.3.6.md#14-a-but-if-chain-is-closed-by-a-period-that-belongs-to-a-nested-clause) |
 | 15 | Reassigning a `value` that holds a `float` to an integer leaves the tag as `float` | wrong output on valid input | fixed in 0.3.6 | [0.3.6](bugs/0.3.6.md#15-reassigning-a-value-that-holds-a-float-to-an-integer-leaves-the-tag-as-float) |
 | 16 | A declared-but-uninitialised `text` variable segfaults on first read | crash | fixed in 0.3.6 | [0.3.6](bugs/0.3.6.md#16-a-declared-but-uninitialised-text-variable-segfaults-on-first-read) |
-| 17 | Appending a format string to a list stores a corrupt element: printing or reading it back segfaults or leaks a raw pointer | crash | fixed in 0.4.0 | [0.4.0](bugs/0.4.0.md#17-appending-a-format-string-to-a-list-stores-a-corrupt-element--printing-or-reading-it-back-segfaults-or-leaks-a-raw-pointer) |
+| 17 | Appending a format string to a list stores a corrupt element: printing or reading it back segfaults or leaks a raw pointer | crash | fixed in 0.3.7 | [0.3.7](bugs/0.3.7.md#17-appending-a-format-string-to-a-list-stores-a-corrupt-element--printing-or-reading-it-back-segfaults-or-leaks-a-raw-pointer) |
 | 18 | The `.lib` list-element-type inference credits fewer shapes than the runtime element tagger: provably-`text` elements ship as plain `list` | unclassified | fixed in 0.4.0 | [0.4.0](bugs/0.4.0.md#18-the-lib-list-element-type-inference-credits-fewer-shapes-than-the-runtime-element-tagger--provably-text-elements-ship-as-plain-list) |
-| 19 | A string literal's content resolved against known variable names at codegen time: crash on self-name collision, silent wrong data on any other collision | wrong output on valid input | fixed in 0.4.0 | [0.4.0](bugs/0.4.0.md#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision) |
-| 20 | Equality dispatch treats a non-stringy operand as a string pointer and dereferences it | crash | fixed in 0.4.0 | [0.4.0](bugs/0.4.0.md#20-equality-dispatch-treats-a-non-stringy-operand-as-a-string-pointer-and-dereferences-it) |
+| 19 | A string literal's content resolved against known variable names at codegen time: crash on self-name collision, silent wrong data on any other collision | wrong output on valid input | fixed in 0.3.7 | [0.3.7](bugs/0.3.7.md#19-a-string-literals-content-resolved-against-known-variable-names-at-codegen-time--crash-on-self-name-collision-silent-wrong-data-on-any-other-collision) |
+| 20 | Equality dispatch treats a non-stringy operand as a string pointer and dereferences it | crash | fixed in 0.3.7 | [0.3.7](bugs/0.3.7.md#20-equality-dispatch-treats-a-non-stringy-operand-as-a-string-pointer-and-dereferences-it) |
 | 21 | A string literal in an `If`/`While` condition inside a function body resolves as a variable name | wrong output on valid input | fixed in 0.4.4 | [0.4.4](bugs/0.4.4.md#21-a-string-literal-in-an-ifwhile-condition-inside-a-function-body-resolves-as-a-variable-name) |
 | 22 | An integer literal too large for 64 bits compiles silently and evaluates to 0 | accepted invalid input | fixed in 0.4.4 | [0.4.4](bugs/0.4.4.md#22-an-integer-literal-too-large-for-64-bits-compiles-silently-and-evaluates-to-0) |
 | 23 | Printing a list of `arguments's all` elements leaks raw pointers; element access is fine | wrong output on valid input | fixed in 0.4.4 | [0.4.4](bugs/0.4.4.md#23-printing-a-list-of-argumentss-all-elements-leaks-raw-pointers-element-access-is-fine) |
@@ -245,5 +474,13 @@ Every entry ever filed, by number. Number 113 was never used.
 | 150 | An ordering comparison on a text, a list, a map or a buffer compares memory addresses | accepted invalid input | fixed in 0.4.16 | [0.4.16](bugs/0.4.16.md#150-an-ordering-comparison-on-a-text-a-list-a-map-or-a-buffer-compares-memory-addresses) |
 | 151 | Comparing a list element that holds a number with a text segfaults | crash | fixed in 0.4.16 | [0.4.16](bugs/0.4.16.md#151-comparing-a-list-element-that-holds-a-number-with-a-text-segfaults) |
 | 152 | `Get current time into` a declared text, number or list turns it into a time | accepted invalid input | fixed in the next release | [unreleased](bugs/unreleased.md#152-get-current-time-into-a-declared-text-number-or-list-turns-it-into-a-time) |
-| 153 | A comparison is refused as the value of a declaration or a `Set` | spurious compile error | open | [open entries](#153-a-comparison-is-refused-as-the-value-of-a-declaration-or-a-set) |
-| 154 | A format string reassigned to a text with `the <name> is` is refused | spurious compile error | open | [open entries](#154-a-format-string-reassigned-to-a-text-with-the-name-is-is-refused) |
+| 153 | A comparison is refused as the value of a declaration or a `Set` | spurious compile error | fixed in the next release | [unreleased](bugs/unreleased.md#153-a-comparison-is-refused-as-the-value-of-a-declaration-or-a-set) |
+| 154 | A format string reassigned to a text with `the <name> is` is refused | spurious compile error | fixed in the next release | [unreleased](bugs/unreleased.md#154-a-format-string-reassigned-to-a-text-with-the-name-is-is-refused) |
+| 155 | A file opened in a branch under a top-level buffer's name segfaults | crash | open | [open entries](#155-a-file-opened-in-a-branch-under-a-top-level-buffers-name-segfaults) |
+| 156 | An element of a list parameter named in a local, then appended, prints an address | wrong output on valid input | open | [open entries](#156-an-element-of-a-list-parameter-named-in-a-local-then-appended-prints-an-address) |
+| 157 | Two `value`s holding equal texts compare not equal | wrong output on valid input | open | [open entries](#157-two-values-holding-equal-texts-compare-not-equal) |
+| 158 | A format string as the match of `treating` never fires over a text list | wrong output on valid input | open | [open entries](#158-a-format-string-as-the-match-of-treating-never-fires-over-a-text-list) |
+| 159 | A width with `.0` on a whole number is one character short | wrong output on valid input | open | [open entries](#159-a-width-with-0-on-a-whole-number-is-one-character-short) |
+| 160 | After an `Otherwise`, one closing period is lost | wrong output on valid input | open | [open entries](#160-after-an-otherwise-one-closing-period-is-lost) |
+| 161 | `{n:0.2}`, `{n:00.2}` and `{n:0.0}` are refused | spurious compile error | open | [open entries](#161-n02-n002-and-n00-are-refused) |
+| 162 | A list holding `nan` is equal to itself | wrong output on valid input | open | [open entries](#162-a-list-holding-nan-is-equal-to-itself) |

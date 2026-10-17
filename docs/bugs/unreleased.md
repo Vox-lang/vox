@@ -283,3 +283,75 @@ hour 10
 **Root cause:** the statement made a new slot for its name and recorded the name as a time, whatever the name had been declared as. Every later use read that slot as a time, so a text or a number printed the seconds and took a time's properties, and a later list or buffer statement on the name was given a time to work on, which the assembler then could not build.
 
 **Fix:** `Get current time into` takes a `time`, or a name not yet declared, which it declares as a time. Any other declared variable is refused at compile time, naming it and its type: `'here' is text, so it cannot take the current time: a variable's type is fixed at its declaration`, with the hint to get the time into a time or a new name. A name declared inside a function is judged the same way.
+
+---
+
+### 153. A comparison is refused as the value of a declaration or a `Set`
+
+**Reproducer:**
+
+```vox
+a number called x is 3.
+a number called y is 3.
+a boolean called same is x is y.
+Print "{same}".
+```
+
+- **Expected:** `same` is declared as `true` and the program prints `1`.
+- **Actual:** the declaration stops at the first `is` after `x` and reads the second `is` as the start of a new statement:
+
+```text
+$ vox comparison_into_boolean.vox -o comparison_into_boolean
+error: Expected a statement, got Is
+  --> comparison_into_boolean.vox:3:28
+```
+
+`Set same to x is y.` is refused the same way. The same comparison is accepted as a `Return` value (`Return a boolean, x is y.` answers `1`) and as a condition.
+
+**Class:** spurious compile error.
+
+**Phase:** parse.
+
+**Claims:** LANGUAGE.md "Grammar Summary": `var_decl ::= ("a" | "an") type "called" name "is" expr "."`, with `expr` reaching `comparison ::= additive (comp_op additive)?`. LANGUAGE.md "Definition" returns a comparison as a value: `Return a boolean, the divisor modulo the dividend is 0.` LANGUAGE.md "Type Predicates": "A predicate result is itself a boolean value, so you can store one".
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16 and on main 9544ceb; confirmed by TheJostler 2026-10-17. Regression tests: tests/900_a_comparison_is_the_value_of_a_declaration.vox, tests/901_a_comparison_is_the_value_of_a_set.vox, tests/902_every_comparison_declares_and_sets_a_boolean_at_the_top_level.vox, tests/903_every_comparison_declares_and_sets_a_boolean_in_a_function.vox, tests/904_a_comparison_value_leaves_the_next_action_of_a_clause_alone.vox, tests/905_existing_declarations_and_assignments_read_as_before.vox, tests/compile_fail/900_a_number_cannot_be_declared_or_set_from_a_comparison.vox.
+
+---
+
+### 154. A format string reassigned to a text with `the <name> is` is refused
+
+**Reproducer:**
+
+```vox
+a text called path is "a.txt".
+a text called note is "".
+the note is "processed {path}".
+Print note.
+```
+
+- **Expected:** the program prints `processed a.txt`.
+- **Actual:** the reassignment is refused, and the caret points at the declaration on line 2, not at the statement on line 3:
+
+```text
+$ vox format_into_text.vox -o format_into_text
+error: Format-string assignment requires a buffer destination: note
+  --> format_into_text.vox:2:15
+```
+
+A plain literal (`the note is "plain".`) is accepted, and so is `Set note to "processed {path}".`, which prints `processed a.txt`.
+
+**Class:** spurious compile error.
+
+**Phase:** analysis (the message comes from the analyzer's assignment check).
+
+**Claims:** LANGUAGE.md "Grammar Summary": `assignment ::= "the" name "is" expr "."`. LANGUAGE.md "Format Strings as Values": a format string "works as a text initializer or assignment", and "A text variable reassigned from a format string releases the string it no longer holds".
+
+**Pile:** manual says X, compiler does Y.
+
+**Hits:** 1, first and last seen 2026-10-17.
+
+**State:** fixed in the next release. Registered 2026-10-17. Verified on vox 0.4.16 and on main 9544ceb; confirmed by TheJostler 2026-10-17. Regression tests: tests/906_a_format_string_reassigns_a_text_with_the_is.vox, tests/907_format_strings_with_every_hole_reassign_with_the_is.vox, tests/compile_fail/901_a_format_string_cannot_be_written_into_a_number_with_the_is.vox.
