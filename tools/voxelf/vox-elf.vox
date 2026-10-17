@@ -1,0 +1,54 @@
+(vox-elf: write a static x86-64 executable from a raw image and the
+ manifest that says where its sections go, or lay the sections out first
+ so the image can be assembled for the right addresses. The work is the
+ voxelf library's; this program reads the command line, makes one call,
+ and passes the diagnostics on to standard error.)
+
+see "./voxelf.vox".
+
+A flag called 'wants help' is "--help" or "-h", it is a boolean.
+A flag called 'output path' is "--output" or "-o", it is a text.
+A flag called 'entry name' is "--entry" or "-e", it is a text with default "_start".
+A flag called 'wants a layout' is "--layout" or "-l", it is a boolean.
+Parse flags.
+
+A text called program is arguments's name.
+
+If 'wants help' then,
+    Print "Usage: {program} [OPTION]... MANIFEST -o OUTPUT",
+    Print "Write the static x86-64 executable that MANIFEST describes to OUTPUT.",
+    Print "MANIFEST names an image of raw section bytes, as nasm -f bin writes one,",
+    Print "and says where each section lies in it and what it holds.",
+    Print "\nOptions:",
+    Print "  -o, --output FILE  write to FILE; there is no default",
+    Print "  -e, --entry NAME   start the program at the symbol NAME (default _start)",
+    Print "  -l, --layout       place the sections MANIFEST lists and write the",
+    Print "                     placed manifest to FILE instead of an executable",
+    Print "  -h, --help         display this help and exit",
+    Print "\nThe executable is written with mode 0644, so make it executable with chmod.",
+    Print "The exit status is the number of errors, or 255 when there are more than",
+    Print "255, and each error is one line on standard error.",
+    Exit 0.
+
+Open a file for writing called 'error stream' at 2 (standard error).
+
+a list called 'manifest paths' is arguments's all.
+If 'manifest paths''s length is not 1 then,
+    Write "{program}: name exactly one manifest; try --help\n" to 'error stream',
+    Exit 2.
+If 'output path' is empty then,
+    Write "{program}: name the output with -o; try --help\n" to 'error stream',
+    Exit 2.
+
+a text called 'manifest path' is element 1 of 'manifest paths'.
+Create a buffer called diagnostics.
+a number called 'error count' is 0.
+If 'wants a layout' then,
+    Set 'error count' to 'lay out and count the errors' with 'manifest path' and 'output path' and diagnostics.
+Otherwise,
+    Set 'error count' to 'link and count the errors' with 'manifest path' and 'output path' and 'entry name' and diagnostics.
+Write diagnostics to 'error stream'.
+(An exit status is one byte, so a count it cannot hold is reported as its
+ largest value, as the help says)
+If 'error count' is greater than 255 then, Set 'error count' to 255.
+Exit 'error count'.
